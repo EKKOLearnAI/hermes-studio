@@ -14,11 +14,11 @@ async function loadSystemInfoWithInjectedVersion(version?: string) {
     ;(globalThis as any).__APP_VERSION__ = version
   }
 
-  vi.doMock('../../packages/server/src/services/hermes/hermes-cli', () => ({
+  vi.doMock('../../packages/server/src/modules/hermes/services/runtime/cli', () => ({
     getVersion: vi.fn().mockResolvedValue('Hermes Agent v0.15.2\n'),
   }))
 
-  vi.doMock('../../packages/server/src/config', () => ({
+  vi.doMock('../../packages/server/src/modules/studio/public/config', () => ({
     config: {
       appHome,
       port: 8648,
@@ -29,7 +29,7 @@ async function loadSystemInfoWithInjectedVersion(version?: string) {
     },
   }))
 
-  const mod = await import('../../packages/server/src/services/system-info')
+  const mod = await import('../../packages/server/src/bootstrap/system-info')
   return { ...mod, appHome }
 }
 

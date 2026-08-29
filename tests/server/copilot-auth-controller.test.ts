@@ -25,32 +25,32 @@ vi.mock('fs/promises', () => ({
   mkdir: mockMkdir,
 }))
 
-vi.mock('../../packages/server/src/services/config-helpers', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/profile-config', () => ({
   saveEnvValue: mockSaveEnvValue,
   readConfigYaml: mockReadConfigYaml,
   writeConfigYaml: mockWriteConfigYaml,
   updateConfigYaml: mockUpdateConfigYaml,
 }))
 
-vi.mock('../../packages/server/src/services/hermes/copilot-models', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/providers/copilot-models', () => ({
   resolveCopilotOAuthTokenWithSource: mockResolveWithSource,
   invalidateAllCaches: mockInvalidate,
 }))
 
-vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/profiles/profile', () => ({
   getActiveEnvPath: () => '/fake/home/.hermes/.env',
 }))
 
-vi.mock('../../packages/server/src/services/app-config', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/app-config', () => ({
   readAppConfig: mockReadAppConfig,
   writeAppConfig: mockWriteAppConfig,
 }))
 
-vi.mock('../../packages/server/src/services/logger', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/logging', () => ({
   logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn() },
 }))
 
-import * as ctrl from '../../packages/server/src/controllers/hermes/copilot-auth'
+import * as ctrl from '../../packages/server/src/modules/hermes/controllers/copilot-auth'
 
 function makeCtx(): any {
   return { params: {}, request: { body: {} }, body: undefined, status: 200 }

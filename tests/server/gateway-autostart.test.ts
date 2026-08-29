@@ -20,7 +20,7 @@ import {
   shouldUseUnifiedGatewayManagement,
   shouldUseManagedGatewayRun,
   shouldUseManagedGatewayRunForAutostart,
-} from '../../packages/server/src/services/hermes/gateway-autostart'
+} from '../../packages/server/src/modules/hermes/services/gateway/autostart'
 
 describe('gateway autostart status parsing', () => {
   it('selects all profiles by default for gateway autostart', () => {

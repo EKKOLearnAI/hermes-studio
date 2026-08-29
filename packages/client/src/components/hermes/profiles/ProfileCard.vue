@@ -171,7 +171,8 @@ function handleEditConfig() {
         {{ t('profiles.editConfig') }}
       </NButton>
       <NButton
-        v-if="!profile.active"
+        v-if="profilesStore.hermesAvailable && !profile.active"
+        data-testid="switch-hermes-profile"
         size="tiny"
         :loading="switching"
         quaternary

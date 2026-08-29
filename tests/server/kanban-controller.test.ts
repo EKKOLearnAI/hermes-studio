@@ -40,7 +40,12 @@ vi.mock('os', () => ({
   homedir: () => '/Users/tester',
 }))
 
-vi.mock('../../packages/server/src/services/hermes/hermes-kanban', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/runtime/path', () => ({
+  detectHermesRootHome: () => '/Users/tester/.hermes',
+  isRealPathWithin: vi.fn(async () => true),
+}))
+
+vi.mock('../../packages/server/src/modules/hermes/services/kanban/kanban-service', () => ({
   normalizeBoardSlug: (board?: string | null) => {
     const value = board?.trim().toLowerCase() || 'default'
     if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(value)) throw new Error('Invalid kanban board slug')
@@ -72,18 +77,18 @@ vi.mock('../../packages/server/src/services/hermes/hermes-kanban', () => ({
   listAttachments: mockListAttachments,
 }))
 
-vi.mock('../../packages/server/src/db/hermes/sessions-db', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/history/sessions-db', () => ({
   searchSessionSummariesWithProfile: mockSearchSessions,
   getSessionDetailFromDbWithProfile: mockGetSessionDetail,
   getExactSessionDetailFromDbWithProfile: mockGetExactSessionDetail,
   findLatestExactSessionIdWithProfile: mockFindLatestExactSessionId,
 }))
 
-vi.mock('../../packages/server/src/db/hermes/users-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/users', () => ({
   listUserProfiles: mockListUserProfiles,
 }))
 
-import * as ctrl from '../../packages/server/src/controllers/hermes/kanban'
+import * as ctrl from '../../packages/server/src/modules/hermes/controllers/kanban'
 
 function ctx(overrides: Record<string, any> = {}) {
   return {

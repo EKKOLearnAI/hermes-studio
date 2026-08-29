@@ -4,11 +4,11 @@ const listSkillBundlesMock = vi.hoisted(() => vi.fn())
 const createSkillBundleMock = vi.hoisted(() => vi.fn())
 const deleteSkillBundleMock = vi.hoisted(() => vi.fn())
 
-vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/profiles/profile', () => ({
   getActiveProfileName: vi.fn(() => 'default'),
 }))
 
-vi.mock('../../packages/server/src/services/hermes/skill-bundles', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/skill-bundles/skill-bundles', () => ({
   listSkillBundles: listSkillBundlesMock,
   createSkillBundle: createSkillBundleMock,
   deleteSkillBundle: deleteSkillBundleMock,
@@ -26,7 +26,7 @@ describe('skill bundles controller', () => {
   it('lists bundles using the request-scoped profile', async () => {
     const bundles = [{ name: 'Review', commandName: 'review', description: '', skills: ['github'] }]
     listSkillBundlesMock.mockResolvedValue(bundles)
-    const { list } = await import('../../packages/server/src/controllers/hermes/skill-bundles')
+    const { list } = await import('../../packages/server/src/modules/hermes/controllers/skill-bundles')
     const ctx: any = { query: {}, state: { profile: { name: 'work' } }, body: null }
 
     await list(ctx)
@@ -38,7 +38,7 @@ describe('skill bundles controller', () => {
   it('creates bundles using the request-scoped profile', async () => {
     const bundle = { name: 'Review', commandName: 'review', description: 'PR checks', skills: ['github'] }
     createSkillBundleMock.mockResolvedValue(bundle)
-    const { create } = await import('../../packages/server/src/controllers/hermes/skill-bundles')
+    const { create } = await import('../../packages/server/src/modules/hermes/controllers/skill-bundles')
     const ctx: any = {
       query: {},
       state: { profile: { name: 'work' } },
@@ -60,7 +60,7 @@ describe('skill bundles controller', () => {
 
   it('deletes bundles using the request-scoped profile', async () => {
     deleteSkillBundleMock.mockResolvedValue(undefined)
-    const { remove } = await import('../../packages/server/src/controllers/hermes/skill-bundles')
+    const { remove } = await import('../../packages/server/src/modules/hermes/controllers/skill-bundles')
     const ctx: any = {
       query: {},
       params: { commandName: 'review-team' },

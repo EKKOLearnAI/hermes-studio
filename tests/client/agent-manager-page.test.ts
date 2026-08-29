@@ -1,0 +1,339 @@
+// @vitest-environment jsdom
+import { flushPromises, mount } from '@vue/test-utils'
+import { defineComponent } from 'vue'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const api = vi.hoisted(() => ({
+  checkCodingAgentUpdate: vi.fn(),
+  deleteCodingAgent: vi.fn(),
+  fetchAgentStatusSnapshot: vi.fn(),
+  fetchCodingAgentsStatus: vi.fn(),
+  fetchRuntimeVersionStatus: vi.fn(),
+  installCodingAgent: vi.fn(),
+}))
+const route = vi.hoisted(() => ({ query: {} as Record<string, string> }))
+const replaceRoute = vi.hoisted(() => vi.fn())
+
+vi.mock('@/api/coding-agents', () => ({
+  checkCodingAgentUpdate: api.checkCodingAgentUpdate,
+  deleteCodingAgent: api.deleteCodingAgent,
+  fetchCodingAgentsStatus: api.fetchCodingAgentsStatus,
+  installCodingAgent: api.installCodingAgent,
+}))
+
+vi.mock('@/api/agent-status', () => ({
+  fetchAgentStatusSnapshot: api.fetchAgentStatusSnapshot,
+}))
+
+vi.mock('@/api/hermes/runtime-versions', () => ({
+  fetchRuntimeVersionStatus: api.fetchRuntimeVersionStatus,
+}))
+
+vi.mock('@/stores/hermes/app', () => ({
+  useAppStore: () => ({ serverVersion: '0.7.0', setPageSidebarExpanded: vi.fn() }),
+}))
+
+vi.mock('@/components/layout/VersionManagementModal.vue', () => ({
+  default: defineComponent({
+    name: 'VersionManagementModal',
+    props: { show: Boolean },
+    template: '<div data-testid="runtime-manager-modal" />',
+  }),
+}))
+
+vi.mock('vue-router', () => ({
+  useRoute: () => route,
+  useRouter: () => ({ push: vi.fn(), replace: replaceRoute }),
+}))
+
+vi.mock('vue-i18n', () => ({
+  useI18n: () => ({
+    t: (key: string, values?: Record<string, string>) => values?.version ? `${key}:${values.version}` : key,
+  }),
+}))
+
+vi.mock('naive-ui', () => {
+  const Slot = defineComponent({ template: '<div><slot /></div>' })
+  return {
+    NAlert: Slot,
+    NButton: defineComponent({
+      props: { disabled: Boolean, loading: Boolean },
+      emits: ['click'],
+      template: '<button :disabled="disabled || loading" @click="$emit(\'click\')"><slot /></button>',
+    }),
+    NPopconfirm: defineComponent({ template: '<div><slot name="trigger" /><slot /></div>' }),
+    NSpin: Slot,
+    NTag: defineComponent({ template: '<span><slot /></span>' }),
+    useMessage: () => ({ success: vi.fn(), error: vi.fn() }),
+  }
+})
+
+import AgentManagerView from '@/views/hermes/AgentManagerView.vue'
+
+const claude = {
+  id: 'claude-code',
+  name: 'Claude Code',
+  provider: 'Anthropic',
+  command: 'claude',
+  packageName: '@anthropic-ai/claude-code',
+  installed: true,
+  version: '2.0.0',
+  rawVersion: '2.0.0',
+}
+
+const missing = (id: 'codex' | 'pi', name: string, packageName: string) => ({
+  id,
+  name,
+  provider: name,
+  command: id,
+  packageName,
+  installed: false,
+  version: '',
+  rawVersion: '',
+})
+
+function runtimeStatus() {
+  return {
+    active: null,
+    platform: 'mac-arm64',
+    activeVersionPath: '',
+    remoteManifestUrl: '',
+    remoteError: '',
+    hermes: {
+      activeVersion: '0.21.0',
+      agentVersion: 'v0.21.0 (2026.8.27) · upstream 3f497e2b · local 470cf66b (+1 carried commit)',
+      activeDirectory: '/runtime/0.21.0',
+      storageDirectory: '/runtime',
+      defaultStorageDirectory: '/runtime',
+      pendingStorageDirectory: '',
+      migrationError: '',
+      activationError: '',
+      cliInstallations: [{
+        path: '/Users/test/.local/bin/hermes',
+        version: '0.20.4',
+        source: 'user-cli',
+        selected: false,
+      }],
+      installed: [{
+        version: '0.21.0',
+        platform: 'mac-arm64',
+        directory: '/runtime/0.21.0',
+        active: true,
+      }],
+      remoteVersions: ['0.21.0'],
+    },
+    webui: {
+      currentVersion: '0.7.0',
+      activeVersion: '0.7.0',
+      activeDirectory: '',
+      installed: [],
+      remoteVersions: [],
+    },
+  }
+}
+
+function agentStatusSnapshot() {
+  return {
+    revision: 1,
+    updatedAt: '2026-08-27T00:00:00.000Z',
+    agents: [
+      {
+        id: 'hermes',
+        installed: true,
+        source: 'managed-runtime',
+        path: '/runtime/0.21.0/bin/hermes',
+        version: 'v0.21.0 (2026.8.27) · upstream 3f497e2b · local 470cf66b (+1 carried commit)',
+      },
+      { id: 'ekko-agent', installed: true, source: 'built-in', path: '', version: '0.7.0' },
+      { id: 'claude-code', installed: true, source: 'user-cli', path: '/usr/local/bin/claude', version: '2.0.0' },
+      { id: 'codex', installed: false, source: 'not-installed', path: '', version: '' },
+      { id: 'pi', installed: false, source: 'not-installed', path: '', version: '' },
+    ],
+  }
+}
+
+describe('Agent Manager page', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    route.query = {}
+    delete (window as typeof window & { hermesDesktop?: unknown }).hermesDesktop
+    Object.defineProperty(window, 'matchMedia', {
+      configurable: true,
+      value: () => ({
+        matches: false,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }),
+    })
+    api.fetchCodingAgentsStatus.mockResolvedValue({
+      tools: [
+        claude,
+        missing('codex', 'Codex', '@openai/codex'),
+        missing('pi', 'Pi', '@earendil-works/pi-coding-agent'),
+      ],
+    })
+    api.fetchRuntimeVersionStatus.mockResolvedValue(runtimeStatus())
+    api.fetchAgentStatusSnapshot.mockResolvedValue(agentStatusSnapshot())
+  })
+
+  it('shows Hermes with the same compact card structure as other Agents', async () => {
+    const wrapper = mount(AgentManagerView, {
+      props: { sidebarCollapsed: false },
+      global: {
+        stubs: {
+          VersionManagementModal: true,
+        },
+      },
+    })
+    await flushPromises()
+
+    const hermesCard = wrapper.get('[data-testid="agent-card-hermes"]')
+    expect(hermesCard.text()).not.toContain('agentManager.managedRuntimeHint')
+    expect(hermesCard.text()).toContain('codingAgents.installed')
+    expect(hermesCard.get('.agent-version').text()).toBe('v0.21.0 (2026.8.27)')
+    expect(hermesCard.text()).not.toContain('3f497e2b')
+    expect(hermesCard.text()).not.toContain('470cf66b')
+    expect(hermesCard.text()).not.toContain('agentManager.hermesDescription')
+    expect(hermesCard.text()).not.toContain('/Users/test/.local/bin/hermes')
+    expect(hermesCard.get('[data-testid="hermes-source-type"]').text()).toBe('Runtime')
+    expect(hermesCard.findAll('button').map(button => button.text()))
+      .toEqual(['agentManager.manageRuntime', 'sidebar.settings'])
+    expect(wrapper.findComponent({ name: 'VersionManagementModal' }).exists()).toBe(true)
+    expect(api.fetchAgentStatusSnapshot).toHaveBeenCalledOnce()
+    expect(api.fetchRuntimeVersionStatus).not.toHaveBeenCalled()
+    expect(api.fetchCodingAgentsStatus).not.toHaveBeenCalled()
+
+    const ekkoCard = wrapper.get('[data-testid="agent-card-ekko"]')
+    expect(ekkoCard.findAll('button').map(button => button.text())).toEqual(['sidebar.settings'])
+    expect(ekkoCard.get('.agent-version').text()).toBe('Studio v0.7.0')
+    expect(ekkoCard.text()).not.toContain('agentManager.ekkoDescription')
+    const claudeCard = wrapper.get('[data-testid="agent-card-claude-code"]')
+    expect(claudeCard.get('.agent-version').text()).toBe('v2.0.0')
+    expect(claudeCard.text()).not.toContain('agentManager.codingAgentDescription')
+    expect(wrapper.get('[data-testid="agent-card-codex"]').text()).toContain('agentManager.codingAgentDescription')
+    expect(wrapper.get('[data-testid="agent-card-codex"]').text()).toContain('codingAgents.installNow')
+    expect(wrapper.get('.coding-agent-grid').findAll('.agent-card').map(card => card.attributes('data-testid')))
+      .toEqual(['agent-card-ekko', 'agent-card-hermes', 'agent-card-claude-code', 'agent-card-codex', 'agent-card-pi'])
+  })
+
+  it('detects the CLI before offering Runtime management in the desktop shell', async () => {
+    ;(window as typeof window & { hermesDesktop?: { isDesktop: boolean } }).hermesDesktop = { isDesktop: true }
+    const status = agentStatusSnapshot()
+    status.agents[0] = {
+      ...status.agents[0],
+      source: 'user-cli',
+      path: '/Users/test/.local/bin/hermes',
+      version: '0.20.4',
+    }
+    api.fetchAgentStatusSnapshot.mockResolvedValue(status)
+    const wrapper = mount(AgentManagerView, {
+      props: { sidebarCollapsed: false },
+      global: {
+        stubs: {
+          VersionManagementModal: true,
+        },
+      },
+    })
+    await flushPromises()
+
+    const hermesCard = wrapper.get('[data-testid="agent-card-hermes"]')
+    expect(hermesCard.text()).not.toContain('/Users/test/.local/bin/hermes')
+    expect(hermesCard.get('[data-testid="hermes-source-type"]').text()).toBe('CLI')
+    expect(hermesCard.findAll('button').map(button => button.text()))
+      .toEqual(['sidebar.settings'])
+    expect(api.fetchRuntimeVersionStatus).not.toHaveBeenCalled()
+    expect(wrapper.getComponent({ name: 'VersionManagementModal' }).props('show')).toBe(false)
+  })
+
+  it('does not open Runtime management when cached Hermes status is unavailable', async () => {
+    ;(window as typeof window & { hermesDesktop?: { isDesktop: boolean } }).hermesDesktop = { isDesktop: true }
+    const status = agentStatusSnapshot()
+    status.agents[0] = {
+      ...status.agents[0],
+      installed: false,
+      source: 'not-installed',
+      path: '',
+      version: '',
+    }
+    api.fetchAgentStatusSnapshot.mockResolvedValue(status)
+
+    const wrapper = mount(AgentManagerView, {
+      props: { sidebarCollapsed: false },
+      global: {
+        stubs: {
+          VersionManagementModal: true,
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(api.fetchRuntimeVersionStatus).not.toHaveBeenCalled()
+    const hermesCard = wrapper.get('[data-testid="agent-card-hermes"]')
+    expect(hermesCard.text()).toContain('codingAgents.notInstalled')
+    expect(hermesCard.text()).toContain('agentManager.hermesDescription')
+    expect(hermesCard.find('.agent-version').exists()).toBe(false)
+    expect(hermesCard.find('[data-testid="hermes-source-type"]').exists()).toBe(false)
+    expect(hermesCard.findAll('button').map(button => button.text()))
+      .toEqual(['codingAgents.installNow'])
+    expect(wrapper.getComponent({ name: 'VersionManagementModal' }).props('show')).toBe(false)
+  })
+
+  it('opens Runtime management only when chat creation requests installation', async () => {
+    route.query = { runtime: 'install' }
+    const wrapper = mount(AgentManagerView, {
+      props: { sidebarCollapsed: false },
+      global: { stubs: { VersionManagementModal: true } },
+    })
+    await flushPromises()
+
+    expect(wrapper.getComponent({ name: 'VersionManagementModal' }).props('show')).toBe(true)
+    expect(replaceRoute).toHaveBeenCalledWith({ query: {} })
+  })
+
+  it('puts the available version directly on the update button', async () => {
+    api.checkCodingAgentUpdate.mockResolvedValue({
+      success: true,
+      tool: claude,
+      latestVersion: '2.1.0',
+      updateAvailable: true,
+    })
+    const wrapper = mount(AgentManagerView, {
+      props: { sidebarCollapsed: false },
+      global: { stubs: { VersionManagementModal: true } },
+    })
+    await flushPromises()
+
+    const claudeCard = wrapper.get('[data-testid="agent-card-claude-code"]')
+    const checkButton = claudeCard.findAll('button')
+      .find(button => button.text() === 'codingAgents.checkUpdate')
+    expect(checkButton).toBeDefined()
+    await checkButton!.trigger('click')
+    await flushPromises()
+
+    expect(claudeCard.find('.update-alert').exists()).toBe(false)
+    expect(claudeCard.findAll('button').map(button => button.text()))
+      .toContain('agentManager.updateToVersion:2.1.0')
+  })
+
+  it('only probes installed Agents after the user clicks refresh', async () => {
+    const wrapper = mount(AgentManagerView, {
+      props: { sidebarCollapsed: false },
+      global: { stubs: { VersionManagementModal: true } },
+    })
+    await flushPromises()
+
+    expect(api.fetchAgentStatusSnapshot).toHaveBeenCalledOnce()
+    expect(api.fetchCodingAgentsStatus).not.toHaveBeenCalled()
+    expect(api.fetchRuntimeVersionStatus).not.toHaveBeenCalled()
+
+    const refreshButton = wrapper.findAll('button')
+      .find(button => button.text() === 'agentManager.refresh')
+    expect(refreshButton).toBeDefined()
+    await refreshButton!.trigger('click')
+    await flushPromises()
+
+    expect(api.fetchCodingAgentsStatus).toHaveBeenCalledOnce()
+    expect(api.fetchRuntimeVersionStatus).toHaveBeenCalledWith({ includeRemote: false })
+    expect(api.fetchAgentStatusSnapshot).toHaveBeenCalledTimes(2)
+  })
+})

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { socketHandlers, mockSocket, mockIo } = vi.hoisted(() => {
   const socketHandlers = new Map<string, (...args: any[]) => void>()
@@ -22,14 +22,18 @@ vi.mock('socket.io-client', () => ({
   io: mockIo,
 }))
 
-vi.mock('../../packages/server/src/services/auth', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/auth/token-auth', () => ({
   getToken: vi.fn(async () => 'test-token'),
 }))
 
-import { AgentClients, groupBridgeSessionId } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
-import { GroupChatServer } from '../../packages/server/src/services/hermes/group-chat'
-import { canManageGroupChatRoom, isGroupChatRoomOwner } from '../../packages/server/src/services/hermes/group-chat/access'
-import { groupChatRoutes, setGroupChatServer } from '../../packages/server/src/routes/hermes/group-chat'
+import { AgentClients, groupBridgeSessionId } from '../../packages/server/src/modules/studio/services/group-chat/agent-clients'
+import { GroupChatServer } from '../../packages/server/src/modules/studio/sockets/group-chat'
+import { canManageGroupChatRoom, isGroupChatRoomOwner } from '../../packages/server/src/modules/studio/services/group-chat/access'
+import { groupChatRoutes, setGroupChatServer } from '../../packages/server/src/modules/studio/routes/group-chat'
+import {
+  resetAgentStatusRegistryForTests,
+  updateAgentStatus,
+} from '../../packages/server/src/modules/studio/public/agent-status-registry'
 
 function routeHandler(path: string, method: string) {
   const layer = (groupChatRoutes as any).stack.find((item: any) => item.path === path && item.methods.includes(method))
@@ -41,6 +45,16 @@ describe('Group Chat member/agent identity sync', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     socketHandlers.clear()
+    resetAgentStatusRegistryForTests()
+    updateAgentStatus('hermes', {
+      installed: true,
+      source: 'user-cli',
+      path: '/usr/local/bin/hermes',
+    })
+  })
+
+  afterEach(() => {
+    resetAgentStatusRegistryForTests()
   })
 
   it('distinguishes profile-based room managers from the room owner for @all', () => {
@@ -340,7 +354,7 @@ describe('Group Chat member/agent identity sync', () => {
     }
     setGroupChatServer(chatServer as any)
 
-    const handler = routeHandler('/api/hermes/group-chat/rooms/:roomId/agents', 'POST')
+    const handler = routeHandler('/api/studio/group-chat/rooms/:roomId/agents', 'POST')
     const ctx: any = {
       params: { roomId: 'room-1' },
       request: { body: { profile: 'default', name: 'Worker' } },
@@ -376,7 +390,7 @@ describe('Group Chat member/agent identity sync', () => {
     }
     setGroupChatServer(chatServer as any)
 
-    const handler = routeHandler('/api/hermes/group-chat/rooms/:roomId/agents', 'POST')
+    const handler = routeHandler('/api/studio/group-chat/rooms/:roomId/agents', 'POST')
     const ctx: any = {
       params: { roomId: 'room-1' },
       request: { body: { profile: 'default', name: 'Worker' } },
@@ -413,7 +427,7 @@ describe('Group Chat member/agent identity sync', () => {
     }
     setGroupChatServer(chatServer as any)
 
-    const handler = routeHandler('/api/hermes/group-chat/rooms/:roomId/agents', 'POST')
+    const handler = routeHandler('/api/studio/group-chat/rooms/:roomId/agents', 'POST')
     const ctx: any = {
       params: { roomId: 'room-1' },
       request: { body: { profile: 'default', name: 'Worker' } },
@@ -453,7 +467,7 @@ describe('Group Chat member/agent identity sync', () => {
     }
     setGroupChatServer(chatServer as any)
 
-    const handler = routeHandler('/api/hermes/group-chat/rooms/:roomId/agents', 'POST')
+    const handler = routeHandler('/api/studio/group-chat/rooms/:roomId/agents', 'POST')
     const ctx: any = {
       params: { roomId: 'room-1' },
       request: { body: { profile: 'default', name: 'Worker' } },
@@ -514,7 +528,7 @@ describe('Group Chat member/agent identity sync', () => {
     }
     setGroupChatServer(chatServer as any)
 
-    const handler = routeHandler('/api/hermes/group-chat/rooms/:roomId/agents/:agentId', 'DELETE')
+    const handler = routeHandler('/api/studio/group-chat/rooms/:roomId/agents/:agentId', 'DELETE')
     const ctx: any = {
       params: { roomId: 'room-1', agentId: 'row-1' },
       status: 200,
@@ -546,7 +560,7 @@ describe('Group Chat member/agent identity sync', () => {
     }
     setGroupChatServer(chatServer as any)
 
-    const handler = routeHandler('/api/hermes/group-chat/rooms/:roomId', 'DELETE')
+    const handler = routeHandler('/api/studio/group-chat/rooms/:roomId', 'DELETE')
     const ctx: any = {
       params: { roomId: 'room-1' },
       state: { user: { id: 1, username: 'root', role: 'super_admin' } },
@@ -572,7 +586,7 @@ describe('Group Chat member/agent identity sync', () => {
     }
     setGroupChatServer(chatServer as any)
 
-    const handler = routeHandler('/api/hermes/group-chat/rooms/:roomId', 'DELETE')
+    const handler = routeHandler('/api/studio/group-chat/rooms/:roomId', 'DELETE')
     const ctx: any = {
       params: { roomId: 'room-1' },
       state: { user: { id: 1, username: 'root', role: 'super_admin' } },
@@ -1045,7 +1059,7 @@ describe('Group Chat member/agent identity sync', () => {
     }
     setGroupChatServer(chatServer as any)
 
-    const handler = routeHandler('/api/hermes/group-chat/rooms/:roomId/clear-context', 'POST')
+    const handler = routeHandler('/api/studio/group-chat/rooms/:roomId/clear-context', 'POST')
     const ctx: any = {
       params: { roomId: 'room-1' },
       state: { user: { id: 1, username: 'root', role: 'super_admin' } },
@@ -1072,7 +1086,7 @@ describe('Group Chat member/agent identity sync', () => {
     }
     setGroupChatServer(chatServer as any)
 
-    const handler = routeHandler('/api/hermes/group-chat/rooms/:roomId/clear-context', 'POST')
+    const handler = routeHandler('/api/studio/group-chat/rooms/:roomId/clear-context', 'POST')
     const ctx: any = {
       params: { roomId: 'room-1' },
       state: { user: { id: 1, username: 'root', role: 'super_admin' } },
@@ -1639,7 +1653,7 @@ describe('Group Chat member/agent identity sync', () => {
       ensureDefaultRoomWorkspace: (roomId: string, profile: string) => `/managed/group-chat/${profile}/${roomId}`,
     } as any)
 
-    const handler = routeHandler('/api/hermes/group-chat/rooms', 'POST')
+    const handler = routeHandler('/api/studio/group-chat/rooms', 'POST')
     const ctx: any = {
       state: { user: { id: 42, username: 'alice-login', role: 'admin' } },
       request: {
@@ -1740,7 +1754,7 @@ describe('Group Chat member/agent identity sync', () => {
     }
     setGroupChatServer({ getStorage: () => storage } as any)
 
-    const handler = routeHandler('/api/hermes/group-chat/rooms', 'GET')
+    const handler = routeHandler('/api/studio/group-chat/rooms', 'GET')
     const ctx: any = {
       state: { user: { id: 2, username: 'ops', role: 'admin', profiles: ['default', 'research'] } },
       status: 200,
@@ -1761,7 +1775,7 @@ describe('Group Chat member/agent identity sync', () => {
     }
     setGroupChatServer({ getStorage: () => storage } as any)
 
-    const handler = routeHandler('/api/hermes/group-chat/rooms', 'GET')
+    const handler = routeHandler('/api/studio/group-chat/rooms', 'GET')
     const ctx: any = {
       state: { user: { id: 1, username: 'admin', role: 'super_admin' } },
       status: 200,

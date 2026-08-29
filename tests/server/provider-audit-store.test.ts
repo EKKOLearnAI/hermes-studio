@@ -6,14 +6,14 @@ let db: DatabaseSync | null = null
 beforeEach(() => {
   vi.resetModules()
   db = new DatabaseSync(':memory:')
-  vi.doMock('../../packages/server/src/db/index', () => ({
+  vi.doMock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
     getDb: () => db,
     getStoragePath: () => ':memory:',
   }))
 })
 
 afterEach(() => {
-  vi.doUnmock('../../packages/server/src/db/index')
+  vi.doUnmock('../../packages/server/src/modules/studio/infrastructure/database/index')
   vi.resetModules()
   db?.close()
   db = null
@@ -23,7 +23,7 @@ describe('provider audit store', () => {
   it('stores structured audit events without credential material', async () => {
     const sensitiveValue = ['sensitive', 'value'].join('-')
     const { appendProviderAuditEvent, listProviderAuditEvents } = await import(
-      '../../packages/server/src/db/hermes/provider-audit-store'
+      '../../packages/server/src/modules/studio/repositories/provider-audit-store'
     )
 
     appendProviderAuditEvent({
@@ -67,7 +67,7 @@ describe('provider audit store', () => {
 
   it('enforces the 90-day retention boundary when appending events', async () => {
     const { appendProviderAuditEvent, listProviderAuditEvents } = await import(
-      '../../packages/server/src/db/hermes/provider-audit-store'
+      '../../packages/server/src/modules/studio/repositories/provider-audit-store'
     )
     const now = Date.now()
     appendProviderAuditEvent({

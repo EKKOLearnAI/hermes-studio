@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useChatStore } from '@/stores/hermes/chat'
 
-vi.mock('@/api/hermes/chat', () => ({
+vi.mock('@/api/studio/chat', () => ({
   startRunViaSocket: vi.fn(),
   resumeSession: vi.fn((_sessionId: string, cb: (data: any) => void) => {
     cb({ session_id: _sessionId, isWorking: false, messages: [] })

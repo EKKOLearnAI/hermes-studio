@@ -8,7 +8,7 @@ import {
 import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watchEffect } from "vue";
 import { useI18n } from "vue-i18n";
 import { useMessage } from "naive-ui";
-import { downloadFile, getDownloadUrl } from "@/api/hermes/download";
+import { downloadFile, getDownloadUrl } from "@/api/studio/download";
 import { copyToClipboard } from "@/utils/clipboard";
 import { parseThinking, countThinkingChars } from "@/utils/thinking-parser";
 import { useChatStore } from "@/stores/hermes/chat";
@@ -29,8 +29,10 @@ import { useVoiceSettings } from "@/composables/useVoiceSettings";
 import { speedToEdgeRate, hzToEdgePitch } from "@/utils/ttsHelpers";
 import { formatChatTimestamp } from "@/utils/chat-timestamp";
 import { openSubagentStream, subagentIdFromToolCall } from "@/utils/hermes/subagent-stream";
-import type { WorkspaceRunChangeSummary } from "@/api/hermes/sessions";
-import { isServerTtsProvider } from "@/api/hermes/tts";
+import type { WorkspaceRunChangeSummary } from "@/api/studio/sessions";
+import { isServerTtsProvider } from "@/api/studio/tts";
+import type { ProfileAvatar as ProfileAvatarData } from "@/api/hermes/profiles";
+import ProfileAvatar from "@/components/hermes/profiles/ProfileAvatar.vue";
 
 const MarkdownRenderer = defineAsyncComponent(async () => (await import("./MarkdownRenderer.vue")).default);
 
@@ -42,13 +44,18 @@ const JSON_MAX_KEYS_PER_OBJECT = 50;
 const JSON_MAX_ITEMS_PER_ARRAY = 50;
 const JSON_TRUNCATED_KEY = "__truncated__";
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   message: Message
   highlight?: boolean
   headingIdPrefix?: string
   showForkAction?: boolean
   assistantAgent?: ChatAgentAvatar
-}>();
+  userProfileName?: string
+  userProfileAvatar?: ProfileAvatarData | null
+}>(), {
+  userProfileName: "default",
+  userProfileAvatar: null,
+});
 const { t } = useI18n();
 const toast = useMessage();
 
@@ -76,7 +83,7 @@ const statusItems = computed(() => {
 });
 
 type DisplayContentFile = {
-  type: 'image' | 'file'
+  type: 'image' | 'video' | 'file'
   name: string
   path?: string
   url?: string
@@ -173,6 +180,7 @@ const contentFiles = computed<DisplayContentFile[] | null>(() => {
   if (!isContentBlockArray.value) return null;
 
   return contentBlocks.value!.flatMap<DisplayContentFile>((block, index) => {
+    if ((block as any).video_frame === true) return []
     if (block.type === 'image') {
       return [{
         type: 'image' as const,
@@ -182,9 +190,11 @@ const contentFiles = computed<DisplayContentFile[] | null>(() => {
       }].filter(file => file.path)
     }
     if (block.type === 'file') {
+      const name = String((block as any).name || `file-${index + 1}`)
+      const mediaType = String((block as any).media_type || '')
       return [{
-        type: 'file' as const,
-        name: String((block as any).name || `file-${index + 1}`),
+        type: isVideo(mediaType, name) ? 'video' as const : 'file' as const,
+        name,
         path: String((block as any).path || ''),
         context: typeof (block as any).context === 'string' ? (block as any).context : undefined,
       }].filter(file => file.path)
@@ -359,6 +369,10 @@ const timeStr = computed(() => formatChatTimestamp(props.message.timestamp));
 
 function isImage(type: string): boolean {
   return type.startsWith("image/");
+}
+
+function isVideo(type: string, name: string): boolean {
+  return type.startsWith("video/") || /\.(?:mp4|mov|m4v|webm)$/i.test(name);
 }
 
 function formatSize(bytes: number): string {
@@ -994,14 +1008,25 @@ onBeforeUnmount(() => {
     </template>
     <template v-else>
       <div class="msg-body">
-        <img
-          v-if="message.role === 'assistant'"
-          class="msg-avatar"
-          :src="assistantAgent.src"
-          :alt="assistantAgent.label"
-          draggable="false"
-        >
         <div class="msg-content" :class="message.role">
+          <div v-if="message.role === 'user'" class="message-author user-message-author">
+            <span class="message-author-name" dir="auto">{{ userProfileName }}</span>
+            <ProfileAvatar
+              class="user-profile-avatar"
+              :name="userProfileName"
+              :avatar="userProfileAvatar"
+              :size="22"
+            />
+          </div>
+          <div v-if="message.role === 'assistant'" class="message-author assistant-message-author">
+            <img
+              class="msg-avatar"
+              :src="assistantAgent.src"
+              :alt="assistantAgent.label"
+              draggable="false"
+            >
+            <span class="message-author-name" dir="auto">{{ assistantAgent.label }}</span>
+          </div>
           <div
             class="message-bubble"
             :class="{
@@ -1017,7 +1042,11 @@ onBeforeUnmount(() => {
                 v-for="att in message.attachments"
                 :key="att.id"
                 class="msg-attachment"
-                :class="{ image: isImage(att.type), 'has-context': !!att.context }"
+                :class="{
+                  image: isImage(att.type),
+                  video: message.role === 'user' && isVideo(att.type, att.name),
+                  'has-context': !!att.context,
+                }"
               >
                 <template v-if="isImage(att.type) && att.url">
                   <img
@@ -1026,6 +1055,19 @@ onBeforeUnmount(() => {
                     class="msg-attachment-thumb"
                     @click="previewUrl = att.url"
                   />
+                </template>
+                <template v-else-if="message.role === 'user' && isVideo(att.type, att.name) && att.url">
+                  <video
+                    class="msg-attachment-video"
+                    :src="att.url"
+                    controls
+                    playsinline
+                    preload="metadata"
+                  ></video>
+                  <div class="msg-attachment-video-footer">
+                    <span class="att-name">{{ att.name }}</span>
+                    <span class="att-size">{{ formatSize(att.size) }}</span>
+                  </div>
                 </template>
                 <template v-else>
                   <div class="msg-attachment-file" @click="handleAttachmentDownload(att)" style="cursor: pointer;" :title="t('download.downloadFile')">
@@ -1109,7 +1151,11 @@ onBeforeUnmount(() => {
                     v-for="(file, idx) in contentFiles"
                     :key="idx"
                     class="msg-attachment"
-                    :class="{ image: file.type === 'image', 'has-context': !!file.context }"
+                    :class="{
+                      image: file.type === 'image',
+                      video: file.type === 'video',
+                      'has-context': !!file.context,
+                    }"
                   >
                     <template v-if="file.type === 'image'">
                       <img
@@ -1118,6 +1164,18 @@ onBeforeUnmount(() => {
                         class="msg-attachment-thumb"
                         @click="previewUrl = getContentFileUrl(file)"
                       />
+                    </template>
+                    <template v-else-if="file.type === 'video'">
+                      <video
+                        class="msg-attachment-video"
+                        :src="getContentFileUrl(file)"
+                        controls
+                        playsinline
+                        preload="metadata"
+                      ></video>
+                      <div class="msg-attachment-video-footer">
+                        <span class="att-name">{{ file.name }}</span>
+                      </div>
                     </template>
                     <template v-else>
                       <div
@@ -1302,10 +1360,9 @@ onBeforeUnmount(() => {
     }
 
     .msg-avatar {
-      width: 40px;
-      height: 40px;
+      width: 22px;
+      height: 22px;
       flex-shrink: 0;
-      margin-top: 2px;
       box-sizing: border-box;
       border: 1px solid #fff;
       border-radius: 50%;
@@ -1370,6 +1427,40 @@ onBeforeUnmount(() => {
   min-width: 0;
   max-width: 100%;
   box-sizing: border-box;
+}
+
+.message-author {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  margin-bottom: 6px;
+  color: $text-secondary;
+  font-size: 12px;
+  line-height: 22px;
+}
+
+.user-message-author {
+  align-self: flex-end;
+  justify-content: flex-end;
+}
+
+.assistant-message-author {
+  align-self: flex-start;
+  justify-content: flex-start;
+}
+
+.message-author-name {
+  min-width: 0;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-profile-avatar {
+  box-sizing: border-box;
+  border: 1px solid #fff;
 }
 
 .message-bubble {
@@ -1569,6 +1660,11 @@ onBeforeUnmount(() => {
   &.image.has-context {
     max-width: 420px;
   }
+
+  &.video {
+    width: min(360px, 100%);
+    background: #000;
+  }
 }
 
 .msg-attachment-thumb {
@@ -1582,6 +1678,39 @@ onBeforeUnmount(() => {
 .msg-attachment.has-context .msg-attachment-thumb {
   max-width: 420px;
   max-height: 280px;
+}
+
+.msg-attachment-video {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  max-height: 280px;
+  background: #000;
+  object-fit: contain;
+}
+
+.msg-attachment-video-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  color: $text-secondary;
+  background: rgba(0, 0, 0, 0.04);
+  font-size: 12px;
+
+  .att-name {
+    min-width: 0;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .att-size {
+    flex-shrink: 0;
+    color: $text-muted;
+    font-size: 11px;
+  }
 }
 
 .msg-attachment-context {

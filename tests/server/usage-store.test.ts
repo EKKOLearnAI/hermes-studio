@@ -9,7 +9,7 @@ const { mockEnsureTable, mockJsonSet, mockJsonGet, mockJsonGetAll, mockJsonDelet
   mockJsonDelete: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/db/index', () => ({
+vi.mock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
   isSqliteAvailable: () => false, // Force JSON fallback path
   ensureTable: mockEnsureTable,
   getDb: () => null,
@@ -25,7 +25,7 @@ import {
   getUsageBatch,
   deleteUsage,
   getRecordedUsageSessionIds,
-} from '../../packages/server/src/db/hermes/usage-store'
+} from '../../packages/server/src/modules/studio/repositories/usage-store'
 
 describe('Usage Store (JSON fallback)', () => {
   beforeEach(() => {
@@ -140,7 +140,7 @@ describe('Usage Store (SQLite path)', () => {
     allMock = vi.fn()
     deleteMock = vi.fn()
 
-    vi.doMock('../../packages/server/src/db/index', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
       isSqliteAvailable: () => true,
       ensureTable: vi.fn(),
       getDb: () => ({
@@ -160,7 +160,7 @@ describe('Usage Store (SQLite path)', () => {
   })
 
   it('updateUsage inserts a usage record with normalized metadata defaults', async () => {
-    const { updateUsage } = await import('../../packages/server/src/db/hermes/usage-store')
+    const { updateUsage } = await import('../../packages/server/src/modules/studio/repositories/usage-store')
     updateUsage('s1', { inputTokens: 500, outputTokens: 200 })
     expect(runMock).toHaveBeenCalledWith(
       's1',
@@ -190,7 +190,7 @@ describe('Usage Store (SQLite path)', () => {
       { name: 'created_at' },
       { name: 'updated_at' },
     ])
-    const { updateUsage } = await import('../../packages/server/src/db/hermes/usage-store')
+    const { updateUsage } = await import('../../packages/server/src/modules/studio/repositories/usage-store')
     updateUsage('s1', { inputTokens: 500, outputTokens: 200 })
     expect(runMock).toHaveBeenCalledWith(
       's1',
@@ -225,7 +225,7 @@ describe('Usage Store (SQLite path)', () => {
       profile: 'default',
       created_at: 0,
     })
-    const { getUsage } = await import('../../packages/server/src/db/hermes/usage-store')
+    const { getUsage } = await import('../../packages/server/src/modules/studio/repositories/usage-store')
     const result = getUsage('s1')
     expect(getMock).toHaveBeenCalledWith('s1')
     expect(result).toEqual({
@@ -245,7 +245,7 @@ describe('Usage Store (SQLite path)', () => {
       { session_id: 'a', input_tokens: 1, output_tokens: 2, cache_read_tokens: 0, cache_write_tokens: 0, reasoning_tokens: 0, model: '', profile: 'default', created_at: 0 },
       { session_id: 'b', input_tokens: 3, output_tokens: 4, cache_read_tokens: 0, cache_write_tokens: 0, reasoning_tokens: 0, model: '', profile: 'default', created_at: 0 },
     ])
-    const { getUsageBatch } = await import('../../packages/server/src/db/hermes/usage-store')
+    const { getUsageBatch } = await import('../../packages/server/src/modules/studio/repositories/usage-store')
     const result = getUsageBatch(['a', 'b', 'c'])
     expect(allMock).toHaveBeenCalledWith('a', 'b', 'c')
     expect(result).toEqual({
@@ -255,7 +255,7 @@ describe('Usage Store (SQLite path)', () => {
   })
 
   it('deleteUsage runs DELETE query', async () => {
-    const { deleteUsage } = await import('../../packages/server/src/db/hermes/usage-store')
+    const { deleteUsage } = await import('../../packages/server/src/modules/studio/repositories/usage-store')
     deleteUsage('s1')
     expect(deleteMock).toHaveBeenCalledWith('s1')
   })
@@ -285,7 +285,7 @@ describe('Usage Store (SQLite path)', () => {
         { session_id: 'session-2' },
       ])
 
-    const { getLocalUsageStats, getRecordedUsageSessionIds } = await import('../../packages/server/src/db/hermes/usage-store')
+    const { getLocalUsageStats, getRecordedUsageSessionIds } = await import('../../packages/server/src/modules/studio/repositories/usage-store')
     expect(getLocalUsageStats('default', 7)).toEqual({
       input_tokens: 100,
       output_tokens: 40,

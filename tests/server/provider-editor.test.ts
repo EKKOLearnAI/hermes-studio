@@ -28,7 +28,8 @@ function readYaml(path: string): any {
 }
 
 async function loadEditor() {
-  return import('../../packages/server/src/services/hermes/provider-editor')
+  await import('../../packages/server/src/bootstrap/agent-profile-adapter')
+  return import('../../packages/server/src/modules/hermes/services/providers/provider-editor')
 }
 
 beforeEach(() => {
@@ -39,7 +40,7 @@ beforeEach(() => {
   db = new DatabaseSync(':memory:')
   db.exec('PRAGMA foreign_keys=ON')
   vi.resetModules()
-  vi.doMock('../../packages/server/src/db/index', () => ({
+  vi.doMock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
     getDb: () => db,
     getStoragePath: () => ':memory:',
   }))
@@ -47,7 +48,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals()
-  vi.doUnmock('../../packages/server/src/db/index')
+  vi.doUnmock('../../packages/server/src/modules/studio/infrastructure/database/index')
   vi.resetModules()
   db?.close()
   db = null

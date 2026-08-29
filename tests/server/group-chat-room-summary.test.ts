@@ -6,7 +6,7 @@ import {
   GroupRoomSummaryService,
   type GroupRoomSummary,
   type GroupSummaryRunner,
-} from '../../packages/server/src/services/hermes/group-chat/room-summary'
+} from '../../packages/server/src/modules/studio/services/group-chat/room-summary'
 
 function message(
   id: string,

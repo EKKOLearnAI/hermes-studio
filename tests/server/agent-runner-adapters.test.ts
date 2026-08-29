@@ -7,24 +7,24 @@ import {
   responsesToAnthropicMessages,
   responsesToOpenAiChat,
   truncateResponsesToolOutputs,
-} from '../../packages/server/src/services/coding-agents/shared/adapters/responses'
+} from '../../packages/server/src/modules/coding-agents/protocol/adapters/responses'
 import {
   anthropicToOpenAiChat,
   anthropicToOpenAiResponses,
   openAiResponsesToAnthropicMessage,
   openAiToAnthropicMessage,
-} from '../../packages/server/src/services/coding-agents/shared/adapters/anthropic'
+} from '../../packages/server/src/modules/coding-agents/protocol/adapters/anthropic'
 import {
   openAiChatSseToAnthropicEvents,
   openAiResponsesSseToAnthropicEvents,
   type AnthropicStreamEvent,
-} from '../../packages/server/src/services/coding-agents/shared/adapters/anthropic-stream'
+} from '../../packages/server/src/modules/coding-agents/protocol/adapters/anthropic-stream'
 import {
   anthropicMessagesSseToResponsesEvents,
   openAiChatSseToResponsesEvents,
   openAiResponsesSseToResponsesEvents,
   type CanonicalResponsesEvent,
-} from '../../packages/server/src/services/coding-agents/shared/adapters/responses-stream'
+} from '../../packages/server/src/modules/coding-agents/protocol/adapters/responses-stream'
 
 const target = { model: 'test-model' }
 const codexTarget = { model: 'test-model', annotateMcpToolNamespaces: true }
@@ -97,9 +97,8 @@ describe('agent runner Responses adapters', () => {
       top_p: 0.9,
       stream: false,
       messages: [
-        { role: 'system', content: 'be terse' },
+        { role: 'system', content: 'be terse\n\nrules' },
         { role: 'user', content: 'hello' },
-        { role: 'system', content: 'rules' },
         {
           role: 'assistant',
           content: null,
@@ -116,6 +115,44 @@ describe('agent runner Responses adapters', () => {
         function: { name: 'search', description: 'Search', parameters: { type: 'object' } },
       }],
     })
+  })
+
+  it('keeps a single top-level instructions system message at the front', () => {
+    const body = {
+      instructions: 'core system prompt',
+      input: [
+        { role: 'user', content: [{ type: 'input_text', text: 'hi' }] },
+      ],
+    }
+
+    expect(responsesToOpenAiChat(body, target).messages).toEqual([
+      { role: 'system', content: 'core system prompt' },
+      { role: 'user', content: 'hi' },
+    ])
+  })
+
+  it('merges multiple system messages into one leading message (vLLM compatibility)', () => {
+    // Codex 0.149 sends both a top-level `instructions` string and `developer`
+    // messages inside `input`. Both convert to `system`; vLLM rejects the
+    // second one ("System message must be at the beginning"), so they must be
+    // merged into a single leading system message.
+    const body = {
+      instructions: 'top-level instructions',
+      input: [
+        { role: 'developer', content: [{ type: 'input_text', text: 'developer message one' }] },
+        { role: 'user', content: [{ type: 'input_text', text: 'hello' }] },
+        { role: 'developer', content: [{ type: 'input_text', text: 'developer message two' }] },
+      ],
+    }
+
+    const messages = responsesToOpenAiChat(body, target).messages
+    expect(messages).toEqual([
+      { role: 'system', content: 'top-level instructions\n\ndeveloper message one\n\ndeveloper message two' },
+      { role: 'user', content: 'hello' },
+    ])
+    const systemMessages = messages.filter((message: any) => message.role === 'system')
+    expect(systemMessages).toHaveLength(1)
+    expect(messages[0].role).toBe('system')
   })
 
   it('replays Responses reasoning_content on DeepSeek tool-call continuations', () => {
@@ -986,6 +1023,49 @@ describe('agent runner Anthropic adapters', () => {
         function: { name: 'lookup', description: 'Lookup', parameters: { type: 'object' } },
       }],
     })
+  })
+
+  it('merges multiple system messages into one leading message (vLLM compatibility)', () => {
+    // Claude Code sends its primary prompt as the top-level `system` field and
+    // injects additional `role: 'system'` messages mid-conversation (e.g. the
+    // ToolSearch deferred-tools notice). A second system message mid-conversation
+    // is rejected by vLLM with "System message must be at the beginning." (400),
+    // so the adapter must keep exactly one leading system message.
+    const body = {
+      system: [
+        { type: 'text', text: 'claude code system prompt' },
+        { type: 'text', text: 'appended rules' },
+      ],
+      messages: [
+        { role: 'user', content: [{ type: 'text', text: 'hello' }] },
+        { role: 'system', content: [{ type: 'text', text: 'deferred tools are now available' }] },
+      ],
+    }
+
+    const messages = anthropicToOpenAiChat(body, anthropicTarget).messages
+    expect(messages).toEqual([
+      {
+        role: 'system',
+        content: 'claude code system prompt\nappended rules\n\ndeferred tools are now available',
+      },
+      { role: 'user', content: 'hello' },
+    ])
+    expect(messages.filter((message: any) => message.role === 'system')).toHaveLength(1)
+    expect(messages[0].role).toBe('system')
+  })
+
+  it('keeps a single in-message system prompt at the front', () => {
+    const body = {
+      messages: [
+        { role: 'system', content: 'rules' },
+        { role: 'user', content: 'hi' },
+      ],
+    }
+
+    expect(anthropicToOpenAiChat(body, anthropicTarget).messages).toEqual([
+      { role: 'system', content: 'rules' },
+      { role: 'user', content: 'hi' },
+    ])
   })
 
   it('preserves Anthropic image inputs for Chat and Responses providers', () => {

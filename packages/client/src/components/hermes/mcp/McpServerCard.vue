@@ -7,6 +7,12 @@ import type { McpServerInfo } from '@/api/hermes/mcp'
 const props = defineProps<{
   server: McpServerInfo
   toolsByServer: Record<string, Array<{ name: string; description?: string }>>
+  readonly?: boolean
+  showManageTools?: boolean
+  showReload?: boolean
+  contextLabel?: string
+  testing?: boolean
+  allowReadonlyToggle?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -41,6 +47,7 @@ const MAX_VISIBLE_TOOLS = 20
       <h3 class="server-name">{{ server.name }}</h3>
       <div class="server-badges">
         <span class="type-badge transport">{{ server.transport }}</span>
+        <span v-if="contextLabel" class="type-badge context">{{ contextLabel }}</span>
         <span class="type-badge" :class="statusClass(server)">{{ statusLabel(server) }}</span>
       </div>
     </div>
@@ -80,11 +87,11 @@ const MAX_VISIBLE_TOOLS = 20
     <!-- 底部：按钮 + 开关 -->
     <div class="card-footer">
       <div class="card-actions">
-        <NButton size="tiny" quaternary @click="emit('edit', server)">{{ t('mcp.edit') }}</NButton>
-        <NButton size="tiny" quaternary :disabled="!server.connected" @click="emit('manageTools', server)">{{ t('mcp.manageTools') }}</NButton>
-        <NButton size="tiny" quaternary @click="emit('test', server)">{{ t('mcp.test') }}</NButton>
-        <NButton size="tiny" quaternary @click="emit('reload', server.name)">{{ t('mcp.reload') }}</NButton>
-        <NPopconfirm @positive-click="emit('remove', server)">
+        <NButton v-if="!readonly" size="tiny" quaternary @click="emit('edit', server)">{{ t('mcp.edit') }}</NButton>
+        <NButton v-if="showManageTools !== false" size="tiny" quaternary :disabled="!server.connected" @click="emit('manageTools', server)">{{ t('mcp.manageTools') }}</NButton>
+        <NButton size="tiny" quaternary :loading="testing" @click="emit('test', server)">{{ t('mcp.test') }}</NButton>
+        <NButton v-if="showReload !== false" size="tiny" quaternary @click="emit('reload', server.name)">{{ t('mcp.reload') }}</NButton>
+        <NPopconfirm v-if="!readonly" @positive-click="emit('remove', server)">
           <template #trigger>
             <NButton size="tiny" quaternary type="error">{{ t('mcp.remove') }}</NButton>
           </template>
@@ -94,6 +101,7 @@ const MAX_VISIBLE_TOOLS = 20
       <NSwitch
         :value="server.raw_config.enabled !== false"
         size="small"
+        :disabled="readonly && !allowReadonlyToggle"
         @update:value="() => emit('toggleEnabled', server)"
       />
     </div>
@@ -164,6 +172,11 @@ const MAX_VISIBLE_TOOLS = 20
   &.connected {
     background: rgba(var(--success-rgb), 0.12);
     color: $success;
+  }
+
+  &.context {
+    background: rgba(var(--accent-primary-rgb), 0.08);
+    color: $text-secondary;
   }
 
   &.disconnected {

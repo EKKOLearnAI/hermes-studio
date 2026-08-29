@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { cleanTtsText, clampTtsText } from '../../packages/server/src/services/hermes/tts-providers/text'
+import { cleanTtsText, clampTtsText } from '../../packages/server/src/modules/studio/services/voice/tts/providers/text'
 
 describe('tts provider text helpers', () => {
   it('removes thinking blocks, code blocks, html, and collapses spaces', () => {

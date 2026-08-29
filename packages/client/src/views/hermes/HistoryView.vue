@@ -14,7 +14,7 @@ import SessionListItem from '@/components/hermes/chat/SessionListItem.vue'
 import OutlinePanel from '@/components/hermes/chat/OutlinePanel.vue'
 import PageSidebarNav from '@/components/layout/PageSidebarNav.vue'
 import PageSidebarFooter from '@/components/layout/PageSidebarFooter.vue'
-import { batchDeleteSessions, deleteSession, fetchHermesSessionGroups, fetchHermesSessionPage, fetchHermesSession, fetchSessionMessagesPage, handoffSessionToHermes, importHermesSession, unarchiveSession, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
+import { batchDeleteSessions, deleteSession, fetchHermesSessionGroups, fetchHermesSessionPage, fetchHermesSession, fetchSessionMessagesPage, handoffSessionToHermes, importHermesSession, unarchiveSession, type HermesMessage, type SessionSummary } from '@/api/studio/sessions'
 import { useChatStore } from '@/stores/hermes/chat'
 
 const appStore = useAppStore()
@@ -183,6 +183,7 @@ function mapHistoryMessages(messages: HermesMessage[]): Session['messages'] {
       timestamp: m.timestamp * 1000,
       reasoning: m.reasoning || undefined,
       systemType: displayRole === 'command' ? 'command' : undefined,
+      runMarker: m.run_marker,
     }
 
     if (m.role === 'tool' || isHistoryMoaToolDisplay(m)) {
@@ -237,6 +238,7 @@ function sessionFromSummary(summary: SessionSummary, messages: Session['messages
     endedAt: summary.ended_at ? summary.ended_at * 1000 : undefined,
     lastActiveAt: summary.last_active ? summary.last_active * 1000 : undefined,
     isArchived: Boolean(summary.is_archived),
+    pushEnabled: Boolean(summary.push_enabled),
     workspace: summary.workspace || undefined,
     messages,
   }
@@ -450,6 +452,7 @@ function sessionSummaryToSession(summary: SessionSummary): Session {
     endedAt: summary.ended_at ? summary.ended_at * 1000 : undefined,
     lastActiveAt: summary.last_active ? summary.last_active * 1000 : undefined,
     isArchived: Boolean(summary.is_archived),
+    pushEnabled: Boolean(summary.push_enabled),
     workspace: summary.workspace || undefined,
     messages: [],
   }
@@ -862,7 +865,6 @@ function handleBatchDeleteConfirm() {
         <PageSidebarNav
           active="history"
           :primary-label="t('chat.newChat')"
-          hide-mode-switch
           @primary="openNewChatPage"
         />
         <div class="session-list-toolbar">

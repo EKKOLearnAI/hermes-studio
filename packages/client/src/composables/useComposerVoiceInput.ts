@@ -12,8 +12,8 @@ import {
   pushLocalSttStreamChunk,
   startLocalSttStream,
   transcribeSpeech,
-} from '@/api/hermes/stt'
-import type { StoredSttProvider } from '@/api/hermes/stt-settings'
+} from '@/api/studio/stt'
+import type { StoredSttProvider } from '@/api/studio/stt-settings'
 import { isDesktopShell } from '@/utils/desktop-bridge'
 import { isMobileDevice } from '@/utils/device'
 

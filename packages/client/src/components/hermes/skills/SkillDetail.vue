@@ -20,6 +20,9 @@ const props = defineProps<{
   target?: SkillTarget
   readonly?: boolean
   canPin?: boolean
+  loadContent?: (category: string, skill: string, filePath?: string) => Promise<string>
+  loadFiles?: (category: string, skill: string) => Promise<SkillFileEntry[]>
+  saveContent?: (category: string, skill: string, content: string) => Promise<void>
 }>()
 
 const emit = defineEmits<{
@@ -47,10 +50,13 @@ async function loadSkill() {
   draftContent.value = ''
   editing.value = false
   try {
-    const skillPath = `${props.category}/${props.skill}/SKILL.md`
     const [skillContent, skillFiles] = await Promise.all([
-      fetchSkillContent(skillPath, props.target || 'hermes'),
-      fetchSkillFiles(props.category, props.skill, props.target || 'hermes'),
+      props.loadContent
+        ? props.loadContent(props.category, props.skill)
+        : fetchSkillContent(`${props.category}/${props.skill}/SKILL.md`, props.target || 'hermes'),
+      props.loadFiles
+        ? props.loadFiles(props.category, props.skill)
+        : fetchSkillFiles(props.category, props.skill, props.target || 'hermes'),
     ])
     content.value = skillContent
     draftContent.value = skillContent
@@ -79,7 +85,9 @@ async function viewFile(filePath: string) {
         relPath = afterSkillDir
       }
     }
-    fileContent.value = await fetchSkillContent(`${base}${relPath}`, props.target || 'hermes')
+    fileContent.value = props.loadContent
+      ? await props.loadContent(props.category, props.skill, relPath)
+      : await fetchSkillContent(`${base}${relPath}`, props.target || 'hermes')
   } catch (err: any) {
     fileContent.value = t('skills.fileLoadFailed') + `: ${err.message}`
   } finally {
@@ -106,7 +114,8 @@ async function saveSkill() {
   if (saving.value || props.readonly) return
   saving.value = true
   try {
-    await saveSkillContent(props.category, props.skill, draftContent.value, props.target || 'hermes')
+    if (props.saveContent) await props.saveContent(props.category, props.skill, draftContent.value)
+    else await saveSkillContent(props.category, props.skill, draftContent.value, props.target || 'hermes')
     content.value = draftContent.value
     editing.value = false
     message.success(t('skills.saveSuccess'))

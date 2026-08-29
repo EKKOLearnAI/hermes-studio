@@ -4,6 +4,11 @@ import { NModal, NButton, NInput, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { fetchExternalDirs, saveExternalDirs, type ExternalDirEntry } from '@/api/hermes/skills'
 
+const props = defineProps<{
+  fetchHandler?: () => Promise<ExternalDirEntry[]>
+  saveHandler?: (directories: string[]) => Promise<void>
+}>()
+
 const emit = defineEmits<{
   close: []
   saved: []
@@ -31,7 +36,7 @@ function entryToRow(entry: ExternalDirEntry): Row {
 
 onMounted(async () => {
   try {
-    const entries = await fetchExternalDirs()
+    const entries = await (props.fetchHandler || fetchExternalDirs)()
     rows.value = entries.map(entryToRow)
   } catch (err: any) {
     message.error(t('skills.externalDirs.loadFailed') + `: ${err.message}`)
@@ -68,7 +73,7 @@ async function handleSave() {
 
   loading.value = true
   try {
-    await saveExternalDirs(cleaned)
+    await (props.saveHandler || saveExternalDirs)(cleaned)
     message.success(t('skills.externalDirs.saveSuccess'))
     emit('saved')
   } catch (err: any) {

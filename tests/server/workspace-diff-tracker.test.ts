@@ -10,7 +10,7 @@ const state = vi.hoisted(() => ({
   appHome: '',
 }))
 
-vi.mock('../../packages/server/src/db/index', () => ({
+vi.mock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
   getDb: () => state.db,
   isSqliteAvailable: () => Boolean(state.db),
   jsonDelete: vi.fn(),
@@ -19,7 +19,7 @@ vi.mock('../../packages/server/src/db/index', () => ({
   jsonSet: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/config', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/config', () => ({
   config: {
     appHome: state.appHome,
   },
@@ -38,7 +38,8 @@ describe('workspace diff tracker', () => {
     root = mkdtempSync(join(tmpdir(), 'hermes-workspace-diff-'))
     state.appHome = join(root, 'home')
     state.db = new DatabaseSync(join(root, 'diffs.db'))
-    const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
+    await import('../../packages/server/src/bootstrap/coding-agent-adapters')
+    const { initAllHermesTables } = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
     initAllHermesTables()
 
     repo = join(root, 'repo')
@@ -60,7 +61,7 @@ describe('workspace diff tracker', () => {
 
   it('hides every Git subprocess window on Windows', () => {
     const source = readFileSync(
-      'packages/server/src/services/hermes/run-chat/workspace-diff-tracker.ts',
+      'packages/server/src/modules/studio/services/chat-run/workspace-diff-tracker.ts',
       'utf8',
     )
 
@@ -72,7 +73,7 @@ describe('workspace diff tracker', () => {
     const {
       completeWorkspaceRunCheckpoint,
       startWorkspaceRunCheckpoint,
-    } = await import('../../packages/server/src/services/hermes/run-chat/workspace-diff-tracker')
+    } = await import('../../packages/server/src/modules/studio/services/chat-run/workspace-diff-tracker')
 
     writeFileSync(join(repo, 'dirty.txt'), 'preexisting dirty change\n')
     startWorkspaceRunCheckpoint({
@@ -101,7 +102,7 @@ describe('workspace diff tracker', () => {
     })
     expect(change?.files[0].patch).toBeUndefined()
 
-    const { getWorkspaceRunChangeFile, listWorkspaceRunChangesForSession } = await import('../../packages/server/src/db/hermes/workspace-run-changes-store')
+    const { getWorkspaceRunChangeFile, listWorkspaceRunChangesForAssistantMessages, listWorkspaceRunChangesForSession } = await import('../../packages/server/src/modules/studio/repositories/workspace-run-changes-store')
     const detail = getWorkspaceRunChangeFile('session-1', change!.change_id, change!.files[0].id)
     expect(detail?.patch).toContain('-old')
     expect(detail?.patch).toContain('+new')
@@ -128,11 +129,18 @@ describe('workspace diff tracker', () => {
       change!.change_id,
       secondChange!.change_id,
     ]))
+    expect(listWorkspaceRunChangesForAssistantMessages('session-1', ['42', 'missing', '42'])).toEqual([
+      expect.objectContaining({
+        change_id: change!.change_id,
+        assistant_message_id: '42',
+        files: [expect.objectContaining({ path: 'changed.txt' })],
+      }),
+    ])
   })
 
   it('persists the exact final assistant row id through the coding-agent completion path', async () => {
-    const { startWorkspaceRunCheckpoint } = await import('../../packages/server/src/services/hermes/run-chat/workspace-diff-tracker')
-    const { CodingAgentRunManager } = await import('../../packages/server/src/services/coding-agents/runtime/run-manager')
+    const { startWorkspaceRunCheckpoint } = await import('../../packages/server/src/modules/studio/services/chat-run/workspace-diff-tracker')
+    const { CodingAgentRunManager } = await import('../../packages/server/src/modules/coding-agents/services/runtime/run-manager')
     const manager = new CodingAgentRunManager()
     const emitted: Array<{ event: string; payload: any }> = []
     ;(manager as any).emitToChat = (_sessionId: string, event: string, payload: any) => {
@@ -204,7 +212,7 @@ describe('workspace diff tracker', () => {
     const {
       completeWorkspaceRunCheckpoint,
       startWorkspaceRunCheckpoint,
-    } = await import('../../packages/server/src/services/hermes/run-chat/workspace-diff-tracker')
+    } = await import('../../packages/server/src/modules/studio/services/chat-run/workspace-diff-tracker')
 
     const workspace = join(root, 'plain-workspace')
     mkdirSync(workspace)
@@ -236,7 +244,7 @@ describe('workspace diff tracker', () => {
       ['old.txt', 'modified'],
     ])
 
-    const { getWorkspaceRunChangeFile } = await import('../../packages/server/src/db/hermes/workspace-run-changes-store')
+    const { getWorkspaceRunChangeFile } = await import('../../packages/server/src/modules/studio/repositories/workspace-run-changes-store')
     const modified = change!.files.find(file => file.path === 'old.txt')!
     const detail = getWorkspaceRunChangeFile('session-plain', change!.change_id, modified.id)
     expect(detail?.patch).toContain('-old')
@@ -247,7 +255,7 @@ describe('workspace diff tracker', () => {
     const {
       completeWorkspaceRunCheckpoint,
       startWorkspaceRunCheckpoint,
-    } = await import('../../packages/server/src/services/hermes/run-chat/workspace-diff-tracker')
+    } = await import('../../packages/server/src/modules/studio/services/chat-run/workspace-diff-tracker')
 
     const workspace = join(root, 'plain-empty-file')
     mkdirSync(workspace)
@@ -288,7 +296,7 @@ describe('workspace diff tracker', () => {
     const {
       completeWorkspaceRunCheckpoint,
       startWorkspaceRunCheckpoint,
-    } = await import('../../packages/server/src/services/hermes/run-chat/workspace-diff-tracker')
+    } = await import('../../packages/server/src/modules/studio/services/chat-run/workspace-diff-tracker')
 
     const workspace = join(root, 'plain-zero-line-diff')
     mkdirSync(workspace)
@@ -317,7 +325,7 @@ describe('workspace diff tracker', () => {
     const {
       completeWorkspaceRunCheckpoint,
       startWorkspaceRunCheckpoint,
-    } = await import('../../packages/server/src/services/hermes/run-chat/workspace-diff-tracker')
+    } = await import('../../packages/server/src/modules/studio/services/chat-run/workspace-diff-tracker')
 
     const workspace = join(root, 'plain-sqlite-sidecars')
     mkdirSync(workspace)
@@ -348,7 +356,7 @@ describe('workspace diff tracker', () => {
     const {
       completeWorkspaceRunCheckpoint,
       startWorkspaceRunCheckpoint,
-    } = await import('../../packages/server/src/services/hermes/run-chat/workspace-diff-tracker')
+    } = await import('../../packages/server/src/modules/studio/services/chat-run/workspace-diff-tracker')
 
     startWorkspaceRunCheckpoint({
       sessionId: 'session-git-sqlite-sidecars',
@@ -376,7 +384,7 @@ describe('workspace diff tracker', () => {
     const {
       completeWorkspaceRunCheckpoint,
       startWorkspaceRunCheckpoint,
-    } = await import('../../packages/server/src/services/hermes/run-chat/workspace-diff-tracker')
+    } = await import('../../packages/server/src/modules/studio/services/chat-run/workspace-diff-tracker')
 
     writeFileSync(join(repo, 'state.db-wal'), 'before\n')
     git(repo, ['add', 'state.db-wal'])
@@ -426,7 +434,7 @@ describe('workspace diff tracker', () => {
     insertParent.run('zero-only', 1, 0, 0, 1, 64, now)
     insertFile.run('zero-only', 'only.bin', 0, 0, 64, 1, now)
 
-    const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
+    const { initAllHermesTables } = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
     initAllHermesTables()
     initAllHermesTables()
 
@@ -452,7 +460,7 @@ describe('workspace diff tracker', () => {
     const {
       completeWorkspaceRunCheckpoint,
       startWorkspaceRunCheckpoint,
-    } = await import('../../packages/server/src/services/hermes/run-chat/workspace-diff-tracker')
+    } = await import('../../packages/server/src/modules/studio/services/chat-run/workspace-diff-tracker')
 
     const workspace = join(root, 'plain-many-existing-files')
     mkdirSync(workspace)
@@ -493,7 +501,7 @@ describe('workspace diff tracker', () => {
     const {
       completeWorkspaceRunCheckpoint,
       startWorkspaceRunCheckpoint,
-    } = await import('../../packages/server/src/services/hermes/run-chat/workspace-diff-tracker')
+    } = await import('../../packages/server/src/modules/studio/services/chat-run/workspace-diff-tracker')
 
     const workspace = join(root, 'plain-with-language-artifacts')
     mkdirSync(join(workspace, 'src'), { recursive: true })

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 
 // Force JSON fallback by mocking isSqliteAvailable
-vi.mock('../../packages/server/src/db/index', async (importOriginal) => {
+vi.mock('../../packages/server/src/modules/studio/infrastructure/database/index', async (importOriginal) => {
   const actual = await importOriginal() as any
   return {
     ...actual,
@@ -15,7 +15,7 @@ import {
   jsonSet,
   jsonGetAll,
   jsonDelete,
-} from '../../packages/server/src/db/index'
+} from '../../packages/server/src/modules/studio/infrastructure/database/index'
 
 describe('JSON fallback store', () => {
   it('jsonSet and jsonGet round-trip', () => {

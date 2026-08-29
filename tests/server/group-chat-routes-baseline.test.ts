@@ -5,12 +5,16 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { groupChatPublicRoutes, groupChatRoutes, setGroupChatServer } from '../../packages/server/src/routes/hermes/group-chat'
+import { groupChatPublicRoutes, groupChatRoutes, setGroupChatServer } from '../../packages/server/src/modules/studio/routes/group-chat'
 import {
   issueRemoteWorkspaceGrant,
   resetRemoteWorkspaceGrantsForTest,
   revokeRemoteWorkspaceGrantsForRun,
-} from '../../packages/server/src/services/hermes/group-chat/remote-workspace-auth'
+} from '../../packages/server/src/modules/studio/services/group-chat/remote-workspace-auth'
+import {
+  resetAgentStatusRegistryForTests,
+  updateAgentStatus,
+} from '../../packages/server/src/modules/studio/public/agent-status-registry'
 
 function listen(server: HttpServer): Promise<string> {
   return new Promise(resolve => server.listen(0, '127.0.0.1', () => {
@@ -35,6 +39,15 @@ describe('group chat REST route baseline', () => {
   const temporaryDirectories: string[] = []
 
   beforeEach(async () => {
+    resetAgentStatusRegistryForTests()
+    updateAgentStatus('hermes', {
+      installed: true,
+      source: 'user-cli',
+      path: '/usr/local/bin/hermes',
+    })
+    for (const id of ['claude-code', 'codex', 'pi'] as const) {
+      updateAgentStatus(id, { installed: true, source: 'user-cli', path: `/usr/local/bin/${id}` })
+    }
     storage = {
       rooms: new Map<string, any>(),
       agents: new Map<string, any[]>(),
@@ -192,11 +205,12 @@ describe('group chat REST route baseline', () => {
     httpServer.close()
     setGroupChatServer(null as any)
     resetRemoteWorkspaceGrantsForTest()
+    resetAgentStatusRegistryForTests()
     await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })))
   })
 
   it('requires name and inviteCode when creating a room', async () => {
-    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms`, {
+    const res = await fetch(`${baseUrl}/api/studio/group-chat/rooms`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: 'Room' }),
@@ -215,7 +229,7 @@ describe('group chat REST route baseline', () => {
       summaryProfile: 'default',
     })
 
-    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/join/ROOM1`)
+    const res = await fetch(`${baseUrl}/api/studio/group-chat/rooms/join/ROOM1`)
 
     expect(res.status).toBe(200)
     await expect(res.json()).resolves.toEqual({
@@ -252,7 +266,7 @@ describe('group chat REST route baseline', () => {
       maxGuestAgentsPerMember: 1,
     })
 
-    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/guest-agent-policy`, {
+    const res = await fetch(`${baseUrl}/api/studio/group-chat/rooms/room-1/guest-agent-policy`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
@@ -293,7 +307,7 @@ describe('group chat REST route baseline', () => {
     })
     storage.agents.set('room-1', [remoteAgent])
 
-    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/invite-code`, {
+    const res = await fetch(`${baseUrl}/api/studio/group-chat/rooms/room-1/invite-code`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
@@ -323,7 +337,7 @@ describe('group chat REST route baseline', () => {
       workspace: '',
     })
 
-    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-source/clone`, {
+    const res = await fetch(`${baseUrl}/api/studio/group-chat/rooms/room-source/clone`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: 'Cloned Room' }),
@@ -352,7 +366,7 @@ describe('group chat REST route baseline', () => {
       agentId: 'agent-route',
       workspace,
     })
-    const endpoint = `${baseUrl}/api/hermes/group-chat/remote-workspace/v1`
+    const endpoint = `${baseUrl}/api/studio/group-chat/remote-workspace/v1`
 
     const unauthorized = await fetch(endpoint, {
       method: 'POST',
@@ -452,7 +466,7 @@ describe('group chat REST route baseline', () => {
     ])
     storage.getOwnedRoomsForAuthUser.mockReturnValue([])
 
-    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms`, {
+    const res = await fetch(`${baseUrl}/api/studio/group-chat/rooms`, {
       headers: { 'x-test-user': 'member' },
     })
 
@@ -488,7 +502,7 @@ describe('group chat REST route baseline', () => {
       ownerMemberId: 'auth:7',
     }])
 
-    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms`, {
+    const res = await fetch(`${baseUrl}/api/studio/group-chat/rooms`, {
       headers: { 'x-test-user': 'member' },
     })
 
@@ -511,7 +525,7 @@ describe('group chat REST route baseline', () => {
       { id: 'room-2', name: 'Second', inviteCode: 'B', lastActiveAt: 200 },
     ])
 
-    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms?limit=1&offset=1`, {
+    const res = await fetch(`${baseUrl}/api/studio/group-chat/rooms?limit=1&offset=1`, {
       headers: { 'x-test-user': 'member' },
     })
 
@@ -544,7 +558,7 @@ describe('group chat REST route baseline', () => {
     }))
     storage.messages.set('room-history', retainedMessages)
 
-    const exactWindow = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-history?limit=150`, {
+    const exactWindow = await fetch(`${baseUrl}/api/studio/group-chat/rooms/room-history?limit=150`, {
       headers: { 'x-test-user': 'member' },
     })
     expect(exactWindow.status).toBe(200)
@@ -563,7 +577,7 @@ describe('group chat REST route baseline', () => {
       role: 'user',
     })
 
-    const recent = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-history?limit=150`, {
+    const recent = await fetch(`${baseUrl}/api/studio/group-chat/rooms/room-history?limit=150`, {
       headers: { 'x-test-user': 'member' },
     })
     expect(recent.status).toBe(200)
@@ -573,7 +587,7 @@ describe('group chat REST route baseline', () => {
     })
 
     const history = await fetch(
-      `${baseUrl}/api/hermes/group-chat/rooms/room-history?history=1&before=message-0352&limit=150`,
+      `${baseUrl}/api/studio/group-chat/rooms/room-history?history=1&before=message-0352&limit=150`,
       { headers: { 'x-test-user': 'member' } },
     )
     expect(history.status).toBe(200)
@@ -585,7 +599,7 @@ describe('group chat REST route baseline', () => {
   })
 
   it('rejects reserved @all agent names when creating a room', async () => {
-    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms`, {
+    const res = await fetch(`${baseUrl}/api/studio/group-chat/rooms`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: 'Room', inviteCode: 'ROOM1', agents: [{ profile: 'default', name: 'all' }] }),
@@ -595,7 +609,7 @@ describe('group chat REST route baseline', () => {
   })
 
   it('creates a room, persists successful agents, and reports agent connection failures', async () => {
-    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms`, {
+    const res = await fetch(`${baseUrl}/api/studio/group-chat/rooms`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -620,7 +634,7 @@ describe('group chat REST route baseline', () => {
   })
 
   it('persists the selected rolling-summary runtime when creating a room', async () => {
-    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms`, {
+    const res = await fetch(`${baseUrl}/api/studio/group-chat/rooms`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -690,7 +704,7 @@ describe('group chat REST route baseline', () => {
       lastError: null,
     })
 
-    const configRes = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/config`, {
+    const configRes = await fetch(`${baseUrl}/api/studio/group-chat/rooms/room-1/config`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -715,7 +729,7 @@ describe('group chat REST route baseline', () => {
       room: { id: 'room-1', name: 'Renamed Room' },
     })
 
-    const getRes = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/summary`)
+    const getRes = await fetch(`${baseUrl}/api/studio/group-chat/rooms/room-1/summary`)
     await expect(getRes.json()).resolves.toMatchObject({
       summary: {
         summary: 'Current summary',
@@ -727,7 +741,7 @@ describe('group chat REST route baseline', () => {
       },
     })
 
-    const editRes = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/summary`, {
+    const editRes = await fetch(`${baseUrl}/api/studio/group-chat/rooms/room-1/summary`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ summary: 'Manually corrected summary' }),
@@ -745,7 +759,7 @@ describe('group chat REST route baseline', () => {
       summaryModel: '',
     })
 
-    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-legacy/config`, {
+    const res = await fetch(`${baseUrl}/api/studio/group-chat/rooms/room-legacy/config`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: 'Renamed Legacy Room' }),
@@ -765,7 +779,7 @@ describe('group chat REST route baseline', () => {
     storage.agents.set('room-1', [{ id: 'row-agent', agentId: 'agent-1', profile: 'default', name: 'Agent' }])
     storage.members.set('room-1', [{ userId: 'user-1', name: 'Alice' }])
 
-    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1?limit=1&offset=1`)
+    const res = await fetch(`${baseUrl}/api/studio/group-chat/rooms/room-1?limit=1&offset=1`)
     const body = await res.json()
 
     expect(res.status).toBe(200)
@@ -787,7 +801,7 @@ describe('group chat REST route baseline', () => {
     storage.getMessageCount.mockReturnValueOnce(580)
     storage.getRecentMessagesForUI.mockReturnValueOnce([])
 
-    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1?limit=100&offset=500`)
+    const res = await fetch(`${baseUrl}/api/studio/group-chat/rooms/room-1?limit=100&offset=500`)
     const body = await res.json()
 
     expect(res.status).toBe(200)
@@ -817,7 +831,7 @@ describe('group chat REST route baseline', () => {
       agentHandoffUnlimited: 0,
     })
 
-    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-source/clone`, {
+    const res = await fetch(`${baseUrl}/api/studio/group-chat/rooms/room-source/clone`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: 'Clone' }),
@@ -840,7 +854,7 @@ describe('group chat REST route baseline', () => {
     storage.rooms.set('room-1', { id: 'room-1', name: 'Room', inviteCode: 'ROOM1' })
     storage.agents.set('room-1', [{ id: 'row-agent', agentId: 'agent-1', profile: 'default', name: 'Agent' }])
 
-    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/agents`, {
+    const res = await fetch(`${baseUrl}/api/studio/group-chat/rooms/room-1/agents`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ profile: 'default', name: 'Second Agent' }),
@@ -877,13 +891,13 @@ describe('group chat REST route baseline', () => {
       connectorId: '',
     }])
 
-    const denied = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/members/guest-1`, {
+    const denied = await fetch(`${baseUrl}/api/studio/group-chat/rooms/room-1/members/guest-1`, {
       method: 'DELETE',
       headers: { 'x-test-user-id': '2' },
     })
     expect(denied.status).toBe(403)
 
-    const removed = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/members/guest-1`, {
+    const removed = await fetch(`${baseUrl}/api/studio/group-chat/rooms/room-1/members/guest-1`, {
       method: 'DELETE',
       headers: { 'x-test-user-id': '1' },
     })
@@ -901,7 +915,7 @@ describe('group chat REST route baseline', () => {
   it('persists the selected provider, model, api mode, and reasoning effort for a room agent', async () => {
     storage.rooms.set('room-1', { id: 'room-1', name: 'Room', inviteCode: 'ROOM1' })
 
-    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/agents`, {
+    const res = await fetch(`${baseUrl}/api/studio/group-chat/rooms/room-1/agents`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -957,8 +971,39 @@ describe('group chat REST route baseline', () => {
     expect(broadcastRoomAgents).toHaveBeenCalledWith('room-1')
   })
 
+  it('rejects adding a room agent that is not installed', async () => {
+    updateAgentStatus('codex', {
+      installed: false,
+      source: 'not-installed',
+      path: '',
+      version: '',
+    })
+    storage.rooms.set('room-1', { id: 'room-1', name: 'Room', inviteCode: 'ROOM1' })
+
+    const res = await fetch(`${baseUrl}/api/studio/group-chat/rooms/room-1/agents`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        agent: 'codex',
+        profile: 'research',
+        provider: 'openai',
+        model: 'gpt-test',
+        apiMode: 'codex_responses',
+      }),
+    })
+
+    expect(res.status).toBe(409)
+    await expect(res.json()).resolves.toMatchObject({
+      code: 'AGENT_NOT_INSTALLED',
+      error: 'Codex is not installed',
+      agent: 'codex',
+    })
+    expect(agentClients.createAgent).not.toHaveBeenCalled()
+    expect(storage.addRoomAgent).not.toHaveBeenCalled()
+  })
+
   it('creates, adds, and updates Pi room agents through the local API', async () => {
-    const createRoom = await fetch(`${baseUrl}/api/hermes/group-chat/rooms`, {
+    const createRoom = await fetch(`${baseUrl}/api/studio/group-chat/rooms`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -982,7 +1027,7 @@ describe('group chat REST route baseline', () => {
     }))
 
     storage.rooms.set('room-pi', { id: 'room-pi', name: 'Pi Room', inviteCode: 'PIROOM2' })
-    const addAgent = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-pi/agents`, {
+    const addAgent = await fetch(`${baseUrl}/api/studio/group-chat/rooms/room-pi/agents`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1004,7 +1049,7 @@ describe('group chat REST route baseline', () => {
       apiMode: 'codex_responses',
     })
 
-    const updateAgent = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-pi/agents/${added.agent.id}`, {
+    const updateAgent = await fetch(`${baseUrl}/api/studio/group-chat/rooms/room-pi/agents/${added.agent.id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1031,14 +1076,14 @@ describe('group chat REST route baseline', () => {
   it('rejects incomplete or invalid room agent runtime configuration', async () => {
     storage.rooms.set('room-1', { id: 'room-1', name: 'Room', inviteCode: 'ROOM1' })
 
-    const missingModel = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/agents`, {
+    const missingModel = await fetch(`${baseUrl}/api/studio/group-chat/rooms/room-1/agents`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ profile: 'research', provider: 'openai' }),
     })
     expect(missingModel.status).toBe(400)
 
-    const invalidReasoning = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/agents`, {
+    const invalidReasoning = await fetch(`${baseUrl}/api/studio/group-chat/rooms/room-1/agents`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1050,7 +1095,7 @@ describe('group chat REST route baseline', () => {
     })
     expect(invalidReasoning.status).toBe(400)
 
-    const missingApiMode = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/agents`, {
+    const missingApiMode = await fetch(`${baseUrl}/api/studio/group-chat/rooms/room-1/agents`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1062,7 +1107,7 @@ describe('group chat REST route baseline', () => {
     })
     expect(missingApiMode.status).toBe(400)
 
-    const invalidApiMode = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/agents`, {
+    const invalidApiMode = await fetch(`${baseUrl}/api/studio/group-chat/rooms/room-1/agents`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1075,7 +1120,7 @@ describe('group chat REST route baseline', () => {
     })
     expect(invalidApiMode.status).toBe(400)
 
-    const invalidAgent = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/agents`, {
+    const invalidAgent = await fetch(`${baseUrl}/api/studio/group-chat/rooms/room-1/agents`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1087,7 +1132,7 @@ describe('group chat REST route baseline', () => {
     })
     expect(invalidAgent.status).toBe(400)
 
-    const invalidAvatar = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/agents`, {
+    const invalidAvatar = await fetch(`${baseUrl}/api/studio/group-chat/rooms/room-1/agents`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1104,7 +1149,7 @@ describe('group chat REST route baseline', () => {
   it('ignores apiMode for Hermes room agents', async () => {
     storage.rooms.set('room-1', { id: 'room-1', name: 'Room', inviteCode: 'ROOM1' })
 
-    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/agents`, {
+    const res = await fetch(`${baseUrl}/api/studio/group-chat/rooms/room-1/agents`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1144,7 +1189,7 @@ describe('group chat REST route baseline', () => {
       invited: 0,
     }])
 
-    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/agents/row-agent`, {
+    const res = await fetch(`${baseUrl}/api/studio/group-chat/rooms/room-1/agents/row-agent`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1207,7 +1252,7 @@ describe('group chat REST route baseline', () => {
       await blocked
       return { ...cfg, joinRoom: vi.fn(async () => ({})), disconnect: vi.fn() }
     })
-    const request = (model: string) => fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-lock/agents/row-lock`, {
+    const request = (model: string) => fetch(`${baseUrl}/api/studio/group-chat/rooms/room-lock/agents/row-lock`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ agent: 'hermes', profile: 'default', provider: 'openai', model, name: 'Worker' }),
     })
@@ -1217,11 +1262,11 @@ describe('group chat REST route baseline', () => {
     const second = await request('second')
     expect(second.status).toBe(409)
     expect(await second.json()).toEqual({ error: 'Agent configuration update is already in progress' })
-    const removed = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-lock/agents/row-lock`, { method: 'DELETE' })
+    const removed = await fetch(`${baseUrl}/api/studio/group-chat/rooms/room-lock/agents/row-lock`, { method: 'DELETE' })
     expect(removed.status).toBe(409)
     expect(await removed.json()).toEqual({ error: 'Agent configuration update is already in progress' })
     expect(storage.removeRoomAgent).not.toHaveBeenCalledWith('room-lock', 'row-lock')
-    const roomRemoved = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-lock`, { method: 'DELETE' })
+    const roomRemoved = await fetch(`${baseUrl}/api/studio/group-chat/rooms/room-lock`, { method: 'DELETE' })
     expect(roomRemoved.status).toBe(409)
     expect(await roomRemoved.json()).toEqual({ error: 'Agent configuration update is already in progress' })
     release()
@@ -1242,15 +1287,15 @@ describe('group chat REST route baseline', () => {
       return task()
     })
 
-    const deleting = fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-delete-lock`, { method: 'DELETE' })
+    const deleting = fetch(`${baseUrl}/api/studio/group-chat/rooms/room-delete-lock`, { method: 'DELETE' })
     await vi.waitFor(() => expect(roomSummaryService.runExclusive).toHaveBeenCalled())
-    const update = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-delete-lock/agents/row-delete-lock`, {
+    const update = await fetch(`${baseUrl}/api/studio/group-chat/rooms/room-delete-lock/agents/row-delete-lock`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ agent: 'hermes', profile: 'default', provider: 'openai', model: 'new', name: 'Worker' }),
     })
     expect(update.status).toBe(409)
     expect(await update.json()).toEqual({ error: 'Room deletion is already in progress' })
-    const remove = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-delete-lock/agents/row-delete-lock`, { method: 'DELETE' })
+    const remove = await fetch(`${baseUrl}/api/studio/group-chat/rooms/room-delete-lock/agents/row-delete-lock`, { method: 'DELETE' })
     expect(remove.status).toBe(409)
     expect(await remove.json()).toEqual({ error: 'Room deletion is already in progress' })
     release()
@@ -1261,7 +1306,7 @@ describe('group chat REST route baseline', () => {
     const agent = { id: 'row-agent', roomId: 'room-1', agentId: 'agent-1', profile: 'default', name: 'Agent' }
     storage.agents.set('room-1', [agent])
 
-    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/agents/row-agent`, { method: 'DELETE' })
+    const res = await fetch(`${baseUrl}/api/studio/group-chat/rooms/room-1/agents/row-agent`, { method: 'DELETE' })
     const body = await res.json()
 
     expect(res.status).toBe(200)
@@ -1275,7 +1320,7 @@ describe('group chat REST route baseline', () => {
   it('clears room context and runtime state while returning the updated room', async () => {
     storage.rooms.set('room-1', { id: 'room-1', name: 'Room', inviteCode: 'ROOM1', totalTokens: 99, sessionSeed: 'old' })
 
-    const res = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/clear-context`, { method: 'POST' })
+    const res = await fetch(`${baseUrl}/api/studio/group-chat/rooms/room-1/clear-context`, { method: 'POST' })
     const body = await res.json()
 
     expect(res.status).toBe(200)

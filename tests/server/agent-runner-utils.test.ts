@@ -2,27 +2,28 @@ import { describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
+import '../../packages/server/src/bootstrap/coding-agent-adapters'
 import {
   anthropicMessagesUrl,
   chatCompletionsUrl,
   providerEndpointUrl,
   responsesUrl,
-} from '../../packages/server/src/services/coding-agents/shared/endpoint-resolver'
-import { parseSseFrame, readSseFrames, readSseFrameTexts, sseEvent } from '../../packages/server/src/services/coding-agents/shared/sse'
-import { AgentTargetRegistry, type AgentTargetInput } from '../../packages/server/src/services/coding-agents/shared/target-registry'
-import { teeAsyncIterable } from '../../packages/server/src/services/coding-agents/shared/stream-tee'
+} from '../../packages/server/src/modules/coding-agents/protocol/endpoint-resolver'
+import { parseSseFrame, readSseFrames, readSseFrameTexts, sseEvent } from '../../packages/server/src/modules/coding-agents/protocol/sse'
+import { AgentTargetRegistry, type AgentTargetInput } from '../../packages/server/src/modules/coding-agents/protocol/target-registry'
+import { teeAsyncIterable } from '../../packages/server/src/modules/coding-agents/protocol/stream-tee'
 import {
   buildClaudeStreamJsonInput,
   codexImageArgs,
   CodingAgentRunManager,
   codingAgentGatewayErrorMessage,
   sanitizeCodingAgentTerminalOutput,
-} from '../../packages/server/src/services/coding-agents/runtime/run-manager'
-import { applyResponseStreamEvent } from '../../packages/server/src/services/hermes/run-chat/response-stream'
-import { initAllHermesTables } from '../../packages/server/src/db/hermes/schemas'
-import { addMessage, getSession, getSessionDetail, listSessions } from '../../packages/server/src/db/hermes/session-store'
-import { getRecordedUsageTotals, getUsage } from '../../packages/server/src/db/hermes/usage-store'
-import { getChatRunServer, setChatRunServer } from '../../packages/server/src/services/hermes/run-chat/server-registry'
+} from '../../packages/server/src/modules/coding-agents/services/runtime/run-manager'
+import { applyResponseStreamEvent } from '../../packages/server/src/modules/studio/services/chat-run/response-stream'
+import { initAllHermesTables } from '../../packages/server/src/modules/studio/infrastructure/database/schemas'
+import { addMessage, getSession, getSessionDetail, listSessions } from '../../packages/server/src/modules/studio/repositories/session-store'
+import { getRecordedUsageTotals, getUsage } from '../../packages/server/src/modules/studio/repositories/usage-store'
+import { getChatRunServer, setChatRunServer } from '../../packages/server/src/modules/studio/services/chat-run/server-registry'
 
 describe('agent runner endpoint resolver', () => {
   it('adds v1 for provider hosts without an API root path', () => {

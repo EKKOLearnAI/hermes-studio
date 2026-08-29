@@ -17,7 +17,7 @@ import {
 } from 'electron'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { startWebUiServer, stopWebUiServer, getToken } from './webui-server'
+import { startWebUiServer, stopWebUiServer, getToken, setWebUiRuntimeRestartHandler } from './webui-server'
 import { bundledNode, desktopIcon, desktopMacTrayIcon, desktopRuntimeVersion, desktopWindowsTrayIcon, hermesBinExists, hermesBin, runtimeStorageRoot, webuiDir, webUiHome } from './paths'
 import { checkForDesktopUpdates, initAutoUpdater } from './updater'
 import { t } from './desktop-i18n'
@@ -909,13 +909,13 @@ async function bootstrap(source?: RuntimeDownloadSource) {
     const forceUpdate = !!process.env.HERMES_DESKTOP_RUNTIME_FORCE_UPDATE
     const runtimeReady = isDesktopRuntimeReady()
     const needsRuntimeWork = !runtimeReady || forceUpdate || runtimeUrlOverride || manifestOverride
+    const explicitRuntimeRequest = !!selectedSource || forceUpdate || runtimeUrlOverride || manifestOverride
 
-    if (needsRuntimeWork) {
-      if (!selectedSource && !runtimeUrlOverride && !manifestOverride) {
-        if (mainWindow) await mainWindow.loadURL(runtimeSourceHtml())
-        isBootstrapping = false
-        return
-      }
+    // Runtime setup is managed in Studio now. A normal desktop launch must
+    // reach the Web UI first so it can detect an existing CLI before offering
+    // the Runtime manager. Preserve explicit automation overrides for builds
+    // and unattended installations.
+    if (needsRuntimeWork && explicitRuntimeRequest) {
       await ensureDesktopRuntime(updateSplash, selectedSource)
     }
     if (isDesktopRuntimeReady()) {
@@ -924,12 +924,7 @@ async function bootstrap(source?: RuntimeDownloadSource) {
     }
   } catch (err) {
     console.error('Failed to prepare Hermes runtime:', err)
-    if (mainWindow) {
-      const msg = String(err instanceof Error ? err.message : err)
-      await mainWindow.loadURL(runtimeSourceHtml(`${t('desktop.failedPrepareRuntime')}\n\n${msg}`))
-    }
-    isBootstrapping = false
-    return
+    // Keep Studio available so Runtime recovery can happen from Agent Manager.
   }
 
   if (!hermesBinExists()) {
@@ -962,6 +957,16 @@ async function bootstrap(source?: RuntimeDownloadSource) {
 }
 
 ipcMain.handle('hermes-desktop:get-token', () => getToken())
+ipcMain.handle('hermes-desktop:restart-app', event => {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
+    throw new Error('Desktop restart can only be requested from the main window')
+  }
+  setTimeout(() => {
+    app.relaunch()
+    quitApp()
+  }, 100).unref?.()
+  return true
+})
 ipcMain.handle('hermes-desktop:open-chat-window', (event, sessionId?: unknown, profile?: unknown) => {
   if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
     throw new Error('Chat windows can only be opened from the main window')
@@ -1185,6 +1190,10 @@ ipcMain.handle('hermes-desktop:retry-bootstrap', async (_event, source?: Runtime
 })
 
 function runDesktopApp() {
+  setWebUiRuntimeRestartHandler(() => {
+    app.relaunch()
+    quitApp()
+  })
   const gotLock = app.requestSingleInstanceLock(QUIT_EXISTING ? { quit: true } : undefined)
   if (!gotLock) {
     app.quit()

@@ -6,16 +6,32 @@ const bridgeMock = vi.hoisted(() => ({
 }))
 const respondToEkkoClarificationMock = vi.hoisted(() => vi.fn())
 
-vi.mock('../../packages/server/src/services/hermes/agent-bridge', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/bridge/index', () => ({
   AgentBridgeClient: vi.fn(() => bridgeMock),
 }))
 
-vi.mock('../../packages/server/src/services/ekko-agent/clarifications', () => ({
+vi.mock('../../packages/server/src/modules/ekko/services/clarifications', () => ({
   respondToEkkoClarification: respondToEkkoClarificationMock,
   waitForEkkoClarification: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/services/logger', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/chat-agent-runtime', () => ({
+  createPrimaryAgentBridge: vi.fn(() => bridgeMock),
+  getPrimaryAgentBridgeManager: vi.fn(() => ({ ensureReady: vi.fn() })),
+  redactPrimaryAgentBridgeError: (error?: string) => error,
+  chatCodingAgentRunManager: {
+    resolveApproval: vi.fn(() => ({ handled: false, resolved: false })),
+    resolveClarification: vi.fn(() => ({ handled: false, resolved: false })),
+    stop: vi.fn(),
+  },
+  handleChatCodingAgentSessionCommand: vi.fn(),
+  parseChatCodingAgentSessionCommand: vi.fn(() => null),
+  getChatEkkoAgent: vi.fn(() => ({ requestBoundaryInterrupt: vi.fn() })),
+  respondToChatEkkoToolApproval: vi.fn(() => ({ handled: false, resolved: false })),
+  respondToChatEkkoClarification: respondToEkkoClarificationMock,
+}))
+
+vi.mock('../../packages/server/src/modules/studio/public/logging', () => ({
   logger: {
     info: vi.fn(),
     warn: vi.fn(),
@@ -29,20 +45,20 @@ const sessionStoreMock = vi.hoisted(() => ({
   getSessionDetail: vi.fn(() => null),
 }))
 
-vi.mock('../../packages/server/src/db/hermes/session-store', () => sessionStoreMock)
+vi.mock('../../packages/server/src/modules/studio/repositories/session-store', () => sessionStoreMock)
 
-vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/profile-config', () => ({
   getActiveProfileName: vi.fn(() => 'default'),
   getProfileDir: vi.fn(() => '/tmp/hermes-default'),
   listProfileNamesFromDisk: vi.fn(() => ['default']),
 }))
 
-vi.mock('../../packages/server/src/middleware/user-auth', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/auth', () => ({
   authenticateUserToken: vi.fn(),
   isAuthEnabled: vi.fn(async () => false),
 }))
 
-vi.mock('../../packages/server/src/db/hermes/users-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/users-store', () => ({
   userCanAccessProfile: vi.fn(() => true),
 }))
 
@@ -86,7 +102,7 @@ describe('ChatRunSocket clarify responses', { timeout: 15_000 }, () => {
 
   it('routes Ekko clarification responses without calling the Hermes bridge', async () => {
     respondToEkkoClarificationMock.mockReturnValueOnce({ handled: true, resolved: true })
-    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
+    const { ChatRunSocket } = await import('../../packages/server/src/modules/studio/sockets/chat-run')
     const { handlers, io, socket } = createSocketHarness()
     const server = new ChatRunSocket(io as any)
 
@@ -107,7 +123,7 @@ describe('ChatRunSocket clarify responses', { timeout: 15_000 }, () => {
 
   it('forwards clarify.respond events to the bridge and emits clarify.resolved', async () => {
     bridgeMock.clarifyRespond.mockResolvedValue({ ok: true, resolved: true })
-    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
+    const { ChatRunSocket } = await import('../../packages/server/src/modules/studio/sockets/chat-run')
     const { handlers, io, namespace, namespaceEmit, socket } = createSocketHarness()
     const server = new ChatRunSocket(io as any)
 
@@ -130,7 +146,7 @@ describe('ChatRunSocket clarify responses', { timeout: 15_000 }, () => {
 
   it('does not replay answered clarify prompts when the session resumes', async () => {
     bridgeMock.clarifyRespond.mockResolvedValue({ ok: true, resolved: true })
-    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
+    const { ChatRunSocket } = await import('../../packages/server/src/modules/studio/sockets/chat-run')
     const { handlers, io, socket } = createSocketHarness()
     const server = new ChatRunSocket(io as any)
     const toolEvent = {
@@ -172,7 +188,7 @@ describe('ChatRunSocket clarify responses', { timeout: 15_000 }, () => {
 
   it('emits an unresolved clarify result when the bridge rejects the response', async () => {
     bridgeMock.clarifyRespond.mockRejectedValue(new Error('unknown clarify request'))
-    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
+    const { ChatRunSocket } = await import('../../packages/server/src/modules/studio/sockets/chat-run')
     const { handlers, namespaceEmit, socket } = createSocketHarness()
     const namespace = {
       adapter: { rooms: new Map([['session:session-1', new Set(['socket-1'])]]) },

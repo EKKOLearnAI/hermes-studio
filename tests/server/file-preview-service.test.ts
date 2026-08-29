@@ -3,7 +3,7 @@ import {
   assertPreviewFileSize,
   buildFileContentHeaders,
   getFilePreviewDescriptor,
-} from '../../packages/server/src/services/hermes/file-preview'
+} from '../../packages/server/src/modules/studio/services/files/file-preview'
 
 describe('file preview service', () => {
   it('allowlists preview extensions with per-format MIME and size limits', () => {

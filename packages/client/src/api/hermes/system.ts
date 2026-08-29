@@ -1,67 +1,5 @@
 import { request } from '../client'
-
-export interface HealthResponse {
-  status: string
-  platform?: string
-  version?: string
-  gateway?: string
-  webui_version?: string
-  webui_latest?: string
-  webui_update_available?: boolean
-  node_version?: string
-  is_docker?: boolean
-  agent_bridge?: {
-    status: string
-    reachable: boolean
-    ready?: boolean
-    running?: boolean
-    attached?: boolean
-    starting?: boolean
-    stopping?: boolean
-    restart_scheduled?: boolean
-    restart_attempts?: number
-    endpoint_kind?: 'ipc' | 'tcp' | 'unknown'
-    pid?: number
-    error?: string
-  }
-}
-
-export interface PreviewTag {
-  name: string
-  sha: string
-}
-
-export interface PreviewStatus {
-  preview_dir: string
-  exists: boolean
-  has_package: boolean
-  installed: boolean
-  running: boolean
-  pid: number | null
-  current_tag: string
-  frontend_url: string
-  agent_bridge_endpoint: string
-  log_path: string
-  webui_home: string
-  action_log_path: string
-  dev_log_path: string
-  active_action: string | null
-  active_action_started_at: string | null
-  last_action: string | null
-  last_action_completed_at: string | null
-  last_action_success: boolean | null
-  last_action_message: string
-  last_action_code: string
-  action_log: string
-  dev_log: string
-}
-
-export interface PreviewActionResponse extends PreviewStatus {
-  success: boolean
-  accepted?: boolean
-  message?: string
-  code?: string
-}
+import type { ProviderApiMode } from '../studio/provider-api-mode'
 
 // Config-based model types
 export interface ModelInfo {
@@ -86,8 +24,6 @@ export interface ModelVisibilityRule {
 
 export type ModelVisibility = Record<string, ModelVisibilityRule>
 export type CustomModels = Record<string, string[]>
-export type ProviderApiMode = 'chat_completions' | 'codex_responses' | 'anthropic_messages' | 'bedrock_converse' | 'codex_app_server'
-
 export interface AvailableModelGroup {
   provider: string   // credential pool key (e.g. "zai", "custom:subrouter.ai")
   label: string      // display name (e.g. "zai", "subrouter.ai")
@@ -196,44 +132,6 @@ export interface ProviderEditorResponse {
   success?: boolean
   provider: ProviderEditorDetail
   changed?: string[]
-}
-
-export async function checkHealth(): Promise<HealthResponse> {
-  return request<HealthResponse>('/health')
-}
-
-export async function triggerUpdate(): Promise<{ success: boolean; message: string }> {
-  return request<{ success: boolean; message: string }>('/api/hermes/update', { method: 'POST' })
-}
-
-export async function fetchPreviewStatus(): Promise<PreviewStatus> {
-  return request<PreviewStatus>('/api/hermes/update/preview')
-}
-
-export async function fetchPreviewTags(): Promise<{ tags: PreviewTag[] }> {
-  return request<{ tags: PreviewTag[] }>('/api/hermes/update/preview/tags')
-}
-
-export async function preparePreview(tag: string): Promise<PreviewActionResponse> {
-  return request<PreviewActionResponse>('/api/hermes/update/preview/prepare', {
-    method: 'POST',
-    body: JSON.stringify({ tag }),
-  })
-}
-
-export async function installPreview(): Promise<PreviewActionResponse> {
-  return request<PreviewActionResponse>('/api/hermes/update/preview/install', { method: 'POST' })
-}
-
-export async function startPreview(tag?: string): Promise<PreviewActionResponse> {
-  return request<PreviewActionResponse>('/api/hermes/update/preview/start', {
-    method: 'POST',
-    body: JSON.stringify({ tag }),
-  })
-}
-
-export async function stopPreview(): Promise<PreviewActionResponse> {
-  return request<PreviewActionResponse>('/api/hermes/update/preview/stop', { method: 'POST' })
 }
 
 export async function fetchConfigModels(): Promise<ConfigModelsResponse> {

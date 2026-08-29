@@ -61,6 +61,8 @@ vi.mock('@/components/hermes/chat/MessageItem.vue', () => ({
     props: {
       message: { type: Object, required: true },
       assistantAgent: { type: Object, default: null },
+      userProfileName: { type: String, default: 'default' },
+      userProfileAvatar: { type: Object, default: null },
     },
     template: '<div class="stub-message" :data-id="message.id">{{ message.content }}</div>',
   }),
@@ -68,6 +70,7 @@ vi.mock('@/components/hermes/chat/MessageItem.vue', () => ({
 
 import MessageList from '@/components/hermes/chat/MessageList.vue'
 import { useChatStore, type Message, type Session } from '@/stores/hermes/chat'
+import { useProfilesStore } from '@/stores/hermes/profiles'
 
 function makeMessage(id: string): Message {
   return { id, role: 'user', content: id, timestamp: Date.now() }
@@ -212,6 +215,31 @@ describe('MessageList session scroll position', () => {
     await flushSessionScroll()
 
     expect(wrapper.getComponent({ name: 'MessageItem' }).props('assistantAgent')).toEqual({ label, src })
+  })
+
+  it('passes the active session profile identity to user message bubbles', async () => {
+    const chatStore = useChatStore()
+    const profilesStore = useProfilesStore()
+    const avatar = { type: 'generated' as const, seed: 'research-avatar' }
+    profilesStore.activeProfileName = 'default'
+    profilesStore.profiles = [
+      { name: 'default', active: true, model: '', alias: '' },
+      { name: 'research', active: false, model: '', alias: 'Researcher', avatar },
+    ]
+
+    const session = makeSession('profile-identity-session')
+    session.profile = 'research'
+    chatStore.activeSessionId = session.id
+    chatStore.activeSession = session
+
+    const wrapper = mount(MessageList, {
+      global: { stubs: { Transition: false } },
+    })
+    await flushSessionScroll()
+
+    const messageItem = wrapper.getComponent({ name: 'MessageItem' })
+    expect(messageItem.props('userProfileName')).toBe('Researcher')
+    expect(messageItem.props('userProfileAvatar')).toEqual(avatar)
   })
 
   it('shows a history link instead of loading more after the live chat message cap', async () => {

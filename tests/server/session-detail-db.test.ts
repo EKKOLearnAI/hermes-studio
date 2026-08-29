@@ -5,7 +5,7 @@ import { tmpdir } from 'os'
 
 const profileDirState = vi.hoisted(() => ({ value: '' }))
 
-vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/profiles/profile', () => ({
   getActiveProfileDir: () => profileDirState.value,
 }))
 
@@ -200,7 +200,7 @@ describe('session DB detail', () => {
     insertMessage(db, { id: 4, session_id: 'root-cont', role: 'assistant', content: 'after compression', timestamp: 112 })
     db.close()
 
-    const mod = await import('../../packages/server/src/db/hermes/sessions-db')
+    const mod = await import('../../packages/server/src/modules/hermes/services/history/sessions-db')
     const detail = await mod.getSessionDetailFromDb('root')
 
     expect(detail?.id).toBe('root')

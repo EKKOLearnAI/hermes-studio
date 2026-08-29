@@ -104,7 +104,7 @@ conversation.
 
 ### Server Queue
 
-`packages/server/src/services/hermes/run-chat/index.ts` enqueues a `QueuedRun`
+`packages/server/src/modules/studio/sockets/chat-run.ts` enqueues a `QueuedRun`
 when `state.isWorking` is true. `dequeueNextQueuedRun()` removes the head and
 passes it back through `handleRun()`. The queued user message therefore already
 has the correct normal-turn execution path.
@@ -750,8 +750,7 @@ or resume semantics.
 - A boundary-stopped turn followed by a queued turn has correct message order.
 - Existing explicit Stop and natural queue completion remain unchanged.
 
-Chat-chain implementation must include the required
-`docs/chat-chain-changes/*.md` record and run the validation set specified in
+Chat-chain implementation must run the focused validation set specified in
 `docs/harness/validation.md`.
 
 ## Acceptance Criteria
@@ -771,18 +770,18 @@ Chat-chain implementation must include the required
 
 Likely implementation touchpoints:
 
-- `packages/server/src/services/hermes/run-chat/index.ts`
-- `packages/server/src/services/hermes/run-chat/types.ts`
-- `packages/server/src/services/hermes/run-chat/abort.ts`
-- `packages/server/src/services/hermes/run-chat/handle-bridge-run.ts`
-- `packages/server/src/services/hermes/run-chat/handle-ekko-agent-run.ts`
-- `packages/server/src/services/hermes/agent-bridge/client.ts`
-- `packages/server/src/services/hermes/agent-bridge/python/bridge_server.py`
-- `packages/server/src/services/hermes/agent-bridge/python/bridge_broker.py`
-- `packages/server/src/services/hermes/agent-bridge/python/bridge_pool.py`
+- `packages/server/src/modules/studio/sockets/chat-run.ts`
+- `packages/server/src/modules/studio/services/chat-run/types.ts`
+- `packages/server/src/modules/studio/services/chat-run/abort.ts`
+- `packages/server/src/modules/studio/services/chat-run/handle-bridge-run.ts`
+- `packages/server/src/modules/studio/services/chat-run/handle-ekko-agent-run.ts`
+- `packages/server/src/modules/hermes/services/bridge/client.ts`
+- `packages/server/src/modules/hermes/services/bridge/python/bridge_server.py`
+- `packages/server/src/modules/hermes/services/bridge/python/bridge_broker.py`
+- `packages/server/src/modules/hermes/services/bridge/python/bridge_pool.py`
 - `packages/ekko-agent/src/runtime/runtime.ts`
-- `packages/server/src/services/ekko-agent/manager.ts`
-- `packages/server/src/services/coding-agents/runtime/run-manager.ts`
+- `packages/server/src/modules/ekko/services/manager.ts`
+- `packages/server/src/modules/coding-agents/runtime/run-manager.ts`
 - `packages/client/src/stores/hermes/chat.ts`
 - queue-related client components and every locale file
 - server, Ekko runtime, Bridge Python, client, and end-to-end tests

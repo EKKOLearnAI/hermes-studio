@@ -5,9 +5,9 @@ import {
   minimaxTtsProvider,
   mistralTtsProvider,
   xaiTtsProvider,
-} from '../../packages/server/src/services/hermes/tts-providers/hermes-cloud'
-import { deepinfraTtsProvider } from '../../packages/server/src/services/hermes/tts-providers/openai'
-import { transcribeWithProvider } from '../../packages/server/src/services/hermes/stt-providers'
+} from '../../packages/server/src/modules/studio/services/voice/tts/providers/hermes-cloud'
+import { deepinfraTtsProvider } from '../../packages/server/src/modules/studio/services/voice/tts/providers/openai'
+import { transcribeWithProvider } from '../../packages/server/src/modules/studio/services/voice/stt'
 
 afterEach(() => {
   vi.unstubAllGlobals()

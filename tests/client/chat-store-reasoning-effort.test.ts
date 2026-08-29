@@ -13,10 +13,11 @@ const chatApi = vi.hoisted(() => ({
 const sessionsApi = vi.hoisted(() => ({
   fetchSessions: vi.fn(),
   setSessionModel: vi.fn(),
+  setSessionPushEnabled: vi.fn(),
   setSessionReasoningEffort: vi.fn(),
 }))
 
-vi.mock('@/api/hermes/chat', () => ({
+vi.mock('@/api/studio/chat', () => ({
   startRunViaSocket: chatApi.startRunViaSocket,
   resumeSession: chatApi.resumeSession,
   registerSessionHandlers: chatApi.registerSessionHandlers,
@@ -36,7 +37,7 @@ vi.mock('@/api/client', () => ({
   hasApiKey: () => false,
 }))
 
-vi.mock('@/api/hermes/sessions', () => ({
+vi.mock('@/api/studio/sessions', () => ({
   archiveSession: vi.fn(),
   deleteSession: vi.fn(),
   fetchSession: vi.fn(),
@@ -44,10 +45,11 @@ vi.mock('@/api/hermes/sessions', () => ({
   fetchWorkspaceRunChangesForSession: vi.fn(async () => []),
   fetchWorkspaceRunChangeFile: vi.fn(async () => null),
   setSessionModel: sessionsApi.setSessionModel,
+  setSessionPushEnabled: sessionsApi.setSessionPushEnabled,
   setSessionReasoningEffort: sessionsApi.setSessionReasoningEffort,
 }))
 
-vi.mock('@/api/hermes/download', () => ({
+vi.mock('@/api/studio/download', () => ({
   getDownloadUrl: (_path: string, name: string) => `/download/${name}`,
 }))
 
@@ -74,6 +76,7 @@ describe('chat store per-session reasoning effort', () => {
     setActivePinia(createPinia())
     localStorage.clear()
     sessionsApi.setSessionReasoningEffort.mockResolvedValue(true)
+    sessionsApi.setSessionPushEnabled.mockResolvedValue(true)
     sessionsApi.setSessionModel.mockResolvedValue(true)
     sessionsApi.fetchSessions.mockResolvedValue([])
     chatApi.startRunViaSocket.mockReturnValue({ abort: vi.fn() })
@@ -169,6 +172,47 @@ describe('chat store per-session reasoning effort', () => {
     expect(sessionsApi.setSessionReasoningEffort).not.toHaveBeenCalled()
   })
 
+  it('persists whether an existing session should be pushed', async () => {
+    const store = useChatStore()
+    const session = makeSession('push-session')
+    store.sessions = [session]
+
+    await expect(store.setSessionPushEnabled(session.id, true)).resolves.toBe(true)
+
+    expect(session.pushEnabled).toBe(true)
+    expect(sessionsApi.setSessionPushEnabled).toHaveBeenCalledWith(session.id, true)
+  })
+
+  it('keeps a local-only push choice for the first run without calling the session endpoint', async () => {
+    const store = useChatStore()
+    const session = makeSession('local-push-session')
+    session.isLocalOnly = true
+    store.sessions = [session]
+    store.activeSessionId = session.id
+    store.activeSession = session
+
+    await expect(store.setSessionPushEnabled(session.id, true)).resolves.toBe(true)
+    await store.sendMessage('persist this push setting')
+
+    expect(session.pushEnabled).toBe(true)
+    expect(sessionsApi.setSessionPushEnabled).not.toHaveBeenCalled()
+    expect(chatApi.startRunViaSocket.mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({
+      session_id: session.id,
+      push_enabled: true,
+    }))
+  })
+
+  it('rolls back the push choice when persistence fails', async () => {
+    sessionsApi.setSessionPushEnabled.mockResolvedValue(false)
+    const store = useChatStore()
+    const session = makeSession('failed-push-session')
+    store.sessions = [session]
+
+    await expect(store.setSessionPushEnabled(session.id, true)).resolves.toBe(false)
+
+    expect(session.pushEnabled).toBe(false)
+  })
+
   it('rolls back the optimistic value when server persistence fails', async () => {
     sessionsApi.setSessionReasoningEffort.mockResolvedValue(false)
     const store = useChatStore()
@@ -233,6 +277,7 @@ describe('chat store per-session reasoning effort', () => {
     const session = makeSession('shared-session')
     session.model = 'old-model'
     session.reasoningEffort = 'low'
+    session.pushEnabled = false
     store.sessions = [session]
     store.activeSessionId = session.id
     store.activeSession = session
@@ -246,6 +291,7 @@ describe('chat store per-session reasoning effort', () => {
       provider: 'openai',
       api_mode: 'codex_responses',
       reasoning_effort: '',
+      push_enabled: true,
     })
 
     expect(session).toEqual(expect.objectContaining({
@@ -253,6 +299,7 @@ describe('chat store per-session reasoning effort', () => {
       provider: 'openai',
       apiMode: 'codex_responses',
       reasoningEffort: undefined,
+      pushEnabled: true,
     }))
   })
 
@@ -261,6 +308,7 @@ describe('chat store per-session reasoning effort', () => {
     const session = makeSession('idle-shared-session')
     session.model = 'old-model'
     session.reasoningEffort = 'low'
+    session.pushEnabled = false
     store.sessions = [session]
     store.activeSessionId = session.id
     store.activeSession = session
@@ -272,12 +320,14 @@ describe('chat store per-session reasoning effort', () => {
       model: 'new-model',
       provider: 'openai',
       reasoning_effort: '',
+      push_enabled: true,
     })
 
     expect(session).toEqual(expect.objectContaining({
       model: 'new-model',
       provider: 'openai',
       reasoningEffort: undefined,
+      pushEnabled: true,
     }))
   })
 
@@ -292,6 +342,7 @@ describe('chat store per-session reasoning effort', () => {
         provider: 'openai',
         api_mode: 'codex_responses',
         reasoning_effort: 'max',
+        push_enabled: true,
       })
       return {}
     })
@@ -299,6 +350,7 @@ describe('chat store per-session reasoning effort', () => {
     const session = makeSession('resume-session')
     session.model = 'stale-model'
     session.reasoningEffort = 'low'
+    session.pushEnabled = false
     store.sessions = [session]
 
     await store.switchSession(session.id)
@@ -308,6 +360,7 @@ describe('chat store per-session reasoning effort', () => {
       provider: 'openai',
       apiMode: 'codex_responses',
       reasoningEffort: 'max',
+      pushEnabled: true,
     }))
   })
 })

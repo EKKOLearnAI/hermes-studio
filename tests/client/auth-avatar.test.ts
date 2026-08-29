@@ -15,7 +15,7 @@ import {
   fetchMyAvatar,
   resetMyAvatar,
   updateMyAvatar,
-} from '../../packages/client/src/api/auth'
+} from '../../packages/client/src/api/studio/auth'
 import { setApiKey } from '../../packages/client/src/api/client'
 
 function makeResponse(status: number, body: any, ok = status >= 200 && status < 300) {

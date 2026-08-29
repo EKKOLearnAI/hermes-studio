@@ -303,7 +303,7 @@ function validateRequiredObjectFields(schema, value, location) {
 }
 
 async function validateApiRequest(method, path, args) {
-  if (pathWithoutQuery(path) === '/api/openapi.json' || pathWithoutQuery(path) === '/api/hermes/openapi.json') return null
+  if (pathWithoutQuery(path) === '/api/openapi.json') return null
   const openapi = await openApiDocument(withAuthArgs(args))
   const match = findOpenApiOperation(openapi, method, path)
   if (!match) return `Unknown endpoint in OpenAPI document: ${method} ${pathWithoutQuery(path)}`
@@ -923,7 +923,7 @@ const tools = [
     inputSchema: inputSchema({
         path: {
           type: 'string',
-          description: 'Optional exact endpoint path filter for on-demand details, for example /api/chat-run/runs.',
+          description: 'Optional exact endpoint path filter for on-demand details, for example /api/studio/chat-run/runs.',
         },
         method: {
           type: 'string',
@@ -943,7 +943,7 @@ const tools = [
   {
     name: 'hermes_studio_api_request',
     toolset: 'api',
-    description: 'Execute a Hermes Studio operation by calling an endpoint path. Use hermes_studio_api_openapi_get first as the operation manual to inspect method, parameters, requestBody, and responses. Do not use /api/chat-run/* or /api/hermes/sessions/* as an internal delegation mechanism.',
+    description: 'Execute a Hermes Studio operation by calling an endpoint path. Use hermes_studio_api_openapi_get first as the operation manual to inspect method, parameters, requestBody, and responses. Do not use /api/studio/chat-run/* or /api/studio/sessions/* as an internal delegation mechanism.',
     inputSchema: inputSchema({
         method: {
           type: 'string',
@@ -952,7 +952,7 @@ const tools = [
         },
         path: {
           type: 'string',
-          description: 'Relative Hermes Studio endpoint path from the operation manual, for example /api/hermes/sessions?limit=20. Full URLs and // paths are rejected.',
+          description: 'Relative Hermes Studio endpoint path from the operation manual, for example /api/studio/sessions?limit=20. Full URLs and // paths are rejected.',
         },
         body: {
           type: ['object', 'array', 'string', 'number', 'boolean', 'null'],
@@ -1814,7 +1814,7 @@ async function callTool(name, args = {}) {
       return jsonText(await requestEnvelope(path, options))
     }
     case 'hermes_studio_use_chat_run':
-      return jsonText(await request('/api/chat-run/runs', withAuthArgs(args, {
+      return jsonText(await request('/api/studio/chat-run/runs', withAuthArgs(args, {
         method: 'POST',
         body: pickDefined(args, [
           'input',
@@ -1838,34 +1838,34 @@ async function callTool(name, args = {}) {
         ]),
       })))
     case 'hermes_studio_use_sessions_list':
-      return jsonText(await request('/api/hermes/sessions', withAuthArgs(args, {
+      return jsonText(await request('/api/studio/sessions', withAuthArgs(args, {
         query: pickDefined(args, ['limit', 'source']),
       })))
     case 'hermes_studio_use_sessions_count':
-      return jsonText(await request('/api/hermes/sessions/count', withAuthArgs(args, {
+      return jsonText(await request('/api/studio/sessions/count', withAuthArgs(args, {
         query: pickDefined(args, ['source']),
       })))
     case 'hermes_studio_use_usage_stats':
-      return jsonText(await request('/api/hermes/usage/stats', withAuthArgs(args, {
+      return jsonText(await request('/api/studio/usage/stats', withAuthArgs(args, {
         query: pickDefined(args, ['days']),
       })))
     case 'hermes_studio_use_session_get':
-      return jsonText(await request(`/api/hermes/sessions/${encodeURIComponent(args.session_id)}`, withAuthArgs(args)))
+      return jsonText(await request(`/api/studio/sessions/${encodeURIComponent(args.session_id)}`, withAuthArgs(args)))
     case 'hermes_studio_use_session_messages':
-      return jsonText(await request(`/api/hermes/sessions/conversations/${encodeURIComponent(args.session_id)}/messages`, withAuthArgs(args, {
+      return jsonText(await request(`/api/studio/sessions/conversations/${encodeURIComponent(args.session_id)}/messages`, withAuthArgs(args, {
         query: args.include_internal ? { humanOnly: '0' } : undefined,
       })))
     case 'hermes_studio_use_session_context':
       return jsonText(cleanSessionContextPayload(
-        await request(`/api/hermes/sessions/${encodeURIComponent(args.session_id)}/context`, withAuthArgs(args)),
+        await request(`/api/studio/sessions/${encodeURIComponent(args.session_id)}/context`, withAuthArgs(args)),
         args,
       ))
     case 'hermes_studio_use_session_delete':
-      return jsonText(await request(`/api/hermes/sessions/${encodeURIComponent(args.session_id)}`, withAuthArgs(args, {
+      return jsonText(await request(`/api/studio/sessions/${encodeURIComponent(args.session_id)}`, withAuthArgs(args, {
         method: 'DELETE',
       })))
     case 'hermes_studio_use_session_rename':
-      return jsonText(await request(`/api/hermes/sessions/${encodeURIComponent(args.session_id)}/rename`, withAuthArgs(args, {
+      return jsonText(await request(`/api/studio/sessions/${encodeURIComponent(args.session_id)}/rename`, withAuthArgs(args, {
         method: 'POST',
         body: { title: args.title },
       })))
@@ -1901,16 +1901,16 @@ async function callTool(name, args = {}) {
       })))
     case 'hermes_studio_use_worker_status':
       return jsonText(summarizeWorkerRuntime(
-        await request('/api/hermes/performance/runtime', withAuthArgs(args)),
+        await request('/api/studio/performance/runtime', withAuthArgs(args)),
       ))
     case 'hermes_studio_use_workflows_list':
-      return jsonText(await request('/api/hermes/workflows', withAuthArgs(args, {
+      return jsonText(await request('/api/studio/workflows', withAuthArgs(args, {
         query: pickDefined(args, ['profile']),
       })))
     case 'hermes_studio_use_workflow_get':
-      return jsonText(await request(`/api/hermes/workflows/${encodeURIComponent(args.workflow_id)}`, withAuthArgs(args)))
+      return jsonText(await request(`/api/studio/workflows/${encodeURIComponent(args.workflow_id)}`, withAuthArgs(args)))
     case 'hermes_studio_use_workflow_create':
-      return jsonText(await request('/api/hermes/workflows', withAuthArgs(args, {
+      return jsonText(await request('/api/studio/workflows', withAuthArgs(args, {
         method: 'POST',
         body: pickDefined(args, [
           'name',
@@ -1922,7 +1922,7 @@ async function callTool(name, args = {}) {
         ]),
       })))
     case 'hermes_studio_use_workflow_update':
-      return jsonText(await request(`/api/hermes/workflows/${encodeURIComponent(args.workflow_id)}`, withAuthArgs(args, {
+      return jsonText(await request(`/api/studio/workflows/${encodeURIComponent(args.workflow_id)}`, withAuthArgs(args, {
         method: 'PATCH',
         body: pickDefined(args, [
           'name',
@@ -1933,15 +1933,15 @@ async function callTool(name, args = {}) {
         ]),
       })))
     case 'hermes_studio_use_workflow_delete':
-      return jsonText(await request(`/api/hermes/workflows/${encodeURIComponent(args.workflow_id)}`, withAuthArgs(args, {
+      return jsonText(await request(`/api/studio/workflows/${encodeURIComponent(args.workflow_id)}`, withAuthArgs(args, {
         method: 'DELETE',
       })))
     case 'hermes_studio_use_workflow_runs_list':
-      return jsonText(await request(`/api/hermes/workflows/${encodeURIComponent(args.workflow_id)}/runs`, withAuthArgs(args, {
+      return jsonText(await request(`/api/studio/workflows/${encodeURIComponent(args.workflow_id)}/runs`, withAuthArgs(args, {
         query: pickDefined(args, ['limit']),
       })))
     case 'hermes_studio_use_workflow_run_start':
-      return jsonText(await request(`/api/hermes/workflows/${encodeURIComponent(args.workflow_id)}/run`, withAuthArgs(args, {
+      return jsonText(await request(`/api/studio/workflows/${encodeURIComponent(args.workflow_id)}/run`, withAuthArgs(args, {
         method: 'POST',
         body: pickDefined(args, [
           'start_node_ids',
@@ -1950,11 +1950,11 @@ async function callTool(name, args = {}) {
         ]),
       })))
     case 'hermes_studio_use_workflow_run_stop':
-      return jsonText(await request(`/api/hermes/workflows/${encodeURIComponent(args.workflow_id)}/runs/${encodeURIComponent(args.run_id)}/stop`, withAuthArgs(args, {
+      return jsonText(await request(`/api/studio/workflows/${encodeURIComponent(args.workflow_id)}/runs/${encodeURIComponent(args.run_id)}/stop`, withAuthArgs(args, {
         method: 'POST',
       })))
     case 'hermes_studio_use_workflow_rerun_node':
-      return jsonText(await request(`/api/hermes/workflows/${encodeURIComponent(args.workflow_id)}/runs/${encodeURIComponent(args.run_id)}/rerun-from-node`, withAuthArgs(args, {
+      return jsonText(await request(`/api/studio/workflows/${encodeURIComponent(args.workflow_id)}/runs/${encodeURIComponent(args.run_id)}/rerun-from-node`, withAuthArgs(args, {
         method: 'POST',
         body: pickDefined(args, [
           'node_id',
@@ -1963,7 +1963,7 @@ async function callTool(name, args = {}) {
         ]),
       })))
     case 'hermes_studio_use_workflow_run_delete':
-      return jsonText(await request(`/api/hermes/workflows/${encodeURIComponent(args.workflow_id)}/runs/${encodeURIComponent(args.run_id)}`, withAuthArgs(args, {
+      return jsonText(await request(`/api/studio/workflows/${encodeURIComponent(args.workflow_id)}/runs/${encodeURIComponent(args.run_id)}`, withAuthArgs(args, {
         method: 'DELETE',
       })))
     case 'hermes_studio_lan_devices_list':

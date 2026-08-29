@@ -17,7 +17,7 @@ import {
     updateGroupAgentPreset,
     updateRoomConfig,
     updateRoomSummary,
-} from '@/api/hermes/group-chat'
+} from '@/api/studio/group-chat'
 import {
     decideGroupAgentPairing,
     leaveLocalGroupAgentRoom,
@@ -27,7 +27,7 @@ import {
     updateGuestAgentPolicy,
     type GroupAgentPairingRequest,
     type LocalGroupAgentConnection,
-} from '@/api/hermes/group-chat-agent-link'
+} from '@/api/studio/group-chat-agent-link'
 import GroupMessageList from './GroupMessageList.vue'
 import GroupChatInput from './GroupChatInput.vue'
 import GroupRoomAgentAvatar from './GroupRoomAgentAvatar.vue'
@@ -48,11 +48,15 @@ import type {
     RoomSummaryAnchor,
     RoomSummaryConfig,
     RoomSummaryState,
-} from '@/api/hermes/group-chat'
+} from '@/api/studio/group-chat'
 import { useFilesStore } from '@/stores/hermes/files'
 import { useToolPanelStore } from '@/stores/hermes/tool-panel'
 import { hasDesktopBrowserBridge } from '@/utils/desktop-bridge'
 import { OPEN_DESKTOP_BROWSER_PANEL_EVENT } from '@/utils/desktop-browser'
+import {
+    createBrowserAnnotationAttachment,
+    type BrowserAnnotationSubmission,
+} from '@/utils/browser-annotation-submit'
 import { canScopedCodingAgentUseProvider } from '@/utils/codingAgentProviders'
 import {
     inferCodingAgentApiMode,
@@ -69,6 +73,11 @@ import { generateGroupChatInviteCode } from '@/utils/group-chat-invite-code'
 import { buildRemoteGroupChatRooms, type RemoteGroupChatRoom } from '@/utils/group-chat-remote-rooms'
 import { handoffErrorTranslationKey } from './handoff-presentation'
 import { clearGroupChatRoomDraft } from './group-chat-room-drafts'
+import {
+    fetchAgentStatusSnapshot,
+    isAgentStatusAvailable,
+    type AgentStatusSnapshot,
+} from '@/api/agent-status'
 
 const FilesPanel = defineAsyncComponent(async () => (await import('@/components/hermes/chat/FilesPanel.vue')).default)
 const FilePreview = defineAsyncComponent(async () => (await import('@/components/hermes/files/FilePreview.vue')).default)
@@ -110,6 +119,7 @@ const manualRoomLinkInput = ref<HTMLInputElement | null>(null)
 const showMemberRail = ref(true)
 const editingAgent = ref<RoomAgent | null>(null)
 const isSavingAgent = ref(false)
+const agentStatusSnapshot = ref<AgentStatusSnapshot | null>(null)
 const showRoomSettingsModal = ref(false)
 const showUserProfileModal = ref(false)
 const userProfileName = ref('')
@@ -221,13 +231,46 @@ const profileOptions = computed(() =>
 
 type GroupAgentType = 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi'
 
-const groupAgentTypeOptions = computed<Array<{ label: string; value: GroupAgentType }>>(() => [
+const groupAgentTypeDefinitions: Array<{ label: string; value: GroupAgentType }> = [
     { label: 'Hermes', value: 'hermes' },
     { label: 'Ekko', value: 'ekko' },
     { label: 'Claude', value: 'claude' },
     { label: 'Codex', value: 'codex' },
     { label: 'Pi', value: 'pi' },
-])
+]
+
+const groupAgentTypeOptions = computed(() => groupAgentTypeDefinitions.map((option) => {
+    const disabled = !isAgentStatusAvailable(agentStatusSnapshot.value, option.value)
+    return {
+        ...option,
+        disabled,
+        label: disabled ? `${option.label} · ${t('codingAgents.notInstalled')}` : option.label,
+    }
+}))
+
+const firstAvailableGroupAgentType = computed<GroupAgentType | null>(() =>
+    groupAgentTypeOptions.value.find(option => !option.disabled)?.value || null
+)
+
+function groupAgentDisplayName(agent: GroupAgentType): string {
+    return groupAgentTypeDefinitions.find(option => option.value === agent)?.label || agent
+}
+
+function isGroupAgentAvailable(agent: GroupAgentType): boolean {
+    return isAgentStatusAvailable(agentStatusSnapshot.value, agent)
+}
+
+function warnAgentUnavailable(agent: GroupAgentType) {
+    message.warning(t('codingAgents.installRequired', { agent: groupAgentDisplayName(agent) }))
+}
+
+async function refreshAgentAvailability() {
+    try {
+        agentStatusSnapshot.value = await fetchAgentStatusSnapshot()
+    } catch {
+        agentStatusSnapshot.value = null
+    }
+}
 
 function getAgentModelGroups(profile: string) {
     return (appStore.profileModelGroups.find(entry => entry.profile === profile)?.groups || [])
@@ -422,6 +465,7 @@ const agentAvatarPreview = computed(() =>
 
 const canConfirmAddAgent = computed(() =>
     Boolean(
+        isGroupAgentAvailable(selectedAgentType.value) &&
         selectedProfile.value &&
         selectedAgentProvider.value &&
         selectedAgentModel.value &&
@@ -451,6 +495,10 @@ function handleAgentProfileChange(profile: string) {
 }
 
 function handleAgentTypeChange(agent: GroupAgentType) {
+    if (!isGroupAgentAvailable(agent)) {
+        warnAgentUnavailable(agent)
+        return
+    }
     selectedAgentType.value = agent
     if (selectedProfile.value) syncAgentModelSelection(selectedProfile.value)
 }
@@ -780,8 +828,20 @@ function handleOpenDesktopBrowserPanelRequest(): void {
     selectWorkspacePanel('browser')
 }
 
-function handleBrowserAttachment(payload: { file: File }): void {
-    groupChatInputRef.value?.addFiles?.([payload.file])
+async function submitBrowserAnnotations(payload: BrowserAnnotationSubmission): Promise<boolean> {
+    if (currentRoomNeedsSummaryConfiguration.value) {
+        await handleSummaryConfigurationRequired()
+        return false
+    }
+    const attachment = createBrowserAnnotationAttachment(payload)
+    try {
+        await store.sendMessage('', [attachment])
+        return true
+    } catch (err: any) {
+        URL.revokeObjectURL(attachment.url)
+        message.error(err instanceof Error ? err.message : String(err))
+        return false
+    }
 }
 
 function groupWorkspacePreviewPath(filePath: string): string | null {
@@ -809,6 +869,29 @@ function handleWorkspaceFilePreviewRequest(event: Event): void {
     toolPanelStore.closeWorkspaceDiff()
     filesStore.closePreview()
     void filesStore.openGroupWorkspacePreview(roomId, path, fileName).catch(error => {
+        message.error(error instanceof Error ? error.message : t('files.previewFailed'))
+    })
+}
+
+function handleGroupAttachmentPreviewRequest(event: Event): void {
+    const customEvent = event as CustomEvent<{ sourceUrl?: string; fileName?: string; size?: number }>
+    const roomId = store.currentRoomId
+    const sourceUrl = String(customEvent.detail?.sourceUrl || '').trim()
+    const fileName = String(customEvent.detail?.fileName || '').trim()
+    if (!roomId || !sourceUrl || !fileName) return
+    customEvent.preventDefault()
+    toolPanelStore.closeWorkspaceDiff()
+    filesStore.closePreview()
+    void filesStore.openRemotePreview(
+        sourceUrl,
+        fileName,
+        Number(customEvent.detail?.size ?? -1),
+        { workspaceRoomId: roomId },
+    ).then(opened => {
+        if (!opened) return
+        activeWorkspacePanel.value = 'files'
+        showWorkspacePanel.value = true
+    }).catch(error => {
         message.error(error instanceof Error ? error.message : t('files.previewFailed'))
     })
 }
@@ -1194,7 +1277,7 @@ async function handleSummaryConfigurationRequired() {
 function resetAgentForm() {
     selectedAgentPresetId.value = null
     selectedProfile.value = null
-    selectedAgentType.value = 'hermes'
+    selectedAgentType.value = firstAvailableGroupAgentType.value || 'hermes'
     selectedAgentProvider.value = ''
     selectedAgentModel.value = ''
     selectedAgentApiMode.value = 'codex_responses'
@@ -1301,7 +1384,11 @@ async function saveAgentPreset(presetId: string | null) {
         pendingAgentPresetId.value = result.preset.id
         message.success(t('groupChat.agentPresetSaved'))
     } catch (err: any) {
-        message.error(extractApiErrorMessage(err) || t('groupChat.agentPresetOperationFailed'))
+        message.error(
+            err?.code === 'GROUP_AGENT_PRESET_NAME_CONFLICT'
+                ? t('groupChat.agentPresetAlreadyExists')
+                : extractApiErrorMessage(err) || t('groupChat.agentPresetOperationFailed'),
+        )
     } finally {
         isSavingAgentPreset.value = false
     }
@@ -1347,10 +1434,11 @@ async function handleAddAgent() {
         profilesStore.fetchProfiles(),
         appStore.loadModels(),
         loadAgentPresets(),
+        refreshAgentAvailability(),
     ])
     editingAgent.value = null
     resetAgentForm()
-    selectedAgentType.value = 'hermes'
+    selectedAgentType.value = firstAvailableGroupAgentType.value || 'hermes'
     selectedProfile.value =
         profilesStore.activeProfileName ||
         profilesStore.profiles.find(profile => profile.active)?.name ||
@@ -1409,6 +1497,7 @@ async function handleEditAgent(agent: RoomAgent) {
         profilesStore.fetchProfiles(),
         appStore.loadModels(),
         loadAgentPresets(),
+        refreshAgentAvailability(),
     ])
     selectedAgentPresetId.value = null
     editingAgent.value = agent
@@ -1428,6 +1517,7 @@ async function handleEditAgent(agent: RoomAgent) {
 }
 
 onMounted(() => {
+    if (!props.standalone) void refreshAgentAvailability()
     if (!props.standalone) {
         try {
             showGroupChatRefactorNotice.value = window.localStorage.getItem(GROUP_CHAT_REFACTOR_NOTICE_STORAGE_KEY) !== '1'
@@ -1437,6 +1527,7 @@ onMounted(() => {
     }
     window.addEventListener('hermes:open-page-sidebar', openPageSidebar)
     window.addEventListener('hermes:preview-workspace-file', handleWorkspaceFilePreviewRequest)
+    window.addEventListener('hermes:preview-group-attachment', handleGroupAttachmentPreviewRequest)
     window.addEventListener(OPEN_DESKTOP_BROWSER_PANEL_EVENT, handleOpenDesktopBrowserPanelRequest)
     window.addEventListener('resize', handleWorkspacePanelResize)
     window.addEventListener('focus', handleWindowFocus)
@@ -1456,6 +1547,7 @@ onUnmounted(() => {
     hideInlineSummaryStatus()
     window.removeEventListener('hermes:open-page-sidebar', openPageSidebar)
     window.removeEventListener('hermes:preview-workspace-file', handleWorkspaceFilePreviewRequest)
+    window.removeEventListener('hermes:preview-group-attachment', handleGroupAttachmentPreviewRequest)
     window.removeEventListener(OPEN_DESKTOP_BROWSER_PANEL_EVENT, handleOpenDesktopBrowserPanelRequest)
     window.removeEventListener('resize', handleWorkspacePanelResize)
     window.removeEventListener('focus', handleWindowFocus)
@@ -1550,6 +1642,10 @@ async function confirmAddAgent() {
         message.warning(t('groupChat.selectRoomFirst'))
         return
     }
+    if (!isGroupAgentAvailable(selectedAgentType.value)) {
+        warnAgentUnavailable(selectedAgentType.value)
+        return
+    }
     if (!canConfirmAddAgent.value || !selectedProfile.value || isSavingAgent.value) return
     isSavingAgent.value = true
     try {
@@ -1580,6 +1676,10 @@ async function confirmAddAgent() {
 
 async function confirmUpdateAgent() {
     if (!store.currentRoomId || !editingAgent.value) return
+    if (!isGroupAgentAvailable(selectedAgentType.value)) {
+        warnAgentUnavailable(selectedAgentType.value)
+        return
+    }
     if (!canConfirmAddAgent.value || !selectedProfile.value || isSavingAgent.value) return
     isSavingAgent.value = true
     try {
@@ -2499,10 +2599,6 @@ function handleClarifyKeydown(event: KeyboardEvent) {
                                 v-if="toolPanelStore.workspaceDiff"
                                 :custom-close="closeWorkspacePanel"
                             />
-                            <FilePreview
-                                v-else-if="filesStore.previewFile?.workspaceRoomId === store.currentRoomId"
-                                :custom-close="closeWorkspacePanel"
-                            />
                             <template v-else>
                                 <div class="group-tool-tabs" role="tablist">
                                     <button
@@ -2562,6 +2658,10 @@ function handleClarifyKeydown(event: KeyboardEvent) {
                                             @attach="handleWorkspaceFileAttach"
                                         />
                                     </template>
+                                    <FilePreview
+                                        v-else-if="filesStore.previewFile?.workspaceRoomId === store.currentRoomId"
+                                        :custom-close="closeWorkspacePanel"
+                                    />
                                     <div v-else-if="activeWorkspacePanel === 'files'" class="group-workspace-empty">
                                         <svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
                                             <path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
@@ -2580,7 +2680,7 @@ function handleClarifyKeydown(event: KeyboardEvent) {
                                         v-if="desktopBrowserAvailable && activeWorkspacePanel === 'browser'"
                                         class="group-browser-panel"
                                         :visible="toolPanelTransitionReady"
-                                        @attach="handleBrowserAttachment"
+                                        :submit="submitBrowserAnnotations"
                                     />
                                 </div>
                             </template>

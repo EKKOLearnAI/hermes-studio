@@ -1,4 +1,11 @@
 import type { MemoryKind, MemoryNode, MemoryNodeType, MemoryRuntimeIdentity } from './types'
+import {
+  memoryScopeAllowed,
+  memoryScopeKey,
+  normalizeMemoryOrigin,
+  normalizeMemoryScope,
+  PROFILE_MEMORY_SCOPE,
+} from './scope'
 
 export interface NormalizeMemoryNodeInput {
   draft: Partial<MemoryNode>
@@ -46,8 +53,8 @@ export type NormalizeMemoryNodeResult =
   | { accepted: true; node: Omit<MemoryNode, 'id'> }
   | { accepted: false; reason: string }
 
-export function memoryConflictKey(node: Pick<MemoryNode, 'domain' | 'key' | 'valueJson'>): string | undefined {
-  return `${node.domain}\u0000${node.key}`
+export function memoryConflictKey(node: Pick<MemoryNode, 'domain' | 'key' | 'valueJson' | 'scope'>): string | undefined {
+  return `${memoryScopeKey(node.scope)}\u0000${node.domain}\u0000${node.key}`
 }
 
 export function canonicalizeMemoryDraft(
@@ -65,7 +72,7 @@ export function canonicalizeMemoryDraft(
   const controlledValue = normalizeControlledValue(kind, draft.valueJson)
   if (!controlledValue.accepted) return controlledValue
   const key = slot.itemized ? `${slot.key}:${normalizedItem}` : slot.key
-  const rendered = renderControlledMemory(kind, controlledValue.value)
+  const inferredEntities = controlledMemoryEntities(kind, controlledValue.value)
   return {
     accepted: true,
     draft: {
@@ -75,9 +82,9 @@ export function canonicalizeMemoryDraft(
       type: slot.type,
       key,
       valueJson: controlledValue.value,
-      title: rendered?.title || draft.title,
-      content: rendered?.content || draft.content,
-      entities: rendered?.entities ?? draft.entities,
+      title: draft.title,
+      content: draft.content,
+      entities: inferredEntities ?? draft.entities,
     },
   }
 }
@@ -98,6 +105,11 @@ export function normalizeMemoryNode(input: NormalizeMemoryNodeInput): NormalizeM
   if (identity.profileId && draft.profileId && identity.profileId !== draft.profileId) {
     return { accepted: false, reason: 'Memory profileId does not match the runtime identity.' }
   }
+  const scope = normalizeMemoryScope(draft.scope || identity.defaultWriteScope) || PROFILE_MEMORY_SCOPE
+  if (!memoryScopeAllowed(scope, identity.writeScopes)) {
+    return { accepted: false, reason: 'Memory scope is not writable in the current host context.' }
+  }
+  const origin = normalizeMemoryOrigin(identity.origin || draft.origin)
 
   const domain = String(draft.domain || 'general').trim()
   const categoryPath = uniqueStrings(draft.categoryPath || [domain])
@@ -117,6 +129,8 @@ export function normalizeMemoryNode(input: NormalizeMemoryNodeInput): NormalizeM
       parentId: draft.parentId,
       supersedesId: draft.supersedesId,
       profileId,
+      scope,
+      origin,
       domain,
       categoryPath: categoryPath.length ? categoryPath : [domain],
       type,
@@ -191,43 +205,24 @@ function normalizeControlledValue(
   return { accepted: true, value }
 }
 
-function renderControlledMemory(kind: MemoryKind, value: unknown): { title: string; content: string; entities?: string[] } | undefined {
+function controlledMemoryEntities(kind: MemoryKind, value: unknown): string[] | undefined {
   if (kind === 'interaction_contract' && value && typeof value === 'object' && !Array.isArray(value)) {
     const record = value as Record<string, unknown>
-    const userRole = cleanValue(record.userRole)
-    const assistantRole = cleanValue(record.assistantRole)
-    const addressUserAs = cleanValue(record.addressUserAs)
-    const parts = [
-      userRole && assistantRole ? `用户设定双方关系：用户是${userRole}，助手是${assistantRole}` : '',
-      userRole && !assistantRole ? `用户在互动中设定自己的角色为${userRole}` : '',
-      assistantRole && !userRole ? `用户将助手的互动角色设定为${assistantRole}` : '',
-      addressUserAs ? `助手应称呼用户为${addressUserAs}` : '',
-    ].filter(Boolean)
-    if (parts.length) {
-      return {
-        title: '用户与助手的互动关系',
-        content: `${parts.join('；')}。`,
-        entities: uniqueStrings([userRole, assistantRole, addressUserAs].filter((item): item is string => Boolean(item))),
-      }
-    }
+    return uniqueStrings([
+      cleanValue(record.userRole),
+      cleanValue(record.assistantRole),
+      cleanValue(record.addressUserAs),
+    ].filter((item): item is string => Boolean(item)))
   }
-  if (kind === 'home_location' && typeof value === 'string' && value.trim()) {
-    return { title: '用户常住地', content: `用户明确表示常住在${value.trim()}。`, entities: [value.trim()] }
-  }
-  if (kind === 'home_location' && value && typeof value === 'object' && !Array.isArray(value)) {
-    const record = value as Record<string, unknown>
-    const city = cleanValue(record.city)
-    const country = cleanValue(record.country)
-    if (city) {
-      return {
-        title: '用户常住地',
-        content: `用户明确表示常住在${country ? `${country}${city}` : city}。`,
-        entities: [city],
-      }
+  if (kind === 'home_location') {
+    if (typeof value === 'string' && value.trim()) return [value.trim()]
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      const city = cleanValue((value as Record<string, unknown>).city)
+      return city ? [city] : undefined
     }
   }
   if (kind === 'profile_name' && typeof value === 'string' && value.trim()) {
-    return { title: '用户姓名', content: `用户的姓名是${value.trim()}。`, entities: [value.trim()] }
+    return [value.trim()]
   }
   return undefined
 }

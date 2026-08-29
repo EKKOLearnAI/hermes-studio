@@ -18,16 +18,18 @@ describe('App Relay API', () => {
   })
 
   it('uses the independent App Relay management endpoints', async () => {
-    const api = await import('@/api/hermes/app-relay')
+    const api = await import('@/api/studio/app-relay')
 
     await api.fetchAppRelayStatus()
     await api.connectAppRelay()
+    await api.updateAppRelayRoute('cloudflare')
     await api.refreshAppRelayPairingCode()
     await api.disconnectAppRelay()
 
     expect(request.mock.calls).toEqual([
       ['/api/app-relay/status'],
       ['/api/app-relay/connect', { method: 'POST' }],
+      ['/api/app-relay/route', { method: 'PUT', body: JSON.stringify({ route: 'cloudflare' }) }],
       ['/api/app-relay/pairing-code', { method: 'POST' }],
       ['/api/app-relay/disconnect', { method: 'POST' }],
     ])

@@ -10,14 +10,15 @@ import XaiOAuthLoginModal from './XaiOAuthLoginModal.vue'
 import AnthropicLoginModal from './AnthropicLoginModal.vue'
 import MiniMaxOAuthLoginModal from './MiniMaxOAuthLoginModal.vue'
 import { checkCopilotToken, enableCopilot, type CopilotTokenSource } from '@/api/hermes/copilot-auth'
-import { fetchProviderModels, type ProviderApiMode } from '@/api/hermes/system'
+import { fetchProviderModels } from '@/api/hermes/system'
+import type { ProviderApiMode } from '@/api/studio/provider-api-mode'
 import { inferApiKeyFunPresetProvider, isApiKeyFunBaseUrl, type ApiKeyFunPresetProvider } from '@/utils/providerBaseUrl'
 
 const { t } = useI18n()
 
 const emit = defineEmits<{
   close: []
-  saved: []
+  saved: [globalModelsAlreadyRefreshed?: boolean]
 }>()
 
 const modelsStore = useModelsStore()
@@ -342,7 +343,7 @@ async function handleSave() {
       providerKey,
     })
     message.success(t('models.providerAdded'))
-    emit('saved')
+    emit('saved', true)
   } catch (e: any) {
     message.error(e.message)
   } finally {

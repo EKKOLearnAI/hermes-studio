@@ -8,14 +8,14 @@ const mocks = vi.hoisted(() => {
   return { getSession, getSessionDetail, createHandoffSession, isSessionProcessing }
 })
 
-vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/session-store', () => ({
   getSession: mocks.getSession,
   getSessionDetail: mocks.getSessionDetail,
   createHandoffSession: mocks.createHandoffSession,
 }))
 
-vi.mock('../../packages/server/src/services/coding-agents/runtime/run-manager', () => ({
-  codingAgentRunManager: {
+vi.mock('../../packages/server/src/modules/studio/public/chat-agent-runtime', () => ({
+  chatCodingAgentRunManager: {
     isSessionProcessing: mocks.isSessionProcessing,
   },
 }))
@@ -24,7 +24,7 @@ import {
   createHermesHandoffSession,
   isHandoffSourceSession,
   normalizeHandoffMessages,
-} from '../../packages/server/src/services/hermes/session-handoff'
+} from '../../packages/server/src/modules/studio/services/session-handoff'
 
 describe('session handoff service', () => {
   beforeEach(() => {

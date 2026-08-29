@@ -1,12 +1,12 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { applyResponseStreamEvent, flushResponseRunToDb } from '../../packages/server/src/services/hermes/run-chat/response-stream'
-import type { SessionState } from '../../packages/server/src/services/hermes/run-chat/types'
+import { applyResponseStreamEvent, flushResponseRunToDb } from '../../packages/server/src/modules/studio/services/chat-run/response-stream'
+import type { SessionState } from '../../packages/server/src/modules/studio/services/chat-run/types'
 
 const { addMessageMock } = vi.hoisted(() => ({
   addMessageMock: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/session-store', () => ({
   addMessage: addMessageMock,
 }))
 
@@ -126,6 +126,62 @@ describe('response stream reasoning storage', () => {
       }),
     ])
     expect(state.responseRun?.pendingReasoning).toBeUndefined()
+  })
+
+  it('keeps duplicate tool reasoning updates scoped to the current run', () => {
+    const previousToolCall = {
+      id: 'item_2',
+      type: 'function',
+      function: { name: 'Command', arguments: '{"command":"pwd"}' },
+    }
+    const state: SessionState = {
+      messages: [{
+        id: 1,
+        session_id: 'session-1',
+        runMarker: 'run-a',
+        role: 'assistant',
+        content: '',
+        reasoning: 'reasoning for run A',
+        reasoning_content: 'reasoning for run A',
+        tool_calls: [previousToolCall],
+        finish_reason: 'tool_calls',
+        timestamp: 1,
+      }],
+      isWorking: false,
+      events: [],
+      queue: [],
+    }
+    const repeatedToolCall = {
+      type: 'function_call',
+      call_id: 'item_2',
+      name: 'Command',
+      arguments: '{"command":"ls"}',
+    }
+
+    applyResponseStreamEvent(state, 'session-1', 'run-b', 'response.created', {
+      response: { id: 'resp-b', status: 'in_progress' },
+    })
+    applyResponseStreamEvent(state, 'session-1', 'run-b', 'response.reasoning.delta', {
+      delta: 'reasoning for run B',
+    })
+    applyResponseStreamEvent(state, 'session-1', 'run-b', 'response.output_item.done', {
+      item: repeatedToolCall,
+    })
+    applyResponseStreamEvent(state, 'session-1', 'run-b', 'response.output_item.done', {
+      item: repeatedToolCall,
+    })
+
+    expect(state.messages[0]).toMatchObject({
+      runMarker: 'run-a',
+      reasoning: 'reasoning for run A',
+      reasoning_content: 'reasoning for run A',
+    })
+    expect(state.messages[1]).toMatchObject({
+      runMarker: 'run-b',
+      reasoning: 'reasoning for run B',
+      reasoning_content: 'reasoning for run B',
+      tool_calls: [expect.objectContaining({ id: 'item_2' })],
+    })
   })
 
   it('flushes reasoning fields to message storage', () => {

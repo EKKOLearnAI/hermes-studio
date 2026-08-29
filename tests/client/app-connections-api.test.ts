@@ -11,17 +11,17 @@ describe('App connections API', () => {
   })
 
   it('uses the connection-specific authorization endpoints', async () => {
-    const api = await import('@/api/hermes/app-connections')
+    const api = await import('@/api/studio/app-connections')
 
     await api.fetchAppConnections()
     await api.createLanAppAuthorization()
-    await api.createCloudAppAuthorization(true)
+    await api.createCloudAppAuthorization(true, 'cloudflare')
     await api.deleteAppConnection(12)
 
     expect(request.mock.calls).toEqual([
       ['/api/app-connections'],
       ['/api/app-connections/authorization-codes/lan', { method: 'POST' }],
-      ['/api/app-connections/authorization-codes/cloud', { method: 'POST', body: JSON.stringify({ refresh: true }) }],
+      ['/api/app-connections/authorization-codes/cloud', { method: 'POST', body: JSON.stringify({ refresh: true, route: 'cloudflare' }) }],
       ['/api/app-connections/12', { method: 'DELETE' }],
     ])
   })

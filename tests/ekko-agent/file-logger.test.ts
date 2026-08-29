@@ -34,6 +34,9 @@ describe('EkkoFileLogger', () => {
       runId: 'run-1',
       data: {
         apiKey: 'top-secret',
+        accessToken: 'oauth-access-secret',
+        refreshToken: 'oauth-refresh-secret',
+        clientSecret: 'oauth-client-secret',
         header: 'Bearer actual-token',
       },
     })).toBe(true)
@@ -50,6 +53,9 @@ describe('EkkoFileLogger', () => {
     const raw = await readFile(join(root, EKKO_LOG_FILE_NAME), 'utf8')
     expect(raw).not.toContain('top-secret')
     expect(raw).not.toContain('actual-token')
+    expect(raw).not.toContain('oauth-access-secret')
+    expect(raw).not.toContain('oauth-refresh-secret')
+    expect(raw).not.toContain('oauth-client-secret')
     expect(raw).toContain('[REDACTED]')
     expect(logger.query({ sessionId: 'session-1' })).toMatchObject([
       {

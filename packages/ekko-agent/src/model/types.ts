@@ -133,6 +133,8 @@ export interface ModelCapabilities {
 export interface ModelProviderConfig {
   id: string
   type: ModelProviderType
+  /** Persisted/public API mode name; requestStyle is its adapter-level form. */
+  apiMode?: import('./provider-presets').EkkoModelApiMode
   requestStyle?: ModelRequestStyle
   /**
    * Provider-specific assistant reasoning field used only by the OpenAI Chat

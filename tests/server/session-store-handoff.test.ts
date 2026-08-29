@@ -25,7 +25,7 @@ const mocks = vi.hoisted(() => {
   }
 })
 
-vi.mock('../../packages/server/src/db/index', () => ({
+vi.mock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
   isSqliteAvailable: vi.fn(() => true),
   getDb: vi.fn(() => mocks.db),
 }))
@@ -71,7 +71,7 @@ describe('createHandoffSession', () => {
   })
 
   it('creates a child Hermes session without touching the parent row', async () => {
-    const { createHandoffSession } = await import('../../packages/server/src/db/hermes/session-store')
+    const { createHandoffSession } = await import('../../packages/server/src/modules/studio/repositories/session-store')
 
     const result = createHandoffSession({
       parent_session_id: 'codex-parent',

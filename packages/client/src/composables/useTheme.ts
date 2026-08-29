@@ -7,7 +7,7 @@ import {
   updateThemeSettings,
   uploadThemeBackground as uploadThemeBackgroundApi,
   type UserThemeSettings,
-} from '@/api/theme'
+} from '@/api/studio/theme'
 import {
   DEFAULT_THEME_FONT_SIZE,
   normalizeHexColor,

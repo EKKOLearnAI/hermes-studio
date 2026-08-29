@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { createTestingPinia } from '@pinia/testing'
 import { nextTick } from 'vue'
 import { useChatStore } from '@/stores/hermes/chat'
@@ -11,6 +11,9 @@ const fetchSkillsMock = vi.hoisted(() => vi.fn())
 const fetchSkillBundlesMock = vi.hoisted(() => vi.fn())
 const deleteSkillBundleApiMock = vi.hoisted(() => vi.fn())
 const dialogWarningMock = vi.hoisted(() => vi.fn())
+const setSessionPushEnabledMock = vi.hoisted(() => vi.fn())
+const fetchSocialMessagePlatformsMock = vi.hoisted(() => vi.fn())
+const messageWarningMock = vi.hoisted(() => vi.fn())
 
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (key: string) => key }),
@@ -20,7 +23,11 @@ vi.mock('naive-ui', () => ({
   NButton: { template: '<button type="button" v-bind="$attrs"><slot /><slot name="icon" /></button>' },
   NTooltip: { template: '<div><slot name="trigger" /><slot /></div>' },
   NSwitch: { template: '<button type="button"></button>' },
-  NDropdown: { template: '<div><slot /></div>' },
+  NDropdown: {
+    props: ['options'],
+    emits: ['select'],
+    template: '<div class="dropdown-stub"><button v-for="option in options" :key="option.key" class="dropdown-option" @click="$emit(\'select\', option.key)">{{ option.label }}</button><slot /></div>',
+  },
   NModal: { template: '<div><slot /><slot name="footer" /></div>' },
   NInputNumber: { template: '<input />' },
   NPopover: {
@@ -41,16 +48,21 @@ vi.mock('naive-ui', () => ({
       />
     `,
   },
-  useMessage: () => ({ error: vi.fn(), success: vi.fn() }),
+  useMessage: () => ({ error: vi.fn(), success: vi.fn(), warning: messageWarningMock }),
   useDialog: () => ({ warning: dialogWarningMock }),
 }))
 
-vi.mock('@/api/hermes/sessions', () => ({
+vi.mock('@/api/studio/sessions', () => ({
   fetchContextLength: vi.fn().mockResolvedValue(256000),
+  setSessionPushEnabled: setSessionPushEnabledMock,
 }))
 
 vi.mock('@/api/hermes/model-context', () => ({
   setModelContext: vi.fn().mockResolvedValue(undefined),
+}))
+
+vi.mock('@/api/studio/social-messages', () => ({
+  fetchSocialMessagePlatforms: fetchSocialMessagePlatformsMock,
 }))
 
 vi.mock('@/api/hermes/skills', () => ({
@@ -107,6 +119,13 @@ describe('ChatInput focusComposer', () => {
     fetchSkillBundlesMock.mockResolvedValue([])
     deleteSkillBundleApiMock.mockReset()
     dialogWarningMock.mockReset()
+    setSessionPushEnabledMock.mockReset()
+    setSessionPushEnabledMock.mockResolvedValue(true)
+    fetchSocialMessagePlatformsMock.mockReset()
+    fetchSocialMessagePlatformsMock.mockResolvedValue([
+      { id: 'telegram', configured: true, active: true, pushReady: true },
+    ])
+    messageWarningMock.mockReset()
   })
 
   it('puts the caret in the message box on a desktop viewport', async () => {
@@ -132,6 +151,47 @@ describe('ChatInput focusComposer', () => {
     await nextTick()
 
     expect(document.activeElement).not.toBe(textarea)
+    wrapper.unmount()
+  })
+
+  it('shows and toggles the per-session push setting', async () => {
+    const wrapper = mountForSession('session-push-setting')
+    const option = wrapper.findAll('.dropdown-option').find(button => button.text() === 'chat.pushEnabled')
+
+    expect(option).toBeTruthy()
+    await option!.trigger('click')
+    await flushPromises()
+
+    expect(setSessionPushEnabledMock).toHaveBeenCalledWith('session-push-setting', true)
+    expect(useChatStore().activeSession?.pushEnabled).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('does not enable push before an active platform and target are configured', async () => {
+    fetchSocialMessagePlatformsMock.mockResolvedValueOnce([
+      { id: 'telegram', configured: true, active: true, pushReady: false },
+    ])
+    const wrapper = mountForSession('session-push-unconfigured')
+    const option = wrapper.findAll('.dropdown-option').find(button => button.text() === 'chat.pushEnabled')
+
+    await option!.trigger('click')
+    await flushPromises()
+
+    expect(messageWarningMock).toHaveBeenCalledWith('chat.pushNotConfigured')
+    expect(setSessionPushEnabledMock).not.toHaveBeenCalled()
+    expect(useChatStore().activeSession?.pushEnabled).not.toBe(true)
+    wrapper.unmount()
+  })
+
+  it('allows push to be disabled without checking platform configuration', async () => {
+    const wrapper = mountForSession('session-push-disable', { pushEnabled: true })
+    const option = wrapper.findAll('.dropdown-option').find(button => button.text() === 'chat.pushEnabled')
+
+    await option!.trigger('click')
+    await flushPromises()
+
+    expect(fetchSocialMessagePlatformsMock).not.toHaveBeenCalled()
+    expect(setSessionPushEnabledMock).toHaveBeenCalledWith('session-push-disable', false)
     wrapper.unmount()
   })
 })

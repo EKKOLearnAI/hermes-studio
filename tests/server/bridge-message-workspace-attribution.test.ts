@@ -2,11 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const addMessageMock = vi.hoisted(() => vi.fn())
 
-vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/session-store', () => ({
   addMessage: addMessageMock,
 }))
 
-vi.mock('../../packages/server/src/services/logger', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/logging', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }))
 
@@ -32,7 +32,7 @@ describe('bridge assistant workspace attribution', () => {
       bridgePendingAssistantContent: 'Finished the workspace update.',
       bridgePendingReasoningContent: '',
     }
-    const { flushBridgePendingToDb } = await import('../../packages/server/src/services/hermes/run-chat/bridge-message')
+    const { flushBridgePendingToDb } = await import('../../packages/server/src/modules/studio/services/chat-run/bridge-message')
 
     const persistedId = flushBridgePendingToDb(state, 'session-hermes', 'run-hermes')
 

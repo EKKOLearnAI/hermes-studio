@@ -130,7 +130,7 @@ async function mockInviteApi(page: Page, valid = true, delayMs = 0) {
       return
     }
 
-    if (url.pathname === '/api/hermes/group-chat/rooms/join/ROOM1') {
+    if (url.pathname === '/api/studio/group-chat/rooms/join/ROOM1') {
       if (delayMs > 0) await new Promise(resolve => setTimeout(resolve, delayMs))
       await route.fulfill({
         status: valid ? 200 : 404,
@@ -142,7 +142,7 @@ async function mockInviteApi(page: Page, valid = true, delayMs = 0) {
 
     if (
       route.request().method() === 'POST' &&
-      url.pathname === '/api/hermes/group-chat/invites/ROOM1/attachments'
+      url.pathname === '/api/studio/group-chat/invites/ROOM1/attachments'
     ) {
       await route.fulfill({
         status: 200,
@@ -159,7 +159,7 @@ async function mockInviteApi(page: Page, valid = true, delayMs = 0) {
 
     if (
       route.request().method() === 'GET' &&
-      url.pathname === '/api/hermes/group-chat/invites/ROOM1/attachments/0123456789abcdef0123456789abcdef.png'
+      url.pathname === '/api/studio/group-chat/invites/ROOM1/attachments/0123456789abcdef0123456789abcdef.png'
     ) {
       await route.fulfill({
         status: 200,
@@ -218,7 +218,7 @@ test.describe('invite-only group chat share page', () => {
     await expect(page.locator('.msg-attachment-thumb')).toBeVisible()
     await expect(page.locator('.msg-attachment-thumb')).toHaveAttribute(
       'src',
-      /\/api\/hermes\/group-chat\/invites\/ROOM1\/attachments\/0123456789abcdef0123456789abcdef\.png/,
+      /\/api\/studio\/group-chat\/invites\/ROOM1\/attachments\/0123456789abcdef0123456789abcdef\.png/,
     )
     expect(protectedRequests).toEqual([])
 

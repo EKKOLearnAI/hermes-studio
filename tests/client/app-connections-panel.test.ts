@@ -5,13 +5,21 @@ const source = readFileSync(
   'packages/client/src/components/hermes/connections/AppConnectionsPanel.vue',
   'utf8',
 )
+const controllerSource = readFileSync(
+  'packages/server/src/modules/studio/controllers/app-connections.ts',
+  'utf8',
+)
 
 describe('App connections scan modal', () => {
-  it('switches between the connection list and the mobile download hub', () => {
-    expect(source).toContain("const panelView = ref<'list' | 'download'>('download')")
+  it('switches between the connection list, mobile download hub, and message push', () => {
+    expect(source).toContain("type AppPanelView = 'list' | 'download' | 'messages'")
+    expect(source).toContain('normalizePanelView(route.query.view)')
     expect(source).toContain("t('connections.app.viewList')")
     expect(source).toContain("t('connections.app.viewDownload')")
+    expect(source).toContain("t('connections.app.viewMessages')")
     expect(source).toContain("panelView === 'list'")
+    expect(source).toContain("updatePanelView('messages')")
+    expect(source).toContain('<SocialMessagesView v-else embedded')
     expect(source).toContain('HStudio Mobile')
     expect(source).toContain("const downloadSource = ref<'github' | 'cloudflare'>('cloudflare')")
     expect(source).toContain('fetchStudioVersionManifest()')
@@ -87,12 +95,21 @@ describe('App connections scan modal', () => {
     expect(source).toContain('accessFailureMode')
     expect(source).toContain("t('connections.app.accessFailures.tokenExpired')")
     expect(source).toContain("t('connections.app.accessFailures.paidAccountRequired')")
-    expect(source).toContain('createCloudAppAuthorization(refresh)')
+    expect(source).toContain('createCloudAppAuthorization(refresh, cloudRelayRoute.value)')
+    expect(source).toContain('updateAppRelayRoute(route)')
+    expect(source).toContain("label: 'connections.app.officialRoute'")
+    expect(source).toContain("label: 'connections.app.cloudflareRoute'")
+    expect(source).not.toContain('option.host')
     expect(source).toContain("generateAuthorization('cloud', true)")
     expect(source).toContain("'connection-qr--expired': authorizationExpired")
     expect(source).toContain('style="width: 560px; max-width: calc(100vw - 32px)"')
     expect(source).not.toContain("t('connections.app.authorizationCode')")
     expect(source).not.toContain('<NInput')
     expect(source).not.toContain('authorization.expires_at <= currentTimestamp.value')
+  })
+
+  it('keeps the Studio route in the QR payload as metadata', () => {
+    expect(controllerSource).toContain('relay_route: relayRoute')
+    expect(controllerSource).toContain('r: relayRoute')
   })
 })

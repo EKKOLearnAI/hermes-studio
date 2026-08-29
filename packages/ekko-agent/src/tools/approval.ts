@@ -27,6 +27,7 @@ export interface ToolApprovalRequirement {
 
 export interface EkkoToolApprovalServiceOptions {
   configPath: string
+  enabled?: boolean
   timeoutMs?: number
 }
 
@@ -143,12 +144,14 @@ const DANGEROUS_COMMAND_RULES: DangerousCommandRule[] = [
 export class EkkoToolApprovalService {
   readonly authorize: AgentToolAuthorizer
   private readonly configPath: string
+  private readonly enabled: boolean
   private readonly timeoutMs: number
   private readonly permanentAllow = new Set<string>()
   private readonly sessionAllow = new Map<string, Set<string>>()
 
   constructor(options: EkkoToolApprovalServiceOptions) {
     this.configPath = options.configPath
+    this.enabled = options.enabled !== false
     this.timeoutMs = positiveInteger(options.timeoutMs, DEFAULT_TOOL_APPROVAL_TIMEOUT_MS)
     for (const key of readPermanentAllowlist(this.configPath)) this.permanentAllow.add(key)
     this.authorize = this.authorizeToolCall.bind(this)
@@ -171,6 +174,7 @@ export class EkkoToolApprovalService {
     input: Record<string, unknown>,
     context: AgentToolContext = {},
   ): Promise<AgentToolAuthorizationDecision> {
+    if (!this.enabled) return { approved: true, scope: 'safe' }
     const requirement = toolApprovalRequirement(toolName, input)
     if (!requirement) return { approved: true, scope: 'safe' }
 

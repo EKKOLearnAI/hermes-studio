@@ -118,11 +118,11 @@ vi.mock('@/composables/usePcmStreamRecorder', async () => {
   }
 })
 
-vi.mock('@/api/hermes/stt-settings', () => ({
+vi.mock('@/api/studio/stt-settings', () => ({
   fetchSttSettings: vi.fn(async () => testState.sttSettingsResponse),
 }))
 
-vi.mock('@/api/hermes/stt', () => ({
+vi.mock('@/api/studio/stt', () => ({
   transcribeSpeech: testState.transcribeSpeech,
   startLocalSttStream: testState.startLocalSttStream,
   pushLocalSttStreamChunk: testState.pushLocalSttStreamChunk,
@@ -187,7 +187,7 @@ vi.mock('@/composables/useSpeech', async () => {
   }
 })
 
-vi.mock('@/api/hermes/tts', () => ({
+vi.mock('@/api/studio/tts', () => ({
   synthesizeSpeech: vi.fn(({ text }: { text: string }) => {
     testState.activeRequests += 1
     testState.maxActiveRequests = Math.max(testState.maxActiveRequests, testState.activeRequests)

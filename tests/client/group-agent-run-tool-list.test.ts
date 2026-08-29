@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { defineComponent } from 'vue'
 import { createPinia } from 'pinia'
-import type { ChatMessage, RoomAgent } from '@/api/hermes/group-chat'
+import type { ChatMessage, RoomAgent } from '@/api/studio/group-chat'
 import GroupAgentRunCard from '@/components/hermes/group-chat/GroupAgentRunCard.vue'
 
 vi.mock('vue-i18n', () => ({
@@ -108,6 +108,8 @@ describe('GroupAgentRunCard tool list', () => {
     expect(wrapper.get('.run-transcript-item').attributes('data-message-id')).toBe('current-reasoning')
     expect(wrapper.get('.run-transcript').find('.tool-name').exists()).toBe(false)
     expect(wrapper.get('.run-column').element.children[0]).toBe(wrapper.get('.run-header').element)
+    const runAvatar = wrapper.get('.run-header .message-agent-avatar, .run-header group-agent-message-avatar-stub')
+    expect(`${runAvatar.attributes('style') || ''} ${runAvatar.attributes('size') || ''}`).toContain('22')
     expect(wrapper.get('.run-card').element.children[0]).toBe(panel.element)
     expect(wrapper.get('.run-card').element.children[1]).toBe(wrapper.get('.run-transcript').element)
     expect(wrapper.get('.run-column').element.children[2]).toBe(wrapper.get('.run-time').element)

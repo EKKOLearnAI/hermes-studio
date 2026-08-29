@@ -4,7 +4,7 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 import YAML from 'js-yaml'
 
-vi.mock('../../packages/server/src/services/hermes/hermes-cli', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/runtime/cli', () => ({
   restartGateway: vi.fn().mockResolvedValue(undefined),
 }))
 
@@ -13,7 +13,8 @@ let hermesHome = ''
 async function loadProvidersController() {
   vi.resetModules()
   process.env.HERMES_HOME = hermesHome
-  return import('../../packages/server/src/controllers/hermes/providers')
+  await import('../../packages/server/src/bootstrap/agent-profile-adapter')
+  return import('../../packages/server/src/modules/hermes/controllers/providers')
 }
 
 function makeCtx(body: Record<string, any>, profile = 'default') {
@@ -39,7 +40,7 @@ describe('providers controller create', () => {
 
   afterEach(() => {
     delete process.env.HERMES_HOME
-    vi.doUnmock('../../packages/server/src/controllers/hermes/providers')
+    vi.doUnmock('../../packages/server/src/modules/hermes/controllers/providers')
     vi.clearAllMocks()
     if (hermesHome) rmSync(hermesHome, { recursive: true, force: true })
     hermesHome = ''

@@ -9,6 +9,7 @@ backend, and an Electron desktop distribution around Hermes Agent.
 | --- | --- | --- |
 | Client | `packages/client/src` | Vue UI, routing, Pinia stores, API wrappers, i18n, browser-visible state. |
 | Server | `packages/server/src` | HTTP API, auth, Socket.IO, SQLite stores, file access, Hermes runtime integration. |
+| Ekko Agent | `packages/ekko-agent` | Canonical Ekko runtime, profile facade, providers, tools, memory, skills, conversations, and package API. |
 | Desktop | `packages/desktop` | Electron shell, local Web UI server bootstrap, updater, bundled Python/Hermes runtime. |
 | Tests | `tests` | Vitest unit/integration tests and Playwright browser tests. |
 | CI | `.github/workflows` | Build, e2e, lockfile, Docker, and desktop release automation. |
@@ -17,7 +18,7 @@ backend, and an Electron desktop distribution around Hermes Agent.
 
 1. The browser loads the Vite-built client from the Koa server.
 2. Client modules call API helpers from `packages/client/src/api`.
-3. Server routes in `packages/server/src/routes` wire HTTP paths to controllers.
+3. Server routes in `packages/server/src/modules/*/routes` wire HTTP paths to controllers.
 4. Controllers validate request concerns and delegate reusable behavior to services.
 5. Services own side effects: files, SQLite, Hermes profiles, subprocesses, bridges, and credentials.
 6. Long-running chat and group-chat flows use Socket.IO namespaces managed by server services.
@@ -36,17 +37,22 @@ should not duplicate server persistence rules.
 
 ## Server Structure
 
-- `routes/` registers HTTP and WebSocket entry points.
-- `controllers/` handles request-level behavior.
-- `services/` owns reusable IO, domain behavior, external process calls, and integration logic.
-- `db/` owns SQLite schemas and stores.
-- `middleware/` owns request middleware such as user auth.
-- `shared/` contains cross-server constants and helpers.
+Server code is separated by business ownership under `modules/studio`,
+`modules/hermes`, `modules/ekko`, and `modules/coding-agents`; concrete module
+composition belongs in `bootstrap`.
+See `docs/harness/server-module-boundaries.md` for the complete target tree,
+ownership decisions, allowed dependency matrix, and migration rules.
+
+- Module `routes/` register HTTP entry points; `sockets/` own Socket.IO transports.
+- Module `controllers/` handle request-level behavior.
+- Module `services/` own reusable IO, domain behavior, processes, and integrations.
+- Studio `repositories/` and `infrastructure/` own application persistence.
+- Studio `middleware/legacy-app-api.ts` is the only released App and MCU firmware URL compatibility map.
 
 Architecture rules:
 
 - Register local API routes before proxy catch-all routes.
-- Keep auth behavior centralized in `packages/server/src/services/auth.ts`.
+- Keep auth behavior under `packages/server/src/modules/studio/services/auth`.
 - Prefer `execFile` or `spawn` with argument arrays over shell command strings.
 - Use structured file and YAML/JSON parsers when editing structured data.
 

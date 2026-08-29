@@ -19,7 +19,7 @@ import {
   type LanDeviceInfo,
   type LanDiscoveryState,
   type LanEndpointKind,
-} from '@/api/hermes/devices'
+} from '@/api/studio/devices'
 
 const { t } = useI18n()
 const message = useMessage()

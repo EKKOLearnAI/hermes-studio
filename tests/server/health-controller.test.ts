@@ -12,6 +12,7 @@ function readRootPackage() {
 type LoadHealthControllerOptions = {
   injectedVersion?: string
   isDocker?: boolean
+  disableUpdateCheck?: boolean
   bridgeReadiness?: any
   bridgeReadinessError?: Error
   managerError?: Error
@@ -35,6 +36,7 @@ const defaultBridgeReadiness = {
 
 async function loadHealthController(options: LoadHealthControllerOptions = {}) {
   vi.resetModules()
+  vi.stubEnv('HERMES_WEB_UI_DISABLE_UPDATE_CHECK', options.disableUpdateCheck ? 'true' : '')
 
   if (typeof options.injectedVersion === 'string') {
     ;(globalThis as any).__APP_VERSION__ = options.injectedVersion
@@ -43,7 +45,7 @@ async function loadHealthController(options: LoadHealthControllerOptions = {}) {
   }
 
   const getVersion = vi.fn().mockResolvedValue('Hermes Agent v0.11.0\n')
-  vi.doMock('../../packages/server/src/services/hermes/hermes-cli', () => ({
+  vi.doMock('../../packages/server/src/modules/hermes/services/runtime/cli', () => ({
     getVersion,
   }))
 
@@ -59,14 +61,14 @@ async function loadHealthController(options: LoadHealthControllerOptions = {}) {
     ? vi.fn(() => { throw options.managerError })
     : vi.fn(() => ({ checkReadiness, getRuntimeState }))
 
-  vi.doMock('../../packages/server/src/services/hermes/agent-bridge/manager', () => ({
+  vi.doMock('../../packages/server/src/modules/hermes/services/bridge/manager', () => ({
     getAgentBridgeManager,
   }))
-  vi.doMock('../../packages/server/src/services/runtime-environment', () => ({
+  vi.doMock('../../packages/server/src/modules/studio/public/runtime-environment', () => ({
     isDockerContainer: () => options.isDocker === true,
   }))
 
-  const health = await import('../../packages/server/src/controllers/health')
+  const health = await import('../../packages/server/src/bootstrap/health')
 
   return {
     ...health,
@@ -94,6 +96,8 @@ function createMockCtx() {
 describe('liveness controller', () => {
   afterEach(() => {
     vi.restoreAllMocks()
+    vi.unstubAllEnvs()
+    vi.unstubAllGlobals()
     vi.resetModules()
   })
 
@@ -112,6 +116,8 @@ describe('liveness controller', () => {
 describe('health controller version metadata', () => {
   afterEach(() => {
     vi.restoreAllMocks()
+    vi.unstubAllEnvs()
+    vi.unstubAllGlobals()
     vi.resetModules()
     ;(globalThis as any).__APP_VERSION__ = 'test'
   })
@@ -190,6 +196,21 @@ describe('health controller version metadata', () => {
     const { checkLatestVersion } = await loadHealthControllerWithoutInjectedVersion()
 
     await expect(checkLatestVersion()).resolves.toBeUndefined()
+  })
+
+  it('skips npm latest when update checks are explicitly disabled', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { checkLatestVersion, healthCheck } = await loadHealthController({ disableUpdateCheck: true })
+
+    await checkLatestVersion()
+    const ctx = createMockCtx()
+    await healthCheck(ctx)
+
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(ctx.body.webui_latest).toBe('')
+    expect(ctx.body.webui_update_available).toBe(false)
   })
 
   it('reports Docker while retaining version checks for upgrade guidance', async () => {

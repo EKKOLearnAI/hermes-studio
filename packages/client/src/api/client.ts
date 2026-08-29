@@ -128,11 +128,11 @@ function shouldAttachProfileHeader(path: string, options: RequestInit): boolean 
 }
 
 function isProfileWideSessionCollection(pathname: string): boolean {
-  return pathname === '/api/hermes/sessions' ||
-    pathname === '/api/hermes/sessions/batch-delete' ||
-    pathname === '/api/hermes/search/sessions' ||
-    pathname === '/api/hermes/sessions/search' ||
-    pathname === '/api/hermes/sessions/conversations'
+  return pathname === '/api/studio/sessions' ||
+    pathname === '/api/studio/sessions/batch-delete' ||
+    pathname === '/api/studio/search/sessions' ||
+    pathname === '/api/studio/sessions/search' ||
+    pathname === '/api/studio/sessions/conversations'
 }
 
 function emitAuthNotice(kind: 'expired' | 'forbidden') {
@@ -170,6 +170,17 @@ function responseErrorMessage(text: string, statusText: string): string {
     return messageFromErrorValue(parsed) || trimmed
   } catch {
     return trimmed
+  }
+}
+
+function responseErrorCode(text: string): string | undefined {
+  const trimmed = text.trim()
+  if (!trimmed) return undefined
+  try {
+    const parsed = JSON.parse(trimmed) as { code?: unknown }
+    return typeof parsed?.code === 'string' && parsed.code ? parsed.code : undefined
+  } catch {
+    return undefined
   }
 }
 
@@ -224,7 +235,10 @@ export async function request<T>(path: string, options: RequestInit = {}): Promi
         emitAuthNotice('forbidden')
       }
     }
-    throw new Error(`API Error ${res.status}: ${responseErrorMessage(text, res.statusText)}`)
+    throw Object.assign(
+      new Error(`API Error ${res.status}: ${responseErrorMessage(text, res.statusText)}`),
+      { status: res.status, code: responseErrorCode(text) },
+    )
   }
 
   return res.json()

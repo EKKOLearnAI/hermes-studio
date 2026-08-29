@@ -5,7 +5,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { NButton, NInput, NModal, useMessage } from 'naive-ui'
 import GroupChatPanel from '@/components/hermes/group-chat/GroupChatPanel.vue'
 import ProfileAvatar from '@/components/hermes/profiles/ProfileAvatar.vue'
-import { getStoredUserId, type RoomAgent } from '@/api/hermes/group-chat'
+import { getStoredUserId, type RoomAgent } from '@/api/studio/group-chat'
 import type { ProfileAvatar as ProfileAvatarData } from '@/api/hermes/profiles'
 import {
     createGuestAgentHandoff,
@@ -13,7 +13,7 @@ import {
     requestGuestAgentPairing,
     type GroupAgentPairingRequest,
     type RemoteGroupAgentDescriptor,
-} from '@/api/hermes/group-chat-agent-link'
+} from '@/api/studio/group-chat-agent-link'
 import { GROUP_CHAT_MEMBER_REMOVED, useGroupChatStore } from '@/stores/hermes/group-chat'
 import { generateClientUuid } from '@/utils/client-random'
 import { copyToClipboard } from '@/utils/clipboard'

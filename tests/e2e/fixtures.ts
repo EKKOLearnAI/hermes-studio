@@ -72,6 +72,13 @@ interface MockHermesApiOptions {
     [key: string]: unknown
   }>
   theme?: Partial<MockThemePayload>
+  socialMessagePlatforms?: unknown[]
+  socialMessageResult?: Record<string, unknown>
+  socialMessageFeishuQrCode?: Record<string, unknown>
+  socialMessageFeishuQrStatus?: Record<string, unknown>
+  socialMessageFeishuRecipients?: Record<string, unknown>
+  socialMessageTelegramRecipients?: Record<string, unknown>
+  socialMessageWeixinRecipients?: Record<string, unknown>
 }
 
 export const TEST_MODEL_GROUP = {
@@ -201,6 +208,57 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
       return
     }
 
+    if (pathname === '/api/agents/status' && request.method() === 'GET') {
+      await route.fulfill(jsonResponse({
+        revision: 1,
+        updatedAt: '2026-01-01T00:00:00.000Z',
+        agents: [
+          { id: 'hermes', name: 'Hermes', provider: 'Nous Research', kind: 'hermes', installed: true, version: '0.19.1', source: 'user-cli', path: '/usr/local/bin/hermes', error: '', installations: [] },
+          { id: 'ekko-agent', name: 'Ekko', provider: 'Hermes Studio', kind: 'built-in', installed: true, version: '0.6.47', source: 'built-in', path: '', error: '', installations: [] },
+          { id: 'claude-code', name: 'Claude', provider: 'Anthropic', kind: 'coding-agent', installed: true, version: '1.0.0', source: 'user-cli', path: '/usr/local/bin/claude', error: '', installations: [] },
+          { id: 'codex', name: 'Codex', provider: 'OpenAI', kind: 'coding-agent', installed: true, version: '1.0.0', source: 'user-cli', path: '/usr/local/bin/codex', error: '', installations: [] },
+          { id: 'pi', name: 'Pi', provider: 'Pi', kind: 'coding-agent', installed: true, version: '1.0.0', source: 'user-cli', path: '/usr/local/bin/pi', error: '', installations: [] },
+        ],
+      }))
+      return
+    }
+
+    if (pathname === '/api/hermes/runtime-versions' && request.method() === 'GET') {
+      await route.fulfill(jsonResponse({
+        active: null,
+        platform: 'linux-x64',
+        activeVersionPath: '',
+        remoteManifestUrl: '',
+        remoteError: '',
+        hermes: {
+          activeVersion: '',
+          agentVersion: '0.19.1',
+          activeDirectory: '',
+          storageDirectory: '',
+          defaultStorageDirectory: '',
+          pendingStorageDirectory: '',
+          migrationError: '',
+          activationError: '',
+          cliInstallations: [{
+            path: '/usr/local/bin/hermes',
+            version: '0.19.1',
+            source: 'user-cli',
+            selected: true,
+          }],
+          installed: [],
+          remoteVersions: [],
+        },
+        webui: {
+          currentVersion: '0.6.47',
+          activeVersion: '0.6.47',
+          activeDirectory: '',
+          installed: [],
+          remoteVersions: [],
+        },
+      }))
+      return
+    }
+
     if (pathname === '/api/auth/status') {
       await route.fulfill(jsonResponse({ hasPasswordLogin: true, username: 'playwright' }))
       return
@@ -283,7 +341,7 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
       return
     }
 
-    if (pathname === '/api/hermes/workflows/import/preview' && request.method() === 'POST') {
+    if (pathname === '/api/studio/workflows/import/preview' && request.method() === 'POST') {
       if (options.workflowImportPreviewError) {
         await route.fulfill(jsonResponse({ error: options.workflowImportPreviewError }, 400))
         return
@@ -292,25 +350,25 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
       return
     }
 
-    if (pathname === '/api/hermes/workflows/import/cancel' && request.method() === 'POST') {
+    if (pathname === '/api/studio/workflows/import/cancel' && request.method() === 'POST') {
       await route.fulfill(jsonResponse({ ok: true }))
       return
     }
 
-    if (pathname === '/api/hermes/workflows/import/confirm' && request.method() === 'POST') {
+    if (pathname === '/api/studio/workflows/import/confirm' && request.method() === 'POST') {
       const definition: any = options.workflowImportDocument || { name: 'Imported flow', nodes: [], edges: [], viewport: null }
       await route.fulfill(jsonResponse({ ok: true, workflow: { id: 'wf-imported', profile: 'research', workspace: null, created_at: 2, updated_at: 2, ...definition } }, 201))
       return
     }
 
-    if (/^\/api\/hermes\/workflows\/[^/]+\/export$/.test(pathname) && request.method() === 'GET') {
+    if (/^\/api\/studio\/workflows\/[^/]+\/export$/.test(pathname) && request.method() === 'GET') {
       const workflowId = pathname.split('/').at(-2)
       const workflow: any = (options.workflows || []).find((item: any) => item?.id === workflowId)
       await route.fulfill(workflow ? jsonResponse({ format: 'hermes-studio.workflow', version: 1, definition: { name: workflow.name, nodes: workflow.nodes, edges: workflow.edges, viewport: workflow.viewport } }) : jsonResponse({ error: 'workflow not found' }, 404))
       return
     }
 
-    if (/^\/api\/hermes\/workflows\/[^/]+\/schedules(?:\/[^/]+)?$/.test(pathname)) {
+    if (/^\/api\/studio\/workflows\/[^/]+\/schedules(?:\/[^/]+)?$/.test(pathname)) {
       if (options.workflowScheduleError) {
         await route.fulfill(jsonResponse({ error: options.workflowScheduleError }, 500))
         return
@@ -357,24 +415,24 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
       }
     }
 
-    if (/^\/api\/hermes\/workflows\/[^/]+\/run$/.test(pathname) && request.method() === 'POST') {
+    if (/^\/api\/studio\/workflows\/[^/]+\/run$/.test(pathname) && request.method() === 'POST') {
       await route.fulfill(jsonResponse({ ok: true, status: 'accepted' }, 202))
       return
     }
 
-    if (/^\/api\/hermes\/workflows\/[^/]+\/runs$/.test(pathname)) {
+    if (/^\/api\/studio\/workflows\/[^/]+\/runs$/.test(pathname)) {
       await route.fulfill(jsonResponse({ runs: options.workflowRuns ?? [] }))
       return
     }
 
-    if (/^\/api\/hermes\/workflows\/[^/]+\/runs\/[^/]+$/.test(pathname) && request.method() === 'GET') {
+    if (/^\/api\/studio\/workflows\/[^/]+\/runs\/[^/]+$/.test(pathname) && request.method() === 'GET') {
       const runId = pathname.split('/').at(-1)
       const run = (options.workflowRuns || []).find((item: any) => item?.id === runId)
       await route.fulfill(run ? jsonResponse({ run }) : jsonResponse({ error: 'workflow run not found' }, 404))
       return
     }
 
-    if (/^\/api\/hermes\/workflows\/[^/]+$/.test(pathname) && request.method() === 'PATCH') {
+    if (/^\/api\/studio\/workflows\/[^/]+$/.test(pathname) && request.method() === 'PATCH') {
       const workflowId = pathname.split('/').at(-1)
       const workflow: any = (options.workflows || []).find((item: any) => item?.id === workflowId)
       let patch: Record<string, unknown> = {}
@@ -385,17 +443,17 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
       return
     }
 
-    if (pathname === '/api/hermes/workflows') {
+    if (pathname === '/api/studio/workflows') {
       await route.fulfill(jsonResponse({ workflows: options.workflows ?? [] }, tokenValidationStatus))
       return
     }
 
-    if (pathname === '/api/hermes/sessions') {
+    if (pathname === '/api/studio/sessions') {
       await route.fulfill(jsonResponse({ sessions: options.sessions ?? [] }, tokenValidationStatus))
       return
     }
 
-    if (pathname === '/api/hermes/session-categories') {
+    if (pathname === '/api/studio/session-categories') {
       if (request.method() === 'GET') {
         await route.fulfill(jsonResponse({ categories: sessionCategories }))
         return
@@ -415,7 +473,7 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
       }
     }
 
-    if (/^\/api\/hermes\/session-categories\/\d+$/.test(pathname)) {
+    if (/^\/api\/studio\/session-categories\/\d+$/.test(pathname)) {
       const categoryId = Number(pathname.split('/').at(-1))
       const categoryIndex = sessionCategories.findIndex(item => item.id === categoryId)
       if (categoryIndex < 0) {
@@ -439,22 +497,22 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
       }
     }
 
-    if (pathname === '/api/hermes/sessions/hermes') {
+    if (pathname === '/api/studio/sessions/hermes') {
       await route.fulfill(jsonResponse({ sessions: [] }))
       return
     }
 
-    if (pathname === '/api/hermes/sessions/context-length') {
+    if (pathname === '/api/studio/sessions/context-length') {
       await route.fulfill(jsonResponse({ context_length: 256000 }))
       return
     }
 
-    if (pathname === '/api/hermes/workspace/folders' && request.method() === 'GET') {
+    if (pathname === '/api/studio/workspace/folders' && request.method() === 'GET') {
       await route.fulfill(jsonResponse({ base: '/workspace', current: '', folders: [] }))
       return
     }
 
-    if (/^\/api\/hermes\/sessions\/[^/]+\/category$/.test(pathname) && request.method() === 'POST') {
+    if (/^\/api\/studio\/sessions\/[^/]+\/category$/.test(pathname) && request.method() === 'POST') {
       await route.fulfill(jsonResponse({ ok: true }))
       return
     }
@@ -509,12 +567,17 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
       return
     }
 
-    if (/^\/api\/hermes\/sessions\/[^/]+\/workspace-run-changes$/.test(pathname)) {
+    if (/^\/api\/studio\/sessions\/[^/]+\/workspace-run-changes$/.test(pathname)) {
       await route.fulfill(jsonResponse({ changes: [] }))
       return
     }
 
-    if (pathname === '/api/hermes/files/list') {
+    if (/^\/api\/studio\/sessions\/[^/]+\/workspace-files\/list$/.test(pathname)) {
+      await route.fulfill(jsonResponse({ entries: [], path: '', absolutePath: '' }))
+      return
+    }
+
+    if (pathname === '/api/studio/files/list') {
       await route.fulfill(jsonResponse({ entries: [], path: '' }))
       return
     }
@@ -612,12 +675,12 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
       return
     }
 
-    if (pathname === '/api/hermes/pets/active') {
+    if (pathname === '/api/studio/pets/active') {
       await route.fulfill(jsonResponse({ pet: null }))
       return
     }
 
-    if (pathname === '/api/hermes/petdex/manifest') {
+    if (pathname === '/api/studio/petdex/manifest') {
       await route.fulfill(jsonResponse({
         generatedAt: '2026-07-28T00:00:00.000Z',
         total: 0,
@@ -710,6 +773,100 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
       return
     }
 
+    if (pathname === '/api/social-messages/platforms' && request.method() === 'GET') {
+      await route.fulfill(jsonResponse({
+        platforms: options.socialMessagePlatforms ?? [],
+      }))
+      return
+    }
+
+    if (pathname === '/api/social-messages/feishu/qrcode' && request.method() === 'GET') {
+      await route.fulfill(jsonResponse(options.socialMessageFeishuQrCode ?? {
+        session_id: 'feishu-session',
+        qrcode_url: 'https://accounts.feishu.cn/device?code=playwright',
+        poll_interval_ms: 1_000,
+        expires_in_ms: 600_000,
+      }))
+      return
+    }
+
+    if (pathname === '/api/social-messages/feishu/qrcode/status' && request.method() === 'GET') {
+      await route.fulfill(jsonResponse(options.socialMessageFeishuQrStatus ?? { status: 'pending' }))
+      return
+    }
+
+    if (pathname === '/api/social-messages/feishu/recipients' && request.method() === 'GET') {
+      await route.fulfill(jsonResponse(options.socialMessageFeishuRecipients ?? {
+        recipients: [],
+        runtimeStatus: 'running',
+      }))
+      return
+    }
+
+    if (pathname === '/api/social-messages/telegram/recipients' && request.method() === 'GET') {
+      await route.fulfill(jsonResponse(options.socialMessageTelegramRecipients ?? {
+        recipients: [],
+        runtimeStatus: 'running',
+      }))
+      return
+    }
+
+    if (pathname === '/api/social-messages/weixin/recipients' && request.method() === 'GET') {
+      await route.fulfill(jsonResponse(options.socialMessageWeixinRecipients ?? {
+        recipients: [],
+        runtimeStatus: 'running',
+      }))
+      return
+    }
+
+    if (pathname === '/api/app-connections' && request.method() === 'GET') {
+      await route.fulfill(jsonResponse({ connections: [], access_failure: null }))
+      return
+    }
+
+    if (pathname === '/api/app-relay/status' && request.method() === 'GET') {
+      await route.fulfill(jsonResponse({
+        relay: {
+          connected: false,
+          machineId: 'playwright-machine',
+          pairingCode: '',
+          pairingExpiresAt: 0,
+          route: 'official',
+          relayUrl: '',
+        },
+      }))
+      return
+    }
+
+    if (pathname === '/api/studio/versions' && request.method() === 'GET') {
+      await route.fulfill(jsonResponse({
+        schema: 1,
+        hermes: [],
+        mobile: {
+          version: '1.0.0',
+          channels: {
+            androidApk: { githubUrl: '', cloudflareUrl: '', online: false },
+            googlePlay: { url: '', online: false },
+            apple: { testFlightUrl: '', appStoreUrl: '', online: false },
+            harmony: { url: '', online: false },
+          },
+        },
+      }))
+      return
+    }
+
+    if (pathname === '/api/social-messages/send' && request.method() === 'POST') {
+      await route.fulfill(jsonResponse({
+        result: options.socialMessageResult ?? {
+          platform: 'telegram',
+          recipient: '1234',
+          messageId: '42',
+          sentAt: '2026-08-23T00:00:00.000Z',
+        },
+      }, 201))
+      return
+    }
+
     if (pathname === '/api/hermes/jobs') {
       await route.fulfill(jsonResponse({ jobs: [sampleJob] }))
       return
@@ -740,12 +897,12 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
       return
     }
 
-    if (pathname === '/api/hermes/group-chat/rooms' && request.method() === 'GET') {
+    if (pathname === '/api/studio/group-chat/rooms' && request.method() === 'GET') {
       await route.fulfill(jsonResponse({ rooms: [] }))
       return
     }
 
-    if (pathname === '/api/hermes/group-chat-link/v1/connections' && request.method() === 'GET') {
+    if (pathname === '/api/studio/group-chat-link/v1/connections' && request.method() === 'GET') {
       await route.fulfill(jsonResponse({ connections: [] }))
       return
     }
@@ -759,6 +916,9 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
     await route.fulfill(jsonResponse({ error: `Unexpected mocked route: ${request.method()} ${pathname}` }, 404))
   })
 
+  // Register this after the catch-all API route so Socket.IO's optimized
+  // module is intercepted before Vite can proxy a connection to port 8648.
+  await mockChatSocket(page)
   return { requests, unexpectedRequests }
 }
 
@@ -782,7 +942,9 @@ const state = window.__PW_CHAT_SOCKET__ || (window.__PW_CHAT_SOCKET__ = { socket
 function makeSocket(url, options) {
   const listeners = new Map()
   const onceListeners = new Map()
+  const socketNumber = (state.socketCount = (state.socketCount || 0) + 1)
   const socket = {
+    id: 'pw-socket-' + socketNumber,
     connected: true,
     url,
     options,
@@ -798,8 +960,39 @@ function makeSocket(url, options) {
       onceListeners.set(event, handlers)
       return this
     },
-    emit(event, payload) {
+    off(event, handler) {
+      if (!event) return this
+      if (!handler) {
+        listeners.delete(event)
+        onceListeners.delete(event)
+        return this
+      }
+      listeners.set(event, (listeners.get(event) || []).filter(item => item !== handler))
+      onceListeners.set(event, (onceListeners.get(event) || []).filter(item => item !== handler))
+      return this
+    },
+    timeout() {
+      return this
+    },
+    emit(event, payload, ack) {
       state.emitted.push({ event, payload })
+      if (typeof ack === 'function' && String(url).endsWith('/workflow')) {
+        const data = event === 'workflow.status.subscribe'
+          ? { statuses: [] }
+          : event === 'workflows.list'
+            ? { workflows: [] }
+            : { ok: true }
+        setTimeout(() => ack(null, { ok: true, data }), 0)
+      } else if (typeof ack === 'function' && event === 'join') {
+        setTimeout(() => ack({
+          roomId: payload && payload.roomId,
+          messages: [],
+          members: [],
+          pendingApprovals: [],
+          pendingClarifies: [],
+          executionQueue: [],
+        }), 0)
+      }
       if (event === 'resume') {
         const sessionId = payload && payload.session_id
         const resumes = window.__PW_CHAT_SOCKET_RESUMES__ || {}

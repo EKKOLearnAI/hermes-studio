@@ -24,5 +24,13 @@ describe('group Agent preset UI sources', () => {
     expect(panel).not.toContain('class="agent-preset-manager"')
     expect(panel).toContain('saveAgentPreset')
     expect(panel).toContain('deleteAgentPreset')
+    expect(panel).toContain("err?.code === 'GROUP_AGENT_PRESET_NAME_CONFLICT'")
+    expect(panel).toContain("t('groupChat.agentPresetAlreadyExists')")
+  })
+
+  it('provides the required Simplified Chinese duplicate-name message', () => {
+    const locale = readFileSync('packages/client/src/i18n/locales/zh.ts', 'utf8')
+
+    expect(locale).toContain("agentPresetAlreadyExists: '该预设已添加过'")
   })
 })

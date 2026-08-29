@@ -25,7 +25,7 @@ Call the local Hermes Web UI media endpoint. Pass a local image path; the server
 Endpoint:
 
 ```bash
-POST <Hermes Web UI base URL>/api/hermes/media/grok-image-to-video
+POST <Hermes Web UI base URL>/api/studio/media/grok-image-to-video
 ```
 
 Resolve the Hermes Web UI base URL in this order:
@@ -103,7 +103,7 @@ if [ -z "$BASE_URL" ]; then
 fi
 BASE_URL="${BASE_URL%/}"
 
-curl -sS -X POST "$BASE_URL/api/hermes/media/grok-image-to-video" \
+curl -sS -X POST "$BASE_URL/api/studio/media/grok-image-to-video" \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{

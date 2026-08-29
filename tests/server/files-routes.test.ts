@@ -10,20 +10,20 @@ const provider = {
   writeFile: vi.fn(),
 }
 const createFileProviderMock = vi.fn(async () => provider)
-const resolveHermesPathMock = vi.fn((relativePath: string) => {
+const resolveProfileFilePathMock = vi.fn((relativePath: string) => {
   const normalized = relativePath.replace(/^\/+/, '')
   return normalized ? `/home/agent/.hermes/${normalized}` : '/home/agent/.hermes'
 })
 
-vi.mock('../../packages/server/src/services/hermes/file-provider', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/files/file-provider', () => ({
   createFileProvider: createFileProviderMock,
-  resolveHermesPath: resolveHermesPathMock,
+  resolveProfileFilePath: resolveProfileFilePathMock,
   isSensitivePath: vi.fn(() => false),
   MAX_EDIT_SIZE: 10 * 1024 * 1024,
 }))
 
 async function runFileRoute(path: string, ctx: any) {
-  const { fileRoutes } = await import('../../packages/server/src/routes/hermes/files')
+  const { fileRoutes } = await import('../../packages/server/src/modules/studio/routes/files')
   const layer = fileRoutes.stack.find((entry: any) => entry.path === path)
   if (!layer) throw new Error(`Missing file route ${path}`)
 
@@ -50,7 +50,7 @@ describe('file routes path metadata', () => {
   beforeEach(() => {
     vi.resetModules()
     createFileProviderMock.mockClear()
-    resolveHermesPathMock.mockClear()
+    resolveProfileFilePathMock.mockClear()
     provider.listDir.mockReset()
     provider.stat.mockReset()
     provider.readFile.mockReset()
@@ -66,10 +66,10 @@ describe('file routes path metadata', () => {
 
     const ctx: any = { query: { path: 'logs' }, state: { profile: { name: 'research' } }, body: null }
 
-    await runFileRoute('/api/hermes/files/list', ctx)
+    await runFileRoute('/api/studio/files/list', ctx)
 
     expect(createFileProviderMock).toHaveBeenCalledWith('research')
-    expect(resolveHermesPathMock).toHaveBeenCalledWith('logs', 'research')
+    expect(resolveProfileFilePathMock).toHaveBeenCalledWith('logs', 'research')
     expect(provider.listDir).toHaveBeenCalledWith('/home/agent/.hermes/logs')
     expect(ctx.body).toEqual({
       path: 'logs',
@@ -98,10 +98,10 @@ describe('file routes path metadata', () => {
 
     const ctx: any = { query: { path: 'logs/app.log' }, state: { profile: { name: 'research' } }, body: null }
 
-    await runFileRoute('/api/hermes/files/stat', ctx)
+    await runFileRoute('/api/studio/files/stat', ctx)
 
     expect(createFileProviderMock).toHaveBeenCalledWith('research')
-    expect(resolveHermesPathMock).toHaveBeenCalledWith('logs/app.log', 'research')
+    expect(resolveProfileFilePathMock).toHaveBeenCalledWith('logs/app.log', 'research')
     expect(ctx.body).toEqual({
       name: 'app.log',
       path: 'logs/app.log',
@@ -130,7 +130,7 @@ describe('file routes path metadata', () => {
       body: null,
     }
 
-    await runFileRoute('/api/hermes/files/preview', ctx)
+    await runFileRoute('/api/studio/files/preview', ctx)
 
     expect(provider.stat).toHaveBeenCalledWith('/home/agent/.hermes/workspace/report.pdf')
     expect(provider.readFile).toHaveBeenCalledWith('/home/agent/.hermes/workspace/report.pdf')
@@ -153,10 +153,10 @@ describe('file routes path metadata', () => {
       body: null,
     }
 
-    await runFileRoute('/api/hermes/files/delete', ctx)
+    await runFileRoute('/api/studio/files/delete', ctx)
 
     expect(createFileProviderMock).toHaveBeenCalledWith('research')
-    expect(resolveHermesPathMock).toHaveBeenCalledWith('workspace/weather.txt', 'research')
+    expect(resolveProfileFilePathMock).toHaveBeenCalledWith('workspace/weather.txt', 'research')
     expect(provider.deleteFile).toHaveBeenCalledWith('/home/agent/.hermes/workspace/weather.txt')
     expect(provider.deleteDir).not.toHaveBeenCalled()
     expect(ctx.body).toEqual({ ok: true })
@@ -169,7 +169,7 @@ describe('file routes path metadata', () => {
       body: null,
     }
 
-    await runFileRoute('/api/hermes/files/delete', ctx)
+    await runFileRoute('/api/studio/files/delete', ctx)
 
     expect(ctx.status).toBe(400)
     expect(ctx.body).toEqual({ error: 'Missing path parameter', code: 'missing_path' })
@@ -203,10 +203,10 @@ describe('file routes path metadata', () => {
         : ''),
     }
 
-    await runFileRoute('/api/hermes/files/upload', ctx)
+    await runFileRoute('/api/studio/files/upload', ctx)
 
     expect(createFileProviderMock).toHaveBeenCalledWith('research')
-    expect(resolveHermesPathMock).toHaveBeenCalledWith('workspace/daily report.txt', 'research')
+    expect(resolveProfileFilePathMock).toHaveBeenCalledWith('workspace/daily report.txt', 'research')
     expect(provider.writeFile).toHaveBeenCalledWith(
       '/home/agent/.hermes/workspace/daily report.txt',
       Buffer.from('hello'),
@@ -240,7 +240,7 @@ describe('file routes path metadata', () => {
         : ''),
     }
 
-    await runFileRoute('/api/hermes/files/upload', ctx)
+    await runFileRoute('/api/studio/files/upload', ctx)
 
     expect(ctx.status).toBe(400)
     expect(ctx.body).toEqual({ error: 'Malformed multipart filename', code: 'invalid_request' })
@@ -257,7 +257,7 @@ describe('file routes path metadata', () => {
       body: null,
     }
 
-    await runFileRoute('/api/hermes/files/read', readCtx)
+    await runFileRoute('/api/studio/files/read', readCtx)
 
     expect(readCtx.status).toBe(403)
     expect(readCtx.body).toEqual({ error: 'Super administrator privileges are required' })
@@ -272,7 +272,7 @@ describe('file routes path metadata', () => {
       body: null,
     }
 
-    await runFileRoute('/api/hermes/files/write', writeCtx)
+    await runFileRoute('/api/studio/files/write', writeCtx)
 
     expect(writeCtx.status).toBe(403)
     expect(writeCtx.body).toEqual({ error: 'Super administrator privileges are required' })

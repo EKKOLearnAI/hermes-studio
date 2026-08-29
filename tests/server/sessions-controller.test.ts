@@ -21,6 +21,7 @@ const localSearchSessionsMock = vi.fn()
 const localDeleteSessionMock = vi.fn()
 const localRenameSessionMock = vi.fn()
 const localSetSessionArchivedMock = vi.fn()
+const localSetSessionPushEnabledMock = vi.fn()
 const localCreateSessionMock = vi.fn()
 const localUpdateSessionMock = vi.fn()
 const localAddMessagesMock = vi.fn()
@@ -45,28 +46,36 @@ const bridgeSwitchSessionModelMock = vi.fn()
 const bridgeGetRuntimeStateMock = vi.fn()
 const emitSessionSettingsUpdatedMock = vi.fn()
 const getChatRunServerMock = vi.fn()
+const agentStatusMocks = vi.hoisted(() => ({ hermesAvailable: true }))
 const codingAgentRunManagerMock = vi.hoisted(() => ({
   stop: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/db/hermes/conversations-db', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/history/conversations-db', () => ({
   listConversationSummariesFromDb: listConversationSummariesFromDbMock,
   getConversationDetailFromDb: getConversationDetailFromDbMock,
 }))
 
-vi.mock('../../packages/server/src/services/hermes/conversations', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/history/conversations', () => ({
   listConversationSummaries: listConversationSummariesMock,
   getConversationDetail: getConversationDetailMock,
 }))
 
-vi.mock('../../packages/server/src/services/logger', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/logging', () => ({
   logger: {
     warn: loggerWarnMock,
     error: vi.fn(),
   },
 }))
 
-vi.mock('../../packages/server/src/services/hermes/hermes-cli', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/logging', () => ({
+  logger: {
+    warn: loggerWarnMock,
+    error: vi.fn(),
+  },
+}))
+
+vi.mock('../../packages/server/src/modules/hermes/services/runtime/cli', () => ({
   listSessions: vi.fn(),
   getSession: getSessionMock,
   deleteSession: vi.fn(),
@@ -74,7 +83,7 @@ vi.mock('../../packages/server/src/services/hermes/hermes-cli', () => ({
   renameSession: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/db/hermes/sessions-db', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/history/sessions-db', () => ({
   listSessionSummaries: listSessionSummariesMock,
   listSessionSummaryGroups: listSessionSummaryGroupsMock,
   searchSessionSummaries: vi.fn(),
@@ -84,13 +93,14 @@ vi.mock('../../packages/server/src/db/hermes/sessions-db', () => ({
   getUsageStatsFromDb: getUsageStatsFromDbMock,
 }))
 
-vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/session-store', () => ({
   listSessions: localListSessionsMock,
   searchSessions: localSearchSessionsMock,
   getSessionDetail: localGetSessionDetailMock,
   deleteSession: localDeleteSessionMock,
   renameSession: localRenameSessionMock,
   setSessionArchived: localSetSessionArchivedMock,
+  setSessionPushEnabled: localSetSessionPushEnabledMock,
   createSession: localCreateSessionMock,
   addMessages: localAddMessagesMock,
   getSession: getSessionMock,
@@ -98,7 +108,7 @@ vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
   updateSessionStats: localUpdateSessionStatsMock,
 }))
 
-vi.mock('../../packages/server/src/db/hermes/session-category-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/session-category-store', () => ({
   SESSION_CATEGORY_NAME_MAX_LENGTH: 40,
   listSessionCategories: listSessionCategoriesMock,
   createSessionCategory: createSessionCategoryMock,
@@ -111,11 +121,11 @@ vi.mock('../../packages/server/src/db/hermes/session-category-store', () => ({
   setSessionCategory: setSessionCategoryMock,
 }))
 
-vi.mock('../../packages/server/src/db/hermes/users-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/users-store', () => ({
   listUserProfiles: listUserProfilesMock,
 }))
 
-vi.mock('../../packages/server/src/db/hermes/usage-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/usage-store', () => ({
   deleteUsage: vi.fn(),
   getUsage: vi.fn(),
   getUsageBatch: vi.fn(),
@@ -123,22 +133,34 @@ vi.mock('../../packages/server/src/db/hermes/usage-store', () => ({
   getRecordedUsageSessionIds: getRecordedUsageSessionIdsMock,
 }))
 
-vi.mock('../../packages/server/src/routes/hermes/group-chat', () => ({
+vi.mock('../../packages/server/src/modules/studio/routes/group-chat', () => ({
   getGroupChatServer: getGroupChatServerMock,
 }))
 
-vi.mock('../../packages/server/src/services/hermes/model-context', () => ({
+vi.mock('../../packages/server/src/modules/studio/controllers/group-chat', () => ({
+  getGroupChatServer: getGroupChatServerMock,
+}))
+
+vi.mock('../../packages/server/src/modules/hermes/services/models/context', () => ({
   getModelContextLength: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/profiles/profile', () => ({
   getActiveProfileName: getActiveProfileNameMock,
   getActiveProfileDir: () => '/tmp/hermes-test/default',
   getProfileDir: (name: string) => `/tmp/hermes-test/${name || 'default'}`,
   listProfileNamesFromDisk: () => ['default', 'travel'],
 }))
 
-vi.mock('../../packages/server/src/services/hermes/agent-bridge', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/profile-config', () => ({
+  getActiveProfileName: getActiveProfileNameMock,
+  getActiveProfileDir: () => '/tmp/hermes-test/default',
+  getProfileDir: (name: string) => `/tmp/hermes-test/${name || 'default'}`,
+  listProfileNamesFromDisk: () => ['default', 'travel'],
+  readConfigYamlForProfile: readConfigYamlForProfileMock,
+}))
+
+vi.mock('../../packages/server/src/modules/hermes/services/bridge/index', () => ({
   AgentBridgeClient: vi.fn().mockImplementation(() => ({
     switchSessionModel: bridgeSwitchSessionModelMock,
   })),
@@ -147,23 +169,27 @@ vi.mock('../../packages/server/src/services/hermes/agent-bridge', () => ({
   })),
 }))
 
-vi.mock('../../packages/server/src/services/config-helpers', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/profiles/config', () => ({
   readConfigYamlForProfile: readConfigYamlForProfileMock,
 }))
 
-vi.mock('../../packages/server/src/services/coding-agents/runtime/run-manager', () => ({
+vi.mock('../../packages/server/src/modules/coding-agents/services/runtime/run-manager', () => ({
   codingAgentRunManager: codingAgentRunManagerMock,
 }))
 
-vi.mock('../../packages/server/src/services/hermes/run-chat/server-registry', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/chat-run/server-registry', () => ({
   getChatRunServer: getChatRunServerMock,
 }))
 
-vi.mock('../../packages/server/src/db/hermes/compression-snapshot', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/chat-run/server-registry', () => ({
+  getChatRunServer: getChatRunServerMock,
+}))
+
+vi.mock('../../packages/server/src/modules/studio/repositories/compression-snapshot', () => ({
   getCompressionSnapshot: getCompressionSnapshotMock,
 }))
 
-vi.mock('../../packages/server/src/lib/context-compressor/export-compressor', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/context-compressor/export-compressor', () => ({
   buildDbExportHistory: buildDbExportHistoryMock,
   ExportCompressor: class {
     async compress(messages: any[]) {
@@ -175,9 +201,50 @@ vi.mock('../../packages/server/src/lib/context-compressor/export-compressor', ()
   },
 }))
 
+vi.mock('../../packages/server/src/modules/studio/services/context-compressor/export-compressor', () => ({
+  buildDbExportHistory: buildDbExportHistoryMock,
+  ExportCompressor: class {
+    async compress(messages: any[]) {
+      return {
+        messages,
+        meta: { totalMessages: messages.length, compressed: true, llmCompressed: true, summaryTokenEstimate: 100, verbatimCount: 0, compressedStartIndex: -1 },
+      }
+    }
+  },
+}))
+
+vi.mock('../../packages/server/src/modules/studio/public/session-agent-runtime', () => ({
+  deleteHermesSessionForProfile: deleteHermesSessionForProfileMock,
+  getHermesCliSession: getSessionMock,
+  getHermesModelContextLength: vi.fn(),
+  getHermesSessionDetail: getSessionDetailFromDbMock,
+  getHermesSessionDetailForProfile: getSessionDetailFromDbWithProfileMock,
+  getHermesSessionDetailPaginatedForProfile: vi.fn(),
+  getExactHermesSessionDetailForProfile: getExactSessionDetailFromDbWithProfileMock,
+  getHermesUsageStats: getUsageStatsFromDbMock,
+  listHermesSessionSummaries: listSessionSummariesMock,
+  listHermesSessionSummaryGroups: listSessionSummaryGroupsMock,
+  notifyHermesSessionModelChanged: async (sessionId: string, model: string, provider: string, profile?: string) => {
+    const state = bridgeGetRuntimeStateMock()
+    if (!state.ready || !state.running) return
+    await bridgeSwitchSessionModelMock(
+      sessionId,
+      model,
+      provider === 'claude-oauth' ? 'anthropic' : provider,
+      profile,
+    )
+  },
+  stopCodingAgentSessionRun: codingAgentRunManagerMock.stop,
+}))
+
+vi.mock('../../packages/server/src/modules/studio/public/agent-status-registry', () => ({
+  isHermesAgentAvailable: vi.fn(() => agentStatusMocks.hermesAvailable),
+}))
+
 describe('session conversations controller', () => {
   beforeEach(() => {
     vi.resetModules()
+    agentStatusMocks.hermesAvailable = true
     listConversationSummariesFromDbMock.mockReset()
     getConversationDetailFromDbMock.mockReset()
     listConversationSummariesMock.mockReset()
@@ -196,6 +263,7 @@ describe('session conversations controller', () => {
     localDeleteSessionMock.mockReset()
     localRenameSessionMock.mockReset()
     localSetSessionArchivedMock.mockReset()
+    localSetSessionPushEnabledMock.mockReset()
     localCreateSessionMock.mockReset()
     localUpdateSessionMock.mockReset()
     localAddMessagesMock.mockReset()
@@ -271,7 +339,7 @@ describe('session conversations controller', () => {
       workspace: null,
     }])
 
-    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
     const ctx: any = { query: { humanOnly: 'true', limit: '5' }, body: null }
     await mod.listConversations(ctx)
 
@@ -308,7 +376,7 @@ describe('session conversations controller', () => {
         set: (name: string, value: string) => { headers[name] = value },
         body: null,
       }
-      const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+      const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
       await mod.readWorkspaceFileContent(successCtx)
 
       expect(successCtx.body).toEqual(pdfBytes)
@@ -397,7 +465,7 @@ describe('session conversations controller', () => {
     })
 
     try {
-      const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+      const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
       const listCtx: any = {
         params: { id: 'session-with-workspace' },
         query: { path: 'workspace/project' },
@@ -442,7 +510,7 @@ describe('session conversations controller', () => {
     })
 
     try {
-      const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+      const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
       const ctx: any = {
         params: { id: 'session-relative-workspace' },
         query: { path: 'project/notes.md' },
@@ -471,7 +539,7 @@ describe('session conversations controller', () => {
     })
 
     try {
-      const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+      const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
       const ctx: any = {
         params: { id: 'session-profile-workspace' },
         query: { path: 'workspace/project/notes.md' },
@@ -513,7 +581,7 @@ describe('session conversations controller', () => {
     }))
 
     try {
-      const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+      const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
       const rootCtx: any = { query: {}, body: null }
 
       await mod.listWorkspaceFolders(rootCtx)
@@ -557,7 +625,7 @@ describe('session conversations controller', () => {
       Object.defineProperty(process, 'platform', { value: 'win32' })
       process.env.WORKSPACE_BASE = workspaceBase
 
-      const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+      const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
       const rootCtx: any = { query: {}, body: null }
       await mod.listWorkspaceFolders(rootCtx)
 
@@ -600,7 +668,7 @@ describe('session conversations controller', () => {
       await symlink(outsideTarget, outsideLink)
       process.env.WORKSPACE_BASE = workspaceBase
 
-      const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+      const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
       const rootCtx: any = { query: {}, body: null }
       await mod.listWorkspaceFolders(rootCtx)
 
@@ -654,7 +722,7 @@ describe('session conversations controller', () => {
       await mkdir(codexDir, { recursive: true })
       process.env.WORKSPACE_BASE = workspaceBase
 
-      const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+      const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
       const rootCtx: any = { query: {}, body: null }
       await mod.listWorkspaceFolders(rootCtx)
 
@@ -700,7 +768,7 @@ describe('session conversations controller', () => {
       await symlink(outsideTarget, escapeLink)
       process.env.WORKSPACE_BASE = workspaceBase
 
-      const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+      const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
 
       const createCtx: any = { request: { body: { parentPath: 'escape-link', name: 'created' } }, body: null }
       await mod.createWorkspaceFolder(createCtx)
@@ -757,7 +825,7 @@ describe('session conversations controller', () => {
       ],
     })
 
-    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
     const ctx: any = { params: { id: 'session-context-1' }, query: {}, body: null }
 
     await mod.getContext(ctx)
@@ -782,7 +850,7 @@ describe('session conversations controller', () => {
   it('returns 404 for missing session context', async () => {
     localGetSessionDetailMock.mockReturnValue(null)
 
-    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
     const ctx: any = { params: { id: 'missing-session' }, query: {}, body: null }
 
     await mod.getContext(ctx)
@@ -862,7 +930,7 @@ describe('session conversations controller', () => {
       },
     ])
 
-    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
     const ctx: any = {
       query: {},
       state: {
@@ -873,14 +941,19 @@ describe('session conversations controller', () => {
     }
     await mod.list(ctx)
 
-    expect(localListSessionsMock).toHaveBeenCalledWith(undefined, undefined, 2000)
+    expect(localListSessionsMock).toHaveBeenCalledWith(undefined, undefined, 2000, {
+      sources: ['api_server', 'cli', 'coding_agent', 'global_agent'],
+      profiles: ['default', 'travel'],
+      includeArchived: false,
+      excludeSessionIds: [],
+    })
     expect(ctx.body.sessions.map((session: any) => session.id)).toEqual(['default-session', 'travel-session'])
   })
 
   it('filters the single-chat session list when profile is explicitly provided', async () => {
     localListSessionsMock.mockReturnValue([])
 
-    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
     const ctx: any = {
       query: { profile: 'travel' },
       state: { profile: { name: 'default' } },
@@ -888,7 +961,12 @@ describe('session conversations controller', () => {
     }
     await mod.list(ctx)
 
-    expect(localListSessionsMock).toHaveBeenCalledWith('travel', undefined, 2000)
+    expect(localListSessionsMock).toHaveBeenCalledWith('travel', undefined, 2000, {
+      sources: ['api_server', 'cli', 'coding_agent', 'global_agent'],
+      profiles: undefined,
+      includeArchived: false,
+      excludeSessionIds: [],
+    })
   })
 
   it('lists only global-agent sessions when requested by source', async () => {
@@ -897,7 +975,7 @@ describe('session conversations controller', () => {
       { id: 'chat-1', profile: 'default', source: 'cli' },
     ])
 
-    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
     const ctx: any = {
       query: { source: 'global_agent' },
       state: {},
@@ -905,7 +983,12 @@ describe('session conversations controller', () => {
     }
     await mod.list(ctx)
 
-    expect(localListSessionsMock).toHaveBeenCalledWith(undefined, 'global_agent', 2000)
+    expect(localListSessionsMock).toHaveBeenCalledWith(undefined, 'global_agent', 2000, {
+      sources: undefined,
+      profiles: ['default', 'travel'],
+      includeArchived: false,
+      excludeSessionIds: [],
+    })
     expect(ctx.body.sessions).toEqual([expect.objectContaining({ id: 'global-1', source: 'global_agent' })])
   })
 
@@ -915,7 +998,7 @@ describe('session conversations controller', () => {
       { id: 'archived-session', profile: 'default', source: 'cli', is_archived: 1 },
     ])
 
-    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
     const ctx: any = { query: {}, state: {}, body: null }
     await mod.list(ctx)
 
@@ -928,7 +1011,7 @@ describe('session conversations controller', () => {
       { id: 'chat-1', profile: 'default', source: 'cli' },
     ])
 
-    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
     const defaultCtx: any = {
       query: {},
       state: {},
@@ -944,7 +1027,12 @@ describe('session conversations controller', () => {
     }
     await mod.list(workflowCtx)
 
-    expect(localListSessionsMock).toHaveBeenLastCalledWith(undefined, 'workflow', 2000)
+    expect(localListSessionsMock).toHaveBeenLastCalledWith(undefined, 'workflow', 2000, {
+      sources: undefined,
+      profiles: ['default', 'travel'],
+      includeArchived: false,
+      excludeSessionIds: [],
+    })
     expect(workflowCtx.body.sessions).toEqual([expect.objectContaining({ id: 'workflow-1', source: 'workflow' })])
   })
 
@@ -960,7 +1048,7 @@ describe('session conversations controller', () => {
       { id: 'workflow-session', profile: 'default', source: 'workflow' },
     ])
 
-    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
     const ctx: any = {
       query: {},
       state: {
@@ -979,7 +1067,7 @@ describe('session conversations controller', () => {
       { id: 'travel-global', profile: 'travel', source: 'global_agent' },
     ])
 
-    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
     const ctx: any = {
       query: { profile: 'travel', source: 'global_agent' },
       state: {},
@@ -1038,7 +1126,7 @@ describe('session conversations controller', () => {
       },
     ])
 
-    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
     const ctx: any = { query: { profile: 'travel' }, state: {}, body: null }
 
     await mod.listHermesSessions(ctx)
@@ -1077,7 +1165,7 @@ describe('session conversations controller', () => {
       },
     ])
 
-    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
     const ctx: any = { query: { profile: 'travel' }, state: {}, body: null }
 
     await mod.listHermesSessions(ctx)
@@ -1122,7 +1210,7 @@ describe('session conversations controller', () => {
       included: [{ id: 'cli-pinned', source: 'cli', started_at: 1, last_active: 1 }],
     })
 
-    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
     const ctx: any = {
       query: { profile: 'travel', limit: '2', include: ['cli-pinned'] },
       state: {},
@@ -1153,7 +1241,7 @@ describe('session conversations controller', () => {
       { id: 'cli-4', source: 'cli', started_at: 1, last_active: 1 },
     ])
 
-    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
     const ctx: any = {
       query: { profile: 'travel', source: 'cli', offset: '1', limit: '2' },
       state: {},
@@ -1202,7 +1290,7 @@ describe('session conversations controller', () => {
     }])
     listSessionSummariesMock.mockResolvedValue([])
 
-    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
     const ctx: any = { query: { profile: 'travel' }, state: {}, body: null }
 
     await mod.listHermesSessions(ctx)
@@ -1216,7 +1304,7 @@ describe('session conversations controller', () => {
     getSessionMock.mockReturnValue({ id: 'session-1', profile: 'default', source: 'cli' })
     localSetSessionArchivedMock.mockReturnValue(true)
 
-    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
     const ctx: any = { params: { id: 'session-1' }, state: {}, body: null }
 
     await mod.archive(ctx)
@@ -1225,11 +1313,50 @@ describe('session conversations controller', () => {
     expect(ctx.body).toEqual({ ok: true })
   })
 
+  it('updates whether an accessible session should be pushed', async () => {
+    getSessionMock.mockReturnValue({ id: 'session-1', profile: 'default', push_enabled: 0 })
+    localSetSessionPushEnabledMock.mockReturnValue(true)
+
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
+    const ctx: any = {
+      params: { id: 'session-1' },
+      request: { body: { pushEnabled: true } },
+      state: {},
+      body: null,
+    }
+
+    await mod.setPushEnabled(ctx)
+
+    expect(localSetSessionPushEnabledMock).toHaveBeenCalledWith('session-1', true)
+    expect(emitSessionSettingsUpdatedMock).toHaveBeenCalledWith('session-1', {
+      push_enabled: true,
+    })
+    expect(ctx.body).toEqual({ ok: true, push_enabled: true })
+  })
+
+  it('rejects a non-boolean session push setting', async () => {
+    getSessionMock.mockReturnValue({ id: 'session-1', profile: 'default', push_enabled: 0 })
+
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
+    const ctx: any = {
+      params: { id: 'session-1' },
+      request: { body: { pushEnabled: 1 } },
+      state: {},
+      body: null,
+    }
+
+    await mod.setPushEnabled(ctx)
+
+    expect(localSetSessionPushEnabledMock).not.toHaveBeenCalled()
+    expect(ctx.status).toBe(400)
+    expect(ctx.body).toEqual({ error: 'pushEnabled must be a boolean' })
+  })
+
   it('lists and creates normalized global session categories', async () => {
     const category = { id: 1, name: 'Client Work', created_at: 1, updated_at: 1 }
     listSessionCategoriesMock.mockReturnValue([category])
     createSessionCategoryMock.mockReturnValue(category)
-    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
 
     const listCtx: any = { body: null }
     await mod.listCategories(listCtx)
@@ -1246,7 +1373,7 @@ describe('session conversations controller', () => {
     const renamed = { ...existing, name: 'Client Work', updated_at: 2 }
     getSessionCategoryMock.mockReturnValue(existing)
     renameSessionCategoryMock.mockReturnValue(renamed)
-    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
 
     const renameCtx: any = { params: { id: '1' }, request: { body: { name: 'Client Work' } }, body: null }
     await mod.renameCategory(renameCtx)
@@ -1262,7 +1389,7 @@ describe('session conversations controller', () => {
   it('assigns and clears a category on an accessible session', async () => {
     getSessionMock.mockReturnValue({ id: 'session-1', profile: 'default', source: 'cli' })
     getSessionCategoryMock.mockReturnValue({ id: 1, name: 'Work' })
-    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
 
     const assignCtx: any = {
       params: { id: 'session-1' },
@@ -1288,7 +1415,7 @@ describe('session conversations controller', () => {
   it('rejects archiving global-agent sessions', async () => {
     getSessionMock.mockReturnValue({ id: 'global-1', profile: 'default', source: 'global_agent' })
 
-    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
     const ctx: any = { params: { id: 'global-1' }, state: {}, body: null }
 
     await mod.archive(ctx)
@@ -1301,7 +1428,7 @@ describe('session conversations controller', () => {
   it('returns 404 when archiving a missing session', async () => {
     getSessionMock.mockReturnValue(null)
 
-    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
     const ctx: any = { params: { id: 'missing' }, state: {}, body: null }
 
     await mod.archive(ctx)
@@ -1315,7 +1442,7 @@ describe('session conversations controller', () => {
     getSessionMock.mockReturnValue({ id: 'session-1', profile: 'default', source: 'coding_agent', is_archived: 1 })
     localSetSessionArchivedMock.mockReturnValue(true)
 
-    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
     const ctx: any = { params: { id: 'session-1' }, state: {}, body: null }
 
     await mod.unarchive(ctx)
@@ -1327,7 +1454,7 @@ describe('session conversations controller', () => {
   it('returns 404 when unarchiving a missing session', async () => {
     getSessionMock.mockReturnValue(null)
 
-    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
     const ctx: any = { params: { id: 'missing' }, state: {}, body: null }
 
     await mod.unarchive(ctx)
@@ -1343,7 +1470,7 @@ describe('session conversations controller', () => {
       { id: 'chat-1', profile: 'default', source: 'cli' },
     ])
 
-    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
     const ctx: any = {
       query: { q: 'docker', limit: '10' },
       state: { profile: { name: 'travel' } },
@@ -1369,7 +1496,7 @@ describe('session conversations controller', () => {
       { id: 'chat-1', profile: 'default', source: 'cli' },
     ])
 
-    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
     const ctx: any = {
       query: { q: 'docker', source: 'global_agent', limit: '10' },
       state: {},
@@ -1391,7 +1518,7 @@ describe('session conversations controller', () => {
       throw new Error('db unavailable')
     })
 
-    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
     const ctx: any = { query: { humanOnly: 'false' }, body: null }
     await expect(mod.listConversations(ctx)).rejects.toThrow('db unavailable')
   })
@@ -1405,7 +1532,7 @@ describe('session conversations controller', () => {
       ],
     })
 
-    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
     const ctx: any = { params: { id: 'root' }, query: { humanOnly: 'true' }, body: null }
     await mod.getConversationMessages(ctx)
 
@@ -1424,7 +1551,7 @@ describe('session conversations controller', () => {
       id: 'root',
     })
 
-    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
     const ctx: any = { params: { id: 'root' }, query: { humanOnly: 'false' }, body: null }
     await mod.getConversationMessages(ctx)
 
@@ -1440,7 +1567,7 @@ describe('session conversations controller', () => {
   it('returns 404 when local conversation detail is missing', async () => {
     localGetSessionDetailMock.mockReturnValue(null)
 
-    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
     const ctx: any = { params: { id: 'root' }, query: { humanOnly: 'false' }, body: null }
     await mod.getConversationMessages(ctx)
 
@@ -1464,7 +1591,7 @@ describe('session conversations controller', () => {
       messages: [],
     })
 
-    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
     const ctx: any = { params: { id: 'cli-1' }, body: null }
     await mod.getHermesSession(ctx)
 
@@ -1489,7 +1616,7 @@ describe('session conversations controller', () => {
       ],
     })
 
-    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
     const ctx: any = { params: { id: 'hermes-1' }, body: null }
     await mod.getHermesSession(ctx)
 
@@ -1503,6 +1630,62 @@ describe('session conversations controller', () => {
     })
   })
 
+  it('returns 404 without reading state.db or spawning Hermes when local history is missing', async () => {
+    agentStatusMocks.hermesAvailable = false
+    localGetSessionDetailMock.mockReturnValue(null)
+    getSessionDetailFromDbMock.mockResolvedValue(null)
+
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
+    const ctx: any = { params: { id: 'missing-session' }, body: null }
+    await mod.getHermesSession(ctx)
+
+    expect(getSessionDetailFromDbMock).not.toHaveBeenCalled()
+    expect(getSessionMock).not.toHaveBeenCalled()
+    expect(ctx.status).toBe(404)
+    expect(ctx.body).toEqual({ error: 'Session not found' })
+  })
+
+  it('lists only Studio-local history when Hermes is unavailable', async () => {
+    agentStatusMocks.hermesAvailable = false
+    localListSessionsMock.mockReturnValue([{
+      id: 'local-history',
+      profile: 'default',
+      source: 'api_server',
+      title: 'Local history',
+      last_active: 10,
+    }])
+
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
+    const ctx: any = { query: {}, body: null }
+    await mod.listHermesSessions(ctx)
+
+    expect(listSessionSummariesMock).not.toHaveBeenCalled()
+    expect(ctx.body.sessions).toEqual([expect.objectContaining({ id: 'local-history' })])
+  })
+
+  it('groups only Studio-local history when Hermes is unavailable', async () => {
+    agentStatusMocks.hermesAvailable = false
+    localListSessionsMock.mockReturnValue([{
+      id: 'local-history',
+      profile: 'default',
+      source: 'api_server',
+      title: 'Local history',
+      last_active: 10,
+    }])
+
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
+    const ctx: any = { query: { limit: '20' }, body: null }
+    await mod.listHermesSessionGroups(ctx)
+
+    expect(listSessionSummaryGroupsMock).not.toHaveBeenCalled()
+    expect(ctx.body.groups).toEqual([
+      expect.objectContaining({
+        source: 'api_server',
+        sessions: [expect.objectContaining({ id: 'local-history' })],
+      }),
+    ])
+  })
+
   it('reads Hermes history detail from the requested profile database', async () => {
     localGetSessionDetailMock.mockReturnValue(null)
     getSessionDetailFromDbWithProfileMock.mockResolvedValue({
@@ -1514,7 +1697,7 @@ describe('session conversations controller', () => {
       ],
     })
 
-    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
     const ctx: any = { params: { id: 'travel-session' }, query: { profile: 'travel' }, body: null }
     await mod.getHermesSession(ctx)
 
@@ -1540,7 +1723,7 @@ describe('session conversations controller', () => {
     getSessionDetailFromDbMock.mockResolvedValue(null)
     getSessionMock.mockResolvedValue(null)
 
-    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
     const ctx: any = { params: { id: 'api-1' }, body: null }
     await mod.getHermesSession(ctx)
 
@@ -1597,7 +1780,7 @@ describe('session conversations controller', () => {
       ],
     })
 
-    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
     const ctx: any = { query: { days: '2' }, body: null }
     await mod.usageStats(ctx)
 
@@ -1649,7 +1832,7 @@ describe('session conversations controller', () => {
       by_day: [],
     })
 
-    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
     const ctx: any = { query: { days: '2' }, state: { profile: { name: 'research' } }, body: null }
     await mod.usageStats(ctx)
 
@@ -1698,7 +1881,7 @@ describe('session conversations controller', () => {
       by_day: [],
     })
 
-    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
     const ctx: any = { query: { days: '2' }, body: null }
     await mod.usageStats(ctx)
 
@@ -1710,7 +1893,7 @@ describe('session conversations controller', () => {
   it('sets a session model and provider in the local session store', async () => {
     getSessionMock.mockReturnValue({ id: 'session-1' })
 
-    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
     const ctx: any = {
       params: { id: 'session-1' },
       request: { body: { model: 'grok-4', provider: 'xai' } },
@@ -1747,7 +1930,7 @@ describe('session conversations controller', () => {
     })
     getSessionMock.mockReturnValue({ id: 'session-1', profile: 'travel' })
 
-    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
     const ctx: any = {
       params: { id: 'session-1' },
       request: { body: { model: 'claude-sonnet-4-6', provider: 'claude-oauth' } },
@@ -1784,7 +1967,7 @@ describe('session conversations controller', () => {
       workspace: '/tmp/original-workspace',
     })
 
-    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
     const ctx: any = {
       params: { id: 'codex-session' },
       request: { body: { model: 'gpt-5.5', provider: 'openai-codex', apiMode: 'chat_completions' } },
@@ -1807,7 +1990,7 @@ describe('session conversations controller', () => {
   it('persists and broadcasts a session reasoning effort', async () => {
     getSessionMock.mockReturnValue({ id: 'session-reasoning', profile: 'default' })
 
-    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
     const ctx: any = {
       params: { id: 'session-reasoning' },
       request: { body: { reasoningEffort: 'high' } },
@@ -1830,7 +2013,7 @@ describe('session conversations controller', () => {
     getExactSessionDetailFromDbWithProfileMock.mockResolvedValue({ id: 'history-only', messages: [] })
     deleteHermesSessionForProfileMock.mockResolvedValue(true)
 
-    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
     const ctx: any = { params: { id: 'history-only' }, body: null }
     await mod.remove(ctx)
 
@@ -1852,7 +2035,7 @@ describe('session conversations controller', () => {
     })
     localDeleteSessionMock.mockReturnValue(true)
 
-    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
     const ctx: any = { params: { id: 'codex-session' }, body: null }
     await mod.remove(ctx)
 
@@ -1877,7 +2060,7 @@ describe('session conversations controller', () => {
     deleteHermesSessionForProfileMock.mockResolvedValue(true)
     localDeleteSessionMock.mockReturnValue(true)
 
-    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
     const ctx: any = {
       request: {
         body: {
@@ -1911,7 +2094,7 @@ describe('session conversations controller', () => {
     })
     localDeleteSessionMock.mockReturnValue(true)
 
-    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
     const ctx: any = {
       request: {
         body: {
@@ -1965,7 +2148,7 @@ describe('session conversations controller', () => {
     localGetSessionDetailMock.mockReturnValueOnce(null).mockReturnValueOnce({ ...hermesDetail, profile: 'travel' })
     getSessionDetailFromDbWithProfileMock.mockResolvedValue(hermesDetail)
 
-    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
     const ctx: any = { params: { id: 'cli-1' }, query: { profile: 'travel' }, state: {}, body: null }
 
     await mod.importHermesSession(ctx)
@@ -2008,7 +2191,7 @@ describe('session conversations controller', () => {
       const sessionData = { id: 'abc-123', title: 'Test Session', messages: [{ id: 1, role: 'user', content: 'hello' }] }
       localGetSessionDetailMock.mockReturnValue(sessionData)
 
-      const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+      const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
       const setMock = vi.fn()
       const ctx: any = { params: { id: 'abc-123' }, query: {}, set: setMock, body: null }
 
@@ -2032,7 +2215,7 @@ describe('session conversations controller', () => {
       }
       localGetSessionDetailMock.mockReturnValue(sessionData)
 
-      const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+      const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
       const setMock = vi.fn()
       const ctx: any = { params: { id: 'txt-123' }, query: { mode: 'full', ext: 'txt' }, set: setMock, body: null }
 
@@ -2059,7 +2242,7 @@ describe('session conversations controller', () => {
         { role: 'assistant', content: 'post cursor' },
       ])
 
-      const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+      const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
       const ctx: any = {
         params: { id: 'compressed-123' },
         query: { mode: 'compressed', ext: 'json' },
@@ -2081,7 +2264,7 @@ describe('session conversations controller', () => {
       localGetSessionDetailMock.mockReturnValue(null)
       getSessionMock.mockResolvedValue(null)
 
-      const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+      const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
       const ctx: any = { params: { id: 'not-found' }, query: {}, set: vi.fn(), body: null }
 
       await mod.exportSession(ctx)
@@ -2094,7 +2277,7 @@ describe('session conversations controller', () => {
       const sessionData = { id: 'cli-123', title: 'CLI Session', messages: [] }
       localGetSessionDetailMock.mockReturnValue(sessionData)
 
-      const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+      const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
       const setMock = vi.fn()
       const ctx: any = { params: { id: 'cli-123' }, query: {}, set: setMock, body: null }
 

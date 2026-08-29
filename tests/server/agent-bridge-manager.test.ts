@@ -81,7 +81,7 @@ describe('agent bridge manager command resolution', () => {
     process.env.HERMES_BIN = installedHermes
     process.env.HERMES_HOME = studioHome
 
-    const { resolveAgentBridgeCommand } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
+    const { resolveAgentBridgeCommand } = await import('../../packages/server/src/modules/hermes/services/bridge/manager')
 
     expect(resolveAgentBridgeCommand()).toEqual({
       command: bundledPython,
@@ -105,7 +105,7 @@ describe('agent bridge manager command resolution', () => {
     process.env.HERMES_HOME = homeDir
     process.env.HERMES_BIN = fakeHermes
 
-    const { resolveAgentBridgeCommand } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
+    const { resolveAgentBridgeCommand } = await import('../../packages/server/src/modules/hermes/services/bridge/manager')
     const command = resolveAgentBridgeCommand()
 
     expect(command).toEqual({
@@ -134,7 +134,7 @@ describe('agent bridge manager command resolution', () => {
     process.env.HERMES_HOME = homeDir
     process.env.HERMES_BIN = fakeHermes
 
-    const { resolveAgentBridgeCommand } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
+    const { resolveAgentBridgeCommand } = await import('../../packages/server/src/modules/hermes/services/bridge/manager')
     const command = resolveAgentBridgeCommand()
 
     expect(command.agentRoot).toBe(agentRoot)
@@ -150,7 +150,7 @@ describe('agent bridge manager command resolution', () => {
     process.env.HERMES_BIN = join(tempDir, 'missing-hermes')
     process.env.PYTHON = fakePython
 
-    const { resolveAgentBridgeCommand } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
+    const { resolveAgentBridgeCommand } = await import('../../packages/server/src/modules/hermes/services/bridge/manager')
     const command = resolveAgentBridgeCommand()
 
     expect(command).toEqual({
@@ -162,7 +162,7 @@ describe('agent bridge manager command resolution', () => {
   })
 
   it('injects Web UI OpenRouter attribution into the bridge process env by default', async () => {
-    const { buildAgentBridgeProcessEnv } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
+    const { buildAgentBridgeProcessEnv } = await import('../../packages/server/src/modules/hermes/services/bridge/manager')
     const env = buildAgentBridgeProcessEnv('ipc:///tmp/test.sock', '/tmp/hermes-home', '/tmp/hermes-agent')
 
     expect(env.HERMES_OPENROUTER_APP_REFERER).toBe('https://hermes-studio.ai')
@@ -175,7 +175,7 @@ describe('agent bridge manager command resolution', () => {
     process.env.HERMES_OPENROUTER_APP_TITLE = 'Custom App'
     process.env.HERMES_OPENROUTER_APP_CATEGORIES = 'custom-category'
 
-    const { buildAgentBridgeProcessEnv } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
+    const { buildAgentBridgeProcessEnv } = await import('../../packages/server/src/modules/hermes/services/bridge/manager')
     const env = buildAgentBridgeProcessEnv('ipc:///tmp/test.sock', '/tmp/hermes-home', undefined)
 
     expect(env.HERMES_OPENROUTER_APP_REFERER).toBe('https://example.invalid/app')
@@ -186,14 +186,14 @@ describe('agent bridge manager command resolution', () => {
   it('removes inherited Anthropic auth token from the bridge process env', async () => {
     process.env.ANTHROPIC_AUTH_TOKEN = 'stale-bearer-token'
 
-    const { buildAgentBridgeProcessEnv } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
+    const { buildAgentBridgeProcessEnv } = await import('../../packages/server/src/modules/hermes/services/bridge/manager')
     const env = buildAgentBridgeProcessEnv('ipc:///tmp/test.sock', '/tmp/hermes-home', undefined)
 
     expect(env).not.toHaveProperty('ANTHROPIC_AUTH_TOKEN')
   })
 
   it('uses an isolated default bridge endpoint while running under Vitest', async () => {
-    const { DEFAULT_AGENT_BRIDGE_ENDPOINT } = await import('../../packages/server/src/services/hermes/agent-bridge/client')
+    const { DEFAULT_AGENT_BRIDGE_ENDPOINT } = await import('../../packages/server/src/modules/hermes/services/bridge/client')
 
     expect(DEFAULT_AGENT_BRIDGE_ENDPOINT).toContain(`hermes-agent-bridge-test-${process.pid}`)
     expect(DEFAULT_AGENT_BRIDGE_ENDPOINT).not.toBe('ipc:///tmp/hermes-agent-bridge.sock')
@@ -202,7 +202,7 @@ describe('agent bridge manager command resolution', () => {
   it('honors the bridge connect retry environment override', async () => {
     process.env.HERMES_AGENT_BRIDGE_CONNECT_RETRY_MS = '120000'
 
-    const { AgentBridgeClient } = await import('../../packages/server/src/services/hermes/agent-bridge/client')
+    const { AgentBridgeClient } = await import('../../packages/server/src/modules/hermes/services/bridge/client')
     const client = new AgentBridgeClient({ endpoint: 'tcp://127.0.0.1:1' })
 
     expect(client.connectRetryMs).toBe(120000)
@@ -229,7 +229,7 @@ describe('agent bridge manager command resolution', () => {
     })
 
     try {
-      const { AgentBridgeClient } = await import('../../packages/server/src/services/hermes/agent-bridge/client')
+      const { AgentBridgeClient } = await import('../../packages/server/src/modules/hermes/services/bridge/client')
       const client = new AgentBridgeClient({ endpoint, connectRetryMs: 1000, timeoutMs: 1000 })
       await expect(client.ping()).resolves.toMatchObject({ ok: true, pong: true })
       await ready
@@ -247,7 +247,7 @@ describe('agent bridge manager command resolution', () => {
     const endpoint = await listenOnRandomTcpPort(server)
 
     try {
-      const { AgentBridgeManager } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
+      const { AgentBridgeManager } = await import('../../packages/server/src/modules/hermes/services/bridge/manager')
       const manager = new AgentBridgeManager({ endpoint })
 
       await expect(manager.checkReadiness({ timeoutMs: 250, connectRetryMs: 0 })).resolves.toMatchObject({
@@ -269,7 +269,7 @@ describe('agent bridge manager command resolution', () => {
   })
 
   it('reports unreachable instead of throwing when endpoint is missing', async () => {
-    const { AgentBridgeManager } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
+    const { AgentBridgeManager } = await import('../../packages/server/src/modules/hermes/services/bridge/manager')
     const manager = new AgentBridgeManager()
     manager.endpoint = ''
 
@@ -290,8 +290,8 @@ describe('agent bridge manager command resolution', () => {
   })
 
   it('reports starting readiness without pinging the bridge', async () => {
-    const { AgentBridgeClient } = await import('../../packages/server/src/services/hermes/agent-bridge/client')
-    const { AgentBridgeManager } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
+    const { AgentBridgeClient } = await import('../../packages/server/src/modules/hermes/services/bridge/client')
+    const { AgentBridgeManager } = await import('../../packages/server/src/modules/hermes/services/bridge/manager')
     const pingSpy = vi.spyOn(AgentBridgeClient.prototype, 'ping')
     const manager = new AgentBridgeManager({ endpoint: 'tcp://127.0.0.1:6553' })
 
@@ -314,8 +314,8 @@ describe('agent bridge manager command resolution', () => {
   })
 
   it('reports stopping readiness without pinging the bridge', async () => {
-    const { AgentBridgeClient } = await import('../../packages/server/src/services/hermes/agent-bridge/client')
-    const { AgentBridgeManager } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
+    const { AgentBridgeClient } = await import('../../packages/server/src/modules/hermes/services/bridge/client')
+    const { AgentBridgeManager } = await import('../../packages/server/src/modules/hermes/services/bridge/manager')
     const pingSpy = vi.spyOn(AgentBridgeClient.prototype, 'ping')
     const manager = new AgentBridgeManager({ endpoint: 'tcp://127.0.0.1:6554' })
 
@@ -340,8 +340,8 @@ describe('agent bridge manager command resolution', () => {
   })
 
   it('reports restarting readiness without pinging the bridge', async () => {
-    const { AgentBridgeClient } = await import('../../packages/server/src/services/hermes/agent-bridge/client')
-    const { AgentBridgeManager } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
+    const { AgentBridgeClient } = await import('../../packages/server/src/modules/hermes/services/bridge/client')
+    const { AgentBridgeManager } = await import('../../packages/server/src/modules/hermes/services/bridge/manager')
     const pingSpy = vi.spyOn(AgentBridgeClient.prototype, 'ping')
     const manager = new AgentBridgeManager({ endpoint: 'tcp://127.0.0.1:6555' })
 
@@ -382,7 +382,7 @@ describe('agent bridge manager command resolution', () => {
     const endpoint = await listenOnRandomTcpPort(server)
 
     try {
-      const { AgentBridgeManager } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
+      const { AgentBridgeManager } = await import('../../packages/server/src/modules/hermes/services/bridge/manager')
       const manager = new AgentBridgeManager({ endpoint, startupTimeoutMs: 100 })
 
       await manager.start()
@@ -419,7 +419,7 @@ describe('agent bridge manager command resolution', () => {
     const endpoint = await listenOnRandomTcpPort(server)
 
     try {
-      const { AgentBridgeManager } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
+      const { AgentBridgeManager } = await import('../../packages/server/src/modules/hermes/services/bridge/manager')
       const manager = new AgentBridgeManager({ endpoint, startupTimeoutMs: 100 })
 
       await manager.start()
@@ -437,7 +437,7 @@ describe('agent bridge manager command resolution', () => {
   })
 
   it('force-stops the complete managed bridge process tree', async () => {
-    const { AgentBridgeManager } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
+    const { AgentBridgeManager } = await import('../../packages/server/src/modules/hermes/services/bridge/manager')
     const manager = new AgentBridgeManager({ endpoint: 'tcp://127.0.0.1:6557' })
     const child = createMockManagedChild(45678)
     ;(manager as any).child = child
@@ -460,7 +460,7 @@ describe('agent bridge manager command resolution', () => {
     vi.useFakeTimers()
     process.env.HERMES_AGENT_BRIDGE_SHUTDOWN_TIMEOUT_MS = '25'
     try {
-      const { AgentBridgeManager } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
+      const { AgentBridgeManager } = await import('../../packages/server/src/modules/hermes/services/bridge/manager')
       const manager = new AgentBridgeManager({ endpoint: 'tcp://127.0.0.1:6556' })
       const child = createMockManagedChild(45679)
       ;(manager as any).child = child
@@ -501,7 +501,7 @@ describe('agent bridge manager command resolution', () => {
     const endpoint = await listenOnRandomTcpPort(server)
 
     try {
-      const { AgentBridgeManager } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
+      const { AgentBridgeManager } = await import('../../packages/server/src/modules/hermes/services/bridge/manager')
       const manager = new AgentBridgeManager({ endpoint, startupTimeoutMs: 100 })
 
       await manager.start()
@@ -536,7 +536,7 @@ describe('agent bridge manager command resolution', () => {
   })
 
   it('returns unreachable without attempting recovery when recover is false', async () => {
-    const { AgentBridgeManager } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
+    const { AgentBridgeManager } = await import('../../packages/server/src/modules/hermes/services/bridge/manager')
     const manager = new AgentBridgeManager({ endpoint: 'tcp://127.0.0.1:6556' })
     const readiness = {
       endpoint: 'tcp://127.0.0.1:6556',
@@ -561,7 +561,7 @@ describe('agent bridge manager command resolution', () => {
   })
 
   it('returns immediately when the bridge is already reachable', async () => {
-    const { AgentBridgeManager } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
+    const { AgentBridgeManager } = await import('../../packages/server/src/modules/hermes/services/bridge/manager')
     const manager = new AgentBridgeManager({ endpoint: 'tcp://127.0.0.1:6560' })
     const readiness = {
       endpoint: 'tcp://127.0.0.1:6560',
@@ -585,7 +585,7 @@ describe('agent bridge manager command resolution', () => {
   })
 
   it('waits for an in-flight start before re-checking readiness', async () => {
-    const { AgentBridgeManager } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
+    const { AgentBridgeManager } = await import('../../packages/server/src/modules/hermes/services/bridge/manager')
     const manager = new AgentBridgeManager({ endpoint: 'tcp://127.0.0.1:6561' })
     let resolveStarting: (() => void) | undefined
     ;(manager as any).starting = new Promise<void>((resolve) => {
@@ -641,7 +641,7 @@ describe('agent bridge manager command resolution', () => {
   it('bounds an in-flight start by caller timeout', async () => {
     vi.useFakeTimers()
     try {
-      const { AgentBridgeManager } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
+      const { AgentBridgeManager } = await import('../../packages/server/src/modules/hermes/services/bridge/manager')
       const manager = new AgentBridgeManager({ endpoint: 'tcp://127.0.0.1:6565' })
       ;(manager as any).starting = new Promise<void>(() => {})
       const checkReadinessSpy = vi.spyOn(manager, 'checkReadiness')
@@ -674,7 +674,7 @@ describe('agent bridge manager command resolution', () => {
   })
 
   it('coalesces callers onto an existing managed recovery', async () => {
-    const { AgentBridgeManager } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
+    const { AgentBridgeManager } = await import('../../packages/server/src/modules/hermes/services/bridge/manager')
     const manager = new AgentBridgeManager({ endpoint: 'tcp://127.0.0.1:6566' })
     const child = createMockManagedChild(45666)
     ;(manager as any).child = child
@@ -725,7 +725,7 @@ describe('agent bridge manager command resolution', () => {
   })
 
   it('does not run destructive managed recovery on legacy global default endpoints', async () => {
-    const { AgentBridgeManager } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
+    const { AgentBridgeManager } = await import('../../packages/server/src/modules/hermes/services/bridge/manager')
     const manager = new AgentBridgeManager({ endpoint: 'ipc:///tmp/hermes-agent-bridge.sock' })
     const child = createMockManagedChild(45667)
     ;(manager as any).child = child
@@ -763,7 +763,7 @@ describe('agent bridge manager command resolution', () => {
   })
 
   it('waits for the old managed child to exit before starting replacement recovery', async () => {
-    const { AgentBridgeManager } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
+    const { AgentBridgeManager } = await import('../../packages/server/src/modules/hermes/services/bridge/manager')
     const manager = new AgentBridgeManager({ endpoint: 'tcp://127.0.0.1:6557' })
     const child = createMockManagedChild(12345)
 
@@ -823,7 +823,7 @@ describe('agent bridge manager command resolution', () => {
   })
 
   it('does not restart managed recovery after an explicit stop wins the race', async () => {
-    const { AgentBridgeManager } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
+    const { AgentBridgeManager } = await import('../../packages/server/src/modules/hermes/services/bridge/manager')
     const manager = new AgentBridgeManager({ endpoint: 'tcp://127.0.0.1:6564' })
     const child = createMockManagedChild(12347)
 
@@ -899,7 +899,7 @@ describe('agent bridge manager command resolution', () => {
     vi.useFakeTimers()
 
     try {
-      const { AgentBridgeManager } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
+      const { AgentBridgeManager } = await import('../../packages/server/src/modules/hermes/services/bridge/manager')
       const manager = new AgentBridgeManager({ endpoint: 'tcp://127.0.0.1:6563' })
       const child = createMockManagedChild(12346)
 
@@ -984,8 +984,8 @@ describe('agent bridge manager command resolution', () => {
       }
     })
 
-    const { AgentBridgeClient } = await import('../../packages/server/src/services/hermes/agent-bridge/client')
-    const { AgentBridgeManager } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
+    const { AgentBridgeClient } = await import('../../packages/server/src/modules/hermes/services/bridge/client')
+    const { AgentBridgeManager } = await import('../../packages/server/src/modules/hermes/services/bridge/manager')
     const pingSpy = vi.spyOn(AgentBridgeClient.prototype, 'ping')
     let pingCalls = 0
     pingSpy.mockImplementation(async () => {
@@ -1068,7 +1068,7 @@ describe('agent bridge manager command resolution', () => {
   })
 
   it('returns follow-up reachable readiness when restart fails after the bridge comes up', async () => {
-    const { AgentBridgeManager } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
+    const { AgentBridgeManager } = await import('../../packages/server/src/modules/hermes/services/bridge/manager')
     const manager = new AgentBridgeManager({ endpoint: 'tcp://127.0.0.1:6558' })
     const child = createMockManagedChild(23456)
     const recoveredReadiness = {
@@ -1124,7 +1124,7 @@ describe('agent bridge manager command resolution', () => {
   })
 
   it('keeps follow-up unreachable readiness while adding restart failure context', async () => {
-    const { AgentBridgeManager } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
+    const { AgentBridgeManager } = await import('../../packages/server/src/modules/hermes/services/bridge/manager')
     const manager = new AgentBridgeManager({ endpoint: 'tcp://127.0.0.1:6559' })
     const child = createMockManagedChild(34567)
 
@@ -1187,8 +1187,8 @@ describe('agent bridge manager command resolution', () => {
   })
 
   it('preserves attached external bridge state when readiness becomes unreachable', async () => {
-    const { AgentBridgeClient } = await import('../../packages/server/src/services/hermes/agent-bridge/client')
-    const { AgentBridgeManager } = await import('../../packages/server/src/services/hermes/agent-bridge/manager')
+    const { AgentBridgeClient } = await import('../../packages/server/src/modules/hermes/services/bridge/client')
+    const { AgentBridgeManager } = await import('../../packages/server/src/modules/hermes/services/bridge/manager')
     const manager = new AgentBridgeManager({ endpoint: 'tcp://127.0.0.1:6558' })
     const readiness = {
       endpoint: 'tcp://127.0.0.1:6558',

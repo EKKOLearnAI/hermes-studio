@@ -134,7 +134,7 @@ test('records, transcribes, stages editable text, then sends through the real ch
   await mockChatSocket(page)
 
   let transcriptionRequests = 0
-  await page.route('**/api/hermes/stt/transcribe', async (route) => {
+  await page.route('**/api/studio/stt/transcribe', async (route) => {
     transcriptionRequests += 1
     await route.fulfill({
       status: 200,
