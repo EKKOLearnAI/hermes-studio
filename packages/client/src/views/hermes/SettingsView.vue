@@ -9,7 +9,6 @@ import {
 import { useI18n } from "vue-i18n";
 import { useSettingsStore } from "@/stores/hermes/settings";
 import DisplaySettings from "@/components/hermes/settings/DisplaySettings.vue";
-import AgentSettings from "@/components/hermes/settings/AgentSettings.vue";
 import ProxySettings from "@/components/hermes/settings/ProxySettings.vue";
 import CompressionSettings from "@/components/hermes/settings/CompressionSettings.vue";
 import PrivacySettings from "@/components/hermes/settings/PrivacySettings.vue";
@@ -34,7 +33,6 @@ const validTabs = computed(() => new Set([
   ...(canManageUsers ? ["webhooks"] : []),
   "display",
   "proxy",
-  "agent",
   "compression",
   "privacy",
   "models",
@@ -56,12 +54,12 @@ function handleTabUpdate(tab: string) {
 }
 
 watch(() => route.query.tab, (tab) => {
-  if (tab === "memory" || tab === "session" || tab === "gateway") {
+  if (tab === "agent" || tab === "memory" || tab === "session" || tab === "gateway") {
     void router.replace({
       name: "hermes.configSettings",
       query: {
         ...route.query,
-        tab: tab === "gateway" ? undefined : tab,
+        tab: tab === "agent" || tab === "gateway" ? undefined : tab,
       },
     });
     return;
@@ -118,9 +116,6 @@ onMounted(() => {
           </NTabPane>
           <NTabPane name="proxy" :tab="t('settings.tabs.proxy')">
             <ProxySettings />
-          </NTabPane>
-          <NTabPane name="agent" :tab="t('settings.tabs.agent')">
-            <AgentSettings />
           </NTabPane>
           <NTabPane name="compression" :tab="t('settings.tabs.compression')">
             <CompressionSettings />

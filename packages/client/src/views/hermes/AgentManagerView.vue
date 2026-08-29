@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, h, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { NAlert, NButton, NPopconfirm, NSpin, NTag, useMessage } from 'naive-ui'
+import { NAlert, NButton, NDrawer, NDrawerContent, NPopconfirm, NSpin, NTag, useDialog, useMessage } from 'naive-ui'
 import {
   checkCodingAgentUpdate,
   deleteCodingAgent,
@@ -16,6 +16,9 @@ import { fetchAgentStatusSnapshot, type AgentStatusSnapshot } from '@/api/agent-
 import { fetchRuntimeVersionStatus } from '@/api/hermes/runtime-versions'
 import VersionManagementModal from '@/components/layout/VersionManagementModal.vue'
 import { useAppStore } from '@/stores/hermes/app'
+import { useChatStore } from '@/stores/hermes/chat'
+
+const AiHelpChatPanel = defineAsyncComponent(async () => (await import('@/components/hermes/chat/ChatPanel.vue')).default)
 
 interface CodingAgentCard {
   id: CodingAgentId
@@ -63,7 +66,9 @@ const codingAgents: CodingAgentCard[] = [
 
 const { t } = useI18n()
 const message = useMessage()
+const dialog = useDialog()
 const appStore = useAppStore()
+const chatStore = useChatStore()
 const route = useRoute()
 const router = useRouter()
 
@@ -72,6 +77,8 @@ const agentStatusSnapshot = ref<AgentStatusSnapshot | null>(null)
 const loading = ref(false)
 const loadError = ref('')
 const runtimeManagerVisible = ref(false)
+const aiHelpDrawerVisible = ref(false)
+const aiHelpPrompt = ref('')
 const installing = ref<Record<CodingAgentId, boolean>>({ 'claude-code': false, codex: false, pi: false })
 const deleting = ref<Record<CodingAgentId, boolean>>({ 'claude-code': false, codex: false, pi: false })
 const checkingUpdate = ref<Record<CodingAgentId, boolean>>({ 'claude-code': false, codex: false, pi: false })
@@ -127,6 +134,66 @@ function replaceTool(next: CodingAgentToolStatus) {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+type AgentManagementOperation = 'install' | 'delete'
+
+function operationLabel(operation: AgentManagementOperation): string {
+  return t(operation === 'install' ? 'agentManager.installOperation' : 'agentManager.deleteOperation')
+}
+
+function buildAiHelpPrompt(agent: CodingAgentCard, operation: AgentManagementOperation, error: string): string {
+  return t('agentManager.aiHelpPrompt', {
+    name: agent.name,
+    id: agent.id,
+    operation: operationLabel(operation),
+    command: agent.command,
+    package: agent.packageName,
+    error,
+  })
+}
+
+function startAiHelpChat(prompt: string) {
+  chatStore.newChat({
+    source: 'coding_agent',
+    agent: 'ekko-agent',
+    codingAgentId: 'ekko-agent',
+    codingAgentMode: 'scoped',
+  })
+  aiHelpPrompt.value = prompt
+  aiHelpDrawerVisible.value = true
+}
+
+function openAiHelpDrawer(agent: CodingAgentCard, operation: AgentManagementOperation, error: string) {
+  startAiHelpChat(buildAiHelpPrompt(agent, operation, error))
+}
+
+function openGeneralAiHelpDrawer() {
+  startAiHelpChat(t('agentManager.aiHelpGeneralPrompt'))
+}
+
+function offerAiHelp(id: CodingAgentId, operation: AgentManagementOperation, error: string) {
+  const agent = codingAgents.find(item => item.id === id)
+  if (!agent) return
+  dialog.warning({
+    title: t('agentManager.aiHelpDialogTitle', { name: agent.name }),
+    content: () => h('div', { class: 'agent-ai-help-dialog' }, [
+      h('p', t('agentManager.aiHelpDialogQuestion', {
+        name: agent.name,
+        operation: operationLabel(operation),
+      })),
+      h('pre', { class: 'agent-ai-help-error' }, error),
+    ]),
+    positiveText: t('agentManager.aiHelpDialogPositive'),
+    negativeText: t('common.cancel'),
+    onPositiveClick: () => openAiHelpDrawer(agent, operation, error),
+  })
+}
+
+function handleMutationError(id: CodingAgentId, operation: AgentManagementOperation, error: unknown) {
+  const detail = errorMessage(error)
+  message.error(detail)
+  offerAiHelp(id, operation, detail)
 }
 
 function applyAgentStatusSnapshot(snapshot: AgentStatusSnapshot) {
@@ -190,7 +257,7 @@ async function handleInstall(id: CodingAgentId) {
     updateInfo.value[id] = null
     message.success(t('codingAgents.installSuccess'))
   } catch (error) {
-    message.error(errorMessage(error))
+    handleMutationError(id, 'install', error)
   } finally {
     installing.value[id] = false
   }
@@ -205,7 +272,7 @@ async function handleDelete(id: CodingAgentId) {
     updateInfo.value[id] = null
     message.success(t('codingAgents.deleteSuccess'))
   } catch (error) {
-    message.error(errorMessage(error))
+    handleMutationError(id, 'delete', error)
   } finally {
     deleting.value[id] = false
   }
@@ -260,9 +327,14 @@ onMounted(() => {
           </NButton>
           <h2 class="header-title">{{ t('agentManager.title') }}</h2>
         </div>
-        <NButton size="small" secondary :loading="loading" @click="refreshAll()">
-          {{ t('agentManager.refresh') }}
-        </NButton>
+        <div class="agent-manager-header-actions">
+          <NButton size="small" secondary :loading="loading" @click="refreshAll()">
+            {{ t('agentManager.refresh') }}
+          </NButton>
+          <NButton size="small" secondary @click="openGeneralAiHelpDrawer">
+            {{ t('agentManager.aiHelpDialogPositive') }}
+          </NButton>
+        </div>
       </header>
 
       <NSpin :show="loading" class="agent-manager-spin">
@@ -427,6 +499,22 @@ onMounted(() => {
       </NSpin>
 
     <VersionManagementModal v-model:show="runtimeManagerVisible" />
+
+    <NDrawer
+      v-model:show="aiHelpDrawerVisible"
+      class="agent-ai-help-drawer"
+      placement="right"
+      width="min(760px, 100vw)"
+    >
+      <NDrawerContent :title="t('agentManager.aiHelpDrawerTitle')" closable body-content-style="padding: 0; overflow: hidden;">
+        <AiHelpChatPanel
+          v-if="aiHelpDrawerVisible"
+          standalone
+          :initial-composer-text="aiHelpPrompt"
+          :composer-persist-draft="false"
+        />
+      </NDrawerContent>
+    </NDrawer>
   </div>
 </template>
 
@@ -442,7 +530,29 @@ onMounted(() => {
   background: $bg-main-surface;
 }
 
+:global(.agent-ai-help-dialog p) {
+  margin: 0 0 12px;
+}
+
+:global(.agent-ai-help-error) {
+  max-height: 180px;
+  margin: 0;
+  padding: 10px 12px;
+  overflow: auto;
+  border-radius: 8px;
+  background: rgba(127, 127, 127, 0.1);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+:global(.agent-ai-help-drawer .n-drawer-body-content-wrapper) {
+  height: 100%;
+}
+
 .agent-manager-header-left,
+.agent-manager-header-actions,
 .agent-identity,
 .agent-name-row,
 .agent-actions {
@@ -452,6 +562,11 @@ onMounted(() => {
 
 .agent-manager-header-left {
   min-width: 0;
+  gap: 8px;
+}
+
+.agent-manager-header-actions {
+  flex: 0 0 auto;
   gap: 8px;
 }
 
@@ -561,6 +676,11 @@ onMounted(() => {
 }
 
 @media (max-width: $breakpoint-mobile) {
+  :global(.agent-ai-help-drawer.n-drawer) {
+    width: 100vw !important;
+    max-width: 100vw;
+  }
+
   .agent-manager-sidebar-toggle {
     display: none;
   }

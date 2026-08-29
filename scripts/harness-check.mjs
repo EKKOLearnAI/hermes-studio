@@ -314,6 +314,7 @@ for (const phrase of [
   'AGENT_BROWSER_EXECUTABLE_PATH',
   'PLAYWRIGHT_BROWSERS_PATH',
   'ms-playwright',
+  '--no-config',
   '--require-hashes',
   'editable_mode=compat',
 ]) {

@@ -3,23 +3,24 @@ import { onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { NSpin, NTabPane, NTabs } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
+import AgentSettings from '@/components/hermes/settings/AgentSettings.vue'
 import GatewayAutoStartSettings from '@/components/hermes/settings/GatewayAutoStartSettings.vue'
 import MemorySettings from '@/components/hermes/settings/MemorySettings.vue'
 import SessionSettings from '@/components/hermes/settings/SessionSettings.vue'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import { useSettingsStore } from '@/stores/hermes/settings'
 
-type HermesSettingsTab = 'gateway' | 'memory' | 'session'
+type HermesSettingsTab = 'agent' | 'memory' | 'session'
 
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const profilesStore = useProfilesStore()
 const settingsStore = useSettingsStore()
-const activeTab = ref<HermesSettingsTab>('gateway')
+const activeTab = ref<HermesSettingsTab>('agent')
 
 function normalizeTab(value: unknown): HermesSettingsTab {
-  return value === 'memory' || value === 'session' ? value : 'gateway'
+  return value === 'memory' || value === 'session' ? value : 'agent'
 }
 
 function handleTabUpdate(tab: HermesSettingsTab) {
@@ -27,7 +28,7 @@ function handleTabUpdate(tab: HermesSettingsTab) {
   void router.replace({
     query: {
       ...route.query,
-      tab: activeTab.value === 'gateway' ? undefined : activeTab.value,
+      tab: activeTab.value === 'agent' ? undefined : activeTab.value,
     },
   })
 }
@@ -61,8 +62,9 @@ onMounted(() => {
         :description="t('common.loading')"
       >
         <NTabs v-model:value="activeTab" type="line" animated @update:value="handleTabUpdate">
-          <NTabPane name="gateway" :tab="t('settings.tabs.agent')">
-            <GatewayAutoStartSettings standalone />
+          <NTabPane name="agent" :tab="t('settings.tabs.agent')">
+            <AgentSettings />
+            <GatewayAutoStartSettings />
           </NTabPane>
           <NTabPane name="memory" :tab="t('settings.tabs.memory')">
             <MemorySettings />

@@ -68,9 +68,13 @@ import {
 const props = withDefaults(defineProps<{
   standalone?: boolean;
   contentMode?: "chat" | "connections" | "agents" | "models";
+  initialComposerText?: string;
+  composerPersistDraft?: boolean;
 }>(), {
   standalone: false,
   contentMode: "chat",
+  initialComposerText: "",
+  composerPersistDraft: true,
 });
 
 const FilesPanel = defineAsyncComponent(async () => (await import('./FilesPanel.vue')).default);
@@ -2938,6 +2942,8 @@ async function handleSessionModelCustomSubmit() {
               ref="chatInputRef"
               :model-label="activeSessionModelLabel"
               :model-disabled="activeSessionUsesGlobalCodingAgentConfig"
+              :initial-text="initialComposerText"
+              :persist-draft="composerPersistDraft"
               @model-click="handleHeaderModelClick"
               @voice-click="openRealtimeVoice"
             />

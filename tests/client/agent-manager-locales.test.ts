@@ -39,6 +39,12 @@ describe('Agent Manager locale coverage', () => {
         expect(placeholders(String(messages.agentManager[key])), `${locale} agentManager.${path} placeholders`)
           .toEqual(placeholders(String(en.agentManager[key])))
       }
+
+      for (const key of ['aiHelpGeneralPrompt', 'aiHelpPrompt'] as const) {
+        const prompt = String(messages.agentManager[key])
+        expect(prompt, `${locale} agentManager.${key} Skill routing`).toContain('hermes-studio-installation')
+        expect(prompt, `${locale} agentManager.${key} reference routing`).not.toContain('references/coding-agents.md')
+      }
     }
   })
 })

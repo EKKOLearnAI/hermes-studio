@@ -79,16 +79,19 @@ describe("Hermes configuration navigation", () => {
     const agentManager = readClientFile("views/hermes/AgentManagerView.vue");
 
     expect(settingsView).not.toContain("GatewayAutoStartSettings");
+    expect(settingsView).not.toContain("AgentSettings");
     expect(settingsView).not.toContain("MemorySettings");
     expect(settingsView).not.toContain("SessionSettings");
     expect(settingsView).toContain('name: "hermes.configSettings"');
     expect(settingsView).toContain(
-      'tab === "memory" || tab === "session" || tab === "gateway"',
+      'tab === "agent" || tab === "memory" || tab === "session" || tab === "gateway"',
     );
 
-    expect(hermesSettings).toContain("<GatewayAutoStartSettings standalone />");
+    expect(hermesSettings).toContain("<AgentSettings />");
+    expect(hermesSettings).toContain("<GatewayAutoStartSettings />");
     expect(hermesSettings).toContain("<MemorySettings />");
     expect(hermesSettings).toContain("<SessionSettings />");
+    expect(hermesSettings).toContain("await settingsStore.fetchSettings()");
     expect(agentManager).toContain(
       "router.push({ name: 'hermes.configSettings' })",
     );

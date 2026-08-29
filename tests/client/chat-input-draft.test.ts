@@ -89,6 +89,7 @@ function mountForSession(
   sessionId: string,
   sessionOverrides: Partial<ReturnType<typeof useChatStore>['sessions'][number]> = {},
   displayOverrides: Record<string, any> = {},
+  componentProps: { initialText?: string; persistDraft?: boolean } = {},
 ) {
   const pinia = createTestingPinia({ stubActions: false, createSpy: vi.fn })
   const chatStore = useChatStore()
@@ -99,7 +100,7 @@ function mountForSession(
   chatStore.activeSessionId = sessionId
   chatStore.activeSession = chatStore.sessions[0]
   settingsStore.display = displayOverrides
-  return mount(ChatInput, { global: { plugins: [pinia] } })
+  return mount(ChatInput, { props: componentProps, global: { plugins: [pinia] } })
 }
 
 describe('ChatInput draft persistence', () => {
@@ -211,6 +212,25 @@ describe('ChatInput draft persistence', () => {
     const remountedA = mountForSession('session-a')
     await nextTick()
     expect((remountedA.get('textarea').element as HTMLTextAreaElement).value).toBe('draft for session a')
+  })
+
+  it('prefills a transient help prompt without overwriting the session draft', async () => {
+    localStorage.setItem('hermes_chat_input_drafts_v1', JSON.stringify({
+      'session-help': 'existing user draft',
+    }))
+    const wrapper = mountForSession('session-help', {}, {}, {
+      initialText: 'diagnose this installation error',
+      persistDraft: false,
+    })
+    await nextTick()
+
+    expect((wrapper.get('textarea').element as HTMLTextAreaElement).value)
+      .toBe('diagnose this installation error')
+    await wrapper.get('textarea').setValue('edited help prompt')
+    await nextTick()
+
+    expect(JSON.parse(localStorage.getItem('hermes_chat_input_drafts_v1') || '{}'))
+      .toEqual({ 'session-help': 'existing user draft' })
   })
 
   it('shows and cancels the active session message reference', async () => {

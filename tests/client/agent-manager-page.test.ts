@@ -13,6 +13,8 @@ const api = vi.hoisted(() => ({
 }))
 const route = vi.hoisted(() => ({ query: {} as Record<string, string> }))
 const replaceRoute = vi.hoisted(() => vi.fn())
+const dialogWarning = vi.hoisted(() => vi.fn())
+const newChat = vi.hoisted(() => vi.fn())
 
 vi.mock('@/api/coding-agents', () => ({
   checkCodingAgentUpdate: api.checkCodingAgentUpdate,
@@ -33,6 +35,10 @@ vi.mock('@/stores/hermes/app', () => ({
   useAppStore: () => ({ serverVersion: '0.7.0', setPageSidebarExpanded: vi.fn() }),
 }))
 
+vi.mock('@/stores/hermes/chat', () => ({
+  useChatStore: () => ({ newChat }),
+}))
+
 vi.mock('@/components/layout/VersionManagementModal.vue', () => ({
   default: defineComponent({
     name: 'VersionManagementModal',
@@ -48,7 +54,10 @@ vi.mock('vue-router', () => ({
 
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({
-    t: (key: string, values?: Record<string, string>) => values?.version ? `${key}:${values.version}` : key,
+    t: (key: string, values?: Record<string, string>) => {
+      if (key === 'agentManager.aiHelpPrompt') return `${key}:${JSON.stringify(values)}`
+      return values?.version ? `${key}:${values.version}` : key
+    },
   }),
 }))
 
@@ -61,9 +70,25 @@ vi.mock('naive-ui', () => {
       emits: ['click'],
       template: '<button :disabled="disabled || loading" @click="$emit(\'click\')"><slot /></button>',
     }),
-    NPopconfirm: defineComponent({ template: '<div><slot name="trigger" /><slot /></div>' }),
+    NDrawer: defineComponent({
+      name: 'NDrawer',
+      props: { show: Boolean, width: [String, Number] },
+      emits: ['update:show'],
+      template: '<aside v-if="show" data-testid="agent-ai-help-drawer"><slot /></aside>',
+    }),
+    NDrawerContent: defineComponent({
+      name: 'NDrawerContent',
+      props: { title: String },
+      template: '<section><header>{{ title }}</header><slot /></section>',
+    }),
+    NPopconfirm: defineComponent({
+      name: 'NPopconfirm',
+      emits: ['positive-click'],
+      template: '<div><slot name="trigger" /><slot /></div>',
+    }),
     NSpin: Slot,
     NTag: defineComponent({ template: '<span><slot /></span>' }),
+    useDialog: () => ({ warning: dialogWarning }),
     useMessage: () => ({ success: vi.fn(), error: vi.fn() }),
   }
 })
@@ -175,6 +200,26 @@ describe('Agent Manager page', () => {
     api.fetchRuntimeVersionStatus.mockResolvedValue(runtimeStatus())
     api.fetchAgentStatusSnapshot.mockResolvedValue(agentStatusSnapshot())
   })
+
+  function mountPage() {
+    return mount(AgentManagerView, {
+      props: { sidebarCollapsed: false },
+      global: {
+        stubs: {
+          VersionManagementModal: true,
+          AiHelpChatPanel: defineComponent({
+            name: 'AiHelpChatPanel',
+            props: {
+              standalone: Boolean,
+              initialComposerText: String,
+              composerPersistDraft: Boolean,
+            },
+            template: '<div data-testid="ai-help-chat">{{ initialComposerText }}</div>',
+          }),
+        },
+      },
+    })
+  }
 
   it('shows Hermes with the same compact card structure as other Agents', async () => {
     const wrapper = mount(AgentManagerView, {
@@ -335,5 +380,94 @@ describe('Agent Manager page', () => {
     expect(api.fetchCodingAgentsStatus).toHaveBeenCalledOnce()
     expect(api.fetchRuntimeVersionStatus).toHaveBeenCalledWith({ includeRemote: false })
     expect(api.fetchAgentStatusSnapshot).toHaveBeenCalledTimes(2)
+  })
+
+  it('opens a dedicated Ekko help drawer from the Ask AI button beside refresh', async () => {
+    const wrapper = mountPage()
+    await flushPromises()
+
+    const headerButtons = wrapper.get('.agent-manager-header-actions').findAll('button')
+    expect(headerButtons.map(button => button.text())).toEqual([
+      'agentManager.refresh',
+      'agentManager.aiHelpDialogPositive',
+    ])
+
+    await headerButtons[1].trigger('click')
+    await flushPromises()
+
+    expect(dialogWarning).not.toHaveBeenCalled()
+    expect(newChat).toHaveBeenCalledWith({
+      source: 'coding_agent',
+      agent: 'ekko-agent',
+      codingAgentId: 'ekko-agent',
+      codingAgentMode: 'scoped',
+    })
+    const chat = wrapper.getComponent({ name: 'AiHelpChatPanel' })
+    expect(chat.props('initialComposerText')).toBe('agentManager.aiHelpGeneralPrompt')
+    expect(chat.props('composerPersistDraft')).toBe(false)
+  })
+
+  it('offers an Ekko troubleshooting drawer with precise install context after installation fails', async () => {
+    api.installCodingAgent.mockResolvedValue({
+      success: false,
+      message: 'npm install failed',
+      tool: missing('codex', 'Codex', '@openai/codex'),
+      tools: [claude, missing('codex', 'Codex', '@openai/codex'), missing('pi', 'Pi', '@earendil-works/pi-coding-agent')],
+    })
+    const wrapper = mountPage()
+    await flushPromises()
+
+    const installButton = wrapper.get('[data-testid="agent-card-codex"]')
+      .findAll('button')
+      .find(button => button.text() === 'codingAgents.installNow')
+    expect(installButton).toBeDefined()
+    await installButton!.trigger('click')
+    await flushPromises()
+
+    expect(dialogWarning).toHaveBeenCalledOnce()
+    const options = dialogWarning.mock.calls[0][0]
+    expect(options.title).toBe('agentManager.aiHelpDialogTitle')
+    options.onPositiveClick()
+    await flushPromises()
+
+    expect(newChat).toHaveBeenCalledWith({
+      source: 'coding_agent',
+      agent: 'ekko-agent',
+      codingAgentId: 'ekko-agent',
+      codingAgentMode: 'scoped',
+    })
+    const chat = wrapper.getComponent({ name: 'AiHelpChatPanel' })
+    expect(chat.props('standalone')).toBe(true)
+    expect(chat.props('composerPersistDraft')).toBe(false)
+    expect(chat.props('initialComposerText')).toContain('"name":"Codex"')
+    expect(chat.props('initialComposerText')).toContain('"operation":"agentManager.installOperation"')
+    expect(chat.props('initialComposerText')).toContain('"command":"codex"')
+    expect(chat.props('initialComposerText')).toContain('"package":"@openai/codex"')
+    expect(chat.props('initialComposerText')).toContain('"error":"npm install failed"')
+  })
+
+  it('labels delete failures as removal problems before opening Ekko troubleshooting', async () => {
+    api.deleteCodingAgent.mockResolvedValue({
+      success: false,
+      message: 'Delete completed but the command is still available',
+      tool: claude,
+      tools: [claude, missing('codex', 'Codex', '@openai/codex'), missing('pi', 'Pi', '@earendil-works/pi-coding-agent')],
+    })
+    const wrapper = mountPage()
+    await flushPromises()
+
+    wrapper.get('[data-testid="agent-card-claude-code"]')
+      .getComponent({ name: 'NPopconfirm' })
+      .vm.$emit('positive-click')
+    await flushPromises()
+
+    const options = dialogWarning.mock.calls[0][0]
+    options.onPositiveClick()
+    await flushPromises()
+
+    const prompt = wrapper.getComponent({ name: 'AiHelpChatPanel' }).props('initialComposerText')
+    expect(prompt).toContain('"name":"Claude"')
+    expect(prompt).toContain('"operation":"agentManager.deleteOperation"')
+    expect(prompt).toContain('"error":"Delete completed but the command is still available"')
   })
 })

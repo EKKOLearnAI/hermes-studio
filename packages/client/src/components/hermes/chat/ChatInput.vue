@@ -33,9 +33,13 @@ const { toolTraceVisible, toggleToolTraceVisible } = useToolTraceVisibility()
 const props = withDefaults(defineProps<{
   modelLabel?: string
   modelDisabled?: boolean
+  initialText?: string
+  persistDraft?: boolean
 }>(), {
   modelLabel: '',
   modelDisabled: false,
+  initialText: '',
+  persistDraft: true,
 })
 
 const emit = defineEmits<{
@@ -511,11 +515,13 @@ function saveDraftForActiveSession(value: string) {
 
 // 从 localStorage 读取设置
 onMounted(() => {
-  loadDraftForActiveSession()
+  if (props.initialText) inputText.value = props.initialText
+  else if (props.persistDraft) loadDraftForActiveSession()
   syncViewport()
   window.addEventListener('resize', syncViewport)
   nextTick(() => {
     applyConfiguredTextareaHeight()
+    if (props.initialText) focusComposer()
   })
 })
 
@@ -554,11 +560,12 @@ async function handleInputSettingsSelect(key: string | number) {
 }
 
 watch(inputText, (value) => {
-  saveDraftForActiveSession(value)
+  if (props.persistDraft) saveDraftForActiveSession(value)
 })
 
 watch(() => chatStore.activeSession?.id, () => {
-  loadDraftForActiveSession()
+  if (props.persistDraft) loadDraftForActiveSession()
+  else inputText.value = props.initialText
   nextTick(() => {
     applyConfiguredTextareaHeight()
   })
