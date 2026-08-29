@@ -3015,6 +3015,9 @@ jobTriggered: 'Job ausgelost',
   },
 
   changelog: {
+    new_0_7_1_1: 'Ekko schreibt und vergisst Erinnerungen jetzt direkt, ohne Modellfreigabe oder Hintergrundprüfung, die durch Zeitüberschreitungen alte Karten wiederherstellen konnte (#2785)',
+    new_0_7_1_2: 'Die verborgene fortlaufende Sitzungszusammenfassung sowie zugehörige Prüfprozesse, Konfiguration, APIs, UI-Zustände und Datenbanktabellen wurden entfernt (#2785)',
+    new_0_7_1_3: 'Alle Erinnerungen lassen sich zuverlässig auflisten und löschen; fehlgeschlagene Speicherwerkzeuge stoppen den Lauf mit einem klaren Fehler, und Datenbank-Upgrades unterstützen Sperrwiederholungen, Sicherung, Neuaufbau und kompatible Datenwiederherstellung (#2785)',
     new_0_7_0_1: 'Diese Version umfasst alle 21 nach v0.6.47 zusammengeführten PRs, angeführt von der vollständigen Ekko-Integration, einer einheitlichen Agent-Laufzeitverwaltung, besserem Erhalt des Chat-Zustands und robuster Studio-Kompatibilität',
     new_0_7_0_2: 'Ekko ist jetzt eine vollständig von Studio verwaltete Laufzeit mit Profile Agents, Unterhaltungen, verwaltetem Speicher, integrierten und externen Skills, MCP-Servern und eigenen Einstellungsseiten (#2752, #2770)',
     new_0_7_0_3: 'Ekko führt parallel geeignete Werkzeugaufrufe gleichzeitig aus, speichert eine versionierte globale Agent-Konfiguration, legt alle Entwicklungsdaten unter packages/ekko-agent/.ekko ab, einschließlich einer einzelnen, mit Navicat gut lesbaren ekko.db, und installiert automatisch nur eigene Skills, ohne Hermes-Skills zu kopieren (#2772, #2775, #2776)',

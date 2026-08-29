@@ -3452,6 +3452,9 @@ export default {
 
   // Changelog
   changelog: {
+    new_0_7_1_1: 'Ekko memory writes and forget requests now update stored memory directly, without model approval or a background review queue that can time out or restore stale cards (#2785)',
+    new_0_7_1_2: 'The hidden rolling session-summary pipeline and its review workers, configuration, APIs, UI state, and database tables have been removed (#2785)',
+    new_0_7_1_3: 'List-all and forget-all memory requests now behave reliably, failed memory tools stop the run with a clear error, and database upgrades can retry locks, back up the original database, rebuild the schema, and recover compatible data (#2785)',
     new_0_7_0_1: 'This release covers all 21 PRs merged after v0.6.47, led by complete Ekko integration, unified Agent runtime management, richer chat state retention, and safer Studio compatibility',
     new_0_7_0_2: 'Ekko is now a complete Studio-owned runtime with profile agents, conversations, managed memory, built-in and external skills, MCP servers, and dedicated settings pages (#2752, #2770)',
     new_0_7_0_3: 'Ekko can execute parallel-safe tool calls concurrently, persist versioned global Agent configuration, keep every development artifact—including one Navicat-friendly ekko.db—inside packages/ekko-agent/.ekko, and use only its own automatically installed Skills without copying Hermes Skills (#2772, #2775, #2776)',

@@ -3015,6 +3015,9 @@ jobTriggered: 'Job ejecutado',
   },
 
   changelog: {
+    new_0_7_1_1: 'Las operaciones de escritura y olvido de memoria de Ekko ahora actualizan el almacenamiento directamente, sin aprobación del modelo ni una cola de revisión en segundo plano que pueda agotar el tiempo o restaurar tarjetas antiguas (#2785)',
+    new_0_7_1_2: 'Se eliminó el proceso oculto de resumen continuo de sesiones junto con sus revisores, configuración, API, estado de interfaz y tablas de base de datos (#2785)',
+    new_0_7_1_3: 'Listar y borrar todas las memorias ahora funciona de forma fiable; los fallos de herramientas de memoria detienen la ejecución con un error claro, y las actualizaciones de base de datos pueden reintentar bloqueos, respaldar, reconstruir y recuperar datos compatibles (#2785)',
     new_0_7_0_1: 'Esta versión incluye los 21 PR fusionados después de v0.6.47, con la integración completa de Ekko, la gestión unificada de runtimes de Agent, una mejor conservación del estado de los chats y mayor compatibilidad de Studio',
     new_0_7_0_2: 'Ekko es ahora un runtime completamente administrado por Studio, con Profile Agents, conversaciones, memoria administrada, skills integradas y externas, servidores MCP y páginas de ajustes propias (#2752, #2770)',
     new_0_7_0_3: 'Ekko ejecuta en paralelo las llamadas de herramientas seguras, conserva una configuración global versionada de Agent, guarda todos los datos de desarrollo en packages/ekko-agent/.ekko, incluido un único ekko.db fácil de consultar con Navicat, e instala automáticamente solo sus propias Skills sin copiar las de Hermes (#2772, #2775, #2776)',

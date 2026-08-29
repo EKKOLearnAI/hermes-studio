@@ -3015,6 +3015,9 @@ jobTriggered: 'Job declenche',
   },
 
   changelog: {
+    new_0_7_1_1: 'Les écritures et suppressions de mémoire Ekko mettent désormais directement à jour le stockage, sans approbation du modèle ni file de révision en arrière-plan susceptible d’expirer ou de restaurer d’anciennes cartes (#2785)',
+    new_0_7_1_2: 'Le pipeline masqué de résumé continu des sessions ainsi que ses tâches de révision, sa configuration, ses API, son état d’interface et ses tables de base de données ont été supprimés (#2785)',
+    new_0_7_1_3: 'La liste et l’effacement de toutes les mémoires sont désormais fiables ; un outil mémoire en échec arrête l’exécution avec une erreur claire, et les mises à niveau de base de données peuvent réessayer les verrous, sauvegarder, reconstruire et récupérer les données compatibles (#2785)',
     new_0_7_0_1: 'Cette version couvre les 21 PR fusionnées après v0.6.47, avec une intégration complète d’Ekko, une gestion unifiée des environnements Agent, une meilleure conservation de l’état des chats et une compatibilité Studio renforcée',
     new_0_7_0_2: 'Ekko est désormais un environnement entièrement géré par Studio avec des Profile Agents, des conversations, une mémoire gérée, des skills intégrées et externes, des serveurs MCP et des pages de réglages dédiées (#2752, #2770)',
     new_0_7_0_3: 'Ekko exécute en parallèle les appels d’outils compatibles, conserve une configuration globale versionnée des Agents, place toutes les données de développement dans packages/ekko-agent/.ekko, dont un unique fichier ekko.db facile à consulter avec Navicat, et installe automatiquement uniquement ses propres Skills sans copier celles de Hermes (#2772, #2775, #2776)',
