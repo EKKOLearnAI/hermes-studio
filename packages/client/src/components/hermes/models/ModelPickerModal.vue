@@ -2,7 +2,8 @@
 import { computed, ref, watch } from 'vue'
 import { NInput, NModal } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
-import type { AvailableModelGroup, ProviderApiMode } from '@/api/hermes/system'
+import type { AvailableModelGroup } from '@/api/hermes/system'
+import type { ProviderApiMode } from '@/api/studio/provider-api-mode'
 import { useCollapsedProviderGroups } from '@/composables/useCollapsedProviderGroups'
 import { useAppStore } from '@/stores/hermes/app'
 

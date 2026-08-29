@@ -29,7 +29,7 @@ describe('invite-scoped group chat attachments', () => {
     messages = []
     agents = []
 
-    const routes = await import('../../packages/server/src/routes/hermes/group-chat')
+    const routes = await import('../../packages/server/src/modules/studio/routes/group-chat')
     setGroupChatServer = routes.setGroupChatServer
     const rooms = new Map([
       ['ROOM1', { id: 'room-1', name: 'Room 1', inviteCode: 'ROOM1' }],
@@ -71,7 +71,7 @@ describe('invite-scoped group chat attachments', () => {
     const form = new FormData()
     form.append('file', new Blob([Buffer.from('png-body')], { type: 'image/png' }), 'visitor.png')
 
-    const upload = await fetch(`${baseUrl}/api/hermes/group-chat/invites/ROOM1/attachments`, {
+    const upload = await fetch(`${baseUrl}/api/studio/group-chat/invites/ROOM1/attachments`, {
       method: 'POST',
       body: form,
     })
@@ -83,14 +83,14 @@ describe('invite-scoped group chat attachments', () => {
     const storedName = basename(body.files[0].path)
 
     const preview = await fetch(
-      `${baseUrl}/api/hermes/group-chat/invites/ROOM1/attachments/${encodeURIComponent(storedName)}?name=visitor.png`,
+      `${baseUrl}/api/studio/group-chat/invites/ROOM1/attachments/${encodeURIComponent(storedName)}?name=visitor.png`,
     )
     expect(preview.status).toBe(200)
     expect(preview.headers.get('content-type')).toBe('image/png')
     expect(preview.headers.get('content-disposition')).toContain('inline')
     expect(Buffer.from(await preview.arrayBuffer()).toString()).toBe('png-body')
     const injectedName = await fetch(
-      `${baseUrl}/api/hermes/group-chat/invites/ROOM1/attachments/${encodeURIComponent(storedName)}?name=${encodeURIComponent('image.png\r\nX-Injected: yes')}`,
+      `${baseUrl}/api/studio/group-chat/invites/ROOM1/attachments/${encodeURIComponent(storedName)}?name=${encodeURIComponent('image.png\r\nX-Injected: yes')}`,
     )
     expect(injectedName.status).toBe(200)
     expect(injectedName.headers.get('x-injected')).toBeNull()
@@ -98,7 +98,7 @@ describe('invite-scoped group chat attachments', () => {
     expect(injectedName.headers.get('content-disposition')).not.toContain('\n')
 
     const crossRoom = await fetch(
-      `${baseUrl}/api/hermes/group-chat/invites/ROOM2/attachments/${encodeURIComponent(storedName)}`,
+      `${baseUrl}/api/studio/group-chat/invites/ROOM2/attachments/${encodeURIComponent(storedName)}`,
     )
     expect(crossRoom.status).toBe(404)
   })
@@ -107,7 +107,7 @@ describe('invite-scoped group chat attachments', () => {
     const form = new FormData()
     form.append('file', new Blob([Buffer.alloc(21 * 1024 * 1024, 0x61)]), 'too-large.bin')
 
-    const upload = await fetch(`${baseUrl}/api/hermes/group-chat/invites/ROOM1/attachments`, {
+    const upload = await fetch(`${baseUrl}/api/studio/group-chat/invites/ROOM1/attachments`, {
       method: 'POST',
       body: form,
     })
@@ -122,7 +122,7 @@ describe('invite-scoped group chat attachments', () => {
     const form = new FormData()
     form.append('file', new Blob([Buffer.from('room-file')], { type: 'image/png' }), 'room.png')
 
-    const upload = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/attachments`, {
+    const upload = await fetch(`${baseUrl}/api/studio/group-chat/rooms/room-1/attachments`, {
       method: 'POST',
       body: form,
     })
@@ -131,14 +131,14 @@ describe('invite-scoped group chat attachments', () => {
     const storedName = basename(body.files[0].path)
 
     const preview = await fetch(
-      `${baseUrl}/api/hermes/group-chat/rooms/room-1/attachments/${encodeURIComponent(storedName)}`,
+      `${baseUrl}/api/studio/group-chat/rooms/room-1/attachments/${encodeURIComponent(storedName)}`,
     )
     expect(preview.status).toBe(200)
     expect(await preview.text()).toBe('room-file')
   })
 
   it('rebinds human attachment blocks to this room without exposing the server path', async () => {
-    const attachments = await import('../../packages/server/src/services/hermes/group-chat/attachments')
+    const attachments = await import('../../packages/server/src/modules/studio/services/group-chat/attachments')
     const storedName = `${'a'.repeat(32)}.png`
     const roomPath = attachments.getGroupChatAttachmentPath('room-1', storedName)
     expect(roomPath).toBeTruthy()
@@ -171,7 +171,7 @@ describe('invite-scoped group chat attachments', () => {
   })
 
   it('stores Agent-uploaded media in the same room attachment format as the composer', async () => {
-    const attachments = await import('../../packages/server/src/services/hermes/group-chat/attachments')
+    const attachments = await import('../../packages/server/src/modules/studio/services/group-chat/attachments')
     const sourcePath = join(stateDir, 'workspace', 'renders', 'final image.png')
     await mkdir(join(stateDir, 'workspace', 'renders'), { recursive: true })
     await writeFile(sourcePath, 'agent-image')
@@ -195,7 +195,7 @@ describe('invite-scoped group chat attachments', () => {
 
   it('denies protected attachment routes to accounts without room read access', async () => {
     const response = await fetch(
-      `${baseUrl}/api/hermes/group-chat/rooms/room-1/attachments/missing.png`,
+      `${baseUrl}/api/studio/group-chat/rooms/room-1/attachments/missing.png`,
       { headers: { 'x-test-denied-user': '1' } },
     )
     expect(response.status).toBe(403)
@@ -204,14 +204,14 @@ describe('invite-scoped group chat attachments', () => {
   it('rejects invalid invites and traversal-style attachment names', async () => {
     const form = new FormData()
     form.append('file', new Blob([Buffer.from('secret')]), 'secret.txt')
-    const invalidInvite = await fetch(`${baseUrl}/api/hermes/group-chat/invites/INVALID/attachments`, {
+    const invalidInvite = await fetch(`${baseUrl}/api/studio/group-chat/invites/INVALID/attachments`, {
       method: 'POST',
       body: form,
     })
     expect(invalidInvite.status).toBe(404)
 
     const traversal = await fetch(
-      `${baseUrl}/api/hermes/group-chat/invites/ROOM1/attachments/${encodeURIComponent('../secret.txt')}`,
+      `${baseUrl}/api/studio/group-chat/invites/ROOM1/attachments/${encodeURIComponent('../secret.txt')}`,
     )
     expect([400, 404]).toContain(traversal.status)
   })
@@ -247,19 +247,19 @@ describe('invite-scoped group chat attachments', () => {
     }]
 
     const agentPreview = await fetch(
-      `${baseUrl}/api/hermes/group-chat/invites/ROOM1/attachments/agent-result.png`,
+      `${baseUrl}/api/studio/group-chat/invites/ROOM1/attachments/agent-result.png`,
     )
     expect(agentPreview.status).toBe(200)
     expect(await agentPreview.text()).toBe('agent-image')
     await rm(agentImagePath)
     const materializedPreview = await fetch(
-      `${baseUrl}/api/hermes/group-chat/invites/ROOM1/attachments/agent-result.png`,
+      `${baseUrl}/api/studio/group-chat/invites/ROOM1/attachments/agent-result.png`,
     )
     expect(materializedPreview.status).toBe(200)
     expect(await materializedPreview.text()).toBe('agent-image')
 
     const userPreview = await fetch(
-      `${baseUrl}/api/hermes/group-chat/invites/ROOM1/attachments/user-secret.png`,
+      `${baseUrl}/api/studio/group-chat/invites/ROOM1/attachments/user-secret.png`,
     )
     expect(userPreview.status).toBe(404)
   })
@@ -283,7 +283,7 @@ describe('invite-scoped group chat attachments', () => {
     }]
 
     const preview = await fetch(
-      `${baseUrl}/api/hermes/group-chat/invites/ROOM1/attachments/${legacyName}`,
+      `${baseUrl}/api/studio/group-chat/invites/ROOM1/attachments/${legacyName}`,
     )
     expect(preview.status).toBe(200)
     expect(await preview.text()).toBe('legacy-image')
@@ -293,7 +293,7 @@ describe('invite-scoped group chat attachments', () => {
     for (let index = 0; index < 30; index += 1) {
       const form = new FormData()
       form.append('file', new Blob([String(index)]), `file-${index}.txt`)
-      const response = await fetch(`${baseUrl}/api/hermes/group-chat/invites/ROOM2/attachments`, {
+      const response = await fetch(`${baseUrl}/api/studio/group-chat/invites/ROOM2/attachments`, {
         method: 'POST',
         body: form,
       })
@@ -301,7 +301,7 @@ describe('invite-scoped group chat attachments', () => {
     }
     const blockedForm = new FormData()
     blockedForm.append('file', new Blob(['blocked']), 'blocked.txt')
-    const blocked = await fetch(`${baseUrl}/api/hermes/group-chat/invites/ROOM2/attachments`, {
+    const blocked = await fetch(`${baseUrl}/api/studio/group-chat/invites/ROOM2/attachments`, {
       method: 'POST',
       body: blockedForm,
     })
@@ -312,7 +312,7 @@ describe('invite-scoped group chat attachments', () => {
   it('rejects an oversized public attachment before writing it', async () => {
     const form = new FormData()
     form.append('file', new Blob([Buffer.alloc(20 * 1024 * 1024 + 1)]), 'oversized.bin')
-    const response = await fetch(`${baseUrl}/api/hermes/group-chat/invites/ROOM1/attachments`, {
+    const response = await fetch(`${baseUrl}/api/studio/group-chat/invites/ROOM1/attachments`, {
       method: 'POST',
       body: form,
     })

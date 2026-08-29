@@ -5,7 +5,7 @@ let db: import('node:sqlite').DatabaseSync | null = null
 afterEach(() => {
   db?.close()
   db = null
-  vi.doUnmock('../../packages/server/src/db/index')
+  vi.doUnmock('../../packages/server/src/modules/studio/infrastructure/database/index')
   vi.resetModules()
 })
 
@@ -27,12 +27,12 @@ describe('workflow edge evidence schema migration', () => {
       INSERT INTO workflow_run_edge_evaluations(id, run_id, edge_id, sequence)
         VALUES ('legacy-edge', 'legacy-run', 'legacy-route', 1);
     `)
-    vi.doMock('../../packages/server/src/db/index', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
       getDb: () => db,
       getStoragePath: () => ':memory:',
     }))
 
-    const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
+    const { initAllHermesTables } = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
     initAllHermesTables()
 
     const indexNames = (table: string) => (db!.prepare(`PRAGMA index_list('${table}')`).all() as Array<{ name: string }>)

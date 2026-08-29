@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const execMock = vi.hoisted(() => vi.fn())
 
-vi.mock('../../packages/server/src/services/hermes/hermes-process', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/runtime/process', () => ({
   execHermesWithBin: execMock,
   spawnHermesWithBin: vi.fn(),
   resolveHermesBin: () => 'hermes',
@@ -16,7 +16,7 @@ describe('profile archive timeout', () => {
 
   it('gives the archive ten minutes, not one', async () => {
     execMock.mockResolvedValue({ stdout: 'exported', stderr: '' })
-    const { exportProfile } = await import('../../packages/server/src/services/hermes/hermes-cli')
+    const { exportProfile } = await import('../../packages/server/src/modules/hermes/services/runtime/cli')
 
     await exportProfile('mohamed', '/tmp/hermes-profile-mohamed.tar.gz')
 
@@ -34,7 +34,7 @@ describe('profile archive timeout', () => {
       new Error('Command failed: /opt/hermes/venv/bin/hermes profile export mohamed --output /tmp/x.tar.gz\n'),
       { killed: true, signal: 'SIGTERM', stdout: '', stderr: '' },
     ))
-    const { exportProfile, ARCHIVE_TIMEOUT_CODE } = await import('../../packages/server/src/services/hermes/hermes-cli')
+    const { exportProfile, ARCHIVE_TIMEOUT_CODE } = await import('../../packages/server/src/modules/hermes/services/runtime/cli')
 
     await expect(exportProfile('mohamed')).rejects.toMatchObject({
       code: ARCHIVE_TIMEOUT_CODE,
@@ -46,7 +46,7 @@ describe('profile archive timeout', () => {
 
   it('gives an import the same ten minutes', async () => {
     execMock.mockResolvedValue({ stdout: 'imported', stderr: '' })
-    const { importProfile } = await import('../../packages/server/src/services/hermes/hermes-cli')
+    const { importProfile } = await import('../../packages/server/src/modules/hermes/services/runtime/cli')
 
     await importProfile('/tmp/hermes-import/hermes-profile-mohamed.tar.gz')
 
@@ -60,7 +60,7 @@ describe('profile archive timeout', () => {
       new Error('Command failed: hermes profile import /tmp/big.tar.gz\n'),
       { killed: true, signal: 'SIGTERM', stdout: '', stderr: '' },
     ))
-    const { importProfile, ARCHIVE_TIMEOUT_CODE } = await import('../../packages/server/src/services/hermes/hermes-cli')
+    const { importProfile, ARCHIVE_TIMEOUT_CODE } = await import('../../packages/server/src/modules/hermes/services/runtime/cli')
 
     await expect(importProfile('/tmp/big.tar.gz')).rejects.toMatchObject({
       code: ARCHIVE_TIMEOUT_CODE,
@@ -73,7 +73,7 @@ describe('profile archive timeout', () => {
       new Error('Command failed: hermes profile export ghost'),
       { code: 1, stdout: '', stderr: "profile 'ghost' not found" },
     ))
-    const { exportProfile, ARCHIVE_TIMEOUT_CODE } = await import('../../packages/server/src/services/hermes/hermes-cli')
+    const { exportProfile, ARCHIVE_TIMEOUT_CODE } = await import('../../packages/server/src/modules/hermes/services/runtime/cli')
 
     const err = await exportProfile('ghost').catch(e => e)
     expect(err.code).not.toBe(ARCHIVE_TIMEOUT_CODE)

@@ -9,7 +9,7 @@ const dbState = vi.hoisted(() => ({
   db: null as DatabaseSync | null,
 }))
 
-vi.mock('../../packages/server/src/db/index', () => ({
+vi.mock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
   getDb: () => dbState.db,
   isSqliteAvailable: () => Boolean(dbState.db),
 }))
@@ -25,7 +25,7 @@ vi.mock('socket.io-client', () => ({
   })),
 }))
 
-vi.mock('../../packages/server/src/services/auth', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/auth/token-auth', () => ({
   getToken: vi.fn(async () => 'test-token'),
 }))
 
@@ -40,7 +40,7 @@ describe('group chat workspace diff persistence', () => {
     workspace = join(root, 'workspace')
     mkdirSync(workspace)
     dbState.db = new DatabaseSync(':memory:')
-    const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
+    const { initAllHermesTables } = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
     initAllHermesTables()
     httpServer = createServer()
   })
@@ -53,7 +53,7 @@ describe('group chat workspace diff persistence', () => {
   })
 
   async function makeDraft(runId = '0123456789abcdef0123456789abcdef') {
-    const tracker = await import('../../packages/server/src/services/hermes/run-chat/workspace-diff-tracker')
+    const tracker = await import('../../packages/server/src/modules/studio/services/chat-run/workspace-diff-tracker')
     writeFileSync(join(workspace, 'file.txt'), 'old\n')
     tracker.startWorkspaceRunCheckpoint({ sessionId: 'session-1', runId, workspace })
     writeFileSync(join(workspace, 'file.txt'), 'new\n')
@@ -85,7 +85,7 @@ describe('group chat workspace diff persistence', () => {
   }
 
   it('persists one workspace_run_change and one durable workspace_diff group message', async () => {
-    const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
+    const { GroupChatServer } = await import('../../packages/server/src/modules/studio/sockets/group-chat')
     const server = new GroupChatServer(httpServer)
     const storage = server.getStorage()
     storage.saveRoom('room-1', 'Room 1')
@@ -142,7 +142,7 @@ describe('group chat workspace diff persistence', () => {
   })
 
   it('keeps workspace_diff message ids unique when room ids are long', async () => {
-    const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
+    const { GroupChatServer } = await import('../../packages/server/src/modules/studio/sockets/group-chat')
     const server = new GroupChatServer(httpServer)
     const storage = server.getStorage()
     const roomId = `room-${'x'.repeat(220)}`
@@ -182,7 +182,7 @@ describe('group chat workspace diff persistence', () => {
   })
 
   it('cleans persisted workspace diffs when room context is cleared', async () => {
-    const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
+    const { GroupChatServer } = await import('../../packages/server/src/modules/studio/sockets/group-chat')
     const server = new GroupChatServer(httpServer)
     const storage = server.getStorage()
     storage.saveRoom('room-1', 'Room 1')
@@ -197,7 +197,7 @@ describe('group chat workspace diff persistence', () => {
   })
 
   it('does not delete unrelated workspace changes from spoofed workspace_diff message content', async () => {
-    const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
+    const { GroupChatServer } = await import('../../packages/server/src/modules/studio/sockets/group-chat')
     const server = new GroupChatServer(httpServer)
     const storage = server.getStorage()
     storage.saveRoom('room-1', 'Room 1')
@@ -223,7 +223,7 @@ describe('group chat workspace diff persistence', () => {
   })
 
   it('does not allow client messages to overwrite server-created workspace diff cards', async () => {
-    const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
+    const { GroupChatServer } = await import('../../packages/server/src/modules/studio/sockets/group-chat')
     const server = new GroupChatServer(httpServer)
     const storage = server.getStorage()
     storage.saveRoom('room-1', 'Room 1')
@@ -249,7 +249,7 @@ describe('group chat workspace diff persistence', () => {
   })
 
   it('cleans persisted workspace diffs when a room is deleted', async () => {
-    const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
+    const { GroupChatServer } = await import('../../packages/server/src/modules/studio/sockets/group-chat')
     const server = new GroupChatServer(httpServer)
     const storage = server.getStorage()
     storage.saveRoom('room-1', 'Room 1')
@@ -264,7 +264,7 @@ describe('group chat workspace diff persistence', () => {
   })
 
   it('does not write workspace diff rows after a room is deleted', async () => {
-    const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
+    const { GroupChatServer } = await import('../../packages/server/src/modules/studio/sockets/group-chat')
     const server = new GroupChatServer(httpServer)
     const storage = server.getStorage()
     storage.saveRoom('room-1', 'Room 1')
@@ -290,7 +290,7 @@ describe('group chat workspace diff persistence', () => {
   })
 
   it('rolls back diff rows when the group message insert fails', async () => {
-    const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
+    const { GroupChatServer } = await import('../../packages/server/src/modules/studio/sockets/group-chat')
     const server = new GroupChatServer(httpServer)
     const storage = server.getStorage()
     storage.saveRoom('room-1', 'Room 1')

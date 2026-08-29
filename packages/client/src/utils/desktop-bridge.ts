@@ -123,6 +123,7 @@ export interface HermesDesktopBridge {
   getToken: () => Promise<string>
   ensureAuth?: () => Promise<boolean>
   retryBootstrap: (source?: 'cf' | 'github') => Promise<void>
+  restartApp?: () => Promise<boolean>
   selectRuntimeDirectory?: (defaultPath?: string) => Promise<string | null>
   notifyCompletion: (payload: { title: string; body?: string; icon?: string; tag?: string; clickUrl?: string }) => Promise<boolean>
   openChatWindow?: (sessionId: string, profile?: string) => Promise<void>

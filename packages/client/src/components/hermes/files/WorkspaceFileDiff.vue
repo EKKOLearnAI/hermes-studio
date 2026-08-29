@@ -2,9 +2,9 @@
 import { computed, ref, watch } from 'vue'
 import { NAlert, NButton, NSpin, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
-import type { FileEntry, WorkspaceFileDiff } from '@/api/hermes/files'
-import { fetchSessionWorkspaceFileDiff, readSessionWorkspaceFile } from '@/api/hermes/sessions'
-import { fetchGroupWorkspaceFileDiff, readGroupWorkspaceFile } from '@/api/hermes/group-chat'
+import type { FileEntry, WorkspaceFileDiff } from '@/api/studio/files'
+import { fetchSessionWorkspaceFileDiff, readSessionWorkspaceFile } from '@/api/studio/sessions'
+import { fetchGroupWorkspaceFileDiff, readGroupWorkspaceFile } from '@/api/studio/group-chat'
 import { getLanguageFromPath, useFilesStore } from '@/stores/hermes/files'
 import { handleCodeBlockCopyClick, renderHighlightedCodeBlock } from '@/components/hermes/chat/highlight'
 

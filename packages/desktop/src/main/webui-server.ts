@@ -38,6 +38,11 @@ const execFileAsync = promisify(execFile)
 let serverProc: ChildProcess | null = null
 let cachedToken: string | null = null
 let currentServerPort = DEFAULT_PORT
+let runtimeRestartHandler: (() => void) | null = null
+
+export function setWebUiRuntimeRestartHandler(handler: (() => void) | null): void {
+  runtimeRestartHandler = handler
+}
 
 function posixDescendantPids(rootPid: number): number[] {
   try {
@@ -497,6 +502,7 @@ async function launchWebUiServer(webUiDirectory: string, entry: string, env: Nod
   launchedProc.on('exit', (code, signal) => {
     console.error(`[webui] server exited code=${code} signal=${signal}`)
     if (serverProc === launchedProc) serverProc = null
+    if (code === 75) runtimeRestartHandler?.()
     if (!app.isReady() || code !== 0) {
       // Best-effort: if server dies abnormally during startup, surface to user
     }

@@ -1,6 +1,6 @@
 import { createHash } from 'crypto'
 import { describe, expect, it } from 'vitest'
-import { assertWorkflowImportCapabilities, workflowImportEnvironmentRevision } from '../../packages/server/src/services/workflow-import-capabilities'
+import { assertWorkflowImportCapabilities, workflowImportEnvironmentRevision } from '../../packages/server/src/modules/studio/services/workflow/import-capabilities'
 
 const node = (data: Record<string, unknown>) => ({ id: 'agent', type: 'agent', data: { agent: 'hermes', ...data } })
 

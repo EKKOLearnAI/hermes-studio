@@ -33,6 +33,7 @@ const testState = vi.hoisted(() => {
 })
 
 vi.mock('child_process', () => ({
+  execFile: vi.fn(),
   spawn: vi.fn((command: string, args: string[], options: any) => {
     const child = new testState.TestEmitter() as any
     child.stdin = new testState.TestEmitter()
@@ -52,15 +53,16 @@ vi.mock('child_process', () => ({
   }),
 }))
 
-vi.mock('../../packages/server/src/db/hermes/session-store', async (importOriginal) => ({
-  ...await importOriginal<typeof import('../../packages/server/src/db/hermes/session-store')>(),
+vi.mock('../../packages/server/src/modules/studio/repositories/session-store', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../packages/server/src/modules/studio/repositories/session-store')>(),
   updateSessionStats: vi.fn(),
 }))
 
 import {
   CodingAgentRunManager,
   isolatedCodingAgentChildEnv,
-} from '../../packages/server/src/services/coding-agents/runtime/run-manager'
+} from '../../packages/server/src/modules/coding-agents/services/runtime/run-manager'
+import '../../packages/server/src/bootstrap/coding-agent-adapters'
 
 const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
 

@@ -211,7 +211,7 @@ async function mockHistoryApi(page: Page, sessions = historySessions, groupRooms
     if (pathname === '/api/hermes/available-models') return json({ default: 'test-model', default_provider: 'test-provider', groups: [TEST_MODEL_GROUP], allProviders: [TEST_MODEL_GROUP], model_aliases: {}, model_visibility: {} })
     if (pathname === '/api/hermes/profiles') return json({ profiles: [{ name: 'default', active: true, model: 'test-model', gateway: 'test' }] })
     if (pathname === '/api/hermes/config') return json({ display: { streaming: true, show_reasoning: true, show_cost: true } })
-    if (pathname === '/api/hermes/group-chat/rooms') {
+    if (pathname === '/api/studio/group-chat/rooms') {
       const offset = Number(url.searchParams.get('offset') || 0)
       const limit = Number(url.searchParams.get('limit') || 50)
       return json({
@@ -222,7 +222,7 @@ async function mockHistoryApi(page: Page, sessions = historySessions, groupRooms
         hasMore: offset + limit < groupRooms.length,
       })
     }
-    const groupRoomMatch = pathname.match(/^\/api\/hermes\/group-chat\/rooms\/([^/]+)$/)
+    const groupRoomMatch = pathname.match(/^\/api\/studio\/group-chat\/rooms\/([^/]+)$/)
     if (groupRoomMatch) {
       const roomId = decodeURIComponent(groupRoomMatch[1])
       const room = groupRooms.find(item => item.id === roomId)
@@ -238,7 +238,7 @@ async function mockHistoryApi(page: Page, sessions = historySessions, groupRooms
         hasMore: false,
       })
     }
-    if (pathname === '/api/hermes/sessions/hermes/groups') {
+    if (pathname === '/api/studio/sessions/hermes/groups') {
       const limit = Number(url.searchParams.get('limit') || 20)
       const source = url.searchParams.get('source')
       const includedIds = new Set(url.searchParams.getAll('include'))
@@ -258,7 +258,7 @@ async function mockHistoryApi(page: Page, sessions = historySessions, groupRooms
         included: sessions.filter(session => includedIds.has(session.id)),
       })
     }
-    if (pathname === '/api/hermes/sessions/hermes') {
+    if (pathname === '/api/studio/sessions/hermes') {
       const source = url.searchParams.get('source')
       if (!source) return json({ sessions })
       const offset = Number(url.searchParams.get('offset') || 0)
@@ -274,7 +274,7 @@ async function mockHistoryApi(page: Page, sessions = historySessions, groupRooms
       })
     }
 
-    const detailMatch = pathname.match(/^\/api\/hermes\/sessions\/hermes\/([^/]+)$/)
+    const detailMatch = pathname.match(/^\/api\/studio\/sessions\/hermes\/([^/]+)$/)
     if (detailMatch) {
       const detail = detailFor(decodeURIComponent(detailMatch[1]), sessions)
       return detail ? json({ session: detail }) : json({ error: 'Session not found' }, 404)
@@ -406,10 +406,10 @@ test.describe('history session deep links', () => {
     })
     await mockHermesApi(page, { sessions: [historySessions[3]] })
     await mockChatSocket(page)
-    await page.route('**/api/hermes/sessions/hermes**', async (route) => {
+    await page.route('**/api/studio/sessions/hermes**', async (route) => {
       const url = new URL(route.request().url())
       const path = url.pathname
-      if (path === '/api/hermes/sessions/hermes/groups') {
+      if (path === '/api/studio/sessions/hermes/groups') {
         await route.fulfill({
           status: 200,
           contentType: 'application/json',
@@ -417,7 +417,7 @@ test.describe('history session deep links', () => {
         })
         return
       }
-      if (path === '/api/hermes/sessions/hermes') {
+      if (path === '/api/studio/sessions/hermes') {
         await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ sessions: [historySessions[3]], hasMore: false, offset: 0, limit: 20 }) })
         return
       }
@@ -467,10 +467,10 @@ test.describe('history session deep links', () => {
     })
     await mockHermesApi(page, { sessions: [historySessions[4]] })
     await mockChatSocket(page)
-    await page.route('**/api/hermes/sessions/hermes**', async (route) => {
+    await page.route('**/api/studio/sessions/hermes**', async (route) => {
       const url = new URL(route.request().url())
       const path = url.pathname
-      if (path === '/api/hermes/sessions/hermes/groups') {
+      if (path === '/api/studio/sessions/hermes/groups') {
         await route.fulfill({
           status: 200,
           contentType: 'application/json',
@@ -478,7 +478,7 @@ test.describe('history session deep links', () => {
         })
         return
       }
-      if (path === '/api/hermes/sessions/hermes') {
+      if (path === '/api/studio/sessions/hermes') {
         await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ sessions: [historySessions[4]], hasMore: false, offset: 0, limit: 20 }) })
         return
       }

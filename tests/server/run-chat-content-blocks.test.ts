@@ -6,7 +6,7 @@ import {
   convertContentBlocks,
   convertContentBlocksForAgent,
   convertContentBlocksForCodingAgent,
-} from '../../packages/server/src/services/hermes/run-chat/content-blocks'
+} from '../../packages/server/src/modules/studio/services/chat-run/content-blocks'
 
 let tempDir = ''
 

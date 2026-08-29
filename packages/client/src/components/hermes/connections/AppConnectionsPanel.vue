@@ -14,13 +14,13 @@ import {
   type AppConnectionAccessFailure,
   type CloudAppAuthorizationResponse,
   type LanAppAuthorizationResponse,
-} from '@/api/hermes/app-connections'
+} from '@/api/studio/app-connections'
 import {
   fetchAppRelayStatus,
   updateAppRelayRoute,
   type AppRelayRoute,
-} from '@/api/hermes/app-relay'
-import { fetchStudioVersionManifest, type StudioMobileRelease } from '@/api/studio-versions'
+} from '@/api/studio/app-relay'
+import { fetchStudioVersionManifest, type StudioMobileRelease } from '@/api/studio/versions'
 import SocialMessagesView from '@/views/social-messages/SocialMessagesView.vue'
 
 type AppPanelView = 'list' | 'download' | 'messages'

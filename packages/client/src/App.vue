@@ -1,25 +1,65 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
-import { darkTheme, NConfigProvider, NMessageProvider, NDialogProvider, NNotificationProvider } from 'naive-ui'
-import { useI18n } from 'vue-i18n'
-import { getThemeOverrides } from '@/styles/theme'
-import { useTheme } from '@/composables/useTheme'
-import { useKeyboard } from '@/composables/useKeyboard'
-import { useSessionSearch } from '@/composables/useSessionSearch'
-import { useAppStore } from '@/stores/hermes/app'
-import AuthEventListener from '@/components/auth/AuthEventListener.vue'
-import { desktopBridge } from '@/utils/desktop-bridge'
-import { naiveLocaleFor } from '@/constants/naiveLocale'
-import { naiveRtlFor } from '@/constants/naiveRtl'
+import {
+  computed,
+  defineAsyncComponent,
+  onMounted,
+  onUnmounted,
+  ref,
+  watch,
+} from "vue";
+import { useRoute } from "vue-router";
+import {
+  darkTheme,
+  NConfigProvider,
+  NMessageProvider,
+  NDialogProvider,
+  NNotificationProvider,
+} from "naive-ui";
+import { useI18n } from "vue-i18n";
+import { getThemeOverrides } from "@/styles/theme";
+import { useTheme } from "@/composables/useTheme";
+import { useKeyboard } from "@/composables/useKeyboard";
+import { useSessionSearch } from "@/composables/useSessionSearch";
+import { useAppStore } from "@/stores/hermes/app";
+import AuthEventListener from "@/components/auth/AuthEventListener.vue";
+import { desktopBridge } from "@/utils/desktop-bridge";
+import { naiveLocaleFor } from "@/constants/naiveLocale";
+import { naiveRtlFor } from "@/constants/naiveRtl";
 
-const AppSidebar = defineAsyncComponent(async () => (await import('@/components/layout/AppSidebar.vue')).default)
-const DesktopTitleBar = defineAsyncComponent(async () => (await import('@/components/layout/DesktopTitleBar.vue')).default)
-const SessionSearchModal = defineAsyncComponent(async () => (await import('@/components/hermes/chat/SessionSearchModal.vue')).default)
-const DefaultCredentialPrompt = defineAsyncComponent(async () => (await import('@/components/auth/DefaultCredentialPrompt.vue')).default)
-const ProviderConfigurationPrompt = defineAsyncComponent(async () => (await import('@/components/hermes/models/ProviderConfigurationPrompt.vue')).default)
-const WebPet = defineAsyncComponent(async () => (await import('@/components/hermes/pets/WebPet.vue')).default)
-const GlobalPendingActions = defineAsyncComponent(async () => (await import('@/components/layout/GlobalPendingActions.vue')).default)
+const AppSidebar = defineAsyncComponent(
+  async () => (await import("@/components/layout/AppSidebar.vue")).default,
+);
+const HermesConfigSidebar = defineAsyncComponent(
+  async () =>
+    (await import("@/components/layout/HermesConfigSidebar.vue")).default,
+);
+const EkkoConfigSidebar = defineAsyncComponent(
+  async () =>
+    (await import("@/components/layout/EkkoConfigSidebar.vue")).default,
+);
+const DesktopTitleBar = defineAsyncComponent(
+  async () => (await import("@/components/layout/DesktopTitleBar.vue")).default,
+);
+const SessionSearchModal = defineAsyncComponent(
+  async () =>
+    (await import("@/components/hermes/chat/SessionSearchModal.vue")).default,
+);
+const DefaultCredentialPrompt = defineAsyncComponent(
+  async () =>
+    (await import("@/components/auth/DefaultCredentialPrompt.vue")).default,
+);
+const ProviderConfigurationPrompt = defineAsyncComponent(
+  async () =>
+    (await import("@/components/hermes/models/ProviderConfigurationPrompt.vue"))
+      .default,
+);
+const WebPet = defineAsyncComponent(
+  async () => (await import("@/components/hermes/pets/WebPet.vue")).default,
+);
+const GlobalPendingActions = defineAsyncComponent(
+  async () =>
+    (await import("@/components/layout/GlobalPendingActions.vue")).default,
+);
 
 const {
   isDark,
@@ -27,91 +67,154 @@ const {
   customization,
   hasBackgroundImage,
   syncThemeFromServer,
-} = useTheme()
-const { t, locale } = useI18n()
-const naiveLocale = computed(() => naiveLocaleFor(locale.value))
-const naiveRtl = computed(() => naiveRtlFor(locale.value))
-const appStore = useAppStore()
-const route = useRoute()
-const { sessionSearchOpen } = useSessionSearch()
+} = useTheme();
+const { t, locale } = useI18n();
+const naiveLocale = computed(() => naiveLocaleFor(locale.value));
+const naiveRtl = computed(() => naiveRtlFor(locale.value));
+const appStore = useAppStore();
+const route = useRoute();
+const { sessionSearchOpen } = useSessionSearch();
 
 const themeOverrides = computed(() =>
   getThemeOverrides(isDark.value, isComic.value, customization.value),
-)
-const naiveTheme = computed(() => isDark.value ? darkTheme : null)
+);
+const naiveTheme = computed(() => (isDark.value ? darkTheme : null));
 
-const isLoginPage = computed(() => route.name === 'login')
-const isStandaloneChatPage = computed(() => route.meta?.standaloneChat === true)
-const isInviteOnlyPage = computed(() => route.meta?.inviteOnly === true)
+const isLoginPage = computed(() => route.name === "login");
+const isStandaloneChatPage = computed(
+  () => route.meta?.standaloneChat === true,
+);
+const isInviteOnlyPage = computed(() => route.meta?.inviteOnly === true);
 const usesPageSidebar = computed(() =>
-  ['hermes.chat', 'hermes.session', 'hermes.connections', 'hermes.history', 'hermes.historySession', 'hermes.globalAgent', 'hermes.globalAgentSession', 'hermes.groupChat', 'hermes.groupChatRoom', 'hermes.workflow'].includes(route.name as string),
-)
-const showAppSidebar = computed(() => !isLoginPage.value && !isStandaloneChatPage.value && !usesPageSidebar.value)
-const showMobileMenuButton = computed(() => !isLoginPage.value && !isStandaloneChatPage.value && (showAppSidebar.value || usesPageSidebar.value))
+  [
+    "hermes.chat",
+    "hermes.session",
+    "hermes.connections",
+    "hermes.agentManager",
+    "hermes.models",
+    "hermes.history",
+    "hermes.historySession",
+    "hermes.globalAgent",
+    "hermes.globalAgentSession",
+    "hermes.groupChat",
+    "hermes.groupChatRoom",
+    "hermes.workflow",
+  ].includes(route.name as string),
+);
+const usesHermesConfigSidebar = computed(
+  () => route.meta?.hermesConfig === true,
+);
+const usesEkkoConfigSidebar = computed(
+  () => route.meta?.ekkoConfig === true,
+);
+const showAppSidebar = computed(
+  () =>
+    !isLoginPage.value &&
+    !isStandaloneChatPage.value &&
+    !usesPageSidebar.value &&
+    !usesHermesConfigSidebar.value &&
+    !usesEkkoConfigSidebar.value,
+);
+const showMobileMenuButton = computed(
+  () =>
+    !isLoginPage.value &&
+    !isStandaloneChatPage.value &&
+    (showAppSidebar.value ||
+      usesPageSidebar.value ||
+      usesHermesConfigSidebar.value ||
+      usesEkkoConfigSidebar.value),
+);
 
 const nodeVersionLow = computed(() => {
-  const v = appStore.nodeVersion
-  const major = parseInt(v.split('.')[0], 10)
-  return !isNaN(major) && major < 23
-})
+  const v = appStore.nodeVersion;
+  const major = parseInt(v.split(".")[0], 10);
+  return !isNaN(major) && major < 23;
+});
 
-const isDesktopShell = computed(() => desktopBridge()?.isDesktop === true)
-const desktopPlatform = computed(() => desktopBridge()?.platform || '')
-const isDesktopWindows = computed(() => isDesktopShell.value && desktopPlatform.value === 'win32')
-const isDesktopChatWindow = computed(() => desktopBridge()?.windowKind === 'chat')
-const showDesktopTitleBar = computed(() => isDesktopWindows.value && !isDesktopChatWindow.value)
+const isDesktopShell = computed(() => desktopBridge()?.isDesktop === true);
+const desktopPlatform = computed(() => desktopBridge()?.platform || "");
+const isDesktopWindows = computed(
+  () => isDesktopShell.value && desktopPlatform.value === "win32",
+);
+const isDesktopChatWindow = computed(
+  () => desktopBridge()?.windowKind === "chat",
+);
+const showDesktopTitleBar = computed(
+  () => isDesktopWindows.value && !isDesktopChatWindow.value,
+);
 const desktopTitleBarLeft = computed(() => {
-  if (isLoginPage.value) return 10
-  if (showAppSidebar.value) return appStore.sidebarCollapsed ? 84 : 260
-  return appStore.pageSidebarExpanded ? 260 : 10
-})
-const isDesktopPetRoute = computed(() => route.name === 'desktop.pet')
-const showWebPet = computed(() => !isLoginPage.value && !isStandaloneChatPage.value && !isDesktopShell.value && !isDesktopPetRoute.value)
-const desktopPlatformClass = computed(() => desktopPlatform.value ? `desktop-platform-${desktopPlatform.value}` : '')
-const isDesktopWindowMaximized = ref(false)
-let stopWindowStateListener: (() => void) | undefined
+  if (isLoginPage.value) return 10;
+  if (showAppSidebar.value) return appStore.sidebarCollapsed ? 84 : 260;
+  if (usesHermesConfigSidebar.value)
+    return appStore.sidebarCollapsed ? 84 : 260;
+  if (usesEkkoConfigSidebar.value)
+    return appStore.sidebarCollapsed ? 84 : 260;
+  return appStore.pageSidebarExpanded ? 260 : 10;
+});
+const isDesktopPetRoute = computed(() => route.name === "desktop.pet");
+const showWebPet = computed(
+  () =>
+    !isLoginPage.value &&
+    !isStandaloneChatPage.value &&
+    !isDesktopShell.value &&
+    !isDesktopPetRoute.value,
+);
+const desktopPlatformClass = computed(() =>
+  desktopPlatform.value ? `desktop-platform-${desktopPlatform.value}` : "",
+);
+const isDesktopWindowMaximized = ref(false);
+let stopWindowStateListener: (() => void) | undefined;
 
 function handleMobileMenuClick() {
-  if (usesPageSidebar.value) {
-    window.dispatchEvent(new CustomEvent('hermes:open-page-sidebar'))
-    return
+  if (usesPageSidebar.value || usesHermesConfigSidebar.value || usesEkkoConfigSidebar.value) {
+    window.dispatchEvent(new CustomEvent("hermes:open-page-sidebar"));
+    return;
   }
-  appStore.toggleSidebar()
+  appStore.toggleSidebar();
 }
 
-watch([isLoginPage, isInviteOnlyPage], ([loginPage, inviteOnlyPage]) => {
-  if (loginPage || inviteOnlyPage) {
-    appStore.stopHealthPolling()
-    return
-  }
-  appStore.loadModels()
-  appStore.startHealthPolling()
-}, {
-  immediate: true,
-})
+watch(
+  [isLoginPage, isInviteOnlyPage],
+  ([loginPage, inviteOnlyPage]) => {
+    if (loginPage || inviteOnlyPage) {
+      appStore.stopHealthPolling();
+      return;
+    }
+    appStore.loadModels();
+    appStore.startHealthPolling();
+  },
+  {
+    immediate: true,
+  },
+);
 
 onMounted(() => {
   if (!isInviteOnlyPage.value) {
-    void syncThemeFromServer().catch(() => undefined)
+    void syncThemeFromServer().catch(() => undefined);
   }
-  const bridge = desktopBridge()
-  if (!bridge?.isDesktop || (desktopPlatform.value !== 'win32' && bridge.windowKind !== 'chat')) return
-  bridge.getWindowState?.()
-    .then(state => {
-      isDesktopWindowMaximized.value = !!state.isMaximized
+  const bridge = desktopBridge();
+  if (
+    !bridge?.isDesktop ||
+    (desktopPlatform.value !== "win32" && bridge.windowKind !== "chat")
+  )
+    return;
+  bridge
+    .getWindowState?.()
+    .then((state) => {
+      isDesktopWindowMaximized.value = !!state.isMaximized;
     })
-    .catch(() => undefined)
+    .catch(() => undefined);
   stopWindowStateListener = bridge.onWindowStateChange?.((state) => {
-    isDesktopWindowMaximized.value = !!state.isMaximized
-  })
-})
+    isDesktopWindowMaximized.value = !!state.isMaximized;
+  });
+});
 
 onUnmounted(() => {
-  stopWindowStateListener?.()
-  appStore.stopHealthPolling()
-})
+  stopWindowStateListener?.();
+  appStore.stopHealthPolling();
+});
 
-useKeyboard()
+useKeyboard();
 </script>
 
 <template>
@@ -145,25 +248,72 @@ useKeyboard()
               :standalone="isLoginPage || isDesktopChatWindow"
               :left-offset="desktopTitleBarLeft"
             />
-            <div v-if="nodeVersionLow && !isStandaloneChatPage" class="node-warning-bar">
-              {{ t('sidebar.nodeVersionWarning', { version: appStore.nodeVersion }) }}
+            <div
+              v-if="nodeVersionLow && !isStandaloneChatPage"
+              class="node-warning-bar"
+            >
+              {{
+                t("sidebar.nodeVersionWarning", {
+                  version: appStore.nodeVersion,
+                })
+              }}
             </div>
-            <div class="app-layout" :class="{ 'no-sidebar': isLoginPage || !showAppSidebar }">
-              <button v-if="showMobileMenuButton" class="hamburger-btn" @click="handleMobileMenuClick">
-                <img src="/logo.png" alt="Menu" style="width: 24px; height: 24px;" />
+            <div
+              class="app-layout"
+              :class="{
+                'no-sidebar': isLoginPage || !showAppSidebar,
+                'has-hermes-config-sidebar': usesHermesConfigSidebar,
+                'has-ekko-config-sidebar': usesEkkoConfigSidebar,
+              }"
+            >
+              <button
+                v-if="showMobileMenuButton"
+                class="hamburger-btn"
+                @click="handleMobileMenuClick"
+              >
+                <img
+                  src="/logo.png"
+                  alt="Menu"
+                  style="width: 24px; height: 24px"
+                />
               </button>
-              <div v-if="!isLoginPage && showAppSidebar && appStore.sidebarOpen" class="mobile-backdrop" @click="appStore.closeSidebar" />
+              <div
+                v-if="!isLoginPage && showAppSidebar && appStore.sidebarOpen"
+                class="mobile-backdrop"
+                @click="appStore.closeSidebar"
+              />
               <AppSidebar v-if="!isLoginPage && showAppSidebar" />
-              <main class="app-main" :class="{ 'app-main--card': showAppSidebar }">
+              <HermesConfigSidebar
+                v-if="!isLoginPage && usesHermesConfigSidebar"
+              />
+              <EkkoConfigSidebar
+                v-if="!isLoginPage && usesEkkoConfigSidebar"
+              />
+              <main
+                class="app-main"
+                :class="{
+                  'app-main--card': showAppSidebar || usesHermesConfigSidebar || usesEkkoConfigSidebar,
+                }"
+              >
                 <router-view />
               </main>
             </div>
           </div>
           <WebPet v-if="showWebPet" />
-          <SessionSearchModal v-if="!isDesktopPetRoute && !isStandaloneChatPage && sessionSearchOpen" />
-          <DefaultCredentialPrompt v-if="!isDesktopPetRoute && !isStandaloneChatPage" />
-          <ProviderConfigurationPrompt v-if="!isDesktopPetRoute && !isStandaloneChatPage" />
-          <GlobalPendingActions v-if="!isLoginPage && !isDesktopPetRoute && !isStandaloneChatPage" />
+          <SessionSearchModal
+            v-if="
+              !isDesktopPetRoute && !isStandaloneChatPage && sessionSearchOpen
+            "
+          />
+          <DefaultCredentialPrompt
+            v-if="!isDesktopPetRoute && !isStandaloneChatPage"
+          />
+          <ProviderConfigurationPrompt
+            v-if="!isDesktopPetRoute && !isStandaloneChatPage"
+          />
+          <GlobalPendingActions
+            v-if="!isLoginPage && !isDesktopPetRoute && !isStandaloneChatPage"
+          />
         </NNotificationProvider>
       </NDialogProvider>
     </NMessageProvider>
@@ -171,7 +321,7 @@ useKeyboard()
 </template>
 
 <style scoped lang="scss">
-@use '@/styles/variables' as *;
+@use "@/styles/variables" as *;
 
 .app-shell {
   position: relative;
@@ -215,16 +365,25 @@ useKeyboard()
 
   &.no-sidebar {
     display: block;
+
+    &.has-hermes-config-sidebar {
+      display: flex;
+    }
+
+    &.has-ekko-config-sidebar {
+      display: flex;
+    }
   }
 }
 
 .app-main {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   overflow-y: auto;
   background-color: $bg-primary;
 
-  .no-sidebar & {
+  .no-sidebar:not(.has-hermes-config-sidebar):not(.has-ekko-config-sidebar) & {
     height: 100%;
   }
 
@@ -261,6 +420,8 @@ useKeyboard()
   }
 
   :deep(.sidebar),
+  :deep(.hermes-config-sidebar),
+  :deep(.ekko-config-sidebar),
   :deep(.chat-panel > .session-list),
   :deep(.history-panel > .session-list),
   :deep(.group-chat-panel > .room-sidebar),
@@ -293,7 +454,7 @@ useKeyboard()
   }
 
   :deep(.chat-input-area),
-  :deep(.coding-agents-content) {
+  :deep(.agent-manager-panel) {
     background-color: transparent;
   }
 
@@ -320,7 +481,6 @@ useKeyboard()
   :deep(.browser-settings-page > .settings-card) {
     background-color: transparent;
   }
-
 }
 
 .app-shell.desktop-platform-darwin,
@@ -382,11 +542,12 @@ useKeyboard()
       -webkit-app-region: no-drag;
     }
   }
-
 }
 
 .app-shell.desktop-platform-darwin {
   .app-layout > :deep(.sidebar),
+  .app-layout > :deep(.hermes-config-sidebar),
+  .app-layout > :deep(.ekko-config-sidebar),
   :deep(.chat-panel > .session-list),
   :deep(.history-panel > .session-list),
   :deep(.workflow-view > .workflow-sidebar),
@@ -405,7 +566,9 @@ useKeyboard()
     }
   }
 
-  .app-layout > :deep(.sidebar) {
+  .app-layout > :deep(.sidebar),
+  .app-layout > :deep(.hermes-config-sidebar),
+  .app-layout > :deep(.ekko-config-sidebar) {
     padding-top: 40px;
   }
 

@@ -8,15 +8,15 @@ import {
   createGlobalEkkoAgent,
   GlobalEkkoAgent,
   setupGlobalEkkoAgent,
-} from '../../packages/server/src/services/ekko-agent/manager'
+} from '../../packages/server/src/modules/ekko/services/manager'
 import { EkkoFileLogReader, setupEkkoAgent } from '../../packages/ekko-agent/src'
 import type { EkkoAgentSetup, ModelClient, ModelRequest } from '../../packages/ekko-agent/src'
 
 const getHermesBaseDirMock = vi.hoisted(() => vi.fn())
 
-vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
-  getHermesBaseDir: getHermesBaseDirMock,
-  listProfileNamesFromDisk: vi.fn(() => ['default']),
+vi.mock('../../packages/server/src/modules/studio/public/profile-config', () => ({
+  getProfilesBaseDir: getHermesBaseDirMock,
+  listProfileNames: vi.fn(() => ['default']),
 }))
 
 let baseDirectory = ''
@@ -75,6 +75,10 @@ describe('GlobalEkkoAgent', () => {
     const setup = setupGlobalEkkoAgent({
       baseDirectory,
       profiles: ['default', 'work'],
+      config: {
+        runtime: { maxSteps: 48 },
+        compression: { threshold: 0.65 },
+      },
       env: { NODE_ENV: 'test' },
     })
 
@@ -84,6 +88,30 @@ describe('GlobalEkkoAgent', () => {
     expect(existsSync(join(baseDirectory, '.ekko', 'logs', 'work'))).toBe(true)
     expect(existsSync(join(baseDirectory, '.ekko', 'workspace', 'work'))).toBe(true)
     expect(setup.memory.isEnabled).toBe(true)
+    expect(setup.config.read()).toMatchObject({
+      runtime: { maxSteps: 48 },
+      compression: { threshold: 0.65 },
+    })
+  })
+
+  it('accepts a config patch when creating a Studio global agent', () => {
+    const agent = createGlobalEkkoAgent({
+      setup: createTestSetup(),
+      memory: false,
+      config: {
+        compression: {
+          enabled: false,
+          threshold: 0.75,
+          protectLastN: 8,
+        },
+        prompt: { instructions: ['Studio global instruction.'] },
+      },
+    })
+
+    expect(agent.readConfig()).toMatchObject({
+      compression: { enabled: false, threshold: 0.75, protectLastN: 8 },
+      prompt: { instructions: ['Studio global instruction.'] },
+    })
   })
 
   it('is created once and handles repeated runs through the same runtime', async () => {
@@ -100,6 +128,21 @@ describe('GlobalEkkoAgent', () => {
     expect(firstClient.create).toHaveBeenCalledTimes(1)
     expect(secondClient.create).toHaveBeenCalledTimes(1)
     expect(existsSync(join(baseDirectory, '.ekko', 'skills', 'default'))).toBe(true)
+  })
+
+  it('recreates the cached runtime after settings change', async () => {
+    const setup = createTestSetup()
+    const createRuntime = vi.spyOn(setup, 'createRuntime')
+    const agent = createGlobalEkkoAgent({ setup, memory: false })
+
+    await agent.run({ messages: ['first'], modelClient: modelClient('first') })
+    expect(createRuntime).toHaveBeenCalledTimes(1)
+    setup.config.update({ logging: { maxBytes: 2_048 } })
+    expect(agent.refreshRuntime()).toBe('refreshed')
+    await agent.run({ messages: ['second'], modelClient: modelClient('second') })
+
+    expect(createRuntime).toHaveBeenCalledTimes(2)
+    expect(createRuntime.mock.calls[1]?.[0]?.logWriter).toMatchObject({ maxBytes: 2_048 })
   })
 
   it('exposes the runtime-owned boundary interrupt without creating queue policy', async () => {

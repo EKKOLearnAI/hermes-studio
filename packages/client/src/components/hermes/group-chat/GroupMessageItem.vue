@@ -21,15 +21,15 @@ import {
     type GroupWorkspaceDiffPayload,
     type RoomAgent,
     type MemberInfo,
-} from '@/api/hermes/group-chat'
-import { getGroupChatAttachmentUrl } from '@/api/hermes/group-chat-attachments'
+} from '@/api/studio/group-chat'
+import { getGroupChatAttachmentUrl } from '@/api/studio/group-chat-attachments'
 import { useGroupChatStore } from '@/stores/hermes/group-chat'
 import { formatReferencedContentForDisplay, parseMessageReference } from '@/stores/hermes/chat'
 import { isPreviewableFile } from '@/utils/hermes/file-preview'
 import ToolChangeCard from '@/components/hermes/chat/ToolChangeCard.vue'
 import { useFilesStore } from '@/stores/hermes/files'
 import { useToolPanelStore } from '@/stores/hermes/tool-panel'
-import { isServerTtsProvider } from '@/api/hermes/tts'
+import { isServerTtsProvider } from '@/api/studio/tts'
 import { groupAgentAvatar, groupMessageAgent, parseStoredAvatar } from '@/utils/group-agent-avatar'
 import GroupAgentMessageAvatar from './GroupAgentMessageAvatar.vue'
 import GroupAgentRobotIcon from './GroupAgentRobotIcon.vue'
@@ -614,7 +614,7 @@ function isStoredGroupAttachment(attachment: { path?: string; url?: string }): b
         const path = rawPath.split(/[?#]/, 1)[0].split(/[\\/]/).pop() || ''
         return /^[a-f0-9]{32}(?:\.[a-z0-9]{1,12})?$/i.test(path)
     }
-    return /\/api\/hermes\/group-chat\/(?:rooms|invites)\/[^/?#]+\/attachments\/[^/?#]+/i.test(String(attachment.url || ''))
+    return /\/api\/studio\/group-chat\/(?:rooms|invites)\/[^/?#]+\/attachments\/[^/?#]+/i.test(String(attachment.url || ''))
 }
 
 function handleAttachmentClick(event: MouseEvent, attachment: { name: string; size?: number; path?: string; url?: string }): void {
@@ -674,20 +674,17 @@ onBeforeUnmount(() => {
 
 <template>
     <div v-if="isToolMessage" class="group-message tool-message" :class="{ embedded }">
-        <div v-if="!embedded" class="avatar">
-            <GroupAgentMessageAvatar
-                v-if="isAgent && agentInfo"
-                :agent="agentInfo"
-                :owner="agentOwnerInfo"
-                :mentionable="!!activeAgentInfo"
-                :size="36"
-                @mention="emit('mentionAgent', $event)"
-            />
-            <ProfileAvatar v-else :name="avatarDisplayName" :avatar="currentAvatar" :size="36" />
-        </div>
-
         <div class="msg-body">
             <div v-if="!embedded" class="msg-header">
+                <GroupAgentMessageAvatar
+                    v-if="isAgent && agentInfo"
+                    :agent="agentInfo"
+                    :owner="agentOwnerInfo"
+                    :mentionable="!!activeAgentInfo"
+                    :size="22"
+                    @mention="emit('mentionAgent', $event)"
+                />
+                <ProfileAvatar v-else :name="avatarDisplayName" :avatar="currentAvatar" :size="22" />
                 <span class="sender-name">{{ message.senderName }}</span>
                 <GroupAgentRobotIcon v-if="isAgent" class="sender-agent-icon" />
                 <span v-if="isAgent && agentInfo?.description" class="agent-desc">{{ agentInfo.description }}</span>
@@ -735,21 +732,17 @@ onBeforeUnmount(() => {
         </div>
     </div>
     <div v-else class="group-message" :class="{ agent: isAgent, self: isSelf, embedded }">
-        <!-- Avatar -->
-        <div v-if="!embedded" class="avatar">
-            <GroupAgentMessageAvatar
-                v-if="isAgent && agentInfo"
-                :agent="agentInfo"
-                :owner="agentOwnerInfo"
-                :mentionable="!!activeAgentInfo"
-                :size="36"
-                @mention="emit('mentionAgent', $event)"
-            />
-            <ProfileAvatar v-else :name="avatarDisplayName" :avatar="currentAvatar" :size="36" />
-        </div>
-
         <div class="msg-body">
             <div v-if="!embedded" class="msg-header">
+                <GroupAgentMessageAvatar
+                    v-if="isAgent && agentInfo"
+                    :agent="agentInfo"
+                    :owner="agentOwnerInfo"
+                    :mentionable="!!activeAgentInfo"
+                    :size="22"
+                    @mention="emit('mentionAgent', $event)"
+                />
+                <ProfileAvatar v-else :name="avatarDisplayName" :avatar="currentAvatar" :size="22" />
                 <span class="sender-name">{{ message.senderName }}</span>
                 <GroupAgentRobotIcon v-if="isAgent" class="sender-agent-icon" />
                 <span v-if="isAgent && agentInfo?.description" class="agent-desc">{{ agentInfo.description }}</span>
@@ -893,7 +886,6 @@ onBeforeUnmount(() => {
 
 .group-message {
     display: flex;
-    gap: 10px;
     padding: 2px 0;
     min-width: 0;
     max-width: 100%;
@@ -1116,15 +1108,6 @@ onBeforeUnmount(() => {
     }
 }
 
-.avatar {
-    width: 36px;
-    height: 36px;
-    flex-shrink: 0;
-    margin-top: 2px;
-    overflow: visible;
-    border-radius: 8px;
-}
-
 .msg-body {
     display: flex;
     flex-direction: column;
@@ -1136,13 +1119,21 @@ onBeforeUnmount(() => {
 .msg-header {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding-bottom: 2px;
+    gap: 6px;
+    padding-bottom: 6px;
+    color: $text-secondary;
+    font-size: 12px;
+    line-height: 22px;
 
     .sender-name {
-        font-size: 13px;
-        font-weight: 600;
-        color: $text-primary;
+        min-width: 0;
+        max-width: 240px;
+        overflow: hidden;
+        color: inherit;
+        font-size: inherit;
+        font-weight: 400;
+        text-overflow: ellipsis;
+        white-space: nowrap;
     }
 
     .sender-agent-icon {

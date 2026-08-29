@@ -153,7 +153,7 @@ describe('Hermes skill usage analytics DB aggregation', () => {
 
     db.close()
 
-    const mod = await import('../../packages/server/src/db/hermes/sessions-db')
+    const mod = await import('../../packages/server/src/modules/hermes/services/history/sessions-db')
     const result = await mod.getSkillUsageStatsFromDb(7, now, 'default')
 
     expect(result).toEqual({
@@ -217,7 +217,7 @@ describe('Hermes skill usage analytics DB aggregation', () => {
 
   it('returns empty stats when the requested Hermes profile has no state.db yet', async () => {
     const now = 1_700_000_000
-    const mod = await import('../../packages/server/src/db/hermes/sessions-db')
+    const mod = await import('../../packages/server/src/modules/hermes/services/history/sessions-db')
     const result = await mod.getSkillUsageStatsFromDb(7, now, 'default')
 
     expect(result).toEqual({
@@ -244,7 +244,7 @@ describe('Hermes skill usage analytics DB aggregation', () => {
     })
     db.close()
 
-    const mod = await import('../../packages/server/src/db/hermes/sessions-db')
+    const mod = await import('../../packages/server/src/modules/hermes/services/history/sessions-db')
     const result = await mod.getSkillUsageStatsFromDb(7, now, 'deleted-profile')
 
     expect(result).toEqual({
@@ -271,7 +271,7 @@ describe('Hermes skill usage analytics DB aggregation', () => {
     })
     db.close()
 
-    const mod = await import('../../packages/server/src/db/hermes/sessions-db')
+    const mod = await import('../../packages/server/src/modules/hermes/services/history/sessions-db')
     const result = await mod.getSkillUsageStatsFromDb(7, now, 'default')
 
     expect(result.summary).toMatchObject({
@@ -303,7 +303,7 @@ describe('Hermes skill usage analytics DB aggregation', () => {
     })
     testerDb.close()
 
-    const mod = await import('../../packages/server/src/db/hermes/sessions-db')
+    const mod = await import('../../packages/server/src/modules/hermes/services/history/sessions-db')
 
     const defaultResult = await mod.getSkillUsageStatsFromDb(7, now, 'default')
     expect(defaultResult.summary).toMatchObject({

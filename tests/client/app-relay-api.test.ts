@@ -18,7 +18,7 @@ describe('App Relay API', () => {
   })
 
   it('uses the independent App Relay management endpoints', async () => {
-    const api = await import('@/api/hermes/app-relay')
+    const api = await import('@/api/studio/app-relay')
 
     await api.fetchAppRelayStatus()
     await api.connectAppRelay()

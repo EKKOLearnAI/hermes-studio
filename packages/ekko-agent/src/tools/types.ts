@@ -51,6 +51,14 @@ export interface AgentToolContext {
   sessionId?: string
   profileId?: string
   sourceMessageIds?: string[]
+  memoryReviewPolicy?: import('../memory/types').MemoryReviewPolicy
+  memoryExplicitIntent?: boolean
+  memoryOrigin?: import('../memory/types').MemoryOrigin
+  memoryRecallScopes?: import('../memory/types').MemoryScope[]
+  memoryWriteScopes?: import('../memory/types').MemoryScope[]
+  memoryDefaultWriteScope?: import('../memory/types').MemoryScope
+  /** Runtime-owned signal used by the safe foreground memory_review tool. */
+  requestMemoryReview?: () => void
   browserSessionId?: string
   mcpServers?: Record<string, unknown>
   timeoutMs?: number
@@ -84,8 +92,12 @@ export type AgentToolContentPart =
   | { type: 'text'; text: string }
   | { type: 'image'; data: string; mimeType: string }
 
+export type AgentToolConcurrency = 'serial' | 'parallel'
+
 export interface AgentTool<TInput extends Record<string, unknown> = Record<string, unknown>> {
   definition: AgentToolDefinition
+  /** Defaults to serial. Use parallel only when independent calls cannot race through shared mutable state. */
+  concurrency?: AgentToolConcurrency
   execute(input: TInput, context?: AgentToolContext): Promise<AgentToolResult>
 }
 

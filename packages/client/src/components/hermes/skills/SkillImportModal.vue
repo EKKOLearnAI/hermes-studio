@@ -5,6 +5,10 @@ import type { UploadFileInfo } from 'naive-ui'
 import { importSkill } from '@/api/hermes/skills'
 import { useI18n } from 'vue-i18n'
 
+const props = defineProps<{
+  importHandler?: (files: File[], category?: string) => Promise<{ name?: string }>
+}>()
+
 const emit = defineEmits<{
   close: []
   saved: []
@@ -78,7 +82,7 @@ async function handleSave() {
 
   loading.value = true
   try {
-    const res = await importSkill(files, category.value.trim() || undefined)
+    const res = await (props.importHandler || importSkill)(files, category.value.trim() || undefined)
     message.success(t('skills.importSuccess') + (res?.name ? `: ${res.name}` : ''))
     message.info(t('skills.reloadHint'), { duration: 6000 })
     emit('saved')

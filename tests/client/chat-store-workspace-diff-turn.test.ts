@@ -17,7 +17,7 @@ const chatApi = vi.hoisted(() => ({
   startRunViaSocket: vi.fn(() => ({ abort: vi.fn() })),
 }))
 
-vi.mock('@/api/hermes/sessions', () => ({
+vi.mock('@/api/studio/sessions', () => ({
   archiveSession: vi.fn(),
   deleteSession: vi.fn(),
   fetchSessionMessagesPage: sessionApi.fetchSessionMessagesPage,
@@ -26,7 +26,7 @@ vi.mock('@/api/hermes/sessions', () => ({
   setSessionModel: vi.fn(),
 }))
 
-vi.mock('@/api/hermes/chat', () => ({
+vi.mock('@/api/studio/chat', () => ({
   startRunViaSocket: chatApi.startRunViaSocket,
   resumeSession: chatApi.resumeSession,
   registerSessionHandlers: vi.fn(),
@@ -42,7 +42,7 @@ vi.mock('@/api/hermes/chat', () => ({
 }))
 
 vi.mock('@/api/client', () => ({ getActiveProfileName: () => 'default' }))
-vi.mock('@/api/hermes/download', () => ({ getDownloadUrl: (_path: string, name: string) => `/download/${name}` }))
+vi.mock('@/api/studio/download', () => ({ getDownloadUrl: (_path: string, name: string) => `/download/${name}` }))
 vi.mock('@/utils/completion-sound', () => ({ primeCompletionSound: vi.fn(), playCompletionSound: vi.fn() }))
 vi.mock('@/utils/completion-notification', () => ({ showCompletionNotification: vi.fn() }))
 vi.mock('@/utils/session-sync', () => ({ subscribeSessionSync: vi.fn(() => vi.fn()), publishSessionSync: vi.fn() }))

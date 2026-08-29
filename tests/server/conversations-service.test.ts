@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const exportSessionsRawMock = vi.fn()
 
-vi.mock('../../packages/server/src/services/hermes/hermes-cli', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/runtime/cli', () => ({
   exportSessionsRaw: exportSessionsRawMock,
 }))
 
@@ -68,7 +68,7 @@ describe('conversations service', () => {
       },
     ])
 
-    const mod = await import('../../packages/server/src/services/hermes/conversations')
+    const mod = await import('../../packages/server/src/modules/hermes/services/history/conversations')
     const summaries = await mod.listConversationSummaries({ humanOnly: true })
 
     expect(summaries).toHaveLength(1)
@@ -143,7 +143,7 @@ describe('conversations service', () => {
       },
     ])
 
-    const mod = await import('../../packages/server/src/services/hermes/conversations')
+    const mod = await import('../../packages/server/src/modules/hermes/services/history/conversations')
     const summaries = await mod.listConversationSummaries({ humanOnly: true })
 
     expect(summaries.map((summary: any) => summary.id)).toEqual(['branch-child', 'root'])
@@ -186,7 +186,7 @@ describe('conversations service', () => {
       },
     ])
 
-    const mod = await import('../../packages/server/src/services/hermes/conversations')
+    const mod = await import('../../packages/server/src/modules/hermes/services/history/conversations')
     const summaries = await mod.listConversationSummaries({ humanOnly: true })
     const detail = await mod.getConversationDetail('synthetic-root', { humanOnly: true })
 
@@ -250,7 +250,7 @@ describe('conversations service', () => {
       },
     ])
 
-    const mod = await import('../../packages/server/src/services/hermes/conversations')
+    const mod = await import('../../packages/server/src/modules/hermes/services/history/conversations')
     const firstSummaries = await mod.listConversationSummaries({ humanOnly: false })
     const detail = await mod.getConversationDetail('recent-open', { humanOnly: false })
     const secondSummaries = await mod.listConversationSummaries({ humanOnly: false })

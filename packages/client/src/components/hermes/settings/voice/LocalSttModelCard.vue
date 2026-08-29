@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { NButton, NProgress, NTag, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useLocalSttModel } from '@/composables/useLocalSttModel'
-import type { LocalSttModelDownloadSource } from '@/api/hermes/local-stt-model'
+import type { LocalSttModelDownloadSource } from '@/api/studio/local-stt-model'
 import type { VoiceApiCardTestState } from './VoiceApiCard.vue'
 
 const props = defineProps<{

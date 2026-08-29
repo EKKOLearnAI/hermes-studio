@@ -3,19 +3,19 @@ import { createCipheriv, randomBytes } from 'crypto'
 import { tmpdir } from 'os'
 import { dirname, join } from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { claudeProxyMessages, claudeProxyModels, registerClaudeCodeProxyTarget } from '../../packages/server/src/services/coding-agents/claude-code/proxy'
-import { codexProxyModels, codexProxyResponses, registerCodexProxyTarget } from '../../packages/server/src/services/coding-agents/codex/proxy'
+import { claudeProxyMessages, claudeProxyModels, registerClaudeCodeProxyTarget } from '../../packages/server/src/modules/coding-agents/services/claude-code/proxy'
+import { codexProxyModels, codexProxyResponses, registerCodexProxyTarget } from '../../packages/server/src/modules/coding-agents/services/codex/proxy'
 import {
   codexToolSearchConfig,
   migratePersistedPiRuntimeMcpConfigs,
   prepareCodingAgentLaunch,
   restorePersistedPiProxyTargets,
-} from '../../packages/server/src/services/coding-agents'
-import { getModelContextLength } from '../../packages/server/src/services/hermes/model-context'
+} from '../../packages/server/src/bootstrap/coding-agents'
+import { getModelContextLength } from '../../packages/server/src/modules/hermes/services/models/context'
 import {
   normalizePiThinkingLevel,
   piModelSupportsThinking,
-} from '../../packages/server/src/services/coding-agents/pi/thinking'
+} from '../../packages/server/src/modules/coding-agents/services/pi/thinking'
 
 const homes: string[] = []
 

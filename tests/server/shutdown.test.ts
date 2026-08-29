@@ -3,7 +3,7 @@ import {
   getShutdownForceExitMs,
   shouldStopAgentBridgeOnShutdown,
   shouldStopManagedGatewaysOnShutdown,
-} from '../../packages/server/src/services/shutdown'
+} from '../../packages/server/src/bootstrap/lifecycle'
 
 describe('shutdown bridge policy', () => {
   const originalValue = process.env.HERMES_AGENT_BRIDGE_STOP_ON_SHUTDOWN
@@ -42,11 +42,11 @@ describe('shutdown bridge policy', () => {
     expect(shouldStopAgentBridgeOnShutdown('SIGTERM')).toBe(false)
   })
 
-  it('stops managed gateways by default in production only', () => {
+  it('stops Studio-owned managed gateways by default in every runtime', () => {
     delete process.env.HERMES_WEB_UI_STOP_GATEWAYS_ON_SHUTDOWN
 
     process.env.NODE_ENV = 'development'
-    expect(shouldStopManagedGatewaysOnShutdown()).toBe(false)
+    expect(shouldStopManagedGatewaysOnShutdown()).toBe(true)
 
     process.env.NODE_ENV = 'production'
     expect(shouldStopManagedGatewaysOnShutdown()).toBe(true)
@@ -62,14 +62,14 @@ describe('shutdown bridge policy', () => {
     expect(shouldStopManagedGatewaysOnShutdown()).toBe(false)
   })
 
-  it('keeps desktop shutdown force-exit timing long enough for runtime cleanup by default', () => {
+  it('uses a short bounded cleanup window before force-exiting by default', () => {
     delete process.env.HERMES_WEB_UI_SHUTDOWN_FORCE_EXIT_MS
 
     delete process.env.HERMES_DESKTOP
-    expect(getShutdownForceExitMs()).toBe(15_000)
+    expect(getShutdownForceExitMs()).toBe(10_000)
 
     process.env.HERMES_DESKTOP = 'true'
-    expect(getShutdownForceExitMs()).toBe(15_000)
+    expect(getShutdownForceExitMs()).toBe(10_000)
   })
 
   it('allows operators to override shutdown force-exit timing', () => {

@@ -1,6 +1,6 @@
 # Coding Agent services
 
-`packages/server/src/services/coding-agents/` is the implementation home for
+`packages/server/src/modules/coding-agents/` is the implementation home for
 managed Claude Code, Codex, and Pi runs. The services share one canonical event
 pipeline, one stream subscription model, and one persistence path while keeping
 agent-specific process and protocol behavior in named subdirectories.
@@ -353,6 +353,3 @@ Minimum checks for each phase:
 - `npm run test -- tests/server/run-chat-content-blocks.test.ts` when touching
   chat input conversion.
 - `npm run build` before merging shared TypeScript contracts.
-
-For chat session behavior changes, also add a fragment under
-`docs/chat-chain-changes/` according to the repository validation guide.

@@ -13,19 +13,19 @@ import {
 import {
   defaultGroupChatWorkspace,
   type GroupChatServer,
-} from '../../packages/server/src/services/hermes/group-chat'
+} from '../../packages/server/src/modules/studio/sockets/group-chat'
 import {
   GroupAgentRelayServer,
   redactRelaySecrets,
   relayRoomWorkspace,
   validateRelayRunRequest,
-} from '../../packages/server/src/services/hermes/group-chat/agent-relay'
-import { AgentClient } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
+} from '../../packages/server/src/modules/studio/services/group-chat/agent-relay'
+import { AgentClient } from '../../packages/server/src/modules/studio/services/group-chat/agent-clients'
 import {
   authenticateRemoteWorkspaceGrant,
   resetRemoteWorkspaceGrantsForTest,
-} from '../../packages/server/src/services/hermes/group-chat/remote-workspace-auth'
-import { performRemoteWorkspaceAction } from '../../packages/server/src/services/hermes/group-chat/remote-workspace-files'
+} from '../../packages/server/src/modules/studio/services/group-chat/remote-workspace-auth'
+import { performRemoteWorkspaceAction } from '../../packages/server/src/modules/studio/services/group-chat/remote-workspace-files'
 
 describe('group chat baseline behavior', () => {
   let harness: Awaited<ReturnType<typeof createTestGroupChatServer>>
@@ -415,7 +415,7 @@ describe('group chat baseline behavior', () => {
   })
 
   it('keeps pairing tickets single-use and replaces them with revocable reconnect credentials', async () => {
-    const relayStore = await import('../../packages/server/src/services/hermes/group-chat/agent-relay-store')
+    const relayStore = await import('../../packages/server/src/modules/studio/services/group-chat/agent-relay-store')
     const storage = groupServer.getStorage()
     storage.saveRoom('room-1', 'Shared Room', 'ROOM1')
     storage.updateRoomGuestAgentPolicy('room-1', {
@@ -492,7 +492,7 @@ describe('group chat baseline behavior', () => {
     )).toBeNull()
     expect(storage.getRoomAgents('room-1')).toEqual([])
 
-    const { getDb } = await import('../../packages/server/src/db')
+    const { getDb } = await import('../../packages/server/src/modules/studio/infrastructure/database/index')
     getDb()!.prepare('UPDATE gc_room_agents SET removedAt = 0 WHERE id = ?').run(roomAgent.id)
     expect(storage.getRoomAgents('room-1')).toHaveLength(1)
     storage.init()
@@ -500,7 +500,7 @@ describe('group chat baseline behavior', () => {
   })
 
   it('keeps Agent handoffs draft until the target service submits the selected Agent', async () => {
-    const relayStore = await import('../../packages/server/src/services/hermes/group-chat/agent-relay-store')
+    const relayStore = await import('../../packages/server/src/modules/studio/services/group-chat/agent-relay-store')
     const requestSecret = 'request_secret_abcdefghijklmnopqrstuvwxyz123456'
     const pairingTicket = 'pairing_ticket_abcdefghijklmnopqrstuvwxyz123456'
     const draft = relayStore.createGroupAgentPairingHandoff({
@@ -557,7 +557,7 @@ describe('group chat baseline behavior', () => {
   })
 
   it('releases a pairing claim after an origin mismatch and accepts the intended target once', async () => {
-    const relayStore = await import('../../packages/server/src/services/hermes/group-chat/agent-relay-store')
+    const relayStore = await import('../../packages/server/src/modules/studio/services/group-chat/agent-relay-store')
     const storage = groupServer.getStorage()
     const relayWorkspace = mkdtempSync(join(tmpdir(), 'group-chat-relay-diff-'))
     temporaryDirectories.push(relayWorkspace)

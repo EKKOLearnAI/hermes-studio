@@ -62,6 +62,50 @@ describe('MessageItem tool details', () => {
     })
   })
 
+  it('renders the profile name and avatar above a user message', () => {
+    const avatar = {
+      type: 'image' as const,
+      dataUrl: 'data:image/png;base64,cHJvZmlsZQ==',
+    }
+    const wrapper = mount(MessageItem, {
+      props: {
+        message: {
+          id: 'user-profile-identity',
+          role: 'user',
+          content: 'Hello',
+          timestamp: Date.now(),
+        } satisfies Message,
+        userProfileName: 'Researcher',
+        userProfileAvatar: avatar,
+      },
+      global: { stubs: { MarkdownRenderer: true } },
+    })
+
+    expect(wrapper.get('.user-message-author .message-author-name').text()).toBe('Researcher')
+    expect(wrapper.get('.user-profile-avatar .profile-avatar-image').attributes('src')).toBe(avatar.dataUrl)
+  })
+
+  it('renders the agent name and avatar above an assistant message', () => {
+    const wrapper = mount(MessageItem, {
+      props: {
+        message: {
+          id: 'assistant-agent-identity',
+          role: 'assistant',
+          content: 'Hello',
+          timestamp: Date.now(),
+        } satisfies Message,
+        assistantAgent: {
+          label: 'Ekko',
+          src: '/coding-agents/ekko-agent.png',
+        },
+      },
+      global: { stubs: { MarkdownRenderer: true } },
+    })
+
+    expect(wrapper.get('.assistant-message-author .message-author-name').text()).toBe('Ekko')
+    expect(wrapper.get('.assistant-message-author .msg-avatar').attributes('src')).toBe('/coding-agents/ekko-agent.png')
+  })
+
   it('selects a completed user or assistant message as the next-turn reference', async () => {
     const chatStore = useChatStore()
     chatStore.activeSessionId = 'session-1'

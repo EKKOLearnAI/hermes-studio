@@ -5,18 +5,19 @@ import {
   emitAck,
   once,
 } from './group-chat-test-helpers'
-import { GROUP_CHAT_AGENT_SOCKET_SECRET, groupRuntimeSessionId } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
-import { AgentBridgeClient } from '../../packages/server/src/services/hermes/agent-bridge'
-import { ChatRunSocket } from '../../packages/server/src/services/hermes/run-chat'
+import { GROUP_CHAT_AGENT_SOCKET_SECRET, groupRuntimeSessionId } from '../../packages/server/src/modules/studio/services/group-chat/agent-clients'
+import { AgentBridgeClient } from '../../packages/server/src/modules/hermes/services/bridge/index'
+import { ChatRunSocket } from '../../packages/server/src/modules/studio/sockets/chat-run'
+import '../../packages/server/src/bootstrap/chat-agent-runtime-adapter'
 import {
   denyPendingEkkoToolApprovals,
   waitForEkkoToolApproval,
-} from '../../packages/server/src/services/ekko-agent/approvals'
+} from '../../packages/server/src/modules/ekko/services/approvals'
 import {
   cancelPendingEkkoClarifications,
   waitForEkkoClarification,
-} from '../../packages/server/src/services/ekko-agent/clarifications'
-import type { GroupChatServer } from '../../packages/server/src/services/hermes/group-chat'
+} from '../../packages/server/src/modules/ekko/services/clarifications'
+import type { GroupChatServer } from '../../packages/server/src/modules/studio/sockets/group-chat'
 
 describe('group chat approval and context baseline', () => {
   let harness: Awaited<ReturnType<typeof createTestGroupChatServer>>
@@ -494,6 +495,8 @@ describe('group chat approval and context baseline', () => {
     await emitAck(human, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
 
     const chatRun = new ChatRunSocket(groupServer.getIO())
+    ;(chatRun as any).bridge.interrupt = vi.fn(async () => ({ ok: true, synced: true }))
+    ;(chatRun as any).bridge.goalPause = vi.fn(async () => ({ ok: true }))
     const abortSession = vi.spyOn(chatRun, 'abortSession')
     const agent = await groupServer.agentClients.createAgent({
       agentId: 'agent-1',

@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -15,20 +15,34 @@ const modelGroups = vi.hoisted(() => ({
     model_meta?: Record<string, { disabled?: boolean }>
   }>,
 }))
-vi.mock('../../packages/server/src/controllers/hermes/models', () => ({
-  getAvailableModelGroupsForProfile: vi.fn(async () => modelGroups.value),
+vi.mock('../../packages/server/src/modules/studio/public/group-chat-agent-runtime', () => ({
+  getGroupAvailableModelGroups: vi.fn(async () => modelGroups.value),
 }))
 
+beforeEach(async () => {
+  const { resetAgentStatusRegistryForTests, updateAgentStatus } = await import(
+    '../../packages/server/src/modules/studio/public/agent-status-registry'
+  )
+  resetAgentStatusRegistryForTests()
+  updateAgentStatus('codex', {
+    installed: true,
+    source: 'user-cli',
+    path: '/usr/local/bin/codex',
+  })
+})
+
 afterAll(async () => {
-  const { closeDb } = await import('../../packages/server/src/db')
+  const { resetAgentStatusRegistryForTests } = await import('../../packages/server/src/modules/studio/public/agent-status-registry')
+  resetAgentStatusRegistryForTests()
+  const { closeDb } = await import('../../packages/server/src/modules/studio/infrastructure/database/index')
   closeDb()
   rmSync(root, { recursive: true, force: true })
 })
 
 describe('group Agent presets', () => {
   it('returns an application conflict for owner-scoped duplicate names without leaking SQLite details', async () => {
-    const { initAllStores } = await import('../../packages/server/src/db/hermes/init')
-    const controller = await import('../../packages/server/src/controllers/hermes/group-agent-presets')
+    const { initAllStores } = await import('../../packages/server/src/modules/studio/infrastructure/database/init')
+    const controller = await import('../../packages/server/src/modules/studio/controllers/group-agent-presets')
     initAllStores()
     modelGroups.value = [{ provider: 'openai', models: ['gpt-test'] }]
 
@@ -90,14 +104,14 @@ describe('group Agent presets', () => {
   })
 
   it('persists owner-scoped CRUD snapshots without secret fields', async () => {
-    const { initAllStores } = await import('../../packages/server/src/db/hermes/init')
+    const { initAllStores } = await import('../../packages/server/src/modules/studio/infrastructure/database/init')
     const {
       createGroupAgentPreset,
       deleteGroupAgentPreset,
       getGroupAgentPreset,
       listGroupAgentPresets,
       updateGroupAgentPreset,
-    } = await import('../../packages/server/src/db/hermes/group-agent-preset-store')
+    } = await import('../../packages/server/src/modules/studio/repositories/group-agent-preset-store')
     initAllStores()
 
     const created = createGroupAgentPreset({
@@ -131,7 +145,7 @@ describe('group Agent presets', () => {
     const {
       normalizeGroupAgentPresetInput,
       validateGroupAgentPresetCapability,
-    } = await import('../../packages/server/src/services/hermes/group-chat/agent-presets')
+    } = await import('../../packages/server/src/modules/studio/services/group-chat/agent-presets')
 
     expect(() => normalizeGroupAgentPresetInput({
       agent: 'codex',
@@ -167,8 +181,48 @@ describe('group Agent presets', () => {
     }])).toThrow(/unavailable/i)
   })
 
+  it('marks presets unavailable when their Agent is not installed', async () => {
+    const controller = await import('../../packages/server/src/modules/studio/controllers/group-agent-presets')
+    const { updateAgentStatus } = await import('../../packages/server/src/modules/studio/public/agent-status-registry')
+    modelGroups.value = [{ provider: 'openai', models: ['gpt-test'] }]
+    const user = { id: 901, role: 'admin', profiles: ['research'] }
+    const input = {
+      agent: 'codex',
+      profile: 'research',
+      provider: 'openai',
+      model: 'gpt-test',
+      apiMode: 'codex_responses',
+      reasoningEffort: 'high',
+      name: 'Availability Reviewer',
+      description: '',
+      avatar: '',
+    }
+    const createCtx: any = { state: { user }, request: { body: input } }
+    await controller.create(createCtx)
+    expect(createCtx.status).toBe(201)
+
+    updateAgentStatus('codex', {
+      installed: false,
+      source: 'not-installed',
+      path: '',
+      version: '',
+    })
+
+    const listCtx: any = { state: { user }, query: {} }
+    await controller.list(listCtx)
+    expect(listCtx.body.presets).toEqual([
+      expect.objectContaining({
+        id: createCtx.body.preset.id,
+        available: false,
+        validationError: 'Codex is not installed',
+      }),
+    ])
+    await expect(controller.resolveGroupAgentPresetForApplication(user, createCtx.body.preset.id))
+      .rejects.toMatchObject({ status: 409, code: 'AGENT_NOT_INSTALLED', agent: 'codex' })
+  })
+
   it('enforces owner/profile boundaries and fail-closes disabled models across CRUD and application', async () => {
-    const controller = await import('../../packages/server/src/controllers/hermes/group-agent-presets')
+    const controller = await import('../../packages/server/src/modules/studio/controllers/group-agent-presets')
     modelGroups.value = [{ provider: 'openai', models: ['gpt-test', 'gpt-new'] }]
     const createCtx: any = {
       state: { user: { id: 41, role: 'admin', profiles: ['research'] } },

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { spawnSync } from 'node:child_process'
 
-import { transcodeToMp3 } from '../../packages/server/src/services/hermes/stt-providers/audio-convert'
+import { transcodeToMp3 } from '../../packages/server/src/modules/studio/services/voice/stt/audio-convert'
 
 const hasFfmpeg = spawnSync('ffmpeg', ['-version']).status === 0
 

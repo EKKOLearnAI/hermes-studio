@@ -120,6 +120,8 @@ describe('SkillsView', () => {
     expect(detail.attributes('data-skill')).toBe('first-skill')
     expect(detail.text()).toBe('first-skill')
     expect(wrapper.get('.skill-list-stub').attributes('data-selected')).toBe('alpha/first-skill')
+    expect(wrapper.find('.n-select-stub').exists()).toBe(false)
+    expect(mockFetchSkills).toHaveBeenCalledWith(undefined, 'hermes')
     expect(globalThis.fetch).not.toHaveBeenCalled()
   })
 })

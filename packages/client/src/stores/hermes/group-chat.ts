@@ -3,7 +3,7 @@ import { ref, computed } from 'vue'
 import { useSettingsStore } from './settings'
 import { primeCompletionSound } from '@/utils/completion-sound'
 import { getActiveProfileName, getStoredUsername } from '@/api/client'
-import { fetchCurrentUser } from '@/api/auth'
+import { fetchCurrentUser } from '@/api/studio/auth'
 import { formatMessageWithReference, type Attachment, type ContentBlock, type MessageReference } from './chat'
 import {
     connectGroupChat,
@@ -38,11 +38,11 @@ import {
     clearRoomContext,
     updateInviteCode as updateInviteCodeApi,
     updateRoomWorkspace as updateRoomWorkspaceApi,
-} from '@/api/hermes/group-chat'
+} from '@/api/studio/group-chat'
 import {
     getGroupChatAttachmentUrl,
     uploadGroupChatAttachments,
-} from '@/api/hermes/group-chat-attachments'
+} from '@/api/studio/group-chat-attachments'
 import { groupMessageAgent } from '@/utils/group-agent-avatar'
 
 type GroupChatSocket = ReturnType<typeof connectGroupChat>

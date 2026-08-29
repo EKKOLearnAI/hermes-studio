@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Mock the controllers so we only verify wiring
-vi.mock('../../packages/server/src/controllers/auth', () => ({
+vi.mock('../../packages/server/src/modules/studio/controllers/auth', () => ({
   authStatus: vi.fn(async (ctx: any) => { ctx.body = { ok: true } }),
   login: vi.fn(async (ctx: any) => { ctx.body = { token: 'x' } }),
   appLogin: vi.fn(async (ctx: any) => { ctx.body = { token: 'x', profiles: [] } }),
@@ -22,7 +22,7 @@ vi.mock('../../packages/server/src/controllers/auth', () => ({
 }))
 
 const requireSuperAdminMock = vi.fn(async (_ctx: any, next: any) => { await next() })
-vi.mock('../../packages/server/src/middleware/user-auth', () => ({
+vi.mock('../../packages/server/src/modules/studio/middleware/auth', () => ({
   requireSuperAdmin: requireSuperAdminMock,
   issueUserJwt: vi.fn(async () => 'jwt'),
 }))
@@ -40,19 +40,19 @@ describe('auth routes: avatar endpoints', () => {
   }
 
   it('mounts GET /api/auth/avatar on the protected router', async () => {
-    const { authProtectedRoutes } = await import('../../packages/server/src/routes/auth')
+    const { authProtectedRoutes } = await import('../../packages/server/src/modules/studio/routes/auth')
     const layer = findLayer(authProtectedRoutes, 'GET', '/api/auth/avatar')
     expect(layer).toBeDefined()
   })
 
   it('mounts PUT /api/auth/avatar on the protected router', async () => {
-    const { authProtectedRoutes } = await import('../../packages/server/src/routes/auth')
+    const { authProtectedRoutes } = await import('../../packages/server/src/modules/studio/routes/auth')
     const layer = findLayer(authProtectedRoutes, 'PUT', '/api/auth/avatar')
     expect(layer).toBeDefined()
   })
 
   it('does not expose the avatar routes on the public router', async () => {
-    const { authPublicRoutes, authProtectedRoutes } = await import('../../packages/server/src/routes/auth')
+    const { authPublicRoutes, authProtectedRoutes } = await import('../../packages/server/src/modules/studio/routes/auth')
 
     expect(findLayer(authPublicRoutes, 'GET', '/api/auth/avatar')).toBeUndefined()
     expect(findLayer(authPublicRoutes, 'PUT', '/api/auth/avatar')).toBeUndefined()
@@ -61,8 +61,8 @@ describe('auth routes: avatar endpoints', () => {
   })
 
   it('routes GET /api/auth/avatar to getMyAvatar', async () => {
-    const { authProtectedRoutes } = await import('../../packages/server/src/routes/auth')
-    const ctrl = await import('../../packages/server/src/controllers/auth')
+    const { authProtectedRoutes } = await import('../../packages/server/src/modules/studio/routes/auth')
+    const ctrl = await import('../../packages/server/src/modules/studio/controllers/auth')
     const layer = findLayer(authProtectedRoutes, 'GET', '/api/auth/avatar')
     expect(layer).toBeDefined()
     const handler = layer!.stack[0]
@@ -75,8 +75,8 @@ describe('auth routes: avatar endpoints', () => {
   })
 
   it('routes PUT /api/auth/avatar to updateMyAvatar', async () => {
-    const { authProtectedRoutes } = await import('../../packages/server/src/routes/auth')
-    const ctrl = await import('../../packages/server/src/controllers/auth')
+    const { authProtectedRoutes } = await import('../../packages/server/src/modules/studio/routes/auth')
+    const ctrl = await import('../../packages/server/src/modules/studio/controllers/auth')
     const layer = findLayer(authProtectedRoutes, 'PUT', '/api/auth/avatar')
     expect(layer).toBeDefined()
     const handler = layer!.stack[0]

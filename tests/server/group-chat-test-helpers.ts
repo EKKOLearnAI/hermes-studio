@@ -2,6 +2,7 @@ import { createServer, type Server as HttpServer } from 'http'
 import { DatabaseSync } from 'node:sqlite'
 import { io as clientIo, type Socket as ClientSocket } from 'socket.io-client'
 import { vi } from 'vitest'
+import '../../packages/server/src/bootstrap/group-chat-agent-runtime-adapter'
 
 const groupChatDbMock = vi.hoisted(() => ({ current: null as DatabaseSync | null }))
 const groupChatAuthMock = vi.hoisted(() => ({
@@ -9,17 +10,17 @@ const groupChatAuthMock = vi.hoisted(() => ({
   user: null as any,
 }))
 
-vi.mock('../../packages/server/src/db/index', () => ({
+vi.mock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
   getDb: () => groupChatDbMock.current,
   isSqliteAvailable: () => groupChatDbMock.current !== null,
 }))
-vi.mock('../../packages/server/src/middleware/user-auth', () => ({
+vi.mock('../../packages/server/src/modules/studio/middleware/auth', () => ({
   isAuthEnabled: vi.fn(async () => groupChatAuthMock.enabled),
   authenticateUserToken: vi.fn(async () => groupChatAuthMock.user),
 }))
 
-import { initAllHermesTables } from '../../packages/server/src/db/hermes/schemas'
-import { GroupChatServer } from '../../packages/server/src/services/hermes/group-chat'
+import { initAllHermesTables } from '../../packages/server/src/modules/studio/infrastructure/database/schemas'
+import { GroupChatServer } from '../../packages/server/src/modules/studio/sockets/group-chat'
 
 export function once<T = any>(socket: ClientSocket, event: string, timeoutMs = 2_000): Promise<T> {
   return new Promise((resolve, reject) => {

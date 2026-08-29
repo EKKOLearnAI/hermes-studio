@@ -10,7 +10,7 @@ describe('user theme storage', () => {
     vi.resetModules()
     const { DatabaseSync } = await import('node:sqlite')
     db = new DatabaseSync(':memory:')
-    vi.doMock('../../packages/server/src/db/index', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
       getDb: () => db,
       getStoragePath: () => ':memory:',
     }))
@@ -19,17 +19,17 @@ describe('user theme storage', () => {
   afterEach(() => {
     db?.close()
     db = null
-    vi.doUnmock('../../packages/server/src/db/index')
-    vi.doUnmock('../../packages/server/src/config')
+    vi.doUnmock('../../packages/server/src/modules/studio/infrastructure/database/index')
+    vi.doUnmock('../../packages/server/src/modules/studio/public/config')
     vi.resetModules()
   })
 
   async function initStore() {
-    const schemas = await import('../../packages/server/src/db/hermes/schemas')
+    const schemas = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
     schemas.initAllHermesTables()
     return {
       schemas,
-      store: await import('../../packages/server/src/db/hermes/user-theme-store'),
+      store: await import('../../packages/server/src/modules/studio/repositories/user-theme-store'),
     }
   }
 
@@ -118,13 +118,13 @@ describe('user theme storage', () => {
 
   it('stores validated background files outside SQLite and removes them cleanly', async () => {
     const root = await mkdtemp(join(tmpdir(), 'hermes-theme-test-'))
-    vi.doMock('../../packages/server/src/config', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/public/config', () => ({
       config: { appHome: root },
     }))
 
     try {
       await initStore()
-      const service = await import('../../packages/server/src/services/user-theme')
+      const service = await import('../../packages/server/src/modules/studio/services/theme/user-theme')
       const png = Buffer.from([
         0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
         0x00, 0x00, 0x00, 0x00,

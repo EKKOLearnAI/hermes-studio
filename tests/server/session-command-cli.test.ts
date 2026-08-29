@@ -8,7 +8,7 @@ const getModelContextLengthMock = vi.fn(() => 256_000)
 const calcAndUpdateUsageMock = vi.fn()
 const forceCompressBridgeHistoryMock = vi.fn()
 
-vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/session-store', () => ({
   addMessage: addMessageMock,
   clearSessionMessages: vi.fn(),
   createSession: createSessionMock,
@@ -17,37 +17,37 @@ vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
   updateSessionStats: updateSessionStatsMock,
 }))
 
-vi.mock('../../packages/server/src/services/logger', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/logging', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }))
 
-vi.mock('../../packages/server/src/services/config-helpers', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/profile-config', () => ({
   readConfigYamlForProfile: vi.fn(async () => ({})),
 }))
 
-vi.mock('../../packages/server/src/services/hermes/run-chat/compression', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/chat-run/compression', () => ({
   buildDbSnapshotAwareHistory: vi.fn(async () => []),
   forceCompressBridgeHistory: forceCompressBridgeHistoryMock,
   getOrCreateSession: vi.fn(() => ({ messages: [], isWorking: false })),
   replaceState: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/services/hermes/run-chat/usage', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/chat-run/usage', () => ({
   calcAndUpdateUsage: calcAndUpdateUsageMock,
   contextTokensWithCachedOverhead: vi.fn(() => 0),
   estimateUsageTokensFromMessages: vi.fn(() => ({ inputTokens: 0, outputTokens: 0 })),
   updateMessageContextTokenUsage: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/services/hermes/run-chat/abort', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/chat-run/abort', () => ({
   handleAbort: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/services/hermes/run-chat/bridge-message', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/chat-run/bridge-message', () => ({
   flushBridgePendingToDb: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/services/hermes/model-context', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/provider-runtime', () => ({
   getModelContextLength: getModelContextLengthMock,
 }))
 
@@ -80,7 +80,7 @@ describe('CLI-style session commands', () => {
   })
 
   it('parses /compact as the compress alias and /context as a new command', async () => {
-    const { parseSessionCommand } = await import('../../packages/server/src/services/hermes/run-chat/session-command')
+    const { parseSessionCommand } = await import('../../packages/server/src/modules/studio/services/chat-run/session-command')
     expect(parseSessionCommand('/compact')?.name).toBe('compress')
     expect(parseSessionCommand('/compact focus on auth')?.rawName).toBe('compact')
     expect(parseSessionCommand('/context')?.name).toBe('context')
@@ -89,7 +89,7 @@ describe('CLI-style session commands', () => {
   it('emits context usage for /context', async () => {
     const state = { messages: [], isWorking: false, events: [], queue: [] }
     const { namespaceEmit, nsp, runQueuedItem, sessionMap, socket, bridge } = makeContext(state)
-    const { handleSessionCommand, parseSessionCommand } = await import('../../packages/server/src/services/hermes/run-chat/session-command')
+    const { handleSessionCommand, parseSessionCommand } = await import('../../packages/server/src/modules/studio/services/chat-run/session-command')
     await handleSessionCommand('session-1', parseSessionCommand('/context')!, {
       nsp: nsp as any,
       socket: socket as any,
@@ -115,7 +115,7 @@ describe('CLI-style session commands', () => {
       compressed: true,
     })
     const { namespaceEmit, nsp, runQueuedItem, sessionMap, socket, bridge } = makeContext(state)
-    const { handleSessionCommand, parseSessionCommand } = await import('../../packages/server/src/services/hermes/run-chat/session-command')
+    const { handleSessionCommand, parseSessionCommand } = await import('../../packages/server/src/modules/studio/services/chat-run/session-command')
     await handleSessionCommand('session-1', parseSessionCommand('/compact')!, {
       nsp: nsp as any,
       socket: socket as any,

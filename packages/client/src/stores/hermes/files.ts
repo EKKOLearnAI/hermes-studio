@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import * as filesApi from '@/api/hermes/files'
+import * as filesApi from '@/api/studio/files'
 import {
   copySessionWorkspaceFile,
   deleteSessionWorkspaceFile,
@@ -10,8 +10,8 @@ import {
   readSessionWorkspaceFile,
   renameSessionWorkspaceFile,
   writeSessionWorkspaceFile,
-} from '@/api/hermes/sessions'
-import type { FileEntry, FileListResult } from '@/api/hermes/files'
+} from '@/api/studio/sessions'
+import type { FileEntry, FileListResult } from '@/api/studio/files'
 import {
   copyGroupWorkspaceFile,
   deleteGroupWorkspaceFile,
@@ -21,13 +21,13 @@ import {
   readGroupWorkspaceFile,
   renameGroupWorkspaceFile,
   writeGroupWorkspaceFile,
-} from '@/api/hermes/group-chat'
+} from '@/api/studio/group-chat'
 import {
   getFilePreviewKind,
   getTextPreviewLanguage,
   type FilePreviewKind,
 } from '@/utils/hermes/file-preview'
-import { fetchAuthenticatedBlob } from '@/api/hermes/binary-content'
+import { fetchAuthenticatedBlob } from '@/api/studio/binary-content'
 
 export { isImageFile, isMarkdownFile, isPreviewableFile, isTextFile } from '@/utils/hermes/file-preview'
 

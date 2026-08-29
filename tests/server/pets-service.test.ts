@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { getActivePet, updateActivePetPreferences } from '../../packages/server/src/services/hermes/pets'
+import { getActivePet, updateActivePetPreferences } from '../../packages/server/src/modules/studio/services/pets/pets'
 
 const originalWebUiHome = process.env.HERMES_WEB_UI_HOME
 

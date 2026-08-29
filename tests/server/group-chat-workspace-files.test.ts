@@ -1,9 +1,13 @@
 import { execFileSync } from 'child_process'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtemp, mkdir, rm, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { groupChatRoutes, setGroupChatServer } from '../../packages/server/src/routes/hermes/group-chat'
+import { groupChatRoutes, setGroupChatServer } from '../../packages/server/src/modules/studio/routes/group-chat'
+
+vi.mock('../../packages/server/src/modules/studio/public/profile-config', () => ({
+  getProfileDir: () => process.env.HERMES_HOME || '',
+}))
 
 function routeHandler(path: string, method: string) {
   const layer = (groupChatRoutes as any).stack.find((item: any) => item.path === path && item.methods.includes(method))
@@ -60,7 +64,7 @@ describe('group chat workspace file routes', () => {
 
   it('lists the managed room workspace and blocks traversal', async () => {
     await writeFile(join(workspace, 'notes.txt'), 'hello')
-    const list = routeHandler('/api/hermes/group-chat/rooms/:roomId/workspace-files/list', 'GET')
+    const list = routeHandler('/api/studio/group-chat/rooms/:roomId/workspace-files/list', 'GET')
     const ctx = createContext()
     await list(ctx)
     expect(ctx.body).toMatchObject({
@@ -81,7 +85,7 @@ describe('group chat workspace file routes', () => {
     const bytes = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0, 1, 2, 3])
     await writeFile(deckPath, bytes)
 
-    const content = routeHandler('/api/hermes/group-chat/rooms/:roomId/workspace-file/content', 'GET')
+    const content = routeHandler('/api/studio/group-chat/rooms/:roomId/workspace-file/content', 'GET')
     const ctx = createContext(deckPath)
     await content(ctx)
 
@@ -101,7 +105,7 @@ describe('group chat workspace file routes', () => {
     execFileSync('git', ['commit', '--quiet', '-m', 'initial'], { cwd: workspace })
     await writeFile(join(workspace, 'notes.txt'), 'after\n')
 
-    const diff = routeHandler('/api/hermes/group-chat/rooms/:roomId/workspace-file/diff', 'GET')
+    const diff = routeHandler('/api/studio/group-chat/rooms/:roomId/workspace-file/diff', 'GET')
     const ctx = createContext('notes.txt')
     await diff(ctx)
 
@@ -116,7 +120,7 @@ describe('group chat workspace file routes', () => {
 
   it('does not expose workspace files to room members without management access', async () => {
     await writeFile(join(workspace, 'private.txt'), 'secret')
-    const read = routeHandler('/api/hermes/group-chat/rooms/:roomId/workspace-file/read', 'GET')
+    const read = routeHandler('/api/studio/group-chat/rooms/:roomId/workspace-file/read', 'GET')
     const ctx = createContext('private.txt')
     ctx.state.user = { role: 'admin', id: 2, profiles: [] }
     await read(ctx)

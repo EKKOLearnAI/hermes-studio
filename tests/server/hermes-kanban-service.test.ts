@@ -4,18 +4,18 @@ const mockExecFileAsync = vi.hoisted(() => vi.fn())
 const mockSpawnHermes = vi.hoisted(() => vi.fn())
 const mockLoggerError = vi.hoisted(() => vi.fn())
 
-vi.mock('../../packages/server/src/services/hermes/hermes-process', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/runtime/process', () => ({
   execHermes: (args: string[], options: unknown) => mockExecFileAsync('hermes', args, options),
   spawnHermes: mockSpawnHermes,
 }))
 
-vi.mock('../../packages/server/src/services/logger', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/logging', () => ({
   logger: {
     error: mockLoggerError,
   },
 }))
 
-import * as service from '../../packages/server/src/services/hermes/hermes-kanban'
+import * as service from '../../packages/server/src/modules/hermes/services/kanban/kanban-service'
 
 describe('hermes kanban service', () => {
   beforeEach(() => {

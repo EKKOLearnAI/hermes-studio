@@ -25,7 +25,7 @@ import json
 import sys
 from pathlib import Path
 
-bridge_dir = Path("packages/server/src/services/hermes/agent-bridge/python").resolve()
+bridge_dir = Path("packages/server/src/modules/hermes/services/bridge/python").resolve()
 sys.path.insert(0, str(bridge_dir))
 import bridge_server
 
@@ -74,7 +74,7 @@ import sys
 import types
 from pathlib import Path
 
-bridge_dir = Path("packages/server/src/services/hermes/agent-bridge/python").resolve()
+bridge_dir = Path("packages/server/src/modules/hermes/services/bridge/python").resolve()
 sys.path.insert(0, str(bridge_dir))
 import bridge_server
 
@@ -125,7 +125,7 @@ print(json.dumps({"response": response, "calls": calls}))
 
   it('forwards the profile, provider, and model from the TypeScript client', async () => {
     const { AgentBridgeClient } = await import(
-      '../../packages/server/src/services/hermes/agent-bridge/client'
+      '../../packages/server/src/modules/hermes/services/bridge/client'
     )
     const client = new AgentBridgeClient({
       endpoint: 'tcp://127.0.0.1:1',

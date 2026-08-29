@@ -9,7 +9,7 @@ const apiMocks = vi.hoisted(() => ({
   routerPushMock: vi.fn(),
 }))
 
-vi.mock('@/api/hermes/sessions', () => ({
+vi.mock('@/api/studio/sessions', () => ({
   fetchSessions: apiMocks.fetchSessionsMock,
   searchSessions: apiMocks.searchSessionsMock,
 }))

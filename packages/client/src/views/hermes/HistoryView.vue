@@ -14,7 +14,7 @@ import SessionListItem from '@/components/hermes/chat/SessionListItem.vue'
 import OutlinePanel from '@/components/hermes/chat/OutlinePanel.vue'
 import PageSidebarNav from '@/components/layout/PageSidebarNav.vue'
 import PageSidebarFooter from '@/components/layout/PageSidebarFooter.vue'
-import { batchDeleteSessions, deleteSession, fetchHermesSessionGroups, fetchHermesSessionPage, fetchHermesSession, fetchSessionMessagesPage, importHermesSession, unarchiveSession, type HermesMessage, type SessionSummary } from '@/api/hermes/sessions'
+import { batchDeleteSessions, deleteSession, fetchHermesSessionGroups, fetchHermesSessionPage, fetchHermesSession, fetchSessionMessagesPage, importHermesSession, unarchiveSession, type HermesMessage, type SessionSummary } from '@/api/studio/sessions'
 
 const appStore = useAppStore()
 const profilesStore = useProfilesStore()
@@ -906,7 +906,6 @@ function handleBatchDeleteConfirm() {
         <PageSidebarNav
           active="history"
           :primary-label="t('chat.newChat')"
-          hide-mode-switch
           @primary="openNewChatPage"
         />
         <div class="session-list-toolbar">

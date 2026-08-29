@@ -173,7 +173,7 @@ test('opens a Profile-generated package.json even when the session has no explic
   const api = await mockHermesApi(page, { sessions: [{ ...session, workspace: null }] })
   let previewRequestUrl = ''
   let previewAuthorization = ''
-  await page.route(`**/api/hermes/sessions/${sessionId}/workspace-file/content**`, async route => {
+  await page.route(`**/api/studio/sessions/${sessionId}/workspace-file/content**`, async route => {
     previewRequestUrl = route.request().url()
     previewAuthorization = route.request().headers().authorization || ''
     await route.fulfill({
@@ -234,7 +234,7 @@ test('HTML source mode remains scrollable while its scrollbar is hidden', async 
 
   const api = await mockHermesApi(page, { sessions: [session] })
   const longHtml = `<main>\n${Array.from({ length: 300 }, (_, index) => `  <p>Line ${index + 1}</p>`).join('\n')}\n</main>`
-  await page.route(`**/api/hermes/sessions/${sessionId}/workspace-file/content**`, route => route.fulfill({
+  await page.route(`**/api/studio/sessions/${sessionId}/workspace-file/content**`, route => route.fulfill({
     status: 200,
     contentType: 'text/html; charset=utf-8',
     body: longHtml,
@@ -289,7 +289,7 @@ test('XLSX preview parses workbook sheets inside the isolated worker', async ({ 
   }, { id: sessionId, path: workbookPath })
 
   const api = await mockHermesApi(page, { sessions: [session] })
-  await page.route(`**/api/hermes/sessions/${sessionId}/workspace-file/content**`, route => route.fulfill({
+  await page.route(`**/api/studio/sessions/${sessionId}/workspace-file/content**`, route => route.fulfill({
     status: 200,
     contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     body: createXlsxFixture(),
@@ -335,7 +335,7 @@ test('DOCX, PDF, and PPTX lazy renderers open safely and cleanly replace one ano
   }, { id: sessionId, docx: docxPath, pdf: pdfPath, pptx: pptxPath })
 
   const api = await mockHermesApi(page, { sessions: [session] })
-  await page.route(`**/api/hermes/sessions/${sessionId}/workspace-file/content**`, route => {
+  await page.route(`**/api/studio/sessions/${sessionId}/workspace-file/content**`, route => {
     const path = new URL(route.request().url()).searchParams.get('path') || ''
     if (path.endsWith('.docx')) {
       return route.fulfill({

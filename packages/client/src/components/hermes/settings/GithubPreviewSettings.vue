@@ -12,7 +12,7 @@ import {
   type PreviewActionResponse,
   type PreviewStatus,
   type PreviewTag,
-} from '@/api/hermes/system'
+} from '@/api/studio/system'
 
 const { t } = useI18n()
 const message = useMessage()

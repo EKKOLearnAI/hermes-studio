@@ -14,25 +14,23 @@ const stopMock = vi.hoisted(() => vi.fn(() => true))
 const startCodingAgentRunMock = vi.hoisted(() => vi.fn(async () => ({ agentSessionId: 'agent-session-1' })))
 const compactStoredCodingAgentSessionMock = vi.hoisted(() => vi.fn())
 
-vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/session-store', () => ({
   addMessage: addMessageMock,
   getSession: getSessionMock,
   updateSessionStats: updateSessionStatsMock,
 }))
 
-vi.mock('../../packages/server/src/services/hermes/run-chat/compression', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/run-state', () => ({
   getOrCreateSession: getOrCreateSessionMock,
-}))
-
-vi.mock('../../packages/server/src/services/hermes/run-chat/usage', () => ({
   calcAndUpdateUsage: calcAndUpdateUsageMock,
+  updateContextTokenUsage: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/services/hermes/model-context', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/provider-runtime', () => ({
   getModelContextLength: getModelContextLengthMock,
 }))
 
-vi.mock('../../packages/server/src/services/coding-agents/runtime/run-manager', () => ({
+vi.mock('../../packages/server/src/modules/coding-agents/services/runtime/run-manager', () => ({
   codingAgentRunManager: {
     compact: compactMock,
     getRunInfo: getRunInfoMock,
@@ -42,7 +40,7 @@ vi.mock('../../packages/server/src/services/coding-agents/runtime/run-manager', 
   },
 }))
 
-vi.mock('../../packages/server/src/services/coding-agents/index', () => ({
+vi.mock('../../packages/server/src/modules/coding-agents/services/index', () => ({
   startCodingAgentRun: startCodingAgentRunMock,
   compactStoredCodingAgentSession: compactStoredCodingAgentSessionMock,
 }))
@@ -76,7 +74,7 @@ describe('coding agent session commands', () => {
   })
 
   it('parses CLI-style coding agent commands', async () => {
-    const { parseCodingAgentSessionCommand } = await import('../../packages/server/src/services/coding-agents/session-command')
+    const { parseCodingAgentSessionCommand } = await import('../../packages/server/src/modules/coding-agents/services/session-command')
     expect(parseCodingAgentSessionCommand('/compact')?.name).toBe('compact')
     expect(parseCodingAgentSessionCommand('/compact focus on auth')?.args).toBe('focus on auth')
     expect(parseCodingAgentSessionCommand('/context')?.name).toBe('context')
@@ -87,7 +85,7 @@ describe('coding agent session commands', () => {
   })
 
   it('emits context usage for coding agent sessions', async () => {
-    const { handleCodingAgentSessionCommand } = await import('../../packages/server/src/services/coding-agents/session-command')
+    const { handleCodingAgentSessionCommand } = await import('../../packages/server/src/modules/coding-agents/services/session-command')
     const { socket, nsp, emitted } = makeSocket()
     await handleCodingAgentSessionCommand(nsp, socket as any, {
       session_id: 'session-1',
@@ -115,7 +113,7 @@ describe('coding agent session commands', () => {
       cost: 0.25,
       contextUsage: { tokens: 40_000, contextWindow: 200_000, percent: 20 },
     })
-    const { handleCodingAgentSessionCommand } = await import('../../packages/server/src/services/coding-agents/session-command')
+    const { handleCodingAgentSessionCommand } = await import('../../packages/server/src/modules/coding-agents/services/session-command')
 
     const contextSocket = makeSocket()
     await handleCodingAgentSessionCommand(contextSocket.nsp, contextSocket.socket as any, {
@@ -150,7 +148,7 @@ describe('coding agent session commands', () => {
   it('emits native compact completion for Codex', async () => {
     compactMock.mockResolvedValue({ compacted: true, beforeTokens: 500, afterTokens: 200 })
     getSessionMock.mockReturnValue({ id: 'session-1', agent: 'codex' })
-    const { handleCodingAgentSessionCommand } = await import('../../packages/server/src/services/coding-agents/session-command')
+    const { handleCodingAgentSessionCommand } = await import('../../packages/server/src/modules/coding-agents/services/session-command')
     const { socket, nsp, emitted } = makeSocket()
     await handleCodingAgentSessionCommand(nsp, socket as any, {
       session_id: 'session-1',
@@ -168,7 +166,7 @@ describe('coding agent session commands', () => {
   it('reports native compact failure without compressing Studio transcript', async () => {
     compactMock.mockRejectedValue(new Error('native compact unsupported'))
     getSessionMock.mockReturnValue({ id: 'session-1', agent: 'codex' })
-    const { handleCodingAgentSessionCommand } = await import('../../packages/server/src/services/coding-agents/session-command')
+    const { handleCodingAgentSessionCommand } = await import('../../packages/server/src/modules/coding-agents/services/session-command')
     const { socket, nsp, emitted } = makeSocket()
     await handleCodingAgentSessionCommand(nsp, socket as any, {
       session_id: 'session-1',
@@ -193,7 +191,7 @@ describe('coding agent session commands', () => {
       workspace: '/tmp/work',
     })
     getRunInfoMock.mockReturnValue(null)
-    const { handleCodingAgentSessionCommand } = await import('../../packages/server/src/services/coding-agents/session-command')
+    const { handleCodingAgentSessionCommand } = await import('../../packages/server/src/modules/coding-agents/services/session-command')
     const { socket, nsp, emitted } = makeSocket()
     await handleCodingAgentSessionCommand(nsp, socket as any, {
       session_id: 'session-1',
@@ -214,7 +212,7 @@ describe('coding agent session commands', () => {
   it('rejects busy coding-agent compaction without running the Studio fallback', async () => {
     compactMock.mockRejectedValue(new Error('Coding agent is still processing the previous input'))
     getSessionMock.mockReturnValue({ id: 'session-1', agent: 'codex' })
-    const { handleCodingAgentSessionCommand } = await import('../../packages/server/src/services/coding-agents/session-command')
+    const { handleCodingAgentSessionCommand } = await import('../../packages/server/src/modules/coding-agents/services/session-command')
     const { socket, nsp, emitted } = makeSocket()
     await handleCodingAgentSessionCommand(nsp, socket as any, {
       session_id: 'session-1',
@@ -238,7 +236,7 @@ describe('coding agent session commands', () => {
       agent_native_session_id: 'thread-1',
       workspace: '/tmp/work',
     })
-    const { handleCodingAgentSessionCommand } = await import('../../packages/server/src/services/coding-agents/session-command')
+    const { handleCodingAgentSessionCommand } = await import('../../packages/server/src/modules/coding-agents/services/session-command')
     const { socket, nsp, emitted } = makeSocket()
     await handleCodingAgentSessionCommand(nsp, socket as any, {
       session_id: 'session-1',
@@ -268,7 +266,7 @@ describe('coding agent session commands', () => {
       workspace: '/tmp/work',
     })
     startCodingAgentRunMock.mockResolvedValue({ agentSessionId: 'agent-session-1' })
-    const { handleCodingAgentSessionCommand } = await import('../../packages/server/src/services/coding-agents/session-command')
+    const { handleCodingAgentSessionCommand } = await import('../../packages/server/src/modules/coding-agents/services/session-command')
     const { socket, nsp, emitted } = makeSocket()
     await handleCodingAgentSessionCommand(nsp, socket as any, {
       session_id: 'session-1',
@@ -293,7 +291,7 @@ describe('coding agent session commands', () => {
       agent_native_session_id: 'thread-1',
       workspace: '/tmp/work',
     })
-    const { handleCodingAgentSessionCommand } = await import('../../packages/server/src/services/coding-agents/session-command')
+    const { handleCodingAgentSessionCommand } = await import('../../packages/server/src/modules/coding-agents/services/session-command')
     const { socket, nsp, emitted } = makeSocket()
     await handleCodingAgentSessionCommand(nsp, socket as any, {
       session_id: 'session-1',
@@ -317,7 +315,7 @@ describe('coding agent session commands', () => {
       messageCount: 4,
     })
     getSessionMock.mockReturnValue({ agent: 'codex', model: 'test-model', provider: 'openrouter' })
-    const { handleCodingAgentSessionCommand } = await import('../../packages/server/src/services/coding-agents/session-command')
+    const { handleCodingAgentSessionCommand } = await import('../../packages/server/src/modules/coding-agents/services/session-command')
     const { socket, nsp, emitted } = makeSocket()
     await handleCodingAgentSessionCommand(nsp, socket as any, {
       session_id: 'session-1',
@@ -342,7 +340,7 @@ describe('coding agent session commands', () => {
       messageCount: 12,
       pendingMessageCount: 0,
     })
-    const { handleCodingAgentSessionCommand } = await import('../../packages/server/src/services/coding-agents/session-command')
+    const { handleCodingAgentSessionCommand } = await import('../../packages/server/src/modules/coding-agents/services/session-command')
     const { socket, nsp, emitted } = makeSocket()
     await handleCodingAgentSessionCommand(nsp, socket as any, {
       session_id: 'session-1',

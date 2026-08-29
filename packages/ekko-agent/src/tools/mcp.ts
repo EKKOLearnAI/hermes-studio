@@ -1,18 +1,24 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
+import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 import type { AgentTool, AgentToolContentPart, AgentToolContext, AgentToolProvider, AgentToolResult } from './types'
 
-interface McpServerConfig {
-  command?: unknown
-  args?: unknown
-  env?: unknown
-  enabled?: unknown
+interface StdioMcpServerConfig {
+  type: 'stdio'
+  command: string
+  args: string[]
+  env: Record<string, string>
+  supportsParallelToolCalls: boolean
 }
 
-interface JsonRpcResponse {
-  id?: number
-  result?: any
-  error?: { message?: string }
+interface StreamableHttpMcpServerConfig {
+  type: 'streamable_http'
+  url: string
+  headers: Record<string, string>
+  supportsParallelToolCalls: boolean
 }
+
+type McpServerConfig = StdioMcpServerConfig | StreamableHttpMcpServerConfig
+type McpClientTransport = StdioClientTransport | StreamableHTTPClientTransport
 
 const DEFAULT_MCP_TIMEOUT_MS = 30_000
 
@@ -21,22 +27,49 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function normalizeServerConfig(value: unknown): McpServerConfig | null {
-  if (!isRecord(value)) return null
-  if (value.enabled === false) return null
-  if (typeof value.command !== 'string' || !value.command.trim()) return null
-  return value
-}
+  if (!isRecord(value) || value.enabled === false) return null
+  const supportsParallelToolCalls = value.supports_parallel_tool_calls === true
+  const configuredType = typeof value.type === 'string' ? value.type.trim().toLowerCase() : ''
+  const command = typeof value.command === 'string' ? value.command.trim() : ''
+  const rawUrl = typeof value.url === 'string' ? value.url.trim() : ''
+  const isHttp = configuredType === 'streamable_http' || (!configuredType && !command && !!rawUrl)
 
-function normalizeArgs(args: unknown): string[] {
-  return Array.isArray(args) ? args.map(arg => String(arg)) : []
-}
-
-function normalizeEnv(env: unknown): NodeJS.ProcessEnv {
-  if (!isRecord(env)) return process.env
-  const normalized: NodeJS.ProcessEnv = { ...process.env }
-  for (const [key, value] of Object.entries(env)) {
-    if (value != null) normalized[key] = String(value)
+  if (isHttp) {
+    try {
+      const url = new URL(rawUrl)
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') return null
+      return {
+        type: 'streamable_http',
+        url: url.toString(),
+        headers: normalizeStringRecord(value.headers),
+        supportsParallelToolCalls,
+      }
+    } catch {
+      return null
+    }
   }
+
+  if (configuredType && configuredType !== 'stdio') return null
+  if (!command) return null
+  return {
+    type: 'stdio',
+    command,
+    args: Array.isArray(value.args) ? value.args.map(arg => String(arg)) : [],
+    env: normalizeProcessEnv(value.env),
+    supportsParallelToolCalls,
+  }
+}
+
+function normalizeStringRecord(value: unknown): Record<string, string> {
+  if (!isRecord(value)) return {}
+  return Object.fromEntries(Object.entries(value)
+    .filter((entry): entry is [string, string] => typeof entry[1] === 'string'))
+}
+
+function normalizeProcessEnv(value: unknown): Record<string, string> {
+  const normalized = Object.fromEntries(Object.entries(process.env)
+    .filter((entry): entry is [string, string] => typeof entry[1] === 'string'))
+  for (const [key, item] of Object.entries(normalizeStringRecord(value))) normalized[key] = item
   return normalized
 }
 
@@ -78,151 +111,98 @@ function responseDataWithoutImagePayloads(value: unknown): unknown {
 }
 
 class McpClientSession {
-  private child: ChildProcessWithoutNullStreams | null = null
-  private nextId = 1
-  private stdout = ''
-  private stderr = ''
+  private client: Client | null = null
+  private transport: McpClientTransport | null = null
   private initialized: Promise<void> | null = null
-  private readonly pending = new Map<number, { resolve: (response: JsonRpcResponse) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>()
 
   constructor(readonly fingerprint: string, private readonly server: McpServerConfig) {}
 
   async listTools(timeoutMs: number): Promise<any[]> {
-    await this.ensureInitialized(timeoutMs)
-    const response = await this.request('tools/list', {}, timeoutMs)
-    if (response.error) throw new Error(response.error.message || 'MCP tools/list failed')
-    return Array.isArray(response.result?.tools) ? response.result.tools : []
+    const client = await this.ensureConnected(timeoutMs)
+    const result = await client.listTools(undefined, { timeout: timeoutMs, cacheMode: 'refresh' })
+    return result.tools
   }
 
   async callTool(name: string, input: Record<string, unknown>, timeoutMs: number): Promise<AgentToolResult> {
-    await this.ensureInitialized(timeoutMs)
-    const response = await this.request('tools/call', { name, arguments: input }, timeoutMs)
-    if (response.error) {
-      return { ok: false, content: response.error.message || 'MCP tools/call failed', error: response.error.message || 'MCP tools/call failed' }
-    }
-    const result = response.result
-    const content = responseContentToText(result)
-    return {
-      ok: result?.isError !== true,
-      content,
-      contentParts: responseContentParts(result),
-      data: responseDataWithoutImagePayloads(result),
-      error: result?.isError === true ? content : undefined,
+    try {
+      const client = await this.ensureConnected(timeoutMs)
+      const result = await client.callTool({ name, arguments: input }, { timeout: timeoutMs })
+      const content = responseContentToText(result)
+      return {
+        ok: result.isError !== true,
+        content,
+        contentParts: responseContentParts(result),
+        data: responseDataWithoutImagePayloads(result),
+        error: result.isError === true ? content : undefined,
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return { ok: false, content: message, error: message }
     }
   }
 
   dispose(): void {
-    this.child?.kill()
-    this.reset(new Error('MCP client session closed'))
+    const client = this.client
+    const transport = this.transport
+    this.client = null
+    this.transport = null
+    this.initialized = null
+    if (!client) return
+    void (async () => {
+      try {
+        if (transport instanceof StreamableHTTPClientTransport) await transport.terminateSession()
+      } catch {
+        // Session termination is optional and some servers return 405.
+      } finally {
+        await client.close().catch(() => undefined)
+      }
+    })()
   }
 
-  private start(): ChildProcessWithoutNullStreams {
-    if (this.child && !this.child.killed) return this.child
-    const command = String(this.server.command)
-    const child = spawn(command, normalizeArgs(this.server.args), {
-      env: normalizeEnv(this.server.env),
-      stdio: ['pipe', 'pipe', 'pipe'],
-      windowsHide: true,
-    })
-    this.child = child
-    this.stdout = ''
-    this.stderr = ''
-    child.stdout.on('data', chunk => this.consumeStdout(String(chunk)))
-    child.stderr.on('data', chunk => { this.stderr = `${this.stderr}${String(chunk)}`.slice(-4000) })
-    child.on('error', error => this.reset(error))
-    child.on('exit', code => this.reset(new Error(`MCP server exited: ${command}${code == null ? '' : ` code=${code}`}${this.stderr ? ` stderr=${this.stderr.trim()}` : ''}`)))
-    child.unref()
-    ;(child.stdin as NodeJS.WritableStream & { unref?: () => void }).unref?.()
-    ;(child.stdout as NodeJS.ReadableStream & { unref?: () => void }).unref?.()
-    ;(child.stderr as NodeJS.ReadableStream & { unref?: () => void }).unref?.()
-    return child
-  }
-
-  private async ensureInitialized(timeoutMs: number): Promise<void> {
-    this.start()
-    if (!this.initialized) {
-      this.initialized = this.request('initialize', {
-        protocolVersion: '2024-11-05',
-        capabilities: {},
-        clientInfo: { name: 'ekko-agent', version: '0.1.0' },
-      }, timeoutMs).then(response => {
-        if (response.error) throw new Error(response.error.message || 'MCP initialize failed')
-        this.child?.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} })}\n`)
-      }).catch(error => {
-        this.initialized = null
+  private async ensureConnected(timeoutMs: number): Promise<Client> {
+    if (!this.client) {
+      const client = new Client({ name: 'ekko-agent', version: '0.1.0' })
+      const transport = this.server.type === 'streamable_http'
+        ? new StreamableHTTPClientTransport(new URL(this.server.url), {
+            requestInit: Object.keys(this.server.headers).length
+              ? { headers: this.server.headers }
+              : undefined,
+          })
+        : new StdioClientTransport({
+            command: this.server.command,
+            args: this.server.args,
+            env: this.server.env,
+            stderr: 'ignore',
+          })
+      this.client = client
+      this.transport = transport
+      this.initialized = client.connect(transport, { timeout: timeoutMs }).catch(async error => {
+        if (this.client === client) {
+          this.client = null
+          this.transport = null
+          this.initialized = null
+        }
+        await client.close().catch(() => undefined)
         throw error
       })
     }
     await this.initialized
-  }
-
-  private request(method: string, params: Record<string, unknown>, timeoutMs: number): Promise<JsonRpcResponse> {
-    const child = this.start()
-    const id = this.nextId++
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(id)
-        reject(new Error(`MCP server timed out after ${timeoutMs}ms: ${String(this.server.command)}`))
-      }, timeoutMs)
-      this.pending.set(id, { resolve, reject, timer })
-      child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`, error => {
-        if (!error) return
-        const entry = this.pending.get(id)
-        if (!entry) return
-        clearTimeout(entry.timer)
-        this.pending.delete(id)
-        entry.reject(error)
-      })
-    })
-  }
-
-  private consumeStdout(chunk: string): void {
-    this.stdout += chunk
-    let newline = this.stdout.indexOf('\n')
-    while (newline >= 0) {
-      const line = this.stdout.slice(0, newline).trim()
-      this.stdout = this.stdout.slice(newline + 1)
-      if (line) {
-        try {
-          const response = JSON.parse(line) as JsonRpcResponse
-          if (typeof response.id === 'number') {
-            const entry = this.pending.get(response.id)
-            if (entry) {
-              clearTimeout(entry.timer)
-              this.pending.delete(response.id)
-              entry.resolve(response)
-            }
-          }
-        } catch {
-          // Ignore non-JSON log lines from MCP servers.
-        }
-      }
-      newline = this.stdout.indexOf('\n')
-    }
-  }
-
-  private reset(error: Error): void {
-    const child = this.child
-    this.child = null
-    this.initialized = null
-    if (child && !child.killed) child.kill()
-    for (const entry of this.pending.values()) {
-      clearTimeout(entry.timer)
-      entry.reject(error)
-    }
-    this.pending.clear()
+    return this.client!
   }
 }
 
 class McpTool implements AgentTool {
   readonly definition: AgentTool['definition']
+  readonly concurrency: AgentTool['concurrency']
 
   constructor(
-    private readonly serverName: string,
+    serverName: string,
     private readonly remoteName: string,
     tool: any,
     private readonly session: McpClientSession,
+    supportsParallelToolCalls: boolean,
   ) {
+    this.concurrency = supportsParallelToolCalls ? 'parallel' : 'serial'
     this.definition = {
       name: String(tool.name || remoteName),
       description: String(tool.description || `MCP tool ${remoteName} from ${serverName}`),
@@ -249,7 +229,7 @@ export function createMcpToolProvider(): AgentToolProvider {
         const server = normalizeServerConfig(rawConfig)
         if (!server) continue
         configuredServerNames.add(serverName)
-        const fingerprint = JSON.stringify({ command: server.command, args: normalizeArgs(server.args), env: server.env })
+        const fingerprint = JSON.stringify(server)
         let session = sessions.get(serverName)
         if (!session || session.fingerprint !== fingerprint) {
           session?.dispose()
@@ -261,7 +241,13 @@ export function createMcpToolProvider(): AgentToolProvider {
           for (const tool of await session.listTools(timeoutMs)) {
             if (!tool?.name || usedNames.has(String(tool.name))) continue
             usedNames.add(String(tool.name))
-            tools.push(new McpTool(serverName, String(tool.name), tool, session))
+            tools.push(new McpTool(
+              serverName,
+              String(tool.name),
+              tool,
+              session,
+              server.supportsParallelToolCalls,
+            ))
           }
         } catch {
           // A broken MCP server should not prevent the rest of the agent run.

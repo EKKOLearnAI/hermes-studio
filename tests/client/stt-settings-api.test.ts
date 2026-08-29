@@ -11,15 +11,15 @@ vi.mock('@/router', () => ({
 
 import router from '@/router'
 import { hasApiKey } from '../../packages/client/src/api/client'
-import { clearSttSecret, deleteSttBaseUrlPreset, deleteSttProvider, fetchSttSettings, saveActiveSttProvider, saveSttSettings } from '../../packages/client/src/api/hermes/stt-settings'
-import { downloadLocalSttModel, fetchLocalSttModelStatus } from '../../packages/client/src/api/hermes/local-stt-model'
+import { clearSttSecret, deleteSttBaseUrlPreset, deleteSttProvider, fetchSttSettings, saveActiveSttProvider, saveSttSettings } from '../../packages/client/src/api/studio/stt-settings'
+import { downloadLocalSttModel, fetchLocalSttModelStatus } from '../../packages/client/src/api/studio/local-stt-model'
 import {
   cancelLocalSttStream,
   finishLocalSttStream,
   pushLocalSttStreamChunk,
   startLocalSttStream,
   transcribeSpeech,
-} from '../../packages/client/src/api/hermes/stt'
+} from '../../packages/client/src/api/studio/stt'
 
 const mockFetch = vi.fn()
 vi.stubGlobal('fetch', mockFetch)
@@ -66,7 +66,7 @@ describe('stt api wrappers', () => {
     const result = await fetchSttSettings()
 
     expect(mockFetch).toHaveBeenCalledWith(
-      'https://hermes.example/api/hermes/stt/settings',
+      'https://hermes.example/api/studio/stt/settings',
       expect.objectContaining({
         headers: expect.objectContaining({
           Authorization: 'Bearer jwt-token',
@@ -101,7 +101,7 @@ describe('stt api wrappers', () => {
     expect(hasApiKey()).toBe(false)
     expect(router.replace).toHaveBeenCalledWith({ name: 'login' })
     expect(mockFetch).toHaveBeenCalledWith(
-      'https://hermes.example/api/hermes/stt/settings',
+      'https://hermes.example/api/studio/stt/settings',
       expect.objectContaining({
         headers: expect.objectContaining({
           Authorization: 'Bearer jwt-token',
@@ -120,7 +120,7 @@ describe('stt api wrappers', () => {
     const result = await saveActiveSttProvider('browser')
 
     expect(mockFetch).toHaveBeenCalledWith(
-      'https://hermes.example/api/hermes/stt/settings/active',
+      'https://hermes.example/api/studio/stt/settings/active',
       expect.objectContaining({
         method: 'PUT',
         headers: expect.objectContaining({
@@ -152,7 +152,7 @@ describe('stt api wrappers', () => {
     })
 
     expect(mockFetch).toHaveBeenCalledWith(
-      'https://hermes.example/api/hermes/stt/settings/openai',
+      'https://hermes.example/api/studio/stt/settings/openai',
       expect.objectContaining({
         method: 'PUT',
         headers: expect.objectContaining({
@@ -190,7 +190,7 @@ describe('stt api wrappers', () => {
     const result = await clearSttSecret('openai', 'apiKey')
 
     expect(mockFetch).toHaveBeenCalledWith(
-      'https://hermes.example/api/hermes/stt/settings/openai/secret/apiKey',
+      'https://hermes.example/api/studio/stt/settings/openai/secret/apiKey',
       expect.objectContaining({
         method: 'DELETE',
         headers: expect.objectContaining({
@@ -219,7 +219,7 @@ describe('stt api wrappers', () => {
     const result = await deleteSttProvider('openai')
 
     expect(mockFetch).toHaveBeenCalledWith(
-      'https://hermes.example/api/hermes/stt/settings/openai',
+      'https://hermes.example/api/studio/stt/settings/openai',
       expect.objectContaining({
         method: 'DELETE',
         headers: expect.objectContaining({
@@ -255,7 +255,7 @@ describe('stt api wrappers', () => {
     const result = await deleteSttBaseUrlPreset('custom', 'https://api.groq.com/openai/v1')
 
     expect(mockFetch).toHaveBeenCalledWith(
-      'https://hermes.example/api/hermes/stt/settings/custom/base-url-preset?url=https%3A%2F%2Fapi.groq.com%2Fopenai%2Fv1',
+      'https://hermes.example/api/studio/stt/settings/custom/base-url-preset?url=https%3A%2F%2Fapi.groq.com%2Fopenai%2Fv1',
       expect.objectContaining({
         method: 'DELETE',
         headers: expect.objectContaining({
@@ -295,11 +295,11 @@ describe('stt api wrappers', () => {
     await expect(downloadLocalSttModel('github')).resolves.toMatchObject({ success: true, job: { id: 'job-1', source: 'github' } })
 
     expect(mockFetch).toHaveBeenNthCalledWith(1,
-      'https://hermes.example/api/hermes/stt/local-model',
+      'https://hermes.example/api/studio/stt/local-model',
       expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer jwt-token' }) }),
     )
     expect(mockFetch).toHaveBeenNthCalledWith(2,
-      'https://hermes.example/api/hermes/stt/local-model/download',
+      'https://hermes.example/api/studio/stt/local-model/download',
       expect.objectContaining({ method: 'POST', body: JSON.stringify({ source: 'github' }) }),
     )
   })
@@ -348,7 +348,7 @@ describe('stt api wrappers', () => {
 
     expect(mockFetch).toHaveBeenCalledOnce()
     const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit]
-    expect(url).toBe('https://hermes.example/api/hermes/stt/transcribe')
+    expect(url).toBe('https://hermes.example/api/studio/stt/transcribe')
     expect(init.method).toBe('POST')
     expect(getHeader(init.headers, 'Authorization')).toBe('Bearer jwt-token')
     expect(getHeader(init.headers, 'Content-Type')).toBeUndefined()
@@ -429,11 +429,11 @@ describe('stt api wrappers', () => {
     await expect(cancelLocalSttStream('stream/a')).resolves.toEqual({ success: true })
 
     expect(mockFetch).toHaveBeenNthCalledWith(1,
-      'https://hermes.example/api/hermes/stt/local-stream',
+      'https://hermes.example/api/studio/stt/local-stream',
       expect.objectContaining({ method: 'POST' }),
     )
     expect(mockFetch).toHaveBeenNthCalledWith(2,
-      'https://hermes.example/api/hermes/stt/local-stream/stream%2Fa/chunk',
+      'https://hermes.example/api/studio/stt/local-stream/stream%2Fa/chunk',
       expect.objectContaining({
         method: 'POST',
         body: chunk,
@@ -444,11 +444,11 @@ describe('stt api wrappers', () => {
       }),
     )
     expect(mockFetch).toHaveBeenNthCalledWith(3,
-      'https://hermes.example/api/hermes/stt/local-stream/stream%2Fa/finish',
+      'https://hermes.example/api/studio/stt/local-stream/stream%2Fa/finish',
       expect.objectContaining({ method: 'POST' }),
     )
     expect(mockFetch).toHaveBeenNthCalledWith(4,
-      'https://hermes.example/api/hermes/stt/local-stream/stream%2Fa',
+      'https://hermes.example/api/studio/stt/local-stream/stream%2Fa',
       expect.objectContaining({ method: 'DELETE' }),
     )
   })
@@ -492,7 +492,7 @@ describe('stt api wrappers', () => {
     expect(listener).toHaveBeenCalledOnce()
     expect(listener.mock.calls[0][0].detail).toEqual({ kind: 'expired' })
     expect(mockFetch).toHaveBeenCalledWith(
-      'https://hermes.example/api/hermes/stt/transcribe',
+      'https://hermes.example/api/studio/stt/transcribe',
       expect.objectContaining({
         method: 'POST',
         headers: expect.objectContaining({

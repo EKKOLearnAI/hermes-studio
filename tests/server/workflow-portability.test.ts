@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { compileWorkflowGraphPreflight } from '../../packages/server/src/services/workflow-manager'
-import { cancelWorkflowImport, exportWorkflowDefinition, previewWorkflowImport, confirmWorkflowImport } from '../../packages/server/src/services/workflow-portability'
+import { compileWorkflowGraphPreflight } from '../../packages/server/src/modules/studio/services/workflow/manager'
+import { cancelWorkflowImport, exportWorkflowDefinition, previewWorkflowImport, confirmWorkflowImport } from '../../packages/server/src/modules/studio/services/workflow/portability'
 
 const workflow = {
   id: 'wf-secret-id', name: 'Portable flow', profile: 'private-profile', workspace: '/private/workspace',

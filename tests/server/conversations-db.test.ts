@@ -5,7 +5,7 @@ import { tmpdir } from 'os'
 
 const profileDirState = vi.hoisted(() => ({ value: '' }))
 
-vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/profiles/profile', () => ({
   getActiveProfileDir: () => profileDirState.value,
 }))
 
@@ -191,7 +191,7 @@ describe('conversation DB service', () => {
     insertMessage(db, { id: 4, session_id: 'root-cont', role: 'assistant', content: 'Continued answer', timestamp: 111 })
     db.close()
 
-    const mod = await import('../../packages/server/src/db/hermes/conversations-db')
+    const mod = await import('../../packages/server/src/modules/hermes/services/history/conversations-db')
     const summaries = await mod.listConversationSummariesFromDb({ humanOnly: true })
     expect(summaries).toHaveLength(1)
     expect(summaries[0]).toEqual(expect.objectContaining({
@@ -274,7 +274,7 @@ describe('conversation DB service', () => {
     insertMessage(db, { id: 3, session_id: 'branch-child', role: 'assistant', content: 'Branch answer', timestamp: 203 })
     db.close()
 
-    const mod = await import('../../packages/server/src/db/hermes/conversations-db')
+    const mod = await import('../../packages/server/src/modules/hermes/services/history/conversations-db')
     const summaries = await mod.listConversationSummariesFromDb({ humanOnly: true })
     expect(summaries.map((summary: any) => summary.id)).toEqual(['branch-child', 'root'])
 
@@ -336,7 +336,7 @@ describe('conversation DB service', () => {
     insertMessage(db, { id: 3, session_id: 'review-child', role: 'assistant', content: 'Review answer', timestamp: 302 })
     db.close()
 
-    const mod = await import('../../packages/server/src/db/hermes/conversations-db')
+    const mod = await import('../../packages/server/src/modules/hermes/services/history/conversations-db')
     const summaries = await mod.listConversationSummariesFromDb({ humanOnly: true })
     expect(summaries.map((summary: any) => summary.id)).toEqual(['review-child', 'parent'])
 
@@ -381,7 +381,7 @@ describe('conversation DB service', () => {
     })
     db.close()
 
-    const mod = await import('../../packages/server/src/db/hermes/conversations-db')
+    const mod = await import('../../packages/server/src/modules/hermes/services/history/conversations-db')
     const summaries = await mod.listConversationSummariesFromDb({ humanOnly: true })
     const detail = await mod.getConversationDetailFromDb('synthetic-root', { humanOnly: true })
 
@@ -418,7 +418,7 @@ describe('conversation DB service', () => {
     })
     db.close()
 
-    const mod = await import('../../packages/server/src/db/hermes/conversations-db')
+    const mod = await import('../../packages/server/src/modules/hermes/services/history/conversations-db')
     const detail = await mod.getConversationDetailFromDb('assistant-empty', { humanOnly: false })
 
     expect(detail).toEqual({

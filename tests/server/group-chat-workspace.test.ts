@@ -9,7 +9,7 @@ const dbState = vi.hoisted(() => ({
   db: null as DatabaseSync | null,
 }))
 
-vi.mock('../../packages/server/src/db/index', () => ({
+vi.mock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
   getDb: () => dbState.db,
   isSqliteAvailable: () => Boolean(dbState.db),
 }))
@@ -25,12 +25,12 @@ vi.mock('socket.io-client', () => ({
   })),
 }))
 
-vi.mock('../../packages/server/src/services/auth', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/auth/token-auth', () => ({
   getToken: vi.fn(async () => 'test-token'),
 }))
 
 async function routeHandler(path: string, method: string) {
-  const { groupChatPublicRoutes, groupChatRoutes } = await import('../../packages/server/src/routes/hermes/group-chat')
+  const { groupChatPublicRoutes, groupChatRoutes } = await import('../../packages/server/src/modules/studio/routes/group-chat')
   const layer = [...(groupChatPublicRoutes as any).stack, ...(groupChatRoutes as any).stack]
     .find((item: any) => item.path === path && item.methods.includes(method))
   if (!layer) throw new Error(`Route not found: ${method} ${path}`)
@@ -51,7 +51,7 @@ describe('group chat room workspace', () => {
     originalWebUiHome = process.env.HERMES_WEB_UI_HOME
     process.env.WORKSPACE_BASE = root
     process.env.HERMES_WEB_UI_HOME = join(root, 'web-ui-home')
-    const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
+    const { initAllHermesTables } = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
     initAllHermesTables()
     httpServer = createServer()
   })
@@ -68,7 +68,7 @@ describe('group chat room workspace', () => {
   })
 
   it('defaults, persists, clears, and returns room workspace in list/detail rows', async () => {
-    const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
+    const { GroupChatServer } = await import('../../packages/server/src/modules/studio/sockets/group-chat')
     const server = new GroupChatServer(httpServer)
     const storage = server.getStorage()
     const workspace = join(root, 'repo')
@@ -95,14 +95,14 @@ describe('group chat room workspace', () => {
   })
 
   it('sets a validated top-level workspace when creating a room', async () => {
-    const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
-    const { setGroupChatServer } = await import('../../packages/server/src/routes/hermes/group-chat')
+    const { GroupChatServer } = await import('../../packages/server/src/modules/studio/sockets/group-chat')
+    const { setGroupChatServer } = await import('../../packages/server/src/modules/studio/routes/group-chat')
     const server = new GroupChatServer(httpServer)
     setGroupChatServer(server)
     const workspace = join(root, 'repo with spaces')
     await mkdir(workspace)
 
-    const handler = await routeHandler('/api/hermes/group-chat/rooms', 'POST')
+    const handler = await routeHandler('/api/studio/group-chat/rooms', 'POST')
     const ctx: any = {
       request: { body: { name: 'Room 1', inviteCode: 'invite-1', workspace, agents: [] } },
       status: 200,
@@ -117,12 +117,12 @@ describe('group chat room workspace', () => {
   })
 
   it('creates a profile-scoped default workspace when the room omits one', async () => {
-    const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
-    const { setGroupChatServer } = await import('../../packages/server/src/routes/hermes/group-chat')
+    const { GroupChatServer } = await import('../../packages/server/src/modules/studio/sockets/group-chat')
+    const { setGroupChatServer } = await import('../../packages/server/src/modules/studio/routes/group-chat')
     const server = new GroupChatServer(httpServer)
     setGroupChatServer(server)
 
-    const handler = await routeHandler('/api/hermes/group-chat/rooms', 'POST')
+    const handler = await routeHandler('/api/studio/group-chat/rooms', 'POST')
     const ctx: any = {
       request: {
         body: {
@@ -151,12 +151,12 @@ describe('group chat room workspace', () => {
   })
 
   it('rejects invalid top-level workspace values when creating a room', async () => {
-    const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
-    const { setGroupChatServer } = await import('../../packages/server/src/routes/hermes/group-chat')
+    const { GroupChatServer } = await import('../../packages/server/src/modules/studio/sockets/group-chat')
+    const { setGroupChatServer } = await import('../../packages/server/src/modules/studio/routes/group-chat')
     const server = new GroupChatServer(httpServer)
     setGroupChatServer(server)
 
-    const handler = await routeHandler('/api/hermes/group-chat/rooms', 'POST')
+    const handler = await routeHandler('/api/studio/group-chat/rooms', 'POST')
     const ctx: any = {
       request: { body: { name: 'Room 1', inviteCode: 'invite-1', workspace: '/definitely/outside', agents: [] } },
       status: 200,
@@ -172,8 +172,8 @@ describe('group chat room workspace', () => {
   })
 
   it('interrupts active room agents before changing the configured workspace', async () => {
-    const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
-    const { setGroupChatServer } = await import('../../packages/server/src/routes/hermes/group-chat')
+    const { GroupChatServer } = await import('../../packages/server/src/modules/studio/sockets/group-chat')
+    const { setGroupChatServer } = await import('../../packages/server/src/modules/studio/routes/group-chat')
     const server = new GroupChatServer(httpServer)
     const storage = server.getStorage()
     const workspace = join(root, 'repo')
@@ -189,7 +189,7 @@ describe('group chat room workspace', () => {
       events.push('interrupt')
     })
 
-    const handler = await routeHandler('/api/hermes/group-chat/rooms/:roomId/workspace', 'PUT')
+    const handler = await routeHandler('/api/studio/group-chat/rooms/:roomId/workspace', 'PUT')
     const ctx: any = {
       params: { roomId: 'room-1' },
       request: { body: { workspace } },
@@ -207,8 +207,8 @@ describe('group chat room workspace', () => {
   })
 
   it('does not switch workspace when active room agents do not finish interrupting', async () => {
-    const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
-    const { setGroupChatServer } = await import('../../packages/server/src/routes/hermes/group-chat')
+    const { GroupChatServer } = await import('../../packages/server/src/modules/studio/sockets/group-chat')
+    const { setGroupChatServer } = await import('../../packages/server/src/modules/studio/routes/group-chat')
     const server = new GroupChatServer(httpServer)
     const storage = server.getStorage()
     const workspace = join(root, 'repo')
@@ -219,7 +219,7 @@ describe('group chat room workspace', () => {
     vi.spyOn(server, 'fenceCurrentRoomAgentSessions').mockReturnValue(releaseSessionFence)
     vi.spyOn(server.agentClients, 'interruptRoom').mockRejectedValue(Object.assign(new Error('still running'), { status: 409 }))
 
-    const handler = await routeHandler('/api/hermes/group-chat/rooms/:roomId/workspace', 'PUT')
+    const handler = await routeHandler('/api/studio/group-chat/rooms/:roomId/workspace', 'PUT')
     const ctx: any = {
       params: { roomId: 'room-1' },
       request: { body: { workspace } },
@@ -237,12 +237,12 @@ describe('group chat room workspace', () => {
   })
 
   it('ignores deprecated compression config, including hidden workspace values', async () => {
-    const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
-    const { setGroupChatServer } = await import('../../packages/server/src/routes/hermes/group-chat')
+    const { GroupChatServer } = await import('../../packages/server/src/modules/studio/sockets/group-chat')
+    const { setGroupChatServer } = await import('../../packages/server/src/modules/studio/routes/group-chat')
     const server = new GroupChatServer(httpServer)
     setGroupChatServer(server)
 
-    const handler = await routeHandler('/api/hermes/group-chat/rooms', 'POST')
+    const handler = await routeHandler('/api/studio/group-chat/rooms', 'POST')
     const ctx: any = {
       request: {
         body: {
@@ -266,13 +266,13 @@ describe('group chat room workspace', () => {
   })
 
   it('lets a regular admin reopen and list an agentless room they created', async () => {
-    const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
-    const { setGroupChatServer } = await import('../../packages/server/src/routes/hermes/group-chat')
+    const { GroupChatServer } = await import('../../packages/server/src/modules/studio/sockets/group-chat')
+    const { setGroupChatServer } = await import('../../packages/server/src/modules/studio/routes/group-chat')
     const server = new GroupChatServer(httpServer)
     setGroupChatServer(server)
     const user = { id: 7, username: 'alice', role: 'admin', profiles: ['default'] }
 
-    const create = await routeHandler('/api/hermes/group-chat/rooms', 'POST')
+    const create = await routeHandler('/api/studio/group-chat/rooms', 'POST')
     const createCtx: any = {
       state: { user },
       request: { body: { name: 'Agentless', inviteCode: 'agentless', agents: [] } },
@@ -282,12 +282,12 @@ describe('group chat room workspace', () => {
     await create(createCtx, async () => {})
     const roomId = createCtx.body.room.id
 
-    const detail = await routeHandler('/api/hermes/group-chat/rooms/:roomId', 'GET')
+    const detail = await routeHandler('/api/studio/group-chat/rooms/:roomId', 'GET')
     const detailCtx: any = { params: { roomId }, query: {}, state: { user }, status: 200, body: undefined }
     await detail(detailCtx, async () => {})
     expect(detailCtx.body.room.id).toBe(roomId)
 
-    const list = await routeHandler('/api/hermes/group-chat/rooms', 'GET')
+    const list = await routeHandler('/api/studio/group-chat/rooms', 'GET')
     const listCtx: any = { state: { user }, status: 200, body: undefined }
     await list(listCtx, async () => {})
     expect(listCtx.body.rooms.map((room: any) => room.id)).toContain(roomId)
@@ -295,8 +295,8 @@ describe('group chat room workspace', () => {
   })
 
   it('does not expose configured workspace paths through invite-code lookup', async () => {
-    const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
-    const { setGroupChatServer } = await import('../../packages/server/src/routes/hermes/group-chat')
+    const { GroupChatServer } = await import('../../packages/server/src/modules/studio/sockets/group-chat')
+    const { setGroupChatServer } = await import('../../packages/server/src/modules/studio/routes/group-chat')
     const server = new GroupChatServer(httpServer)
     const workspace = join(root, 'repo')
     await mkdir(workspace)
@@ -304,7 +304,7 @@ describe('group chat room workspace', () => {
     server.getStorage().updateRoomWorkspace('room-1', workspace)
     setGroupChatServer(server)
 
-    const handler = await routeHandler('/api/hermes/group-chat/rooms/join/:code', 'GET')
+    const handler = await routeHandler('/api/studio/group-chat/rooms/join/:code', 'GET')
     const ctx: any = { params: { code: 'invite-1' }, status: 200, body: undefined }
     await handler(ctx, async () => {})
 
@@ -316,8 +316,8 @@ describe('group chat room workspace', () => {
   })
 
   it('keeps invite-code members read-only and redacts workspace paths without profile access', async () => {
-    const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
-    const { setGroupChatServer } = await import('../../packages/server/src/routes/hermes/group-chat')
+    const { GroupChatServer } = await import('../../packages/server/src/modules/studio/sockets/group-chat')
+    const { setGroupChatServer } = await import('../../packages/server/src/modules/studio/routes/group-chat')
     const server = new GroupChatServer(httpServer)
     const storage = server.getStorage()
     const workspace = join(root, 'repo')
@@ -329,12 +329,12 @@ describe('group chat room workspace', () => {
     setGroupChatServer(server)
     const user = { id: 2, username: 'bob', role: 'admin', profiles: ['default'] }
 
-    const list = await routeHandler('/api/hermes/group-chat/rooms', 'GET')
+    const list = await routeHandler('/api/studio/group-chat/rooms', 'GET')
     const listCtx: any = { state: { user }, status: 200, body: undefined }
     await list(listCtx, async () => {})
     expect(listCtx.body.rooms).toEqual([expect.objectContaining({ id: 'room-1', workspace: '', inviteCode: null, canManage: false })])
 
-    const detail = await routeHandler('/api/hermes/group-chat/rooms/:roomId', 'GET')
+    const detail = await routeHandler('/api/studio/group-chat/rooms/:roomId', 'GET')
     const detailCtx: any = { params: { roomId: 'room-1' }, query: {}, state: { user }, status: 200, body: undefined }
     await detail(detailCtx, async () => {})
     expect(detailCtx.status).toBe(200)
@@ -342,13 +342,13 @@ describe('group chat room workspace', () => {
     expect(detailCtx.body.room.inviteCode).toBe(null)
     expect(detailCtx.body.room.canManage).toBe(false)
 
-    const updateWorkspace = await routeHandler('/api/hermes/group-chat/rooms/:roomId/workspace', 'PUT')
+    const updateWorkspace = await routeHandler('/api/studio/group-chat/rooms/:roomId/workspace', 'PUT')
     const workspaceCtx: any = { params: { roomId: 'room-1' }, request: { body: { workspace } }, state: { user }, status: 200, body: undefined }
     await updateWorkspace(workspaceCtx, async () => {})
     expect(workspaceCtx.status).toBe(403)
     expect(storage.getRoom('room-1')?.workspace).toBe(workspace)
 
-    const clone = await routeHandler('/api/hermes/group-chat/rooms/:roomId/clone', 'POST')
+    const clone = await routeHandler('/api/studio/group-chat/rooms/:roomId/clone', 'POST')
     const cloneCtx: any = { params: { roomId: 'room-1' }, request: { body: { name: 'Copy' } }, state: { user }, status: 200, body: undefined }
     await clone(cloneCtx, async () => {})
     expect(cloneCtx.status).toBe(403)
@@ -357,8 +357,8 @@ describe('group chat room workspace', () => {
   })
 
   it('rejects workspace updates for rooms outside a regular admin profile scope', async () => {
-    const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
-    const { setGroupChatServer } = await import('../../packages/server/src/routes/hermes/group-chat')
+    const { GroupChatServer } = await import('../../packages/server/src/modules/studio/sockets/group-chat')
+    const { setGroupChatServer } = await import('../../packages/server/src/modules/studio/routes/group-chat')
     const server = new GroupChatServer(httpServer)
     const storage = server.getStorage()
     const workspace = join(root, 'repo')
@@ -367,7 +367,7 @@ describe('group chat room workspace', () => {
     storage.addRoomAgent('room-private', 'agent-1', 'research', 'Researcher', '', 0)
     setGroupChatServer(server)
 
-    const handler = await routeHandler('/api/hermes/group-chat/rooms/:roomId/workspace', 'PUT')
+    const handler = await routeHandler('/api/studio/group-chat/rooms/:roomId/workspace', 'PUT')
     const ctx: any = {
       params: { roomId: 'room-private' },
       state: { user: { id: 2, username: 'ops', role: 'admin', profiles: ['default'] } },
@@ -385,8 +385,8 @@ describe('group chat room workspace', () => {
   })
 
   it('rejects room detail and clone reads outside a regular admin profile scope', async () => {
-    const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
-    const { setGroupChatServer } = await import('../../packages/server/src/routes/hermes/group-chat')
+    const { GroupChatServer } = await import('../../packages/server/src/modules/studio/sockets/group-chat')
+    const { setGroupChatServer } = await import('../../packages/server/src/modules/studio/routes/group-chat')
     const server = new GroupChatServer(httpServer)
     const storage = server.getStorage()
     const workspace = join(root, 'repo')
@@ -397,13 +397,13 @@ describe('group chat room workspace', () => {
     setGroupChatServer(server)
     const user = { id: 2, username: 'ops', role: 'admin', profiles: ['default'] }
 
-    const detail = await routeHandler('/api/hermes/group-chat/rooms/:roomId', 'GET')
+    const detail = await routeHandler('/api/studio/group-chat/rooms/:roomId', 'GET')
     const detailCtx: any = { params: { roomId: 'room-private' }, query: {}, state: { user }, status: 200, body: undefined }
     await detail(detailCtx, async () => {})
     expect(detailCtx.status).toBe(403)
     expect(detailCtx.body).toEqual({ error: 'Access denied' })
 
-    const clone = await routeHandler('/api/hermes/group-chat/rooms/:roomId/clone', 'POST')
+    const clone = await routeHandler('/api/studio/group-chat/rooms/:roomId/clone', 'POST')
     const cloneCtx: any = { params: { roomId: 'room-private' }, request: { body: { name: 'Copy' } }, state: { user }, status: 200, body: undefined }
     await clone(cloneCtx, async () => {})
     expect(cloneCtx.status).toBe(403)
@@ -427,7 +427,7 @@ describe('group chat room workspace', () => {
     )`)
     dbState.db?.prepare('INSERT INTO gc_rooms (id, name) VALUES (?, ?)').run('old-room', 'Old Room')
 
-    const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
+    const { initAllHermesTables } = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
     initAllHermesTables()
 
     const row = dbState.db?.prepare(
@@ -450,15 +450,15 @@ describe('group chat room workspace', () => {
   })
 
   it('validates workspace updates through the group room REST route', async () => {
-    const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
-    const { setGroupChatServer } = await import('../../packages/server/src/routes/hermes/group-chat')
+    const { GroupChatServer } = await import('../../packages/server/src/modules/studio/sockets/group-chat')
+    const { setGroupChatServer } = await import('../../packages/server/src/modules/studio/routes/group-chat')
     const server = new GroupChatServer(httpServer)
     const workspace = join(root, 'repo')
     await mkdir(workspace)
     server.getStorage().saveRoom('room-1', 'Room 1')
     setGroupChatServer(server)
 
-    const handler = await routeHandler('/api/hermes/group-chat/rooms/:roomId/workspace', 'PUT')
+    const handler = await routeHandler('/api/studio/group-chat/rooms/:roomId/workspace', 'PUT')
     const okCtx: any = { params: { roomId: 'room-1' }, request: { body: { workspace } }, status: 200, body: undefined }
     await handler(okCtx, async () => {})
     expect(okCtx.body.room.workspace).toBe(workspace)

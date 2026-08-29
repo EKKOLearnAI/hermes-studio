@@ -12,7 +12,7 @@ let hermesHome = ''
 async function loadService() {
   vi.resetModules()
   process.env.HERMES_HOME = hermesHome
-  return import('../../packages/server/src/services/hermes/write-gate')
+  return import('../../packages/server/src/modules/hermes/services/write-gate/write-gate')
 }
 
 async function configureFakeApprovalRuntime(lines: string[]) {

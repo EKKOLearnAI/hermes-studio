@@ -7,25 +7,25 @@ describe('session category store', () => {
     vi.resetModules()
     const { DatabaseSync } = await import('node:sqlite')
     db = new DatabaseSync(':memory:')
-    vi.doMock('../../packages/server/src/db/index', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
       getDb: () => db,
       getStoragePath: () => ':memory:',
       isSqliteAvailable: () => true,
     }))
-    const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
+    const { initAllHermesTables } = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
     initAllHermesTables()
   })
 
   afterEach(() => {
     db?.close()
     db = null
-    vi.doUnmock('../../packages/server/src/db/index')
+    vi.doUnmock('../../packages/server/src/modules/studio/infrastructure/database/index')
     vi.resetModules()
   })
 
   it('creates normalized global categories without case-insensitive duplicates', async () => {
     const { createSessionCategory, listSessionCategories } = await import(
-      '../../packages/server/src/db/hermes/session-category-store'
+      '../../packages/server/src/modules/studio/repositories/session-category-store'
     )
 
     const created = createSessionCategory('  Client   Work  ')
@@ -38,9 +38,9 @@ describe('session category store', () => {
 
   it('stores one nullable category id directly on a session', async () => {
     const { createSessionCategory, deleteSessionCategory, renameSessionCategory, setSessionCategory } = await import(
-      '../../packages/server/src/db/hermes/session-category-store'
+      '../../packages/server/src/modules/studio/repositories/session-category-store'
     )
-    const { createSession, getSession } = await import('../../packages/server/src/db/hermes/session-store')
+    const { createSession, getSession } = await import('../../packages/server/src/modules/studio/repositories/session-store')
     const category = createSessionCategory('Work')
     createSession({ id: 'session-1', profile: 'profile-a', category_id: category.id })
     createSession({ id: 'session-2', profile: 'profile-b', category_id: category.id })

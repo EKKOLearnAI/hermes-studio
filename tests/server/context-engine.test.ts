@@ -1,14 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { SummaryCache } from '../../packages/server/src/services/hermes/context-engine/summary-cache'
+import { SummaryCache } from '../../packages/server/src/modules/studio/services/group-chat/context-engine/summary-cache'
 import {
     buildAgentInstructions,
     buildSummarizationSystemPrompt,
     buildFullSummaryPrompt,
     buildIncrementalUpdatePrompt,
     buildNonOwnerRequestSecurityPrompt,
-} from '../../packages/server/src/services/hermes/context-engine/prompt'
-import { ContextEngine } from '../../packages/server/src/services/hermes/context-engine/compressor'
-import type { StoredMessage, MessageFetcher, GatewayCaller } from '../../packages/server/src/services/hermes/context-engine/types'
+} from '../../packages/server/src/modules/studio/services/group-chat/agent-prompt'
+import { ContextEngine } from '../../packages/server/src/modules/studio/services/group-chat/context-engine/compressor'
+import type { StoredMessage, MessageFetcher, GatewayCaller } from '../../packages/server/src/modules/studio/services/group-chat/types'
 
 // ─── Helpers ─────────────────────────────────────────────────
 

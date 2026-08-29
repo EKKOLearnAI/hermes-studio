@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -8,6 +8,7 @@ import {
   DelegateTaskTool,
   ReadFileTool,
   TerminalExecTool,
+  ViewImageTool,
   WriteFileTool,
   createDefaultToolRegistry,
   sanitizeAgentToolResult,
@@ -78,6 +79,39 @@ describe('ekko-agent tools', () => {
     })
   })
 
+  it('loads supported workspace images as multimodal tool results', async () => {
+    const image = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      'base64',
+    )
+    await writeFile(path.join(workspaceRoot, 'preview.png'), image)
+    const viewer = new ViewImageTool()
+
+    await expect(viewer.execute({ path: 'preview.png' }, { workspaceRoot })).resolves.toMatchObject({
+      ok: true,
+      contentParts: [{
+        type: 'image',
+        mimeType: 'image/png',
+        data: image.toString('base64'),
+      }],
+      data: {
+        path: path.join(workspaceRoot, 'preview.png'),
+        bytes: image.byteLength,
+        mimeType: 'image/png',
+      },
+    })
+  })
+
+  it('enforces workspace and format boundaries when viewing images', async () => {
+    const viewer = new ViewImageTool()
+    await writeFile(path.join(workspaceRoot, 'not-an-image.png'), 'plain text')
+
+    await expect(viewer.execute({ path: '../outside.png' }, { workspaceRoot }))
+      .rejects.toMatchObject({ code: 'PATH_OUTSIDE_WORKSPACE' })
+    await expect(viewer.execute({ path: 'not-an-image.png' }, { workspaceRoot }))
+      .rejects.toMatchObject({ code: 'UNSUPPORTED_IMAGE_FORMAT' })
+  })
+
   it('runs terminal commands with argument arrays', async () => {
     const terminal = new TerminalExecTool()
 
@@ -92,6 +126,35 @@ describe('ekko-agent tools', () => {
         exitCode: 0,
       },
     })
+  })
+
+  it('defaults command temporary files to the current workspace', async () => {
+    const terminal = new TerminalExecTool()
+    const result = await terminal.execute({
+      command: process.execPath,
+      args: ['-e', 'process.stdout.write(JSON.stringify({ TMPDIR: process.env.TMPDIR, TMP: process.env.TMP, TEMP: process.env.TEMP }))'],
+    }, { workspaceRoot })
+    const expected = path.join(workspaceRoot, '.ekko-tmp')
+
+    expect(result.ok).toBe(true)
+    expect(JSON.parse(result.content)).toEqual({ TMPDIR: expected, TMP: expected, TEMP: expected })
+    expect((await stat(expected)).isDirectory()).toBe(true)
+  })
+
+  it('allows an explicit terminal working directory outside workspaceRoot', async () => {
+    const terminal = new TerminalExecTool()
+    const cwd = os.tmpdir()
+
+    const result = await terminal.execute({
+      command: process.execPath,
+      args: ['-e', 'process.stdout.write(process.cwd())'],
+      cwd,
+    }, { workspaceRoot })
+    expect(result).toMatchObject({
+      ok: true,
+      data: { cwd },
+    })
+    expect(await realpath(result.content)).toBe(await realpath(cwd))
   })
 
   it('normalizes shell-like terminal command strings when args are omitted', async () => {
@@ -165,11 +228,13 @@ describe('ekko-agent tools', () => {
       'skill_list',
       'skill_view',
       'terminal_exec',
+      'view_image',
       'write_file',
     ])
     const definitionsByName = new Map(definitions.map(definition => [definition.name, definition]))
     expect(definitionsByName.get('code_exec')?.description).toContain('including a one-line snippet')
     expect(definitionsByName.get('terminal_exec')?.description).toContain('use code_exec instead')
+    expect(definitionsByName.get('terminal_exec')?.description).toContain('npx --dir')
     for (const definition of definitions) {
       expect(definition.description, definition.name).not.toMatch(/[\p{Script=Han}]/u)
       for (const description of collectDescriptions(definition.parameters)) {

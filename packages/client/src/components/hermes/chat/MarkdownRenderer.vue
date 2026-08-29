@@ -17,7 +17,7 @@ import {
   isMermaidFence,
   renderMermaidPlaceholder,
 } from './mermaidRenderer'
-import { downloadFile, getDownloadUrl, inferDownloadFileName } from '@/api/hermes/download'
+import { downloadFile, getDownloadUrl, inferDownloadFileName } from '@/api/studio/download'
 import { isPreviewableFile } from '@/utils/hermes/file-preview'
 import { openUrlInDesktopBrowser } from '@/utils/desktop-browser'
 
@@ -491,8 +491,8 @@ async function handleMarkdownClick(event: MouseEvent): Promise<void> {
     return
   }
 
-  // Full download URL: open directly (already has /api/hermes/download?path=...)
-  if (href.startsWith('/api/hermes/download?')) {
+  // Full download URL: open directly (already has /api/studio/files/download?path=...)
+  if (href.startsWith('/api/studio/files/download?')) {
     event.preventDefault()
     event.stopPropagation()
     const linkText = link.textContent || ''

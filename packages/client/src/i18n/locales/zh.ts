@@ -1,6 +1,8 @@
 import { socialMessagesZh } from '../social-messages'
+import { ekkoConfigZh } from './ekko-config'
 
 export default {
+  ekkoConfig: ekkoConfigZh,
   socialMessages: socialMessagesZh,
   browser: {
     title: '浏览器', settings: '浏览器设置', desktopOnly: '内置浏览器仅在 Hermes Studio 桌面端可用。', newTab: '新标签页',
@@ -225,6 +227,7 @@ export default {
     files: '文件',
     devices: '设备',
     connections: '设备互联',
+    agentManager: 'Agent 管理',
     groupConversation: '对话',
     groupConversationShort: '对话',
     groupPlatform: '平台',
@@ -259,6 +262,32 @@ export default {
     dockerUpdateTitle: 'Docker 升级',
     dockerUpdateGuide: '当前运行在 Docker 环境中，请拉取最新镜像并重建容器来升级：',
     dockerUpdateNote: '数据会持续保留，重建容器不会丢失数据。',
+  },
+
+  agentManager: {
+    title: 'Agent 管理',
+    subtitle: '统一发现和管理这台设备上的 Agent。',
+    refresh: '刷新',
+    hermesDescription: 'Hermes 支持 Studio 托管的 Runtime，以及用户自行安装的本机 CLI。',
+    managedRuntime: 'Hermes Runtime',
+    managedRuntimeHint: 'Studio 只安装和管理完整 Runtime 包，不单独安装 Hermes CLI。',
+    studioManaged: 'Studio 管理',
+    manageRuntime: '管理 Runtime',
+    runtimeVersion: 'Runtime 版本',
+    agentVersion: 'Hermes Agent 版本',
+    path: '路径',
+    userCli: 'Hermes CLI',
+    userCliReadonly: '优先探测当前环境中的 Hermes CLI；CLI 由用户自行管理。',
+    readOnly: '只读',
+    noUserCli: '未探测到可用的 Hermes CLI',
+    unknownVersion: '版本未知',
+    inUse: '当前使用',
+    builtIn: '内置',
+    ekkoDescription: 'Ekko 随 Studio 提供，无需单独安装、升级或删除。',
+    version: '版本',
+    codingAgentDescription: '可由 Studio 安装、检查更新和删除。',
+    updateToVersion: '更新到 {version}',
+    deleteConfirm: '确定删除 {name}？',
   },
 
   runtimeVersions: {

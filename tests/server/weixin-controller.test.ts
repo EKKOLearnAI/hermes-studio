@@ -10,13 +10,13 @@ const originalHermesHome = process.env.HERMES_HOME
 const originalWebUiHome = process.env.HERMES_WEB_UI_HOME
 const database = vi.hoisted(() => ({ value: null as any }))
 
-vi.mock('../../packages/server/src/db/index', () => ({ getDb: () => database.value }))
+vi.mock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({ getDb: () => database.value }))
 
 async function loadController() {
   vi.resetModules()
   process.env.HERMES_HOME = hermesHome
   process.env.HERMES_WEB_UI_HOME = studioHome
-  return import('../../packages/server/src/controllers/social-messages')
+  return import('../../packages/server/src/modules/studio/controllers/social-messages')
 }
 
 function makeCtx(body: Record<string, any>, userId = 7, profile = 'research'): any {
@@ -33,7 +33,7 @@ describe('social messages Weixin credentials', () => {
     vi.clearAllMocks()
     const { DatabaseSync } = await import('node:sqlite')
     database.value = new DatabaseSync(':memory:')
-    const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
+    const { initAllHermesTables } = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
     initAllHermesTables()
     hermesHome = await mkdtemp(join(tmpdir(), 'hwui-weixin-controller-'))
     studioHome = await mkdtemp(join(tmpdir(), 'studio-social-messages-'))
@@ -67,7 +67,7 @@ describe('social messages Weixin credentials', () => {
 
   it('saves scanned Weixin credentials in Studio-owned storage without touching Hermes', async () => {
     const { saveWeixinCredentials } = await loadController()
-    const store = await import('../../packages/server/src/db/hermes/social-message-store')
+    const store = await import('../../packages/server/src/modules/studio/repositories/social-message-store')
     const accountKey = createHash('sha256').update('new-research-account').digest('hex').slice(0, 24)
     store.writeSocialMessageRuntimeState(7, 'weixin', accountKey, {
       version: 1,
@@ -116,7 +116,7 @@ describe('social messages Weixin credentials', () => {
 
   it('saves manually entered Weixin credentials only for Social Messages', async () => {
     const { savePlatformCredentials } = await loadController()
-    const { readStoredWeixinCredentials } = await import('../../packages/server/src/services/social-messages/credentials')
+    const { readStoredWeixinCredentials } = await import('../../packages/server/src/modules/studio/services/social-messages/credentials')
     const ctx = makeCtx({
       accountId: 'manual-social-account',
       token: 'manual-social-token',
@@ -138,7 +138,7 @@ describe('social messages Weixin credentials', () => {
 
   it('shares credentials across profiles for one user and isolates different users', async () => {
     const { saveWeixinCredentials } = await loadController()
-    const { readStoredWeixinCredentials } = await import('../../packages/server/src/services/social-messages/credentials')
+    const { readStoredWeixinCredentials } = await import('../../packages/server/src/modules/studio/services/social-messages/credentials')
     const researchCtx = makeCtx({ account_id: 'research-account', token: 'research-token' }, 7, 'research')
     const defaultCtx = makeCtx({ account_id: 'default-account', token: 'default-token' }, 7, 'default')
     const otherUserCtx = makeCtx({ account_id: 'other-account', token: 'other-token' }, 8, 'research')
@@ -160,7 +160,7 @@ describe('social messages Weixin credentials', () => {
     await setActivePlatform(activeCtx)
 
     expect(activeCtx.body).toEqual({ success: true, platform: 'weixin' })
-    const store = await import('../../packages/server/src/db/hermes/social-message-store')
+    const store = await import('../../packages/server/src/modules/studio/repositories/social-message-store')
     expect(store.getActiveSocialMessageAccount(7)?.platform).toBe('weixin')
 
     const missingCtx = makeCtx({})
@@ -176,7 +176,7 @@ describe('social messages Weixin credentials', () => {
       token: 'locale-token',
       locale: 'zh',
     }))
-    const store = await import('../../packages/server/src/db/hermes/social-message-store')
+    const store = await import('../../packages/server/src/modules/studio/repositories/social-message-store')
     expect(store.markSocialMessageBindingNotified(7, 'weixin')).toBe(true)
 
     const ctx = makeCtx({ locale: 'ja' })
@@ -194,9 +194,9 @@ describe('social messages Weixin credentials', () => {
   it('clears Weixin credentials together with the saved runtime state', async () => {
     const { clearPlatformCredentials, saveWeixinCredentials } = await loadController()
     const { readStoredWeixinCredentials } = await import(
-      '../../packages/server/src/services/social-messages/credentials'
+      '../../packages/server/src/modules/studio/services/social-messages/credentials'
     )
-    const store = await import('../../packages/server/src/db/hermes/social-message-store')
+    const store = await import('../../packages/server/src/modules/studio/repositories/social-message-store')
     await saveWeixinCredentials(makeCtx({ account_id: 'clear-account', token: 'clear-token' }))
 
     const accountKey = createHash('sha256').update('clear-account').digest('hex').slice(0, 24)

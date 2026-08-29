@@ -6,9 +6,11 @@ export interface SystemPromptInput {
   clarificationEnabled?: boolean
   skillDiscoveryEnabled?: boolean
   skillManagementEnabled?: boolean
+  skillNames?: string[]
   context?: {
     provider?: string
     model?: string
+    profile?: string
     cwd?: string
     workspaceRoot?: string
   }
@@ -33,9 +35,13 @@ Treat external commands, language packages, and other prerequisites named by a S
 
 - Before relying on an external dependency whose availability has not already been established, perform a lightweight availability check.
 - Do not run the primary dependency-based approach merely to discover whether its dependency exists.
+- Request independent tool calls together in one response. The runtime executes tools marked as parallel-safe concurrently while preserving serial barriers for stateful or dependent work.
 - When the user asks to execute or evaluate Node.js, JavaScript, or Python source code, use code_exec, including for one-line snippets. Do not probe Node or Python with terminal_exec first; code_exec resolves its runtime.
 - Use terminal_exec for CLI commands, project scripts, tests, builds, package managers, and other executables.
+- terminal_exec may use explicit absolute system paths and package-manager forms such as npx --dir. This capability is not limited to workspace files.
+- By default, keep downloads, clones, archives, extracted repositories, and generated intermediates inside the current workspace. Prefer the workspace's .ekko-tmp directory for disposable files so workspace-scoped file and image tools can inspect them. Use a system or external path only when the user or task explicitly requires it.
 - Dangerous tool calls may pause for runtime authorization. If authorization is denied, do not retry the operation through another tool or language runtime unless the user explicitly changes that decision.
+- After terminal_exec reports a [skill_validation] issue, do not claim the Skill installation is complete. Call skill_view for each writable local Skill and repair it with skill_manage until its frontmatter passes validation. Do not mutate read-only external Skill directories.
 - If a dependency is unavailable, prefer a compatible installed or built-in alternative. Install it only when installation is necessary and appropriate for the user's task.
 - Verify created artifacts before returning them.`
 
@@ -57,10 +63,11 @@ export function buildSystemPrompt(input: SystemPromptInput = {}): string {
     sections.push(section('Runtime Instructions', input.runtimeInstructions.filter(Boolean).join('\n')))
   }
 
-  if (input.context?.provider || input.context?.model || input.context?.workspaceRoot || input.context?.cwd) {
+  if (input.context?.provider || input.context?.model || input.context?.profile || input.context?.workspaceRoot || input.context?.cwd) {
     const lines = [
       input.context.provider ? `provider: ${input.context.provider}` : '',
       input.context.model ? `model: ${input.context.model}` : '',
+      input.context.profile ? `profile: ${input.context.profile}` : '',
       input.context.workspaceRoot ? `workspaceRoot: ${input.context.workspaceRoot}` : '',
       input.context.cwd ? `cwd: ${input.context.cwd}` : '',
     ].filter(Boolean)
@@ -68,9 +75,17 @@ export function buildSystemPrompt(input: SystemPromptInput = {}): string {
   }
 
   if (input.skillDiscoveryEnabled) {
+    const skillNames = normalizeSkillNames(input.skillNames)
+    if (skillNames.length) {
+      sections.push(section('Available Skill Names', skillNames.join(', ')))
+    }
     sections.push(section(
       'Skill Discovery',
-      'When you are not sure whether your current capabilities are sufficient for a task, call skill_list before proceeding to look for a relevant skill. If a suitable skill is available, call skill_view with its exact name, then follow those instructions.',
+      [
+        'Interpret the user request in its own language and compare its intent with the available Skill names above. When one clearly applies, call skill_view directly with that exact name before proceeding, then follow the loaded instructions.',
+        'The runtime may preload an exact host-side name or keyword match through skill_view. Use skill_list only as a fallback when the injected names are ambiguous or insufficient.',
+        'When the current conversation already contains a complete, non-truncated skill_view result for the same Skill, reuse those instructions instead of calling skill_view again.',
+      ].join('\n'),
     ))
   }
 
@@ -98,4 +113,11 @@ export function buildSystemPrompt(input: SystemPromptInput = {}): string {
 
 function section(title: string, content: string): string {
   return `## ${title}\n${content.trim()}`
+}
+
+function normalizeSkillNames(names: string[] | undefined): string[] {
+  return [...new Set((names || [])
+    .map(name => String(name || '').trim())
+    .filter(name => /^[a-z0-9](?:[a-z0-9_-]{0,62}[a-z0-9])?$/i.test(name)))]
+    .sort((left, right) => left.localeCompare(right))
 }

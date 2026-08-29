@@ -286,9 +286,12 @@ function isSensitiveKey(key: string): boolean {
     normalized === 'token' ||
     normalized.endsWith('_token') ||
     normalized === 'access_token' ||
+    normalized === 'accesstoken' ||
     normalized === 'refresh_token' ||
+    normalized === 'refreshtoken' ||
     normalized === 'secret' ||
     normalized === 'client_secret' ||
+    normalized === 'clientsecret' ||
     normalized === 'password' ||
     normalized === 'cookie' ||
     normalized === 'set_cookie'

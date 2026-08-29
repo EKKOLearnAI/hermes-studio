@@ -1,4 +1,4 @@
-import { fetchUsageStats, type UsageStatsResponse } from '@/api/hermes/sessions'
+import { fetchUsageStats, type UsageStatsResponse } from '@/api/studio/sessions'
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 

@@ -10,7 +10,7 @@ async function loadRuntimeEnvironment(
   else process.env.container = options.container
   const existsSync = vi.fn((path: string) => path === '/.dockerenv' && options.dockerEnvFile === true)
   vi.doMock('fs', () => ({ existsSync }))
-  const runtimeEnvironment = await import('../../packages/server/src/services/runtime-environment')
+  const runtimeEnvironment = await import('../../packages/server/src/modules/studio/public/runtime-environment')
   return { ...runtimeEnvironment, existsSync }
 }
 

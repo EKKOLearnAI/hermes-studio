@@ -3,7 +3,7 @@ import {
   buildProjectedGroupChatHistory,
   isWorkspaceDiffToolMessage,
   projectGroupChatMessage,
-} from '../../packages/server/src/services/hermes/group-chat/context-projection'
+} from '../../packages/server/src/modules/studio/services/group-chat/context-projection'
 
 function message(overrides: Record<string, unknown>) {
   return {

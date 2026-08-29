@@ -77,7 +77,7 @@ describe('hermes-web-ui MCP server', () => {
                 },
               },
             },
-            '/api/chat-run/runs': {
+            '/api/studio/chat-run/runs': {
               post: {
                 tags: ['Chat Run'],
                 requestBody: {
@@ -117,7 +117,7 @@ describe('hermes-web-ui MCP server', () => {
         })
         return
       }
-      if (req.url === '/api/chat-run/runs') {
+      if (req.url === '/api/studio/chat-run/runs') {
         chatRunHits += 1
         let raw = ''
         req.on('data', chunk => { raw += chunk })
@@ -145,6 +145,7 @@ describe('hermes-web-ui MCP server', () => {
         HERMES_WEB_UI_URL: `http://127.0.0.1:${address.port}`,
         HERMES_WEB_UI_HOME: home,
         HERMES_WEB_UI_PROFILE: 'research',
+        AUTH_TOKEN: '',
       },
     })
     child.stdout.on('data', (chunk) => {
@@ -171,14 +172,14 @@ describe('hermes-web-ui MCP server', () => {
       name: 'hermes_studio_api_request',
       arguments: {
         method: 'POST',
-        path: '/api/chat-run/runs',
+        path: '/api/studio/chat-run/runs',
         body: {},
       },
     })
     writeRpc(child, 7, 'tools/call', {
       name: 'hermes_studio_api_openapi_get',
       arguments: {
-        path: '/api/chat-run/runs',
+        path: '/api/studio/chat-run/runs',
         method: 'POST',
       },
     })
@@ -249,7 +250,7 @@ describe('hermes-web-ui MCP server', () => {
       operationCount: 1,
       operations: [{
         method: 'POST',
-        path: '/api/chat-run/runs',
+        path: '/api/studio/chat-run/runs',
         requestBody: {
           fields: [
             { name: 'input', required: true, type: 'string' },
@@ -290,7 +291,7 @@ describe('hermes-web-ui MCP server', () => {
       name: 'hermes_studio_api_request',
       arguments: {
         method: 'POST',
-        path: '/api/chat-run/runs',
+        path: '/api/studio/chat-run/runs',
         body: { input: 'hello' },
       },
     })
@@ -322,7 +323,7 @@ describe('hermes-web-ui MCP server', () => {
   it('exposes the curated Hermes Studio use catalog through one compact category tool', async () => {
     const server = createServer((req, res) => {
       res.setHeader('content-type', 'application/json')
-      if (req.url === '/api/chat-run/runs') {
+      if (req.url === '/api/studio/chat-run/runs') {
         let raw = ''
         req.on('data', chunk => { raw += chunk })
         req.on('end', () => {
@@ -334,15 +335,15 @@ describe('hermes-web-ui MCP server', () => {
         })
         return
       }
-      if (req.url === '/api/hermes/sessions?limit=2&source=coding_agent') {
+      if (req.url === '/api/studio/sessions?limit=2&source=coding_agent') {
         res.end(JSON.stringify({ sessions: [{ id: 'session-1' }] }))
         return
       }
-      if (req.url === '/api/hermes/sessions/count?source=coding_agent') {
+      if (req.url === '/api/studio/sessions/count?source=coding_agent') {
         res.end(JSON.stringify({ count: 7 }))
         return
       }
-      if (req.url === '/api/hermes/usage/stats?days=7') {
+      if (req.url === '/api/studio/usage/stats?days=7') {
         res.end(JSON.stringify({
           total_input_tokens: 100,
           total_output_tokens: 40,
@@ -358,11 +359,11 @@ describe('hermes-web-ui MCP server', () => {
         }))
         return
       }
-      if (req.url === '/api/hermes/sessions/session-1' && req.method === 'GET') {
+      if (req.url === '/api/studio/sessions/session-1' && req.method === 'GET') {
         res.end(JSON.stringify({ id: 'session-1', title: 'Session 1' }))
         return
       }
-      if (req.url === '/api/hermes/sessions/session-1/context') {
+      if (req.url === '/api/studio/sessions/session-1/context') {
         res.end(JSON.stringify({
           session_id: 'session-1',
           title: 'Session 1',
@@ -379,15 +380,15 @@ describe('hermes-web-ui MCP server', () => {
         }))
         return
       }
-      if (req.url === '/api/hermes/sessions/session-1' && req.method === 'DELETE') {
+      if (req.url === '/api/studio/sessions/session-1' && req.method === 'DELETE') {
         res.end(JSON.stringify({ ok: true, deleted: true }))
         return
       }
-      if (req.url === '/api/hermes/sessions/conversations/session-1/messages?humanOnly=0') {
+      if (req.url === '/api/studio/sessions/conversations/session-1/messages?humanOnly=0') {
         res.end(JSON.stringify({ messages: [{ role: 'system', content: 'internal' }] }))
         return
       }
-      if (req.url === '/api/hermes/sessions/session-1/rename' && req.method === 'POST') {
+      if (req.url === '/api/studio/sessions/session-1/rename' && req.method === 'POST') {
         let raw = ''
         req.on('data', chunk => { raw += chunk })
         req.on('end', () => {
@@ -425,7 +426,7 @@ describe('hermes-web-ui MCP server', () => {
         res.end(JSON.stringify({ success: true, deleted: 'custom:edge-router' }))
         return
       }
-      if (req.url === '/api/hermes/performance/runtime') {
+      if (req.url === '/api/studio/performance/runtime') {
         res.end(JSON.stringify({
           timestamp: 123456,
           bridge: {
@@ -439,15 +440,15 @@ describe('hermes-web-ui MCP server', () => {
         }))
         return
       }
-      if (req.url === '/api/hermes/workflows?profile=default') {
+      if (req.url === '/api/studio/workflows?profile=default') {
         res.end(JSON.stringify({ workflows: [{ id: 'workflow-1', name: 'Demo workflow', profile: 'default' }] }))
         return
       }
-      if (req.url === '/api/hermes/workflows/workflow-1' && req.method === 'GET') {
+      if (req.url === '/api/studio/workflows/workflow-1' && req.method === 'GET') {
         res.end(JSON.stringify({ workflow: { id: 'workflow-1', name: 'Demo workflow', profile: 'default' } }))
         return
       }
-      if (req.url === '/api/hermes/workflows' && req.method === 'POST') {
+      if (req.url === '/api/studio/workflows' && req.method === 'POST') {
         let raw = ''
         req.on('data', chunk => { raw += chunk })
         req.on('end', () => {
@@ -455,7 +456,7 @@ describe('hermes-web-ui MCP server', () => {
         })
         return
       }
-      if (req.url === '/api/hermes/workflows/workflow-1' && req.method === 'PATCH') {
+      if (req.url === '/api/studio/workflows/workflow-1' && req.method === 'PATCH') {
         let raw = ''
         req.on('data', chunk => { raw += chunk })
         req.on('end', () => {
@@ -463,11 +464,11 @@ describe('hermes-web-ui MCP server', () => {
         })
         return
       }
-      if (req.url === '/api/hermes/workflows/workflow-1/runs?limit=5') {
+      if (req.url === '/api/studio/workflows/workflow-1/runs?limit=5') {
         res.end(JSON.stringify({ runs: [{ id: 'run-1', workflow_id: 'workflow-1', status: 'completed', node_sessions: [] }] }))
         return
       }
-      if (req.url === '/api/hermes/workflows/workflow-1/run' && req.method === 'POST') {
+      if (req.url === '/api/studio/workflows/workflow-1/run' && req.method === 'POST') {
         let raw = ''
         req.on('data', chunk => { raw += chunk })
         req.on('end', () => {
@@ -475,11 +476,11 @@ describe('hermes-web-ui MCP server', () => {
         })
         return
       }
-      if (req.url === '/api/hermes/workflows/workflow-1/runs/run-1/stop' && req.method === 'POST') {
+      if (req.url === '/api/studio/workflows/workflow-1/runs/run-1/stop' && req.method === 'POST') {
         res.end(JSON.stringify({ ok: true, run: { id: 'run-1', status: 'canceled' } }))
         return
       }
-      if (req.url === '/api/hermes/workflows/workflow-1/runs/run-1/rerun-from-node' && req.method === 'POST') {
+      if (req.url === '/api/studio/workflows/workflow-1/runs/run-1/rerun-from-node' && req.method === 'POST') {
         let raw = ''
         req.on('data', chunk => { raw += chunk })
         req.on('end', () => {
@@ -487,11 +488,11 @@ describe('hermes-web-ui MCP server', () => {
         })
         return
       }
-      if (req.url === '/api/hermes/workflows/workflow-1/runs/run-1' && req.method === 'DELETE') {
+      if (req.url === '/api/studio/workflows/workflow-1/runs/run-1' && req.method === 'DELETE') {
         res.end(JSON.stringify({ ok: true, deleted_run: 'run-1' }))
         return
       }
-      if (req.url === '/api/hermes/workflows/workflow-1' && req.method === 'DELETE') {
+      if (req.url === '/api/studio/workflows/workflow-1' && req.method === 'DELETE') {
         res.end(JSON.stringify({ ok: true, deleted_workflow: 'workflow-1' }))
         return
       }

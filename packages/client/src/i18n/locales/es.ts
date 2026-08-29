@@ -1,6 +1,8 @@
 import { socialMessagesEs } from '../social-messages-locales'
+import { ekkoConfigEs } from './ekko-config'
 
 export default {
+  ekkoConfig: ekkoConfigEs,
   socialMessages: socialMessagesEs,
   browser: {
     title: 'Navegador', settings: 'Ajustes del navegador', desktopOnly: 'El navegador integrado solo está disponible en Hermes Studio Desktop.', newTab: 'Nueva pestaña',
@@ -233,6 +235,7 @@ export default {
     files: 'Archivos',
     devices: 'Dispositivos',
     connections: 'Conexiones de dispositivos',
+    agentManager: 'Gestión de agentes',
     groupChat: 'Chat grupal',
     groupConversation: 'Conversación',
     groupConversationShort: 'Conv.',
@@ -271,6 +274,32 @@ export default {
     gateways: 'Puertas de enlace',
     expand: 'Expandir menú',
     collapse: 'Contraer menú',
+  },
+
+  agentManager: {
+    title: 'Gestión de agentes',
+    subtitle: 'Detecta y gestiona los agentes disponibles en este dispositivo.',
+    refresh: 'Actualizar',
+    hermesDescription: 'Hermes puede usar un Runtime gestionado por Studio o una CLI local instalada por el usuario.',
+    managedRuntime: 'Hermes Runtime',
+    managedRuntimeHint: 'Studio solo instala y gestiona paquetes Runtime completos; nunca instala la CLI de Hermes por separado.',
+    studioManaged: 'Gestionado por Studio',
+    manageRuntime: 'Gestionar Runtime',
+    runtimeVersion: 'Versión del Runtime',
+    agentVersion: 'Versión de Hermes Agent',
+    path: 'Ruta',
+    userCli: 'Hermes CLI',
+    userCliReadonly: 'La CLI de Hermes del entorno actual se detecta primero y permanece gestionada por el usuario.',
+    readOnly: 'Solo lectura',
+    noUserCli: 'No se detectó ninguna CLI de Hermes disponible',
+    unknownVersion: 'Versión desconocida',
+    inUse: 'En uso',
+    builtIn: 'Integrado',
+    ekkoDescription: 'Ekko se incluye con Studio y no requiere instalación, actualización ni eliminación por separado.',
+    version: 'Versión',
+    codingAgentDescription: 'Studio puede instalar, buscar actualizaciones y eliminar este agente.',
+    updateToVersion: 'Actualizar a {version}',
+    deleteConfirm: '¿Eliminar {name}?',
   },
 
   runtimeVersions: {

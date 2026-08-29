@@ -7,7 +7,7 @@ import {
   externalSessionId,
   parseClaudeHistoryText,
   parseCodexHistoryText,
-} from '../../packages/server/src/services/coding-agents/external-history'
+} from '../../packages/server/src/modules/studio/services/external-history'
 
 describe('external coding-agent history parser', () => {
   it('normalizes Claude user and assistant messages while ignoring tool records', () => {

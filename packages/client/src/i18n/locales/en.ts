@@ -1,6 +1,8 @@
 import { socialMessagesEn } from '../social-messages'
+import { ekkoConfigEn } from './ekko-config'
 
 export default {
+  ekkoConfig: ekkoConfigEn,
   socialMessages: socialMessagesEn,
   browser: {
     title: 'Browser', settings: 'Browser Settings', desktopOnly: 'The embedded browser is available only in Hermes Studio Desktop.', newTab: 'New Tab',
@@ -225,6 +227,7 @@ export default {
     files: 'Files',
     devices: 'Devices',
     connections: 'Device connections',
+    agentManager: 'Agent Manager',
     groupConversation: 'Conversation',
     groupConversationShort: 'Conv',
     groupPlatform: 'Platform',
@@ -259,6 +262,32 @@ export default {
     dockerUpdateTitle: 'Docker Update',
     dockerUpdateGuide: 'In Docker environment, please pull the latest image and recreate the container to upgrade:',
     dockerUpdateNote: 'Your data will persist after the container is recreated.',
+  },
+
+  agentManager: {
+    title: 'Agent Manager',
+    subtitle: 'Discover and manage the Agents available on this device.',
+    refresh: 'Refresh',
+    hermesDescription: 'Hermes can come from a Studio-managed Runtime or a CLI installed by the user.',
+    managedRuntime: 'Hermes Runtime',
+    managedRuntimeHint: 'Studio installs and manages complete Runtime packages; it never installs the Hermes CLI separately.',
+    studioManaged: 'Studio managed',
+    manageRuntime: 'Manage Runtime',
+    runtimeVersion: 'Runtime version',
+    agentVersion: 'Hermes Agent version',
+    path: 'Path',
+    userCli: 'Hermes CLI',
+    userCliReadonly: 'Hermes Studio checks the current environment for a CLI first; CLI installations remain user managed.',
+    readOnly: 'Read only',
+    noUserCli: 'No available Hermes CLI was detected',
+    unknownVersion: 'Unknown version',
+    inUse: 'In use',
+    builtIn: 'Built in',
+    ekkoDescription: 'Ekko ships with Studio and does not need separate installation, updates, or removal.',
+    version: 'Version',
+    codingAgentDescription: 'Studio can install, check for updates, and remove this Agent.',
+    updateToVersion: 'Update to {version}',
+    deleteConfirm: 'Remove {name}?',
   },
 
   runtimeVersions: {

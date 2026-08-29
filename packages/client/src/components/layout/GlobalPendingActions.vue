@@ -11,8 +11,8 @@ import { copyToClipboard } from '@/utils/clipboard'
 import { playCompletionSound } from '@/utils/completion-sound'
 import { showSystemNotification } from '@/utils/completion-notification'
 import { workflowApprovalKey } from '@/utils/workflow-approval-key'
-import { approveWorkflowNode, type WorkflowRecord } from '@/api/hermes/workflows'
-import { listWorkflowsSocket, onWorkflowStatusUpdated, subscribeWorkflowStatuses, disconnectWorkflowSocket, type WorkflowRuntimeStatus } from '@/api/hermes/workflow-socket'
+import { approveWorkflowNode, type WorkflowRecord } from '@/api/studio/workflows'
+import { listWorkflowsSocket, onWorkflowStatusUpdated, subscribeWorkflowStatuses, disconnectWorkflowSocket, type WorkflowRuntimeStatus } from '@/api/studio/workflow-socket'
 
 const chatStore = useChatStore()
 const groupChatStore = useGroupChatStore()

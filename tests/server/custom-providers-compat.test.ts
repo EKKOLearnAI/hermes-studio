@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   getCompatibleCustomProviders,
   normalizeCustomProviderEntry,
-} from '../../packages/server/src/services/hermes/custom-providers-compat'
+} from '../../packages/server/src/modules/studio/contracts/provider-compat'
 
 describe('normalizeCustomProviderEntry', () => {
   it('returns null for non-objects', () => {

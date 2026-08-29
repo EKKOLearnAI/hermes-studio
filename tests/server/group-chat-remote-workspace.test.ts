@@ -10,13 +10,13 @@ import {
   resetRemoteWorkspaceGrantsForTest,
   revokeRemoteWorkspaceGrantsForRun,
   waitForRemoteWorkspaceGrantOperations,
-} from '../../packages/server/src/services/hermes/group-chat/remote-workspace-auth'
+} from '../../packages/server/src/modules/studio/services/group-chat/remote-workspace-auth'
 import {
   MAX_REMOTE_WORKSPACE_TRANSFER_BYTES,
   openRemoteWorkspaceDownload,
   performRemoteWorkspaceAction,
   uploadRemoteWorkspaceFile,
-} from '../../packages/server/src/services/hermes/group-chat/remote-workspace-files'
+} from '../../packages/server/src/modules/studio/services/group-chat/remote-workspace-files'
 
 describe('group chat remote workspace access', () => {
   const temporaryDirectories: string[] = []

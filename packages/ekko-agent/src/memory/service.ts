@@ -12,15 +12,21 @@ import {
 import { RuleBasedMemoryExtractor } from './extraction'
 import { resolveMemoryQuery } from './retrieval'
 import { canonicalizeMemoryDraft, memoryKindForCanonicalKey, normalizeMemoryNode } from './schema'
+import { memoryScopeAllowed, normalizeMemoryScopes, PROFILE_MEMORY_SCOPE } from './scope'
 import { stableJson } from './store'
 import type {
   MemoryAuditEvent,
+  MemoryAuditQuery,
   MemoryContext,
+  MemoryCreateInput,
+  MemoryDeleteInput,
+  MemoryExpireInput,
   MemoryExtraction,
   MemoryExtractor,
   MemoryForgetInput,
   MemoryForgetResult,
   MemoryMessage,
+  MemoryMessageListInput,
   MemoryMessageRole,
   MemoryNode,
   MemoryProposeUpdateInput,
@@ -28,8 +34,11 @@ import type {
   MemoryQuery,
   MemoryQueryResult,
   MemoryRuntimeIdentity,
+  MemoryReviewPolicy,
   MemoryStore,
   MemorySummary,
+  MemorySessionState,
+  MemoryUpdateInput,
 } from './types'
 
 const MEMORY_CANDIDATE_LIMIT = 500
@@ -65,14 +74,20 @@ export interface MemoryCaptureMessage {
   createdAt?: string
 }
 
+export interface MemoryRunCompletionOptions {
+  reviewPolicy?: MemoryReviewPolicy
+  /** Force the current captured batch through review, subject to host review policy. */
+  forceReview?: boolean
+}
+
 export class MemoryService {
   private readonly store?: MemoryStore
   private readonly extractor: MemoryExtractor
-  private readonly enabled: boolean
-  private readonly recentMessageLimit: number
-  private readonly automaticRecallTokenBudget: number
-  private readonly searchResultLimit: number
-  private readonly reviewEveryUserMessages: number
+  private enabled: boolean
+  private recentMessageLimit: number
+  private automaticRecallTokenBudget: number
+  private searchResultLimit: number
+  private reviewEveryUserMessages: number
   private readonly warnings = new Set<string>()
   private extractionQueue: Promise<void> = Promise.resolve()
 
@@ -98,6 +113,30 @@ export class MemoryService {
       ),
     )
     if (options.warning) this.warnings.add(options.warning)
+  }
+
+  configure(options: Pick<
+    MemoryServiceOptions,
+    | 'enabled'
+    | 'recentMessageLimit'
+    | 'automaticRecallTokenBudget'
+    | 'searchResultLimit'
+    | 'reviewEveryUserMessages'
+  >): void {
+    this.enabled = options.enabled ?? Boolean(this.store)
+    this.recentMessageLimit = options.recentMessageLimit ?? DEFAULT_MEMORY_RECENT_MESSAGE_LIMIT
+    this.automaticRecallTokenBudget = positiveInteger(
+      options.automaticRecallTokenBudget,
+      DEFAULT_AUTOMATIC_MEMORY_TOKEN_BUDGET,
+    )
+    this.searchResultLimit = memorySearchLimit(
+      options.searchResultLimit,
+      DEFAULT_MEMORY_SEARCH_RESULT_LIMIT,
+    )
+    this.reviewEveryUserMessages = Math.max(
+      1,
+      Math.floor(options.reviewEveryUserMessages ?? DEFAULT_MEMORY_REVIEW_EVERY_USER_MESSAGES),
+    )
   }
 
   get isEnabled(): boolean {
@@ -234,6 +273,79 @@ export class MemoryService {
     return node && isNodeAccessible(node, identity) ? node : undefined
   }
 
+  async list(query: MemoryQuery = {}): Promise<MemoryNode[]> {
+    if (!this.isEnabled || !this.store) return []
+    return this.store.queryNodes({
+      ...query,
+      profileId: query.profileId || 'default',
+    })
+  }
+
+  async create(input: MemoryCreateInput): Promise<MemoryProposeUpdateResult> {
+    return this.proposeUpdate({
+      ...input,
+      operation: 'create',
+    })
+  }
+
+  async update(id: string, input: MemoryUpdateInput): Promise<MemoryProposeUpdateResult> {
+    return this.proposeUpdate({
+      ...input,
+      operation: 'update',
+      targetId: id,
+      node: input.node ?? {},
+    })
+  }
+
+  async expire(id: string, input: MemoryExpireInput): Promise<MemoryProposeUpdateResult> {
+    return this.proposeUpdate({
+      ...input,
+      operation: 'expire',
+      targetId: id,
+      node: {},
+    })
+  }
+
+  async delete(id: string, input: MemoryDeleteInput): Promise<MemoryForgetResult> {
+    return this.forget({
+      ...input,
+      id,
+    })
+  }
+
+  async listMessages(input: MemoryMessageListInput): Promise<MemoryMessage[]> {
+    if (!this.isEnabled || !this.store) return []
+    if (input.afterMessageId) {
+      return this.store.listMessagesAfter({
+        sessionId: input.sessionId,
+        messageId: input.afterMessageId,
+        limit: input.limit,
+      })
+    }
+    return this.store.listRecentMessages({
+      sessionId: input.sessionId,
+      limit: input.limit ?? this.recentMessageLimit,
+    })
+  }
+
+  async getLatestSummary(sessionId: string): Promise<MemorySummary | undefined> {
+    if (!this.isEnabled || !this.store) return undefined
+    return this.store.getLatestSummary({ sessionId })
+  }
+
+  async getSessionState(sessionId: string): Promise<MemorySessionState | undefined> {
+    if (!this.isEnabled || !this.store) return undefined
+    return this.store.getSessionState(sessionId)
+  }
+
+  async listAuditEvents(query: MemoryAuditQuery = {}): Promise<MemoryAuditEvent[]> {
+    if (!this.isEnabled || !this.store) return []
+    return this.store.listAuditEvents({
+      ...query,
+      profileId: query.profileId || 'default',
+    })
+  }
+
   async proposeUpdate(input: MemoryProposeUpdateInput): Promise<MemoryProposeUpdateResult> {
     if (!this.isEnabled || !this.store) return { accepted: false, reason: 'Memory store is disabled.' }
     const actor = input.actor || 'ekko-agent'
@@ -284,6 +396,10 @@ export class MemoryService {
       if (revisionError) return { accepted: false, reason: revisionError }
       const slot = memoryKindForCanonicalKey(target.key)
       if (!slot) return { accepted: false, reason: 'Memory has no server-controlled canonical key.' }
+      const changesValue = input.node.valueJson !== undefined || input.valuePatch !== undefined || Boolean(input.unsetValueFields?.length)
+      if (changesValue && (!input.node.title?.trim() || !input.node.content?.trim())) {
+        return { accepted: false, reason: 'A value-changing memory update requires title and content derived from its supporting user evidence.' }
+      }
       const valueJson = applyValuePatch(
         input.node.valueJson === undefined ? target.valueJson : input.node.valueJson,
         input.valuePatch,
@@ -296,6 +412,8 @@ export class MemoryService {
         parentId: target.id,
         supersedesId: target.id,
         profileId: target.profileId,
+        scope: target.scope,
+        origin: input.identity?.origin || target.origin,
         key: target.key,
         domain: target.domain,
         categoryPath: target.categoryPath,
@@ -309,7 +427,7 @@ export class MemoryService {
       if (!canonical.accepted) return canonical
       const normalized = normalizeMemoryNode({
         draft: canonical.draft,
-        identity: input.identity,
+        identity: writableIdentityForNode(input.identity, target),
         explicitUserIntent: input.explicitUserIntent,
       })
       if (!normalized.accepted) return normalized
@@ -325,7 +443,11 @@ export class MemoryService {
       return { accepted: true, nodeId: node.id, action: 'updated', node }
     }
 
-    const canonical = canonicalizeMemoryDraft(input.kind, input.itemKey, input.node)
+    const canonical = canonicalizeMemoryDraft(input.kind, input.itemKey, {
+      ...input.node,
+      ...(input.scope ? { scope: input.scope } : {}),
+      ...(input.identity?.origin ? { origin: input.identity.origin } : {}),
+    })
     if (!canonical.accepted) return canonical
     const normalized = normalizeMemoryNode({
       draft: canonical.draft,
@@ -336,7 +458,11 @@ export class MemoryService {
     const now = new Date().toISOString()
     let node: MemoryNode = { id: randomUUID(), ...normalized.node, revision: 1, updatedAt: now }
     const existing = (await this.store.queryNodes({
-      ...memoryQuery(input.identity as MemoryRuntimeIdentity, { key: node.key, includeExpired: false }),
+      ...memoryQuery(input.identity as MemoryRuntimeIdentity, {
+        key: node.key,
+        scopes: [node.scope || PROFILE_MEMORY_SCOPE],
+        includeExpired: false,
+      }),
       limit: 2,
     }))[0]
     if (existing && stableJson(existing.valueJson) === stableJson(node.valueJson) && existing.content === node.content) {
@@ -437,9 +563,12 @@ export class MemoryService {
     identity: MemoryRuntimeIdentity,
     messages: MemoryCaptureMessage[],
     extractor: MemoryExtractor = this.extractor,
+    options: MemoryRunCompletionOptions = {},
   ): void {
     if (!this.isEnabled || !this.store) return
-    const forceReview = hasHighSignalMemoryCandidate(messages)
+    const explicitIntent = hasExplicitMemoryIntent(messages)
+    if (options.reviewPolicy === 'explicit-only' && !explicitIntent) return
+    const forceReview = options.forceReview === true || explicitIntent || hasHighSignalMemoryCandidate(messages)
     this.extractionQueue = this.extractionQueue
       .then(async () => {
         await this.captureMessages(identity, messages)
@@ -484,6 +613,7 @@ export class MemoryService {
         operation: operation.operation,
         kind: operation.kind,
         itemKey: operation.itemKey,
+        scope: operation.scope,
         targetId: operation.targetId,
         expectedRevision: operation.expectedRevision,
         node: {
@@ -581,6 +711,7 @@ function memoryQuery(identity: Partial<MemoryRuntimeIdentity> | undefined, overr
   return {
     ...overrides,
     profileId: identity?.profileId || 'default',
+    scopes: overrides.scopes ?? normalizeMemoryScopes(identity?.recallScopes),
   }
 }
 
@@ -656,6 +787,11 @@ function messageSignature(message: MemoryCaptureMessage): string {
     .update('\0')
     .update(stableJson(message.metadata || {}))
     .digest('hex')
+}
+
+export function hasExplicitMemoryIntent(messages: MemoryCaptureMessage[]): boolean {
+  const latestUser = [...messages].reverse().find(message => message.role === 'user')?.content || ''
+  return /(?:记住|记下来|保存(?:到|为)?记忆|以后(?:都|请)?|从现在起|忘掉|忘记|删除.{0,8}(?:记忆|偏好|记录)|更正.{0,8}(?:记忆|偏好|信息)|更新.{0,8}(?:记忆|偏好|信息)|remember|from now on|forget|delete (?:that|this|my) memory|update my memory)/i.test(latestUser)
 }
 
 function hasHighSignalMemoryCandidate(messages: MemoryCaptureMessage[]): boolean {
@@ -749,5 +885,22 @@ function emptyContext(diagnostics: MemoryContext['diagnostics']): MemoryContext 
 }
 
 function isNodeAccessible(node: MemoryNode, identity: Partial<MemoryRuntimeIdentity> | undefined): boolean {
-  return (identity?.profileId || 'default') === node.profileId
+  if ((identity?.profileId || 'default') !== node.profileId) return false
+  if (identity?.recallScopes?.length) return memoryScopeAllowed(node.scope, identity.recallScopes)
+  // Session-bound callers are runtime actors and inherit the safe profile-only
+  // default. Sessionless callers are administrative APIs that already own the
+  // profile and need to inspect scoped cards for maintenance.
+  return !identity?.sessionId || memoryScopeAllowed(node.scope, [PROFILE_MEMORY_SCOPE])
+}
+
+function writableIdentityForNode(
+  identity: Partial<MemoryRuntimeIdentity> | undefined,
+  node: MemoryNode,
+): Partial<MemoryRuntimeIdentity> {
+  if (identity?.writeScopes?.length) return identity
+  return {
+    ...identity,
+    writeScopes: [node.scope || PROFILE_MEMORY_SCOPE],
+    defaultWriteScope: node.scope || PROFILE_MEMORY_SCOPE,
+  }
 }

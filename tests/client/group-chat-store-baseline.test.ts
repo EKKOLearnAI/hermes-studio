@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import type { ChatMessage, MemberInfo, RoomAgent, RoomInfo } from '@/api/hermes/group-chat'
+import type { ChatMessage, MemberInfo, RoomAgent, RoomInfo } from '@/api/studio/group-chat'
 
 const groupChatApiMock = vi.hoisted(() => {
   const handlers = new Map<string, Function[]>()
@@ -82,10 +82,10 @@ const settingsStoreMock = vi.hoisted(() => ({
   },
 }))
 
-vi.mock('@/api/hermes/group-chat', () => groupChatApiMock)
+vi.mock('@/api/studio/group-chat', () => groupChatApiMock)
 vi.mock('@/api/client', () => clientApiMock)
-vi.mock('@/api/auth', () => authApiMock)
-vi.mock('@/api/hermes/download', () => ({ getDownloadUrl: vi.fn((path: string) => `/download?path=${path}`) }))
+vi.mock('@/api/studio/auth', () => authApiMock)
+vi.mock('@/api/studio/download', () => ({ getDownloadUrl: vi.fn((path: string) => `/download?path=${path}`) }))
 vi.mock('@/utils/completion-sound', () => ({
   primeCompletionSound: completionSoundMock.primeCompletionSound,
 }))

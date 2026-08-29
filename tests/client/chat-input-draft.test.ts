@@ -46,7 +46,7 @@ vi.mock('naive-ui', () => ({
   useDialog: () => ({ warning: dialogWarningMock }),
 }))
 
-vi.mock('@/api/hermes/sessions', () => ({
+vi.mock('@/api/studio/sessions', () => ({
   fetchContextLength: vi.fn().mockResolvedValue(256000),
   setSessionReasoningEffort: vi.fn().mockResolvedValue(true),
 }))

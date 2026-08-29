@@ -9,11 +9,15 @@ import ProvidersPanel from '@/components/hermes/models/ProvidersPanel.vue'
 import ProviderFormModal from '@/components/hermes/models/ProviderFormModal.vue'
 import VoiceSettings from '@/components/hermes/settings/VoiceSettings.vue'
 import { useModelsStore } from '@/stores/hermes/models'
+import { useAppStore } from '@/stores/hermes/app'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import { checkCopilotToken } from '@/api/hermes/copilot-auth'
 
 const { t } = useI18n()
+const props = defineProps<{ sidebarCollapsed?: boolean }>()
+const emit = defineEmits<{ toggleSidebar: [] }>()
 const modelsStore = useModelsStore()
+const appStore = useAppStore()
 const profilesStore = useProfilesStore()
 const message = useMessage()
 const route = useRoute()
@@ -82,8 +86,13 @@ function handleModalClose() {
   showModal.value = false
 }
 
-async function handleSaved() {
-  await modelsStore.fetchProviders()
+async function handleSaved(globalModelsAlreadyRefreshed = false) {
+  if (!globalModelsAlreadyRefreshed) {
+    await Promise.all([
+      modelsStore.fetchProviders(),
+      appStore.reloadModels({ preserveSelection: true }),
+    ])
+  }
   handleModalClose()
 }
 
@@ -104,7 +113,27 @@ async function handleRefreshModelCache() {
     </div>
 
     <header class="page-header">
-      <h2 class="header-title">{{ t('models.title') }}</h2>
+      <div class="models-header-left">
+        <NButton
+          class="models-sidebar-toggle"
+          quaternary
+          size="small"
+          circle
+          :title="props.sidebarCollapsed ? t('sidebar.expand') : t('sidebar.collapse')"
+          :aria-label="props.sidebarCollapsed ? t('sidebar.expand') : t('sidebar.collapse')"
+          @click="emit('toggleSidebar')"
+        >
+          <template #icon>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+              <rect x="3" y="3" width="7" height="7" />
+              <rect x="14" y="3" width="7" height="7" />
+              <rect x="3" y="14" width="7" height="7" />
+              <rect x="14" y="14" width="7" height="7" />
+            </svg>
+          </template>
+        </NButton>
+        <h2 class="header-title">{{ t('models.title') }}</h2>
+      </div>
       <div v-if="activeTab === 'general'" class="header-actions">
         <NButton
           size="small"
@@ -168,9 +197,17 @@ async function handleRefreshModelCache() {
 @use '@/styles/variables' as *;
 
 .models-view {
-  height: calc(100 * var(--vh));
+  height: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: column;
+}
+
+.models-header-left {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .model-cache-overlay {

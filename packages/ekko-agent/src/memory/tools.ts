@@ -1,20 +1,51 @@
 import type { AgentTool, AgentToolContext, AgentToolResult } from '../tools/types'
+import { normalizeMemoryScope } from './scope'
 import { MEMORY_KINDS, type MemoryForgetInput, type MemoryNode, type MemoryProposeUpdateInput, type MemoryQuery, type MemoryRuntimeIdentity } from './types'
 import type { MemoryService } from './service'
 
-export function createMemoryTools(service: MemoryService): AgentTool[] {
-  return [
+export function createMemoryTools(
+  service: MemoryService,
+  options: { writable?: boolean; reviewable?: boolean } = {},
+): AgentTool[] {
+  const tools: AgentTool[] = [
     new MemorySearchTool(service),
     new MemoryGetTool(service),
-    new MemoryProposeUpdateTool(service),
-    new MemoryForgetTool(service),
   ]
+  if (options.reviewable === true) tools.push(new MemoryReviewTool())
+  if (options.writable !== false) {
+    tools.push(new MemoryProposeUpdateTool(service), new MemoryForgetTool(service))
+  }
+  return tools
+}
+
+class MemoryReviewTool implements AgentTool {
+  readonly definition = {
+    name: 'memory_review',
+    description: 'Request an immediate isolated memory review of the current host-selected conversation evidence. Call this exactly once when the user asks to remember, correct, update, or forget durable information, or when the current turn contains a clearly useful durable memory candidate. This tool does not accept memory content and cannot write memory directly.',
+    parameters: {
+      type: 'object',
+      properties: {},
+      additionalProperties: false,
+    },
+  }
+
+  async execute(_input: Record<string, unknown>, context?: AgentToolContext): Promise<AgentToolResult> {
+    if (!context?.sessionId) return failure('memory_review requires a sessionId.')
+    if (context.memoryReviewPolicy === 'explicit-only' && context.memoryExplicitIntent !== true) {
+      return failure('This host allows memory review only when the current user explicitly asks to remember, update, or forget something.')
+    }
+    if (!context.requestMemoryReview) return failure('Memory review is not available in this runtime context.')
+    context.requestMemoryReview()
+    return success({ requested: true })
+  }
 }
 
 class MemorySearchTool implements AgentTool {
+  readonly concurrency = 'parallel' as const
+
   readonly definition = {
     name: 'memory_search',
-    description: 'Search current profile memory. Results include the canonical key, id, revision, value, and content required for precise mutations. Do not search again when automatic recall already contains a direct, conflict-free answer. Otherwise, use this tool to verify personal information, memory questions, or before saying that you do not know or remember. Prefer kinds for known categories and queryText for open-ended questions.',
+    description: 'Search memory in the host-authorized recall scopes. Results include the canonical key, scope, id, revision, value, and content required for precise mutations. Do not search again when automatic recall already contains a direct, conflict-free answer. Otherwise, use this tool to verify remembered information or before saying that you do not know or remember. Prefer kinds for known categories and queryText for open-ended questions.',
     parameters: {
       type: 'object',
       properties: {
@@ -65,6 +96,8 @@ function validMemoryKinds(value: unknown): MemoryQuery['kinds'] {
 }
 
 class MemoryGetTool implements AgentTool {
+  readonly concurrency = 'parallel' as const
+
   readonly definition = {
     name: 'memory_get',
     description: 'Get one complete memory card by id, including its server canonical key and current revision.',
@@ -111,7 +144,7 @@ class MemoryProposeUpdateTool implements AgentTool {
       'the server generates the canonical key and automatically noops or replaces the active value in that slot. ' +
       'For update/supersede, first search/get, then provide targetId and expectedRevision; the server preserves the key. ' +
       'Use valuePatch/unsetValueFields for object fields. Never invent or submit a key. ' +
-      'Persist only cross-session durable state, not transient requests or retraction history; forget an exact invalidated memory when no durable replacement remains.'
+      'Persist only durable state appropriate to an authorized scope, not transient requests or retraction history; forget an exact invalidated memory when no durable replacement remains.'
     ),
     parameters: {
       type: 'object',
@@ -120,25 +153,41 @@ class MemoryProposeUpdateTool implements AgentTool {
         operation: { type: 'string', enum: ['create', 'update', 'supersede', 'expire', 'delete'] },
         kind: { type: 'string', enum: [...MEMORY_KINDS], description: 'Required for create. Server maps this controlled kind to a canonical key.' },
         itemKey: { type: 'string', description: 'Stable concept/entity discriminator required for itemized kinds, such as a preference dimension or entity name.' },
+        scope: {
+          type: 'object',
+          description: 'Required for create. Select one of the host-provided writable scopes exactly.',
+          properties: {
+            type: { type: 'string', enum: ['profile', 'context', 'session'] },
+            namespace: { type: 'string' },
+            id: { type: 'string' },
+          },
+          required: ['type'],
+          additionalProperties: false,
+        },
         targetId: { type: 'string' },
         expectedRevision: { type: 'integer', minimum: 1, description: 'Required for update, supersede, expire, and delete.' },
         node: {
           type: 'object',
           properties: {
             valueJson: { description: 'Optional structured or scalar value. Use this exact field name, not value.' },
-            title: { type: 'string', description: 'Short human-readable memory title.' },
-            content: { type: 'string', description: 'Complete durable memory statement.' },
+            title: { type: 'string', description: 'Short memory title in the language of the cited user evidence.' },
+            content: { type: 'string', description: 'Complete durable statement in the language of the cited user evidence.' },
             confidence: { type: 'number', minimum: 0, maximum: 1 },
             importance: { type: 'number', minimum: 0, maximum: 1 },
             tags: { type: 'array', items: { type: 'string' } },
             entities: { type: 'array', items: { type: 'string' } },
+            sourceMessageIds: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'IDs of the user-authored transcript messages that directly support this memory. Every id must come from the host-provided review transcript.',
+            },
             expiresAt: { type: 'string', description: 'Optional ISO-8601 expiration timestamp.' },
           },
           additionalProperties: false,
         },
         valuePatch: { type: 'object', description: 'Object fields to set while preserving unspecified fields in the current value.' },
         unsetValueFields: { type: 'array', items: { type: 'string' }, description: 'Object fields to remove without deleting the whole memory.' },
-        reason: { type: 'string' },
+        reason: { type: 'string', description: 'Mutation reason in the language of the user evidence supporting this change.' },
         explicitUserIntent: {
           type: 'boolean',
           description: 'Set true only when the user clearly asked to remember, change, correct, or delete durable information.',
@@ -153,6 +202,9 @@ class MemoryProposeUpdateTool implements AgentTool {
   async execute(input: Record<string, unknown>, context?: AgentToolContext): Promise<AgentToolResult> {
     const identity = runtimeIdentity(context)
     if (!identity) return failure('memory_propose_update requires a sessionId.')
+    if (context?.memoryReviewPolicy === 'explicit-only' && context.memoryExplicitIntent !== true) {
+      return failure('This host allows memory writes only when the current user explicitly asks to remember, update, or forget something.')
+    }
     const operation = optionalString(input.operation) as MemoryProposeUpdateInput['operation'] | undefined
     const reason = optionalString(input.reason)
     if (!operation || !reason) return failure('operation and reason are required.')
@@ -161,12 +213,18 @@ class MemoryProposeUpdateTool implements AgentTool {
       : {}
     if (operation === 'create' && !input.node) return failure('create requires node.')
     const node = normalizeToolMemoryNode(rawNode)
-    node.sourceMessageIds = uniqueStrings(context?.sourceMessageIds || [])
+    const allowedSourceMessageIds = uniqueStrings(context?.sourceMessageIds || [])
+    const requestedSourceMessageIds = uniqueStrings(node.sourceMessageIds || [])
+    if (requestedSourceMessageIds.some(id => !allowedSourceMessageIds.includes(id))) {
+      return failure('Memory sourceMessageIds must be selected from the host-provided user evidence.')
+    }
+    node.sourceMessageIds = requestedSourceMessageIds.length ? requestedSourceMessageIds : allowedSourceMessageIds
     const explicitUserIntent = input.explicitUserIntent === true
     const result = await this.service.proposeUpdate({
       operation,
       kind: optionalString(input.kind) as MemoryProposeUpdateInput['kind'],
       itemKey: optionalString(input.itemKey),
+      scope: normalizeMemoryScope(input.scope) || context?.memoryDefaultWriteScope,
       targetId: optionalString(input.targetId),
       expectedRevision: optionalNumber(input.expectedRevision),
       valuePatch: recordValue(input.valuePatch),
@@ -209,6 +267,9 @@ class MemoryForgetTool implements AgentTool {
   async execute(input: Record<string, unknown>, context?: AgentToolContext): Promise<AgentToolResult> {
     const identity = runtimeIdentity(context)
     if (!identity) return failure('memory_forget requires a sessionId.')
+    if (context?.memoryReviewPolicy === 'explicit-only' && context.memoryExplicitIntent !== true) {
+      return failure('This host allows memory deletion only when the current user explicitly asks to forget or change something.')
+    }
     const reason = optionalString(input.reason)
     if (!reason) return failure('reason is required.')
     const request: MemoryForgetInput = {
@@ -236,6 +297,10 @@ function runtimeIdentity(context?: AgentToolContext): MemoryRuntimeIdentity | un
   return {
     sessionId: context.sessionId,
     profileId: context.profileId || 'default',
+    origin: context.memoryOrigin,
+    recallScopes: context.memoryRecallScopes,
+    writeScopes: context.memoryWriteScopes,
+    defaultWriteScope: context.memoryDefaultWriteScope,
   }
 }
 
@@ -286,14 +351,5 @@ function normalizeToolMemoryNode(input: Record<string, unknown>): Partial<Memory
   }
   const summary = optionalString(node.summary) || optionalString(node.description)
   if (!optionalString(node.content) && summary) node.content = summary
-  if (!optionalString(node.title)) {
-    const key = optionalString(node.key)?.replaceAll('_', ' ')
-    const value = typeof node.valueJson === 'string' ? node.valueJson : undefined
-    node.title = truncateTitle([key, value].filter(Boolean).join(': ') || summary || optionalString(node.content) || 'Memory')
-  }
   return node as Partial<MemoryNode>
-}
-
-function truncateTitle(value: string): string {
-  return value.length <= 80 ? value : `${value.slice(0, 79)}…`
 }

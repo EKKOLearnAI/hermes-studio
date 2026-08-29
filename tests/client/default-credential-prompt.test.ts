@@ -19,7 +19,7 @@ vi.mock('vue-i18n', () => ({
   }),
 }))
 
-vi.mock('@/api/auth', () => ({
+vi.mock('@/api/studio/auth', () => ({
   fetchCurrentUser: mockFetchCurrentUser,
 }))
 

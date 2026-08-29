@@ -4,7 +4,7 @@ import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import GroupMessageItem from '@/components/hermes/group-chat/GroupMessageItem.vue'
 import GroupMessageList from '@/components/hermes/group-chat/GroupMessageList.vue'
-import type { ChatMessage, GroupWorkspaceDiffPayload } from '@/api/hermes/group-chat'
+import type { ChatMessage, GroupWorkspaceDiffPayload } from '@/api/studio/group-chat'
 
 const toolTraceVisibleState = vi.hoisted(() => ({ value: true }))
 
@@ -52,15 +52,15 @@ const groupChatApiMock = vi.hoisted(() => {
   }
 })
 
-vi.mock('@/api/hermes/group-chat', () => groupChatApiMock)
+vi.mock('@/api/studio/group-chat', () => groupChatApiMock)
 vi.mock('@/api/client', () => ({
   getApiKey: vi.fn(() => 'token'),
   getBaseUrlValue: vi.fn(() => ''),
   getActiveProfileName: vi.fn(() => 'default'),
   getStoredUsername: vi.fn(() => null),
 }))
-vi.mock('@/api/auth', () => ({ fetchCurrentUser: vi.fn(async () => { throw new Error('no user') }) }))
-vi.mock('@/api/hermes/download', () => ({ getDownloadUrl: vi.fn((path: string) => `/download?path=${path}`) }))
+vi.mock('@/api/studio/auth', () => ({ fetchCurrentUser: vi.fn(async () => { throw new Error('no user') }) }))
+vi.mock('@/api/studio/download', () => ({ getDownloadUrl: vi.fn((path: string) => `/download?path=${path}`) }))
 vi.mock('@/composables/useToolTraceVisibility', () => ({
   useToolTraceVisibility: () => ({ toolTraceVisible: toolTraceVisibleState, toggleToolTraceVisible: vi.fn() }),
 }))
@@ -334,7 +334,7 @@ describe('group chat workspace diff client rendering', () => {
     try {
       const video = wrapper.get('video.msg-attachment-video')
       expect(video.attributes('controls')).toBeDefined()
-      expect(video.attributes('src')).toContain('/api/hermes/group-chat/rooms/room-1/attachments/3bcfe4f3a97cc6fa202849b0fed2fad8.mp4')
+      expect(video.attributes('src')).toContain('/api/studio/group-chat/rooms/room-1/attachments/3bcfe4f3a97cc6fa202849b0fed2fad8.mp4')
       expect(wrapper.find('.msg-attachment-file').exists()).toBe(false)
     } finally {
       wrapper.unmount()
@@ -407,7 +407,7 @@ describe('group chat workspace diff client rendering', () => {
       expect(click.defaultPrevented).toBe(true)
       expect(previewRequests).toHaveLength(1)
       expect(previewRequests[0]).toMatchObject({ fileName: 'report.xml', size: 0 })
-      expect(previewRequests[0].sourceUrl).toContain('/api/hermes/group-chat/rooms/room-1/attachments/3bcfe4f3a97cc6fa202849b0fed2fad8.xml')
+      expect(previewRequests[0].sourceUrl).toContain('/api/studio/group-chat/rooms/room-1/attachments/3bcfe4f3a97cc6fa202849b0fed2fad8.xml')
     } finally {
       wrapper.unmount()
       window.removeEventListener('hermes:preview-group-attachment', handlePreview)

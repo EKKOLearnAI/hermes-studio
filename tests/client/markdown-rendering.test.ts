@@ -13,7 +13,7 @@ const mermaidMock = vi.hoisted(() => ({
 const downloadApiMock = vi.hoisted(() => ({
   downloadFile: vi.fn(() => Promise.resolve()),
   fetchFileText: vi.fn(() => Promise.resolve('preview content')),
-  getDownloadUrl: vi.fn((path: string) => `http://test.local/api/hermes/download?path=${encodeURIComponent(path)}`),
+  getDownloadUrl: vi.fn((path: string) => `http://test.local/api/studio/files/download?path=${encodeURIComponent(path)}`),
 }))
 
 const desktopBrowserMock = vi.hoisted(() => ({
@@ -66,8 +66,8 @@ vi.mock('naive-ui', () => ({
   }),
 }))
 
-vi.mock('@/api/hermes/download', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/api/hermes/download')>()
+vi.mock('@/api/studio/download', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/api/studio/download')>()
   return {
     ...actual,
     downloadFile: downloadApiMock.downloadFile,
@@ -96,7 +96,7 @@ describe('MarkdownRenderer', () => {
     }))
     downloadApiMock.downloadFile.mockResolvedValue(undefined)
     downloadApiMock.fetchFileText.mockResolvedValue('preview content')
-    downloadApiMock.getDownloadUrl.mockImplementation((path: string) => `http://test.local/api/hermes/download?path=${encodeURIComponent(path)}`)
+    downloadApiMock.getDownloadUrl.mockImplementation((path: string) => `http://test.local/api/studio/files/download?path=${encodeURIComponent(path)}`)
 
     Object.defineProperty(window, 'isSecureContext', {
       configurable: true,
@@ -316,7 +316,7 @@ describe('MarkdownRenderer', () => {
 
     const video = wrapper.find('video.markdown-video')
     expect(video.exists()).toBe(true)
-    expect(video.attributes('src')).toContain('/api/hermes/download?path=')
+    expect(video.attributes('src')).toContain('/api/studio/files/download?path=')
     const src = new URL(video.attributes('src'))
     expect(decodeURIComponent(src.searchParams.get('path') || '')).toBe('/Users/ekko/Desktop/录屏2026-05-08 15.19.46.mov')
     expect(wrapper.find('.markdown-video-footer .att-name').text()).toBe('录屏2026-05-08 15.19.46.mov')
@@ -333,7 +333,7 @@ describe('MarkdownRenderer', () => {
     expect(audio.exists()).toBe(true)
     expect(audio.attributes('controls')).toBeDefined()
     expect(audio.attributes('preload')).toBe('metadata')
-    expect(audio.attributes('src')).toContain('/api/hermes/download?path=')
+    expect(audio.attributes('src')).toContain('/api/studio/files/download?path=')
     const src = new URL(audio.attributes('src'))
     expect(decodeURIComponent(src.searchParams.get('path') || '')).toBe('/tmp/song.mp3')
     expect(wrapper.find('.markdown-audio-footer .att-name').text()).toBe('song.mp3')
@@ -349,7 +349,7 @@ describe('MarkdownRenderer', () => {
 
     const img = wrapper.find('img')
     expect(img.exists()).toBe(true)
-    expect(img.attributes('src')).toContain('/api/hermes/download?path=')
+    expect(img.attributes('src')).toContain('/api/studio/files/download?path=')
     const src = new URL(img.attributes('src'))
     expect(decodeURIComponent(src.searchParams.get('path') || '')).toBe('/c/Users/Administrator/Desktop/screenshot.png')
     expect(img.attributes('alt')).toBe('桌面截图')
@@ -370,7 +370,7 @@ describe('MarkdownRenderer', () => {
       await nextTick()
       expect(previewRequests).toEqual([])
       expect(document.body.querySelector('.image-preview-overlay')).not.toBeNull()
-      expect(document.body.querySelector('.image-preview-img')?.getAttribute('src')).toContain('/api/hermes/download?path=')
+      expect(document.body.querySelector('.image-preview-img')?.getAttribute('src')).toContain('/api/studio/files/download?path=')
     } finally {
       wrapper.unmount()
       window.removeEventListener('hermes:preview-workspace-file', handlePreview)
@@ -477,7 +477,7 @@ describe('MarkdownRenderer', () => {
     window.addEventListener('hermes:preview-workspace-file', handlePreview)
     const wrapper = mount(MarkdownRenderer, {
       props: {
-        content: '[notes.txt](/api/hermes/download?path=%2Ftmp%2Fnotes.txt)',
+        content: '[notes.txt](/api/studio/files/download?path=%2Ftmp%2Fnotes.txt)',
       },
     })
 

@@ -32,11 +32,11 @@ vi.mock('fs/promises', () => ({
   readFile: mockReadFile,
 }))
 
-vi.mock('../../packages/server/src/config', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/config', () => ({
   config: { appHome: '/app-home' },
 }))
 
-vi.mock('../../packages/server/src/shared/providers', () => ({
+vi.mock('../../packages/server/src/modules/studio/contracts/providers', () => ({
   PROVIDER_PRESETS: [
     {
       value: 'openrouter',
@@ -90,7 +90,7 @@ vi.mock('../../packages/server/src/shared/providers', () => ({
   ],
 }))
 
-vi.mock('../../packages/server/src/services/config-helpers', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/profile-config', () => ({
   PROVIDER_ENV_MAP: {
     openrouter: { api_key_env: 'OPENROUTER_API_KEY', base_url_env: 'OPENROUTER_BASE_URL' },
     deepseek: { api_key_env: 'DEEPSEEK_API_KEY', base_url_env: 'DEEPSEEK_BASE_URL' },
@@ -101,36 +101,39 @@ vi.mock('../../packages/server/src/services/config-helpers', () => ({
     'claude-oauth': { api_key_env: '', base_url_env: '' },
     'minimax-oauth': { api_key_env: '', base_url_env: '' },
   },
-  fetchProviderModels: mockFetchProviderModels,
   readConfigYamlForProfile: mockReadConfigYamlForProfile,
 }))
 
-vi.mock('../../packages/server/src/services/app-config', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/provider-catalog', () => ({
+  fetchProviderModels: mockFetchProviderModels,
+}))
+
+vi.mock('../../packages/server/src/modules/studio/public/app-config', () => ({
   readAppConfig: mockReadAppConfig,
 }))
 
-vi.mock('../../packages/server/src/services/hermes/copilot-models', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/providers/copilot-models', () => ({
   resolveCopilotOAuthToken: mockResolveCopilotOAuthToken,
   fetchCopilotModelsWithOAuthToken: mockFetchCopilotModelsWithOAuthToken,
 }))
 
-vi.mock('../../packages/server/src/services/hermes/authorized-provider-credentials', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/providers/authorized-provider-credentials', () => ({
   resolveAuthorizedProviderRuntimeCredentials: mockResolveAuthorizedCredentials,
 }))
 
-vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/profiles/profile', () => ({
   getProfileDir: mockGetProfileDir,
   listProfileNamesFromDisk: mockListProfileNamesFromDisk,
 }))
 
-vi.mock('../../packages/server/src/services/logger', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/logging', () => ({
   logger: {
     info: vi.fn(),
     warn: vi.fn(),
   },
 }))
 
-vi.mock('../../packages/server/src/services/safe-file-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/safe-file-store', () => ({
   safeFileStore: {
     readText: mockReadText,
     updateText: mockUpdateText,
@@ -184,7 +187,7 @@ describe('model catalog cache', () => {
 
   it('resolves cached catalogs by source and authoritative manifest presence', async () => {
     const { providerModelCatalogKey, resolveProviderCatalogModels } = await import(
-      '../../packages/server/src/services/hermes/model-catalog-cache'
+      '../../packages/server/src/modules/hermes/services/providers/model-catalog-cache'
     )
     const provider = 'xai'
     const baseUrl = 'https://api.x.ai/v1'
@@ -244,7 +247,7 @@ describe('model catalog cache', () => {
 
   it('preserves the last-good live catalog when a refresh returns no models', async () => {
     const { providerModelCatalogKey, refreshProviderModelCatalog } = await import(
-      '../../packages/server/src/services/hermes/model-catalog-cache'
+      '../../packages/server/src/modules/hermes/services/providers/model-catalog-cache'
     )
     const provider = 'deepseek'
     const baseUrl = 'https://api.deepseek.com/v1'
@@ -280,7 +283,7 @@ describe('model catalog cache', () => {
 
   it('refreshes providers from all profiles and deduplicates identical catalogs', async () => {
     const { refreshConfiguredProviderModelCatalogs, providerModelCatalogKey } = await import(
-      '../../packages/server/src/services/hermes/model-catalog-cache'
+      '../../packages/server/src/modules/hermes/services/providers/model-catalog-cache'
     )
 
     await refreshConfiguredProviderModelCatalogs({ force: true })
@@ -320,7 +323,7 @@ describe('model catalog cache', () => {
       refreshConfiguredProviderModelCatalogs,
       resolveProviderCatalogModels,
       writeProviderModelCatalogEntry,
-    } = await import('../../packages/server/src/services/hermes/model-catalog-cache')
+    } = await import('../../packages/server/src/modules/hermes/services/providers/model-catalog-cache')
     const scopedKey = providerModelCatalogKey(
       'openrouter',
       'https://openrouter.ai/api/v1',
@@ -449,7 +452,7 @@ describe('model catalog cache', () => {
       refreshConfiguredProviderModelCatalogs,
       resolveProviderCatalogRefreshTarget,
     } = await import(
-      '../../packages/server/src/services/hermes/model-catalog-cache'
+      '../../packages/server/src/modules/hermes/services/providers/model-catalog-cache'
     )
 
     await refreshConfiguredProviderModelCatalogs({ force: true })
@@ -542,7 +545,7 @@ describe('model catalog cache', () => {
     ])
 
     const { providerModelCatalogKey, refreshConfiguredProviderModelCatalogs } = await import(
-      '../../packages/server/src/services/hermes/model-catalog-cache'
+      '../../packages/server/src/modules/hermes/services/providers/model-catalog-cache'
     )
     await refreshConfiguredProviderModelCatalogs({ force: true })
 

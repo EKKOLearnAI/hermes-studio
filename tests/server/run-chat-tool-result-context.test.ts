@@ -3,16 +3,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const addMessageMock = vi.fn()
 const getSessionDetailMock = vi.fn()
 
-vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/session-store', () => ({
   addMessage: addMessageMock,
   getSessionDetail: getSessionDetailMock,
 }))
 
-vi.mock('../../packages/server/src/db/hermes/compression-snapshot', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/compression-snapshot', () => ({
   getCompressionSnapshot: vi.fn(() => null),
 }))
 
-vi.mock('../../packages/server/src/services/logger', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/logging', () => ({
   logger: {
     info: vi.fn(),
     warn: vi.fn(),
@@ -40,10 +40,10 @@ describe('Bridge tool result context projection', () => {
       }],
     }
     const { recordBridgeToolCompleted } = await import(
-      '../../packages/server/src/services/hermes/run-chat/bridge-message'
+      '../../packages/server/src/modules/studio/services/chat-run/bridge-message'
     )
     const { truncateToolResultForContext } = await import(
-      '../../packages/server/src/lib/tool-result-context'
+      '../../packages/server/src/modules/studio/services/chat-run/tool-result-context'
     )
 
     const completed = recordBridgeToolCompleted(
@@ -71,12 +71,12 @@ describe('Bridge tool result context projection', () => {
     getSessionDetailMock.mockReturnValue({
       messages: [{ role: 'tool', content: completeToolResult }],
     })
-    const { countTokens } = await import('../../packages/server/src/lib/context-compressor')
+    const { countTokens } = await import('../../packages/server/src/modules/studio/services/context-compressor')
     const { truncateToolResultForContext } = await import(
-      '../../packages/server/src/lib/tool-result-context'
+      '../../packages/server/src/modules/studio/services/chat-run/tool-result-context'
     )
     const { calcAndUpdateUsage } = await import(
-      '../../packages/server/src/services/hermes/run-chat/usage'
+      '../../packages/server/src/modules/studio/services/chat-run/usage'
     )
     const makeState = () => ({ messages: [], isWorking: false, events: [], queue: [] }) as any
 

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { mimoTtsProvider } from '../../packages/server/src/services/hermes/tts-providers/mimo'
+import { mimoTtsProvider } from '../../packages/server/src/modules/studio/services/voice/tts/providers/mimo'
 
 const mockFetch = vi.fn()
 vi.stubGlobal('fetch', mockFetch)

@@ -23,7 +23,7 @@ describe('workspace path validation', () => {
   it('resolves valid folders under the configured base', async () => {
     const folder = join(root, 'project')
     await mkdir(folder)
-    const { resolveAllowedWorkspaceFolder } = await import('../../packages/server/src/services/hermes/workspace-path')
+    const { resolveAllowedWorkspaceFolder } = await import('../../packages/server/src/modules/studio/services/files/workspace-path')
 
     await expect(resolveAllowedWorkspaceFolder('project')).resolves.toEqual({ base: root, fullPath: folder })
     await expect(resolveAllowedWorkspaceFolder(folder)).resolves.toEqual({ base: root, fullPath: folder })
@@ -31,7 +31,7 @@ describe('workspace path validation', () => {
 
   it('rejects traversal outside the base', async () => {
     const outside = await mkdtemp(join(tmpdir(), 'hermes-workspace-path-outside-'))
-    const { resolveAllowedWorkspaceFolder, assertAllowedWorkspaceFolder } = await import('../../packages/server/src/services/hermes/workspace-path')
+    const { resolveAllowedWorkspaceFolder, assertAllowedWorkspaceFolder } = await import('../../packages/server/src/modules/studio/services/files/workspace-path')
 
     await expect(resolveAllowedWorkspaceFolder(outside)).resolves.toBeNull()
     await expect(assertAllowedWorkspaceFolder(outside)).rejects.toMatchObject({ status: 403 })
@@ -40,7 +40,7 @@ describe('workspace path validation', () => {
 
   it('rejects files and empty strings as workspace folders', async () => {
     await writeFile(join(root, 'file.txt'), 'not a folder')
-    const { resolveAllowedWorkspaceFolder, assertAllowedWorkspaceFolder } = await import('../../packages/server/src/services/hermes/workspace-path')
+    const { resolveAllowedWorkspaceFolder, assertAllowedWorkspaceFolder } = await import('../../packages/server/src/modules/studio/services/files/workspace-path')
 
     await expect(resolveAllowedWorkspaceFolder('file.txt')).resolves.toBeNull()
     await expect(resolveAllowedWorkspaceFolder('')).resolves.toBeNull()
@@ -53,7 +53,7 @@ describe('workspace path validation', () => {
     Object.defineProperty(process, 'platform', { value: 'win32' })
     delete process.env.WORKSPACE_BASE
     try {
-      const { normalizeWindowsWorkspacePath } = await import('../../packages/server/src/services/hermes/workspace-path')
+      const { normalizeWindowsWorkspacePath } = await import('../../packages/server/src/modules/studio/services/files/workspace-path')
       expect(normalizeWindowsWorkspacePath('c:/Users/Alice/Project')).toEqual({
         base: 'C:\\',
         fullPath: 'c:\\Users\\Alice\\Project',
@@ -69,7 +69,7 @@ describe('workspace path validation', () => {
     const originalPlatform = process.platform
     Object.defineProperty(process, 'platform', { value: 'win32' })
     try {
-      const { isWorkspaceListPathAllowed } = await import('../../packages/server/src/services/hermes/workspace-path')
+      const { isWorkspaceListPathAllowed } = await import('../../packages/server/src/modules/studio/services/files/workspace-path')
       const directoryStat = async () => ({ isDirectory: () => true }) as any
       const escapedViaJunction = vi.fn(async () => false)
       const withinBase = vi.fn(async () => true)
@@ -89,7 +89,7 @@ describe('workspace path validation', () => {
     const originalPlatform = process.platform
     Object.defineProperty(process, 'platform', { value: 'win32' })
     try {
-      const { isWorkspaceListPathAllowed } = await import('../../packages/server/src/services/hermes/workspace-path')
+      const { isWorkspaceListPathAllowed } = await import('../../packages/server/src/modules/studio/services/files/workspace-path')
       const directoryStat = async () => ({ isDirectory: () => true }) as any
       const realPathWithinFn = vi.fn(async () => false)
 

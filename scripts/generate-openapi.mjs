@@ -6,14 +6,13 @@
  * OpenAPI documentation without requiring code changes or decorators.
  */
 
-import { readFileSync, writeFileSync, readdirSync } from 'fs'
+import { readFileSync, writeFileSync } from 'fs'
 import { dirname, resolve, join } from 'path'
 import { fileURLToPath } from 'url'
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
 const rootDir = resolve(__dirname, '..')
-const routesDir = join(rootDir, 'packages/server/src/routes')
-const controllersDir = join(rootDir, 'packages/server/src/controllers')
+const serverSourceDir = join(rootDir, 'packages/server/src')
 const packageJson = JSON.parse(readFileSync(join(rootDir, 'package.json'), 'utf-8'))
 
 // OpenAPI template
@@ -44,78 +43,73 @@ const openapi = {
 
 // Tag mappings based on route directories
 const tagMappings = {
-  'routes/hermes/sessions.ts': { name: 'Sessions', description: 'Chat session management' },
-  'routes/hermes/profiles.ts': { name: 'Profiles', description: 'Hermes profile management' },
-  'routes/hermes/gateways.ts': { name: 'Gateways', description: 'Gateway process management' },
-  'routes/hermes/models.ts': { name: 'Models', description: 'Model configuration' },
-  'routes/hermes/providers.ts': { name: 'Providers', description: 'Model provider management' },
-  'routes/hermes/skills.ts': { name: 'Skills', description: 'Skill browsing and management' },
-  'routes/hermes/skill-bundles.ts': { name: 'Skill Bundles', description: 'Skill bundle browsing and management' },
-  'routes/hermes/plugins.ts': { name: 'Plugins', description: 'Plugin browsing and management' },
-  'routes/hermes/memory.ts': { name: 'Memory', description: 'Agent memory files' },
-  'routes/hermes/logs.ts': { name: 'Logs', description: 'Log file access' },
-  'routes/hermes/jobs.ts': { name: 'Jobs', description: 'Scheduled job management' },
-  'routes/hermes/cron-history.ts': { name: 'Jobs', description: 'Cron job history' },
-  'routes/hermes/kanban.ts': { name: 'Kanban', description: 'Kanban board and task management' },
-  'routes/hermes/weixin.ts': { name: 'Weixin', description: 'Hermes WeChat QR code login' },
-  'routes/social-messages.ts': { name: 'Social Messages', description: 'Unified outbound messaging for configured social platforms' },
-  'routes/hermes/codex-auth.ts': { name: 'Codex Auth', description: 'OpenAI Codex OAuth' },
-  'routes/hermes/nous-auth.ts': { name: 'Nous Auth', description: 'Nous Research OAuth' },
-  'routes/hermes/copilot-auth.ts': { name: 'Copilot Auth', description: 'GitHub Copilot OAuth' },
-  'routes/hermes/xai-auth.ts': { name: 'xAI Auth', description: 'xAI OAuth' },
-  'routes/hermes/anthropic-auth.ts': { name: 'Anthropic Auth', description: 'Anthropic OAuth' },
-  'routes/hermes/group-chat.ts': { name: 'Group Chat', description: 'Group chat management' },
-  'routes/hermes/chat-run.ts': { name: 'Chat Run', description: 'Chat run HTTP and Socket.IO bridge operations' },
-  'routes/hermes/chat-webhooks.ts': { name: 'Chat Webhooks', description: 'Outgoing Chat Run webhook endpoint management' },
-  'routes/hermes/config.ts': { name: 'Config', description: 'Configuration management' },
-  'routes/hermes/files.ts': { name: 'Files', description: 'Hermes file browser' },
-  'routes/hermes/download.ts': { name: 'Download', description: 'File download' },
-  'routes/hermes/tts.ts': { name: 'TTS', description: 'Text-to-speech generation and settings' },
-  'routes/hermes/stt.ts': { name: 'STT', description: 'Speech-to-text transcription and settings' },
-  'routes/hermes/media.ts': { name: 'Media', description: 'Media generation endpoints' },
-  'routes/hermes/mcp.ts': { name: 'MCP', description: 'MCP server and tool management' },
-  'routes/hermes/runtime-versions.ts': { name: 'Runtime Versions', description: 'Runtime and Web UI version management' },
-  'routes/hermes/write-gate.ts': { name: 'Write Gate', description: 'Hermes Agent write approval review' },
-  'routes/hermes/performance-monitor.ts': { name: 'Performance', description: 'Runtime performance monitoring' },
-  'routes/hermes/journey.ts': { name: 'Journey', description: 'Hermes Agent learning journey graph' },
-  'routes/hermes/terminal.ts': { name: 'Terminal', description: 'WebSocket terminal' },
-  'routes/health.ts': { name: 'Health', description: 'Health check' },
-  'routes/update.ts': { name: 'Update', description: 'Self-update management' },
-  'routes/upload.ts': { name: 'Upload', description: 'File upload' },
-  'routes/auth.ts': { name: 'Auth', description: 'Authentication management' },
-  'routes/app-connections.ts': { name: 'App Connections', description: 'Mobile App authorization and connection management' },
-  'routes/app-relay.ts': { name: 'App Relay', description: 'Mobile App cloud relay route and connection management' },
-  'routes/devices.ts': { name: 'Devices', description: 'Device pairing and LAN peer operations' },
-  'routes/coding-agents.ts': { name: 'Coding Agents', description: 'Coding agent installation, config, and runs' },
-  'routes/theme.ts': { name: 'Theme', description: 'Per-user appearance settings and background image' },
-  'routes/api-docs.ts': { name: 'API Docs', description: 'OpenAPI route catalog' },
+  'modules/hermes/routes/profiles.ts': { name: 'Profiles', description: 'Hermes profile management' },
+  'modules/hermes/routes/models.ts': { name: 'Models', description: 'Model configuration' },
+  'modules/hermes/routes/providers.ts': { name: 'Providers', description: 'Model provider management' },
+  'modules/hermes/routes/skills.ts': { name: 'Skills', description: 'Skill browsing and management' },
+  'modules/hermes/routes/skill-bundles.ts': { name: 'Skill Bundles', description: 'Skill bundle browsing and management' },
+  'modules/hermes/routes/plugins.ts': { name: 'Plugins', description: 'Plugin browsing and management' },
+  'modules/hermes/routes/memory.ts': { name: 'Memory', description: 'Agent memory files' },
+  'modules/hermes/routes/jobs.ts': { name: 'Jobs', description: 'Scheduled job management' },
+  'modules/hermes/routes/cron-history.ts': { name: 'Jobs', description: 'Cron job history' },
+  'modules/hermes/routes/kanban.ts': { name: 'Kanban', description: 'Kanban board and task management' },
+  'modules/hermes/routes/weixin.ts': { name: 'Weixin', description: 'Hermes WeChat QR code login' },
+  'modules/hermes/routes/codex-auth.ts': { name: 'Codex Auth', description: 'OpenAI Codex OAuth' },
+  'modules/hermes/routes/nous-auth.ts': { name: 'Nous Auth', description: 'Nous Research OAuth' },
+  'modules/hermes/routes/copilot-auth.ts': { name: 'Copilot Auth', description: 'GitHub Copilot OAuth' },
+  'modules/hermes/routes/xai-auth.ts': { name: 'xAI Auth', description: 'xAI OAuth' },
+  'modules/hermes/routes/anthropic-auth.ts': { name: 'Anthropic Auth', description: 'Anthropic OAuth' },
+  'modules/hermes/routes/minimax-auth.ts': { name: 'MiniMax Auth', description: 'MiniMax OAuth' },
+  'modules/hermes/routes/config.ts': { name: 'Config', description: 'Configuration management' },
+  'modules/studio/routes/files.ts': { name: 'Studio Files', description: 'Studio profile file browser and editor' },
+  'modules/studio/routes/app-upload.ts': { name: 'Studio Files', description: 'Studio App chunked uploads' },
+  'modules/studio/routes/download.ts': { name: 'Studio Files', description: 'Studio file download' },
+  'modules/hermes/routes/mcp.ts': { name: 'MCP', description: 'MCP server and tool management' },
+  'modules/hermes/routes/runtime-versions.ts': { name: 'Runtime Versions', description: 'Runtime and Web UI version management' },
+  'modules/hermes/routes/write-gate.ts': { name: 'Write Gate', description: 'Hermes Agent write approval review' },
+  'modules/hermes/routes/journey.ts': { name: 'Journey', description: 'Hermes Agent learning journey graph' },
+  'modules/ekko/routes/memory.ts': { name: 'Ekko Memory', description: 'Ekko durable memory management' },
+  'modules/ekko/routes/skills.ts': { name: 'Ekko Skills', description: 'Ekko reusable skill management' },
+  'modules/ekko/routes/mcp.ts': { name: 'Ekko MCP', description: 'Ekko MCP server management' },
+  'modules/ekko/routes/config.ts': { name: 'Ekko Config', description: 'Ekko runtime configuration management' },
+  'modules/studio/routes/workflows.ts': { name: 'Workflows', description: 'Cross-agent workflow orchestration' },
+  'modules/studio/routes/sessions.ts': { name: 'Sessions', description: 'Cross-agent chat session management' },
+  'modules/studio/routes/logs.ts': { name: 'Logs', description: 'Cross-agent log file access' },
+  'modules/studio/routes/social-messages.ts': { name: 'Social Messages', description: 'Unified outbound messaging for configured social platforms' },
+  'modules/studio/routes/group-chat.ts': { name: 'Group Chat', description: 'Cross-agent group chat management' },
+  'modules/studio/routes/chat-run.ts': { name: 'Chat Run', description: 'Cross-agent chat run HTTP and Socket.IO bridge operations' },
+  'modules/studio/routes/chat-webhooks.ts': { name: 'Chat Webhooks', description: 'Cross-agent Chat Run webhook endpoint management' },
+  'modules/studio/routes/tts.ts': { name: 'TTS', description: 'Text-to-speech generation and settings' },
+  'modules/studio/routes/stt.ts': { name: 'STT', description: 'Speech-to-text transcription and settings' },
+  'modules/studio/routes/media.ts': { name: 'Media', description: 'Media generation endpoints' },
+  'modules/studio/routes/performance-monitor.ts': { name: 'Performance', description: 'Runtime performance monitoring' },
+  'modules/studio/routes/petdex.ts': { name: 'Petdex', description: 'Desktop pet catalog and assets' },
+  'modules/studio/routes/pets.ts': { name: 'Pets', description: 'Per-profile desktop pet settings' },
+  'modules/studio/routes/health.ts': { name: 'Health', description: 'Health check' },
+  'modules/studio/routes/update.ts': { name: 'Update', description: 'Studio self-update management' },
+  'modules/studio/routes/upload.ts': { name: 'Studio Files', description: 'Studio runtime file upload' },
+  'modules/studio/routes/auth.ts': { name: 'Auth', description: 'Authentication management' },
+  'modules/studio/routes/app-connections.ts': { name: 'App Connections', description: 'Mobile App authorization and connection management' },
+  'modules/studio/routes/app-relay.ts': { name: 'App Relay', description: 'Mobile App cloud relay route and connection management' },
+  'modules/studio/routes/devices.ts': { name: 'Devices', description: 'Device pairing and LAN peer operations' },
+  'modules/studio/routes/mcu-devices.ts': { name: 'MCU Devices', description: 'Microcontroller device management' },
+  'modules/studio/routes/mcu-firmware.ts': { name: 'MCU Firmware', description: 'Microcontroller firmware distribution' },
+  'modules/studio/routes/theme.ts': { name: 'Theme', description: 'Per-user appearance settings and background image' },
+  'modules/studio/routes/api-docs.ts': { name: 'API Docs', description: 'OpenAPI route catalog' },
+  'modules/studio/routes/agent-status.ts': { name: 'Agent Status', description: 'In-memory Agent installation, version, and source status' },
+  'modules/coding-agents/routes/agents.ts': { name: 'Coding Agents', description: 'Coding agent installation, config, and runs' },
 }
 
 // Extract route definitions from route files
 function scanRoutes() {
   const paths = {}
 
-  // Scan hermes routes
-  const hermesRoutesDir = join(routesDir, 'hermes')
-  const hermesRouteFiles = readdirSync(hermesRoutesDir).filter(f => f.endsWith('.ts'))
-
-  for (const file of hermesRouteFiles) {
-    const routePath = join('hermes', file)
-    const tagInfo = tagMappings[`routes/${routePath}`]
-    if (tagInfo) {
-      scanRouteFile(join(hermesRoutesDir, file), tagInfo, paths)
-    }
-  }
-
-  // Scan top-level routes
   for (const [routeFile, tagInfo] of Object.entries(tagMappings)) {
-    if (!routeFile.startsWith('routes/hermes/')) {
-      const filePath = join(routesDir, routeFile.replace('routes/', ''))
-      try {
-        scanRouteFile(filePath, tagInfo, paths)
-      } catch (e) {
-        // File might not exist, skip
-      }
+    const filePath = join(serverSourceDir, routeFile)
+    try {
+      scanRouteFile(filePath, tagInfo, paths)
+    } catch (e) {
+      // File might not exist, skip
     }
   }
 
@@ -138,9 +132,9 @@ function scanRouteFile(filePath, tagInfo, paths) {
   let match
   while (ctrlRouteRegex && (match = ctrlRouteRegex.exec(content)) !== null) {
     const [, method, path, controllerAlias, controllerMethod] = match
-    const controllerContent = controllerContents.get(controllerAlias)
-    const controllerSource = controllerContent
-      ? extractFunctionSource(controllerContent, controllerMethod)
+    const controller = controllerContents.get(controllerAlias)
+    const controllerSource = controller
+      ? extractHandlerSource(controller.filePath, controller.content, controllerMethod)
       : ''
     addEndpoint(paths, method, path, controllerMethod, tagInfo, content, match.index, controllerSource)
   }
@@ -161,12 +155,80 @@ function readControllerContents(routeFilePath, routeContent) {
     const [, alias, importPath] = match
     const controllerPath = resolve(dirname(routeFilePath), `${importPath}.ts`)
     try {
-      contents.set(alias, readFileSync(controllerPath, 'utf-8'))
+      contents.set(alias, {
+        content: readFileSync(controllerPath, 'utf-8'),
+        filePath: controllerPath,
+      })
     } catch {
       // Non-controller namespace imports are ignored by the route scanner.
     }
   }
   return contents
+}
+
+function extractHandlerSource(filePath, content, functionName) {
+  const source = extractFunctionSource(content, functionName)
+  if (!source) return ''
+
+  // Module controllers may intentionally be thin HTTP boundaries that delegate
+  // the implementation to a service. Include directly delegated handlers so
+  // request parameters remain visible after moving business logic to services.
+  const namedImports = readNamedImports(filePath, content)
+  const delegatedSources = []
+  const seen = new Set()
+
+  for (const match of source.matchAll(/\b([A-Za-z_$][\w$]*)\s*\(\s*ctx\s*\)/g)) {
+    const localName = match[1]
+    const imported = namedImports.get(localName)
+    if (!imported || seen.has(localName)) continue
+    seen.add(localName)
+
+    try {
+      const importedContent = readFileSync(imported.filePath, 'utf-8')
+      const delegatedSource = extractFunctionSource(importedContent, imported.importedName)
+      if (delegatedSource) delegatedSources.push(delegatedSource)
+    } catch {
+      // An unresolved delegated import should not prevent the remaining API
+      // catalog from being generated.
+    }
+  }
+
+  return [source, ...delegatedSources].join('\n')
+}
+
+function readNamedImports(importerPath, content) {
+  const imports = new Map()
+
+  for (const match of content.matchAll(/import\s*\{([\s\S]*?)\}\s*from\s*['"]([^'"]+)['"]/g)) {
+    const [, bindings, importPath] = match
+    if (!importPath.startsWith('.')) continue
+
+    const importedFilePath = resolveTypeScriptImport(importerPath, importPath)
+    if (!importedFilePath) continue
+
+    for (const binding of bindings.split(',')) {
+      const parsed = binding.trim().match(/^(?:type\s+)?([A-Za-z_$][\w$]*)(?:\s+as\s+([A-Za-z_$][\w$]*))?$/)
+      if (!parsed) continue
+      const importedName = parsed[1]
+      const localName = parsed[2] || importedName
+      imports.set(localName, { filePath: importedFilePath, importedName })
+    }
+  }
+
+  return imports
+}
+
+function resolveTypeScriptImport(importerPath, importPath) {
+  const basePath = resolve(dirname(importerPath), importPath)
+  for (const candidate of [`${basePath}.ts`, join(basePath, 'index.ts')]) {
+    try {
+      readFileSync(candidate, 'utf-8')
+      return candidate
+    } catch {
+      // Try the next supported TypeScript module path.
+    }
+  }
+  return null
 }
 
 function extractFunctionSource(content, functionName) {
@@ -736,7 +798,7 @@ function generateResponses(path, method) {
     responses['400'] = { $ref: '#/components/responses/BadRequest' }
   }
 
-  if (path === '/api/hermes/group-chat/rooms/:roomId/workspace') {
+  if (path === '/api/studio/group-chat/rooms/:roomId/workspace') {
     responses['403'] = { description: 'Forbidden - Workspace folder is not allowed' }
     responses['404'] = { $ref: '#/components/responses/NotFound' }
   }
@@ -787,25 +849,6 @@ openapi.components.responses = {
   },
 }
 
-// Add WebSocket terminal endpoint
-openapi.paths['/api/hermes/terminal'] = {
-  'get': {
-    tags: ['Terminal'],
-    summary: 'WebSocket terminal connection',
-    description: 'Establish a WebSocket connection for interactive terminal access. Uses the `ws` or `wss` protocol with `?token=` for authentication.',
-    operationId: 'terminalWebSocket',
-    responses: {
-      '101': { description: 'Switching Protocols - WebSocket connection established' },
-      '401': { $ref: '#/components/responses/Unauthorized' },
-    },
-  },
-}
-
-// Add Terminal tag
-if (!openapi.tags.find(t => t.name === 'Terminal')) {
-  openapi.tags.push({ name: 'Terminal', description: 'WebSocket terminal access' })
-}
-
 // Run scanner
 console.log('Scanning routes...')
 openapi.paths = scanRoutes()
@@ -835,7 +878,7 @@ openapi.paths = sortedPaths
 
 // Add special endpoints after sorting
 // Add non-streaming Chat Run HTTP wrapper endpoint
-openapi.paths['/api/chat-run/runs'] = {
+openapi.paths['/api/studio/chat-run/runs'] = {
   post: {
     tags: ['Chat Run'],
     summary: 'Run chat and wait for completion',

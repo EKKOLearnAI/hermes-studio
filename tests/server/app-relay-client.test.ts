@@ -42,20 +42,20 @@ const { mockIo, sockets } = vi.hoisted(() => {
 })
 
 vi.mock('socket.io-client', () => ({ io: mockIo }))
-vi.mock('../../packages/server/src/services/system-info', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/system-info', () => ({
   createDeviceSignature: vi.fn(async () => 'machine-signature'),
 }))
 
 describe('AppRelayClient', () => {
   beforeEach(async () => {
-    const { stopAppRelayClient } = await import('../../packages/server/src/services/app-relay/client')
+    const { stopAppRelayClient } = await import('../../packages/server/src/modules/studio/services/app-relay/client')
     stopAppRelayClient()
     sockets.length = 0
     vi.clearAllMocks()
   })
 
   it('connects with a signed machine identity independent of the MCU relay', async () => {
-    const { startAppRelayClient } = await import('../../packages/server/src/services/app-relay/client')
+    const { startAppRelayClient } = await import('../../packages/server/src/modules/studio/services/app-relay/client')
     const publicKey = '-----BEGIN PUBLIC KEY-----\nmachine-public-key\n-----END PUBLIC KEY-----\n'
     const client = startAppRelayClient({
       relayUrl: 'https://relay.example.com',
@@ -87,9 +87,9 @@ describe('AppRelayClient', () => {
 
   it('marks development Web UI relay hosts as non-preemptive', async () => {
     const { shouldReplaceExistingAppRelayHost } = await import(
-      '../../packages/server/src/services/app-relay/connection'
+      '../../packages/server/src/modules/studio/services/app-relay/connection'
     )
-    const { startAppRelayClient } = await import('../../packages/server/src/services/app-relay/client')
+    const { startAppRelayClient } = await import('../../packages/server/src/modules/studio/services/app-relay/client')
 
     expect(shouldReplaceExistingAppRelayHost({ NODE_ENV: 'development' })).toBe(false)
     expect(shouldReplaceExistingAppRelayHost({ NODE_ENV: 'test' })).toBe(false)
@@ -110,7 +110,7 @@ describe('AppRelayClient', () => {
   })
 
   it('keeps waiting across transient connect errors while Socket.IO retries', async () => {
-    const { startAppRelayClient } = await import('../../packages/server/src/services/app-relay/client')
+    const { startAppRelayClient } = await import('../../packages/server/src/modules/studio/services/app-relay/client')
     const client = startAppRelayClient({
       relayUrl: 'https://relay.example.com',
       machineId: 'hwui_machine_1234567890',
@@ -129,7 +129,7 @@ describe('AppRelayClient', () => {
   })
 
   it('forwards local API requests with safe headers and binary support', async () => {
-    const fetchImpl = vi.fn(async (url: string) => url.endsWith('/api/hermes/tts/synthesize')
+    const fetchImpl = vi.fn(async (url: string) => url.endsWith('/api/studio/tts/synthesize')
       ? new Response(Uint8Array.from([7, 8, 9]), {
           status: 200,
           headers: { 'content-type': 'audio/mpeg' },
@@ -138,7 +138,7 @@ describe('AppRelayClient', () => {
           status: 200,
           headers: { 'content-type': 'application/json' },
         }))
-    const { startAppRelayClient } = await import('../../packages/server/src/services/app-relay/client')
+    const { startAppRelayClient } = await import('../../packages/server/src/modules/studio/services/app-relay/client')
     startAppRelayClient({
       relayUrl: 'https://relay.example.com',
       machineId: 'hwui_machine_1234567890',
@@ -151,7 +151,7 @@ describe('AppRelayClient', () => {
     remote.__handlers.get('app.http.request')({
       id: 'http-1',
       method: 'POST',
-      path: '/api/hermes/sessions?profile=default',
+      path: '/api/studio/sessions?profile=default',
       headers: {
         authorization: 'Bearer local-user-token',
         'content-type': 'application/json',
@@ -167,7 +167,7 @@ describe('AppRelayClient', () => {
       body: '{"ok":true}',
     })))
     expect(fetchImpl).toHaveBeenCalledWith(
-      'http://127.0.0.1:8648/api/hermes/sessions?profile=default',
+      'http://127.0.0.1:8648/api/studio/sessions?profile=default',
       expect.objectContaining({ method: 'POST', body: JSON.stringify({ title: 'App session' }) }),
     )
     const headers = fetchImpl.mock.calls[0][1]?.headers as Headers
@@ -179,7 +179,7 @@ describe('AppRelayClient', () => {
     remote.__handlers.get('app.http.request')({
       id: 'binary-1',
       method: 'POST',
-      path: '/api/hermes/tts/synthesize',
+      path: '/api/studio/tts/synthesize',
       headers: { 'content-type': 'application/octet-stream' },
       bodyBytes: Uint8Array.from([1, 2, 3]),
     }, binaryAck)
@@ -203,7 +203,7 @@ describe('AppRelayClient', () => {
         'content-length': String(apkBytes.byteLength),
       },
     }))
-    const { startAppRelayClient } = await import('../../packages/server/src/services/app-relay/client')
+    const { startAppRelayClient } = await import('../../packages/server/src/modules/studio/services/app-relay/client')
     const client = startAppRelayClient({
       relayUrl: 'https://relay.example.com',
       machineId: 'hwui_machine_1234567890',
@@ -223,7 +223,7 @@ describe('AppRelayClient', () => {
     const allowed = await client.handleHttpRequest({
       id: 'apk-allowed',
       method: 'GET',
-      path: '/api/hermes/download?path=test.apk',
+      path: '/api/studio/files/download?path=test.apk',
     })
     expect(allowed.error).toBeUndefined()
     expect(allowed.bodyBytes?.byteLength).toBe(apkBytes.byteLength)
@@ -238,7 +238,7 @@ describe('AppRelayClient', () => {
     const rejected = await client.handleHttpRequest({
       id: 'apk-rejected',
       method: 'GET',
-      path: '/api/hermes/download?path=test.apk',
+      path: '/api/studio/files/download?path=test.apk',
     })
     expect(rejected).toMatchObject({
       id: 'apk-rejected',
@@ -259,7 +259,7 @@ describe('AppRelayClient', () => {
         'content-length': '5',
       },
     }))
-    const { startAppRelayClient } = await import('../../packages/server/src/services/app-relay/client')
+    const { startAppRelayClient } = await import('../../packages/server/src/modules/studio/services/app-relay/client')
     startAppRelayClient({
       relayUrl: 'https://relay.example.com',
       machineId: 'hwui_machine_1234567890',
@@ -281,7 +281,7 @@ describe('AppRelayClient', () => {
     remote.__handlers.get('app.http.request')({
       id: 'chunked-open',
       method: 'GET',
-      path: '/api/hermes/download?path=test.bin',
+      path: '/api/studio/files/download?path=test.bin',
       streamBinary: true,
     }, openAck)
     await vi.waitFor(() => expect(openAck).toHaveBeenCalledWith(expect.objectContaining({
@@ -318,7 +318,7 @@ describe('AppRelayClient', () => {
       status: 200,
       headers: { 'content-type': 'application/json' },
     }))
-    const { startAppRelayClient } = await import('../../packages/server/src/services/app-relay/client')
+    const { startAppRelayClient } = await import('../../packages/server/src/modules/studio/services/app-relay/client')
     startAppRelayClient({
       relayUrl: 'https://relay.example.com',
       machineId: 'hwui_machine_1234567890',
@@ -350,7 +350,7 @@ describe('AppRelayClient', () => {
   })
 
   it('requests a bounded cloud preconnection without embedding the relay URL', async () => {
-    const { startAppRelayClient } = await import('../../packages/server/src/services/app-relay/client')
+    const { startAppRelayClient } = await import('../../packages/server/src/modules/studio/services/app-relay/client')
     const client = startAppRelayClient({
       relayUrl: 'https://relay.example.com',
       machineId: 'hwui_machine_1234567890',
@@ -393,7 +393,7 @@ describe('AppRelayClient', () => {
   })
 
   it('drops cached preconnections whenever the relay host session changes', async () => {
-    const { startAppRelayClient } = await import('../../packages/server/src/services/app-relay/client')
+    const { startAppRelayClient } = await import('../../packages/server/src/modules/studio/services/app-relay/client')
     const client = startAppRelayClient({
       relayUrl: 'https://relay.example.com',
       machineId: 'hwui_machine_1234567890',
@@ -443,7 +443,7 @@ describe('AppRelayClient', () => {
       status: 200,
       headers: { 'content-type': 'application/json' },
     }))
-    const { startAppRelayClient } = await import('../../packages/server/src/services/app-relay/client')
+    const { startAppRelayClient } = await import('../../packages/server/src/modules/studio/services/app-relay/client')
     const client = startAppRelayClient({
       relayUrl: 'https://relay.example.com',
       machineId: 'hwui_machine_1234567890',
@@ -491,7 +491,7 @@ describe('AppRelayClient', () => {
   })
 
   it('includes the cloud account when revoking a shared device code', async () => {
-    const { startAppRelayClient } = await import('../../packages/server/src/services/app-relay/client')
+    const { startAppRelayClient } = await import('../../packages/server/src/modules/studio/services/app-relay/client')
     const client = startAppRelayClient({
       relayUrl: 'https://relay.example.com',
       machineId: 'hwui_machine_1234567890',
@@ -515,7 +515,7 @@ describe('AppRelayClient', () => {
   })
 
   it('bridges the full-duplex /chat-run socket without using MCU events', async () => {
-    const { startAppRelayClient } = await import('../../packages/server/src/services/app-relay/client')
+    const { startAppRelayClient } = await import('../../packages/server/src/modules/studio/services/app-relay/client')
     startAppRelayClient({
       relayUrl: 'https://relay.example.com',
       machineId: 'hwui_machine_1234567890',
@@ -611,7 +611,7 @@ describe('AppRelayClient', () => {
   })
 
   it('bridges the /workflow status namespace and whitelisted subscription events', async () => {
-    const { startAppRelayClient } = await import('../../packages/server/src/services/app-relay/client')
+    const { startAppRelayClient } = await import('../../packages/server/src/modules/studio/services/app-relay/client')
     startAppRelayClient({
       relayUrl: 'https://relay.example.com',
       machineId: 'hwui_machine_1234567890',

@@ -1,16 +1,16 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { createMcuSpeechSegmenter } from '@/api/hermes/mcu-interaction'
+import { createMcuSpeechSegmenter } from '@/api/studio/mcu-interaction'
 import {
   cancelLocalSttStream,
   finishLocalSttStream,
   pushLocalSttStreamChunk,
   startLocalSttStream,
   transcribeSpeech,
-} from '@/api/hermes/stt'
-import { fetchSttSettings, type SttProviderSettingsResponse } from '@/api/hermes/stt-settings'
-import { isServerTtsProvider, synthesizeSpeech } from '@/api/hermes/tts'
+} from '@/api/studio/stt'
+import { fetchSttSettings, type SttProviderSettingsResponse } from '@/api/studio/stt-settings'
+import { isServerTtsProvider, synthesizeSpeech } from '@/api/studio/tts'
 import { useBrowserSpeechRecognition } from '@/composables/useBrowserSpeechRecognition'
 import { useMicRecorder } from '@/composables/useMicRecorder'
 import { usePcmStreamRecorder } from '@/composables/usePcmStreamRecorder'

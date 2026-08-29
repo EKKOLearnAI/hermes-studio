@@ -6,7 +6,7 @@ import {
   isOriginAllowed,
   securityHeaders,
   shouldRejectUpgradeOrigin,
-} from '../../packages/server/src/security'
+} from '../../packages/server/src/modules/studio/middleware/security'
 
 function fakeCtx(origin: string, host: string) {
   return {

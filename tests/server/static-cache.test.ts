@@ -3,7 +3,7 @@ import {
   getStaticCacheControl,
   IMMUTABLE_ASSET_CACHE_CONTROL,
   SPA_ENTRY_CACHE_CONTROL,
-} from '../../packages/server/src/middleware/static-cache'
+} from '../../packages/server/src/modules/studio/middleware/static-cache'
 
 describe('static cache headers', () => {
   it('caches fingerprinted build assets as immutable', () => {

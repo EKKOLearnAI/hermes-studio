@@ -4,9 +4,9 @@
 </p>
 
 <p align="center">
-  A desktop app, local runtime, and web console for <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a>.<br/>
-  Chat with agents, build visual workflows, manage models and profiles,<br/>
-  browse the web, run coding agents, and keep everything local.
+  A multi-agent desktop app, local runtime, and web console for<br/>
+  <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a>, Ekko, Claude Code, Codex, and Pi.<br/>
+  Run chats, groups, workflows, coding tasks, voice, files, and devices from one local-first workspace.
 </p>
 
 <p align="center">
@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <img src="https://github.com/EKKOLearnAI/hermes-studio/blob/main/packages/client/src/assets/image.gif" alt="Hermes Web UI Demo" width="680"/>
+  <img src="https://github.com/EKKOLearnAI/hermes-studio/blob/main/packages/client/src/assets/image.gif" alt="Hermes Studio Demo" width="680"/>
 </p>
 
 <p align="center">
@@ -31,19 +31,39 @@
 
 | Area | What Hermes Studio does |
 | --- | --- |
-| Agent chat | Runs Hermes Agent conversations with streaming responses, tool traces, generated-file previews, persistent local sessions, and standalone desktop chat windows. |
-| Local control plane | Manages profiles, providers, models, credentials, memory, skills, plugins, logs, and runtime settings from one dashboard. |
-| Automation | Builds executable visual workflows and configures platform channels, cron jobs, Kanban tasks, group-chat rooms, and MCP servers around the same Hermes profiles. |
+| Multi-agent runtime | Runs Hermes, Ekko, Claude Code, Codex, and Pi with streaming responses, tool traces, generated-file previews, persistent sessions, and standalone desktop chat windows. |
+| Studio workspace | Provides shared chats, group chat, global-agent runs, workflows, files, voice, media, devices, themes, logs, usage, and App connectivity across agent runtimes. |
+| Agent control planes | Keeps Hermes profiles, providers, models, memory, skills, plugins, jobs, Kanban, channels, and runtime management in their owning agent module. |
+| Automation | Builds executable visual workflows and connects the five runtimes through schedules, approval gates, group-chat rooms, platform channels, and MCP servers. |
 | Workspace tools | Provides a file browser, web terminal, Desktop Agent Browser, voice input/output, coding-agent runners, device discovery, Journey graph, and performance views. |
 | Distribution | Ships as a desktop app for Windows/macOS/Linux, an npm CLI package, and a Docker image. |
+
+## Agent and Platform Boundaries
+
+Hermes Studio is the shared product platform, not a sixth agent. It coordinates
+five concrete runtimes grouped into three agent families:
+
+| Agent family | Runtime | Owned behavior |
+| --- | --- | --- |
+| Hermes | Hermes | Profiles, providers, models, skills, plugins, memory, jobs, Kanban, channels, MCP, terminal, and Hermes runtime integration. |
+| Ekko | Ekko | Ekko execution, approvals, clarifications, memory, MCP, and provider runtime behavior. |
+| Coding | Claude Code, Codex, Pi | Coding-agent installation, configuration, proxies, sessions, and process execution. |
+
+Studio owns capabilities shared by those families: single chat, group chat,
+global-agent orchestration, workflows, webhooks, sessions, files and uploads,
+TTS/STT, media, pets, themes, devices, networking, logs, usage, authentication,
+and App connectivity. Studio-owned HTTP APIs use `/api/studio/*`; Hermes-owned
+control-plane APIs use `/api/hermes/*`. Already-released mobile App paths are
+handled by one centralized compatibility layer instead of duplicate legacy
+controllers.
 
 ## Features
 
 ### AI Chat
 
-- Real-time chat streaming over Socket.IO `/chat-run`; chat runs execute through the Hermes agent bridge
+- Real-time chat streaming over Socket.IO `/chat-run`; Studio dispatches each run to Hermes, Ekko, Claude Code, Codex, or Pi through runtime adapters
 - Multi-session management — create, rename, delete, switch between sessions
-- **Self-built session database** — local SQLite storage for Web UI sessions; Hermes state.db remains a read-only source for Hermes history APIs
+- **Self-built session database** — local SQLite storage for Studio sessions; Hermes state.db remains a read-only source for Hermes history APIs
 - Session grouping by source (Telegram, Discord, Slack, etc.) with collapsible accordion
 - Active session indicator — live sessions pin to top with spinner icon
 - Sessions sorted by latest message time
@@ -52,7 +72,7 @@
 - Profile-scoped file uploads, clipboard image/file paste, and workspace attachments
 - File download support — download uploaded files and agent-generated files by resolved path across local, Docker, SSH, and Singularity backends
 - Inline previews for generated HTML, PDF, DOCX, PPTX, XLSX, CSV, images, Markdown, and source files
-- Session search — Ctrl+K search across the Web UI local session database; read-only Hermes history sessions are not included
+- Session search — Ctrl+K search across the Studio local session database; read-only Hermes history sessions are not included
 - Session categories, message references, compression progress, and durable background delegation results
 - Profile-aware model selector — discovers models available to the signed-in account through authorized Hermes profiles
 - Per-session model display badge and context token usage
@@ -96,11 +116,11 @@ Unified configuration for **10 platforms** in one page:
 
 - Profile-aware Kanban board for planning and tracking agent work
 - Task creation, updates, and status movement from the dashboard
-- Shared with the same local Web UI state and authentication model
+- Shared with the same local Studio state and authentication model
 
 ### Visual Workflows
 
-- Vue Flow canvas for Hermes, Codex, and Claude Code nodes with file/image attachments
+- Vue Flow canvas for Hermes, Ekko, Claude Code, Codex, and Pi nodes with file/image attachments
 - Directed edges, structured conditions, success/failure routes, loops, and approval gates
 - Import/export for portable workflow definitions and profile-aware workspaces
 - Run budgets, deadlines, stop/rerun controls, and persisted execution history
@@ -145,7 +165,7 @@ Unified configuration for **10 platforms** in one page:
 
 ### Coding Agents
 
-- Install, configure, launch, and monitor Claude Code and Codex from the dashboard
+- Install, configure, launch, and monitor Claude Code, Codex, and Pi from the dashboard
 - Built-in coding-agent terminal, session history, workspace selection, images, and file diffs
 - Dedicated proxy routes and API modes for provider/model compatibility
 - Standalone desktop chat windows and persisted output/reasoning metadata
@@ -195,14 +215,14 @@ CLI maintenance commands:
 # Delete persisted login IP lock records
 hermes-web-ui clear-login-locks
 
-# Delete login locks and restart the running Web UI process
+# Delete login locks and restart the running Studio server
 hermes-web-ui clear-login-locks --restart
 
 # Create or reset the default super administrator login to admin / 123456
 hermes-web-ui reset-default-login
 ```
 
-`clear-login-locks` removes `${HERMES_WEB_UI_HOME:-~/.hermes-web-ui}/.login-lock.json`. If the server is running, restart it to clear in-memory lock state. `reset-default-login` updates the Web UI account database; if an `admin` user already exists, its password is reset to `123456` and the account is enabled as a super administrator.
+`clear-login-locks` removes `${HERMES_WEB_UI_HOME:-~/.hermes-web-ui}/.login-lock.json`. If the server is running, restart it to clear in-memory lock state. `reset-default-login` updates the Studio account database; if an `admin` user already exists, its password is reset to `123456` and the account is enabled as a super administrator.
 
 ### Settings
 
@@ -235,7 +255,7 @@ hermes-web-ui reset-default-login
 ### Desktop App & Updates
 
 - Native Electron shell for Windows, macOS, and Linux
-- Bundles the Web UI runtime and starts the local Hermes Studio server automatically
+- Bundles the Studio runtime and starts the local server automatically
 - Uses Cloudflare download endpoints for desktop auto-update metadata and assets first
 - Falls back to GitHub Releases `latest` assets if the Cloudflare update feed is unavailable
 - Windows upgrades attempt to close an existing Hermes Studio process before replacing files
@@ -250,17 +270,17 @@ Download the latest **Hermes Studio** desktop installer from
 [GitHub Releases](https://github.com/EKKOLearnAI/hermes-studio/releases/latest).
 
 Desktop builds are published for macOS, Windows, and Linux, with separate
-architecture assets where applicable. The desktop app bundles the Web UI
+architecture assets where applicable. The desktop app bundles the Studio
 runtime and stores Hermes Agent data in the native Hermes location:
 
 - Windows: `%LOCALAPPDATA%\hermes` (falls back to `%APPDATA%\hermes`)
 - macOS/Linux: `~/.hermes`
 
-The desktop wrapper stores its own Web UI state separately in
+The desktop wrapper stores its own Studio state separately in
 `~/.hermes-web-ui` unless `HERMES_WEB_UI_HOME` is set.
 
 After the packaged desktop app starts, it installs managed command shims so the
-desktop app, bundled Hermes Agent CLI, and bundled Web UI CLI do not conflict:
+desktop app, bundled Hermes Agent CLI, and bundled server CLI do not conflict:
 
 | Command | Description |
 | --- | --- |
@@ -268,10 +288,10 @@ desktop app, bundled Hermes Agent CLI, and bundled Web UI CLI do not conflict:
 | `hermes-studio cli ...` | Run the bundled Hermes Agent CLI |
 | `hermes-studio web ...` | Run the bundled `hermes-web-ui` command |
 | `hermes-studio -h` | Show wrapper help |
-| `hermes-studio-mcp [api\|browser\|devices\|use]` | Run one managed Web UI MCP toolset |
+| `hermes-studio-mcp [api\|browser\|devices\|use]` | Run one managed Studio MCP toolset |
 
 Use `hermes-studio cli -h` for Hermes Agent CLI help and
-`hermes-studio web -h` for Web UI CLI help. `hermes-studio-mcp` defaults to the
+`hermes-studio web -h` for server CLI help. `hermes-studio-mcp` defaults to the
 `api` toolset; choose `browser`, `devices`, or `use` to keep the exposed MCP
 surface focused on the current task.
 
@@ -306,7 +326,7 @@ docker compose logs -f hermes-webui
 Open **http://localhost:6060**
 
 - Persistent Hermes data is stored in `./hermes_data`
-- Web UI auth token is stored in `./hermes_data/hermes-web-ui/.token`
+- Studio auth token is stored in `./hermes_data/hermes-web-ui/.token`
 - On first run with auth enabled, the token is printed to container logs
 - All runtime settings are environment-variable driven in `docker-compose.yml`
 
@@ -314,30 +334,30 @@ For detailed notes and troubleshooting, see [`docs/docker.md`](./docs/docker.md)
 
 ### Hermes Agent Runtime Discovery
 
-When Web UI starts backend chat features, it prefers a source checkout that
+When Studio starts backend chat features, it prefers a source checkout that
 contains `run_agent.py` such as `~/.hermes/hermes-agent`. If no source checkout
 is found, it falls back to the Python environment used by the installed
 `hermes` command, then the system Python. This supports both source installs
 and package installs such as `pip install hermes-agent`.
 
-## Web UI Environment Variables
+## Studio Environment Variables
 
-These variables configure Hermes Web UI, its local Hermes runtime integration, and development/preview helpers. Provider API keys and Hermes Agent settings are normally managed through Hermes profiles; environment variables here are process-level overrides.
+These variables configure Hermes Studio, its local Hermes runtime integration, and development/preview helpers. Provider API keys and Hermes Agent settings are normally managed through Hermes profiles; environment variables here are process-level overrides.
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `PORT` | `8648` | Web UI listen port. |
-| `BIND_HOST` | `0.0.0.0` | Web UI bind host. Set `::` explicitly for IPv6. |
+| `PORT` | `8648` | Studio server listen port. |
+| `BIND_HOST` | `0.0.0.0` | Studio server bind host. Set `::` explicitly for IPv6. |
 | `HERMES_LAN_ADVERTISE_URL` | unset | Reachable Studio origin used in App LAN QR codes. Set this to the Docker host's LAN URL when Studio is opened through `localhost`, for example `http://192.168.1.20:6060`. |
 | `HERMES_APP_ENTITLEMENT_REQUIRED` | `true` | Require a valid cloud-signed App entitlement before accepting a LAN App relay connection. Set `false` only for temporary compatibility diagnostics. |
 | `HERMES_APP_ENTITLEMENT_PUBLIC_KEY` | built in | Optional PEM public-key override for RS256 App entitlements. The expected issuer is `hermes-studio-server` and audience is `ekko-studio`. |
-| `HERMES_WEB_UI_HOME` | `~/.hermes-web-ui` | Web UI data home for auth token, credentials, logs, DB, and default uploads. `HERMES_WEBUI_STATE_DIR` is also supported as a compatibility alias. |
+| `HERMES_WEB_UI_HOME` | `~/.hermes-web-ui` | Studio data home for auth token, credentials, logs, DB, and default uploads. `HERMES_WEBUI_STATE_DIR` is also supported as a compatibility alias. |
 | `HERMES_WEBUI_STATE_DIR` | unset | Compatibility alias for `HERMES_WEB_UI_HOME`. |
 | `HERMES_WEB_UI_DISABLE_MCP_AUTOINJECT` | unset | Disable startup injection of the managed `hermes-studio` MCP server into Hermes profile configs. |
 | `HERMES_WEB_UI_ALLOW_TRANSIENT_MCP_AUTOINJECT` | unset | Allow managed MCP injection when `HERMES_WEB_UI_HOME` is under a temporary directory, such as Version Preview runtimes. |
 | `UPLOAD_DIR` | `$HERMES_WEB_UI_HOME/upload` | Upload root override. Files are stored below profile-scoped subdirectories. |
 | `CORS_ORIGINS` | same host only | Comma- or space-separated cross-origin allowlist for HTTP, Socket.IO, and WebSocket requests. Set `*` only when you intentionally need legacy wildcard CORS. |
-| `AUTH_TOKEN` | auto-generated | Explicit bearer token. If unset, Web UI creates one under `HERMES_WEB_UI_HOME`. |
+| `AUTH_TOKEN` | auto-generated | Explicit bearer token. If unset, Studio creates one under `HERMES_WEB_UI_HOME`. |
 | `AUTH_JWT_SECRET` | `AUTH_TOKEN` | JWT signing secret override for username/password sessions. |
 | `HERMES_WEB_UI_AUTH_JWT_EXPIRES_IN` | `30d` | Username/password session JWT lifetime. Accepts seconds or `s`/`m`/`h`/`d` suffixes, for example `12h` or `7d`. |
 | `PROFILE` | `default` | Startup/default Hermes profile. Runtime requests use the profile selected by the frontend and authorized for the current account. |
@@ -357,7 +377,7 @@ These variables configure Hermes Web UI, its local Hermes runtime integration, a
 | `HERMES_AGENT_BRIDGE_TIMEOUT_MS` | `120000` | Timeout for Node requests to the bridge broker. |
 | `HERMES_AGENT_BRIDGE_CONNECT_RETRY_MS` | `5000` | Short retry window for connecting to the bridge socket. |
 | `HERMES_AGENT_BRIDGE_STARTUP_TIMEOUT_MS` | `120000` | Timeout while waiting for the Python bridge to become ready. |
-| `HERMES_AGENT_BRIDGE_STOP_ON_SHUTDOWN` | enabled | Stop the bridge broker during Web UI shutdown and restart. Set `0`, `false`, `no`, or `off` to keep the bridge across restarts. |
+| `HERMES_AGENT_BRIDGE_STOP_ON_SHUTDOWN` | enabled | Stop the bridge broker during Studio shutdown and restart. Set `0`, `false`, `no`, or `off` to keep the bridge across restarts. |
 | `HERMES_AGENT_BRIDGE_AUTO_RESTART` | enabled | Auto-restart the bridge broker after unexpected exit. Set `0`, `false`, `no`, or `off` to disable. |
 | `HERMES_AGENT_BRIDGE_RESTART_DELAY_MS` | `1000` | Base delay for bridge auto-restart backoff. |
 | `HERMES_AGENT_BRIDGE_PLATFORM` | `cli` | Platform identity passed to Hermes Agent. |
@@ -368,12 +388,14 @@ These variables configure Hermes Web UI, its local Hermes runtime integration, a
 | `HERMES_BRIDGE_MAX_TURNS` | profile/default | Maximum turn override for bridge runs. |
 | `HERMES_BRIDGE_SUPPRESS_PLATFORM_HINT` | `cli` | Controls bridge platform hint suppression passed to Hermes Agent. |
 | `HERMES_OPENROUTER_APP_REFERER` | `https://hermes-studio.ai` | OpenRouter attribution referer sent by bridge runs. |
-| `HERMES_OPENROUTER_APP_TITLE` | `Hermes Web UI` | OpenRouter attribution title sent by bridge runs. |
+| `HERMES_OPENROUTER_APP_TITLE` | `Hermes Studio` | OpenRouter attribution title sent by bridge runs. |
 | `HERMES_OPENROUTER_APP_CATEGORIES` | `cli-agent,personal-agent` | OpenRouter attribution categories sent by bridge runs. |
-| `HERMES_WEB_UI_MANAGED_GATEWAY` | enabled | Controls Web UI-managed Hermes gateway process handling. Set `0`, `false`, `no`, or `off` to use `hermes gateway start` instead. |
+| `HERMES_WEB_UI_MANAGED_GATEWAY` | enabled | Controls Studio-managed Hermes gateway process handling. Set `0`, `false`, `no`, or `off` to use `hermes gateway start` instead. |
 | `HERMES_WEB_UI_DISABLE_GATEWAY_AUTOSTART` | unset | Skip startup gateway checks/autostart. Set `1`, `true`, `yes`, or `on` for dashboard-only deployments where another service owns Hermes gateway lifecycle. |
-| `HERMES_WEB_UI_DISABLE_SKILL_INJECTION` | unset | Skip startup bundled skill injection. Set `1`, `true`, `yes`, or `on` when bundled skills are managed outside Hermes Web UI. When injection is enabled, Web UI updates only skills it previously installed or identical existing bundled copies; local edits and user-owned same-name skills are skipped. |
-| `HERMES_WEB_UI_STOP_GATEWAYS_ON_SHUTDOWN` | enabled in production | Controls whether Web UI shutdown also stops managed gateway processes. Set `0` or `false` to detach them. |
+| `HERMES_WEB_UI_DISABLE_SKILL_INJECTION` | unset | Skip startup bundled skill injection. Set `1`, `true`, `yes`, or `on` when bundled skills are managed outside Studio. When injection is enabled, Studio updates only skills it previously installed or identical existing bundled copies; local edits and user-owned same-name skills are skipped. |
+| `HERMES_WEB_UI_STOP_GATEWAYS_ON_SHUTDOWN` | enabled | Controls whether Studio shutdown also stops only the gateway processes started and tracked by this Studio process. Set `0` or `false` to detach them; externally discovered gateways are never adopted or stopped. |
+| `HERMES_WEB_UI_SHUTDOWN_FORCE_EXIT_MS` | `10000` | Short cleanup budget before Studio force-stops its owned process trees and exits. |
+| `HERMES_DESKTOP_STOP_TIMEOUT_MS` | `20000` | Desktop host's existing outer deadline before it force-stops the complete Web UI process tree; independent from the Web UI's 10-second cleanup budget. |
 | `HERMES_GATEWAY_URL` / `GATEWAY_URL` | unset | Explicit Hermes gateway upstream URL for proxy routes. |
 | `GATEWAY_HOST` | `127.0.0.1` | Default Hermes gateway upstream host for proxy routes. |
 | `GATEWAY_PORT` | `8642` | Default Hermes gateway upstream port for proxy routes. |
@@ -397,7 +419,7 @@ These variables configure Hermes Web UI, its local Hermes runtime integration, a
 | `hermes-web-ui update` / `upgrade` | Update to the latest version and restart |
 | `hermes-web-ui version` / `-v` | Show the version |
 | `hermes-web-ui -h` | Show help |
-| `hermes-web-ui-mcp [api\|browser\|devices\|use]` | Run one managed Web UI MCP toolset (same as `hermes-studio-mcp`) |
+| `hermes-web-ui-mcp [api\|browser\|devices\|use]` | Run one managed Studio MCP toolset (same as `hermes-studio-mcp`) |
 
 Add `--no-open` to `start` or `client` when no browser should open.
 
@@ -409,7 +431,7 @@ Add `--no-open` to `start` or `client` when no browser should open.
 
 On startup the BFF server automatically:
 
-- Initializes Web UI data directories, local databases, and bundled skills
+- Initializes Studio data directories, local databases, and bundled skills
 - Starts the Hermes agent bridge used by `/chat-run`
 - Opens a browser on successful startup unless `--no-open` is set
 
@@ -419,7 +441,7 @@ On startup the BFF server automatically:
 
 ```bash
 git clone https://github.com/EKKOLearnAI/hermes-studio.git
-cd hermes-web-ui
+cd hermes-studio
 npm install
 npm run dev
 ```
@@ -428,38 +450,52 @@ npm run dev
 - BFF Server: http://localhost:8647
 
 ```bash
+npm run harness:check
+npm run test
 npm run build   # outputs to dist/
 ```
 
-See [DEVELOPMENT.md](./DEVELOPMENT.md) for project development guidelines.
+See [DEVELOPMENT.md](./DEVELOPMENT.md) for contributor commands and
+[ARCHITECTURE.md](./ARCHITECTURE.md) for the complete package and state model.
 
 ## Architecture
 
-```
-Browser → BFF (Koa, :8648) → Socket.IO /chat-run
-                ↓
-        Hermes agent bridge → Hermes Agent runtime
-                ↓
-           Hermes CLI / profiles
-           profile config.yaml    (channel/provider behavior)
-           profile auth.json      (credential pool)
-           Tencent iLink API      (WeChat QR login)
+```text
+Browser / Desktop / App
+          │ HTTP + Socket.IO
+          ▼
+Koa bootstrap (composition only)
+          │
+          ├─ Studio platform ── chat, groups, global agent, workflows,
+          │                    sessions, files, voice, devices, webhooks
+          ├─ Hermes family ─── profiles, models, skills, memory, jobs,
+          │                    Kanban, channels, terminal, Hermes bridge
+          ├─ Ekko family ───── Ekko runtime and agent-owned services
+          └─ Coding family ─── Claude Code, Codex, and Pi adapters
 ```
 
-The frontend is designed with **multi-agent extensibility** — all Hermes-specific code is namespaced under `hermes/` directories (API, components, views, stores), making it straightforward to add new agent integrations alongside.
+The server is organized by business ownership under
+`packages/server/src/modules/{studio,hermes,ekko,coding-agents}`. Routes stay
+thin, controllers own HTTP concerns, services own reusable behavior, and only
+`packages/server/src/bootstrap` may compose concrete modules and adapters.
+Cross-agent code belongs to Studio; an agent module must not absorb a shared
+product surface merely because it uses that agent today.
 
-The BFF layer handles Socket.IO chat streaming, the Hermes agent bridge, profile-aware file upload and path-based download (multi-backend: local/Docker/SSH/Singularity), session CRUD, account- and profile-scoped management, config/credential management, WeChat QR login, model discovery, skills/memory/plugin management, TTS/STT, coding-agent proxies, MCP/runtime management, log reading, and static file serving.
+Studio state and Hermes Agent state remain separate. Studio defaults to
+`~/.hermes-web-ui`; Hermes profile data remains under the Hermes home. For the
+full ownership tree, dependency rules, and API migration contract, see
+[`docs/harness/server-module-boundaries.md`](./docs/harness/server-module-boundaries.md).
 
 ## Tech Stack
 
 **Frontend:** Vue 3 + TypeScript + Vite + Naive UI + Pinia + Vue Router + vue-i18n + SCSS + markdown-it + highlight.js
 
-**Backend:** Koa 2 (BFF server) + node-pty (web terminal)
+**Backend:** Koa 2 + Socket.IO + SQLite + node-pty
 
 ## License
 
 [BSL-1.1](./LICENSE)
 
-The license covers Hermes Studio, the former Hermes Web UI name, the
-`hermes-web-ui` npm package and CLI, desktop applications, firmware, release
+The license covers Hermes Studio, the `hermes-web-ui` npm package and CLI,
+desktop applications, firmware, release
 artifacts, documentation, and associated files in this repository.

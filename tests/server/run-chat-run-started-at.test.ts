@@ -19,63 +19,82 @@ const bridgeMock = vi.hoisted(() => ({
   clarifyRespond: vi.fn(async () => ({ resolved: true })),
 }))
 
-vi.mock('../../packages/server/src/services/hermes/run-chat/handle-bridge-run', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/chat-run/handle-bridge-run', () => ({
   handleBridgeRun: handleBridgeRunMock,
   resumeBridgeRun: resumeBridgeRunMock,
 }))
 
-vi.mock('../../packages/server/src/services/hermes/run-chat/load-state', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/chat-run/load-state', () => ({
   loadSessionStateFromDb: loadSessionStateFromDbMock,
   resolveRunSource: vi.fn((source?: string) => source || 'cli'),
 }))
 
-vi.mock('../../packages/server/src/services/hermes/run-chat/handle-coding-agent-run', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/chat-run/handle-coding-agent-run', () => ({
   handleCodingAgentRun: handleCodingAgentRunMock,
 }))
 
-vi.mock('../../packages/server/src/services/hermes/run-chat/session-command', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/chat-run/session-command', () => ({
   handleSessionCommand: vi.fn(),
   isSessionCommand: vi.fn(() => false),
   parseSessionCommand: vi.fn(() => null),
 }))
 
-vi.mock('../../packages/server/src/services/hermes/agent-bridge', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/bridge/index', () => ({
   AgentBridgeClient: vi.fn(() => bridgeMock),
 }))
 
-vi.mock('../../packages/server/src/services/hermes/agent-bridge/manager', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/bridge/manager', () => ({
   getAgentBridgeManager: vi.fn(() => ({
     ensureReady: ensureReadyMock,
     getRuntimeState: getRuntimeStateMock,
   })),
 }))
 
-vi.mock('../../packages/server/src/services/logger', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/chat-agent-runtime', () => ({
+  createPrimaryAgentBridge: vi.fn(() => bridgeMock),
+  getPrimaryAgentBridgeManager: vi.fn(() => ({
+    ensureReady: ensureReadyMock,
+    getRuntimeState: getRuntimeStateMock,
+  })),
+  redactPrimaryAgentBridgeError: (error?: string) => error,
+  chatCodingAgentRunManager: {
+    resolveApproval: vi.fn(() => ({ handled: false, resolved: false })),
+    resolveClarification: vi.fn(() => ({ handled: false, resolved: false })),
+    stop: vi.fn(),
+  },
+  handleChatCodingAgentSessionCommand: vi.fn(),
+  parseChatCodingAgentSessionCommand: vi.fn(() => null),
+  getChatEkkoAgent: vi.fn(() => ({ requestBoundaryInterrupt: vi.fn() })),
+  respondToChatEkkoToolApproval: vi.fn(() => ({ handled: false, resolved: false })),
+  respondToChatEkkoClarification: vi.fn(() => ({ handled: false, resolved: false })),
+}))
+
+vi.mock('../../packages/server/src/modules/studio/public/logging', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }))
 
-vi.mock('../../packages/server/src/lib/llm-prompt', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/runs/prompt', () => ({
   getSystemPrompt: vi.fn(() => 'system prompt'),
 }))
 
-vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/session-store', () => ({
   getSession: getSessionMock,
   getSessionMetadata: getSessionMock,
   getSessionDetail: vi.fn(() => null),
 }))
 
-vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/profile-config', () => ({
   getActiveProfileName: vi.fn(() => 'default'),
   getProfileDir: vi.fn(() => '/tmp/hermes-default'),
   listProfileNamesFromDisk: vi.fn(() => ['default', 'research']),
 }))
 
-vi.mock('../../packages/server/src/middleware/user-auth', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/auth', () => ({
   authenticateUserToken: vi.fn(),
   isAuthEnabled: vi.fn(async () => false),
 }))
 
-vi.mock('../../packages/server/src/db/hermes/users-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/users-store', () => ({
   userCanAccessProfile: userCanAccessProfileMock,
 }))
 
@@ -126,7 +145,7 @@ describe('ChatRunSocket reports when the run started', () => {
   })
 
   it('sends the run start to a client resuming a working session', async () => {
-    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
+    const { ChatRunSocket } = await import('../../packages/server/src/modules/studio/sockets/chat-run')
     const { handlers, io, socket } = makeServerHarness()
     ;(socket.data as any).user = { id: 1, username: 'admin', role: 'super_admin' }
     const server = new ChatRunSocket(io as any)
@@ -144,7 +163,7 @@ describe('ChatRunSocket reports when the run started', () => {
   })
 
   it('leaves it unset for a session that is not working', async () => {
-    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
+    const { ChatRunSocket } = await import('../../packages/server/src/modules/studio/sockets/chat-run')
     const { handlers, io, socket } = makeServerHarness()
     ;(socket.data as any).user = { id: 1, username: 'admin', role: 'super_admin' }
     const server = new ChatRunSocket(io as any)
@@ -161,7 +180,7 @@ describe('ChatRunSocket reports when the run started', () => {
   })
 
   it('refreshes the start when a queued run becomes active', async () => {
-    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
+    const { ChatRunSocket } = await import('../../packages/server/src/modules/studio/sockets/chat-run')
     const { io, socket } = makeServerHarness()
     const server = new ChatRunSocket(io as any)
     const previousStart = 1_787_000_000_000
@@ -184,7 +203,7 @@ describe('ChatRunSocket reports when the run started', () => {
   })
 
   it('uses a new shared fallback when the server reattaches an existing bridge run', async () => {
-    const { ChatRunSocket } = await import('../../packages/server/src/services/hermes/run-chat')
+    const { ChatRunSocket } = await import('../../packages/server/src/modules/studio/sockets/chat-run')
     const { handlers, io, socket } = makeServerHarness()
     ;(socket.data as any).user = { id: 1, username: 'admin', role: 'super_admin' }
     const server = new ChatRunSocket(io as any)

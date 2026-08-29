@@ -2,8 +2,8 @@
 import { ref, onMounted } from "vue";
 import { NButton, NInput, NModal, NForm, NFormItem, NPopconfirm, useMessage } from "naive-ui";
 import { useI18n } from "vue-i18n";
-import { changePassword, changeUsername, fetchCurrentUser, fetchLockedIps, unlockSpecificIp, unlockAllIps, fetchMyAvatar, updateMyAvatar, resetMyAvatar } from "@/api/auth";
-import type { LockedIp, UserAvatar } from "@/api/auth";
+import { changePassword, changeUsername, fetchCurrentUser, fetchLockedIps, unlockSpecificIp, unlockAllIps, fetchMyAvatar, updateMyAvatar, resetMyAvatar } from "@/api/studio/auth";
+import type { LockedIp, UserAvatar } from "@/api/studio/auth";
 import ProfileAvatar from "@/components/hermes/profiles/ProfileAvatar.vue";
 import multiavatar from "@multiavatar/multiavatar";
 

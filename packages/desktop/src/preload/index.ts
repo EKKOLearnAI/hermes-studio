@@ -12,6 +12,7 @@ function desktopWindowKind(): DesktopWindowKind {
 contextBridge.exposeInMainWorld('hermesDesktop', {
   getToken: (): Promise<string> => ipcRenderer.invoke('hermes-desktop:get-token'),
   retryBootstrap: (source?: 'cf' | 'github'): Promise<void> => ipcRenderer.invoke('hermes-desktop:retry-bootstrap', source),
+  restartApp: (): Promise<boolean> => ipcRenderer.invoke('hermes-desktop:restart-app'),
   selectRuntimeDirectory: (defaultPath?: string): Promise<string | null> => ipcRenderer.invoke('hermes-desktop:select-runtime-directory', defaultPath),
   notifyCompletion: (payload: { title: string; body?: string; icon?: string; tag?: string; clickUrl?: string }): Promise<boolean> => ipcRenderer.invoke('hermes-desktop:notify-completion', payload),
   openChatWindow: (sessionId: string, profile?: string): Promise<void> => ipcRenderer.invoke('hermes-desktop:open-chat-window', sessionId, profile),

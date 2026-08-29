@@ -12,20 +12,28 @@ const writeModelRunProfileTokenMock = vi.hoisted(() => vi.fn(async () => undefin
 const getSystemPromptMock = vi.hoisted(() => vi.fn(() => 'system prompt'))
 const getSessionMock = vi.hoisted(() => vi.fn())
 
-vi.mock('../../packages/server/src/services/coding-agents/runtime/run-manager', () => ({
+vi.mock('../../packages/server/src/modules/coding-agents/services/runtime/run-manager', () => ({
   codingAgentRunManager: managerMock,
 }))
-vi.mock('../../packages/server/src/services/coding-agents', () => ({
+vi.mock('../../packages/server/src/bootstrap/coding-agents', () => ({
   startCodingAgentRun: startCodingAgentRunMock,
   sendCodingAgentRunInput: sendCodingAgentRunInputMock,
 }))
-vi.mock('../../packages/server/src/services/hermes/run-chat/model-run-prompt', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/chat-run/model-run-prompt', () => ({
   writeModelRunProfileToken: writeModelRunProfileTokenMock,
 }))
-vi.mock('../../packages/server/src/lib/llm-prompt', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/runs/prompt', () => ({
   getSystemPrompt: getSystemPromptMock,
 }))
-vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
+
+vi.mock('../../packages/server/src/modules/studio/public/chat-agent-runtime', () => ({
+  chatCodingAgentRunManager: managerMock,
+  startChatCodingAgentRun: startCodingAgentRunMock,
+  sendChatCodingAgentRunInput: sendCodingAgentRunInputMock,
+  handleChatCodingAgentSessionCommand: vi.fn(),
+  parseChatCodingAgentSessionCommand: vi.fn(() => null),
+}))
+vi.mock('../../packages/server/src/modules/studio/repositories/session-store', () => ({
   getSession: getSessionMock,
 }))
 
@@ -61,7 +69,7 @@ describe('coding-agent dispatch baseline', () => {
   })
 
   it('dispatches an explicit coding_agent_id and passes local proxy fields through', async () => {
-    const { handleCodingAgentRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-coding-agent-run')
+    const { handleCodingAgentRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-coding-agent-run')
     const runState = state()
     const sessionMap = new Map([['session-1', runState]])
     const runSocket = socket()
@@ -88,7 +96,7 @@ describe('coding-agent dispatch baseline', () => {
   })
 
   it('uses agent_id as an alias when coding_agent_id is omitted', async () => {
-    const { handleCodingAgentRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-coding-agent-run')
+    const { handleCodingAgentRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-coding-agent-run')
     const runState = state()
     const sessionMap = new Map([['session-1', runState]])
 
@@ -110,7 +118,7 @@ describe('coding-agent dispatch baseline', () => {
   })
 
   it('passes ContentBlock images as native coding-agent attachments', async () => {
-    const { handleCodingAgentRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-coding-agent-run')
+    const { handleCodingAgentRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-coding-agent-run')
     const blocks = [
       { type: 'text', text: 'hello blocks' },
       { type: 'image', name: 'screen.png', path: '/tmp/screen.png', media_type: 'image/png' },
@@ -132,7 +140,7 @@ describe('coding-agent dispatch baseline', () => {
   })
 
   it('fails fast when session_id is missing', async () => {
-    const { handleCodingAgentRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-coding-agent-run')
+    const { handleCodingAgentRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-coding-agent-run')
     const runSocket = socket()
 
     await handleCodingAgentRun({} as any, runSocket as any, {

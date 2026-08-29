@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   fetchStudioVersionManifest,
   STUDIO_VERSION_MANIFEST_URL,
-} from '../../packages/client/src/api/studio-versions'
+} from '../../packages/client/src/api/studio/versions'
 
 afterEach(() => {
   vi.unstubAllGlobals()

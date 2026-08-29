@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
-import { CodingAgentRunManager } from '../../packages/server/src/services/coding-agents/runtime/run-manager'
+import { CodingAgentRunManager } from '../../packages/server/src/modules/coding-agents/services/runtime/run-manager'
 
 function managedRun(agentId: 'claude-code' | 'codex' | 'pi' = 'codex') {
   const runMarker = 'coding-agent-turn-1'

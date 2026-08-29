@@ -25,7 +25,7 @@ const { mockIo, mockSocket } = vi.hoisted(() => {
   }
 })
 
-vi.mock('../../packages/server/src/db/index', () => ({
+vi.mock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
   getDb: () => dbMock.current,
 }))
 
@@ -33,17 +33,17 @@ vi.mock('socket.io-client', () => ({
   io: mockIo,
 }))
 
-vi.mock('../../packages/server/src/services/auth', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/auth/token-auth', () => ({
   getToken: vi.fn(async () => 'test-token'),
 }))
 
-import { countTokens } from '../../packages/server/src/lib/context-compressor'
-import { initAllHermesTables } from '../../packages/server/src/db/hermes/schemas'
-import { healthRoutes } from '../../packages/server/src/routes/health'
-import { GroupChatServer } from '../../packages/server/src/services/hermes/group-chat'
-import { AgentClients, mentionMessageToStoredContextMessage } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
-import { sortGroupMessagesCanonical } from '../../packages/server/src/services/hermes/group-chat/group-message-ordering'
-import { GroupRoomSummaryService, type GroupSummaryRunner } from '../../packages/server/src/services/hermes/group-chat/room-summary'
+import { countTokens } from '../../packages/server/src/modules/studio/services/context-compressor'
+import { initAllHermesTables } from '../../packages/server/src/modules/studio/infrastructure/database/schemas'
+import { healthRoutes } from '../../packages/server/src/bootstrap/health'
+import { GroupChatServer } from '../../packages/server/src/modules/studio/sockets/group-chat'
+import { AgentClients, mentionMessageToStoredContextMessage } from '../../packages/server/src/modules/studio/services/group-chat/agent-clients'
+import { sortGroupMessagesCanonical } from '../../packages/server/src/modules/studio/services/group-chat/group-message-ordering'
+import { GroupRoomSummaryService, type GroupSummaryRunner } from '../../packages/server/src/modules/studio/services/group-chat/room-summary'
 
 function makeDb(): DatabaseSync {
   return new DatabaseSync(':memory:')

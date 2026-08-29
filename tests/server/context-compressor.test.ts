@@ -12,7 +12,7 @@ const createModelClientMock = vi.fn()
 const resolveModelProviderConfigsMock = vi.fn()
 const resolveEkkoProviderRuntimeConfigMock = vi.fn()
 
-vi.mock('../../packages/server/src/services/logger', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/logging', () => ({
   logger: {
     info: vi.fn(),
     warn: vi.fn(),
@@ -21,30 +21,42 @@ vi.mock('../../packages/server/src/services/logger', () => ({
   },
 }))
 
-vi.mock('../../packages/server/src/db/hermes/compression-snapshot', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/compression-snapshot', () => ({
   getCompressionSnapshot: getCompressionSnapshotMock,
   saveCompressionSnapshot: saveCompressionSnapshotMock,
   deleteCompressionSnapshot: deleteCompressionSnapshotMock,
 }))
 
-vi.mock('../../packages/server/src/services/hermes/agent-bridge', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/bridge/index', () => ({
   AgentBridgeClient: class {
     request = bridgeRequestMock
     destroy = bridgeDestroyMock
   },
 }))
 
-vi.mock('../../packages/server/src/services/ekko-agent/provider-runtime', () => ({
+vi.mock('../../packages/server/src/modules/ekko/services/provider-runtime', () => ({
   resolveEkkoProviderRuntimeConfig: resolveEkkoProviderRuntimeConfigMock,
 }))
 
-vi.mock('../../packages/server/src/services/ekko-agent/manager', () => ({
+vi.mock('../../packages/server/src/modules/ekko/services/manager', () => ({
   getGlobalEkkoAgent: getGlobalEkkoAgentMock,
 }))
 
 vi.mock('../../packages/ekko-agent/src', () => ({
   createModelClient: createModelClientMock,
   resolveModelProviderConfigs: resolveModelProviderConfigsMock,
+}))
+
+vi.mock('../../packages/server/src/modules/studio/public/chat-agent-runtime', () => ({
+  createChatEkkoAuthorizedProviderFetch: vi.fn(() => vi.fn()),
+  createPrimaryAgentBridge: vi.fn(() => ({
+    request: bridgeRequestMock,
+    destroy: bridgeDestroyMock,
+  })),
+  getChatEkkoAgent: getGlobalEkkoAgentMock,
+  createChatEkkoModelClient: createModelClientMock,
+  resolveChatEkkoModelProviderConfigs: resolveModelProviderConfigsMock,
+  resolveChatEkkoProviderRuntimeConfig: resolveEkkoProviderRuntimeConfigMock,
 }))
 
 describe('ChatContextCompressor', () => {
@@ -100,8 +112,8 @@ describe('ChatContextCompressor', () => {
     global.fetch = originalFetch
   })
 
-  it('uses a fresh one-step tool-free and skill-free Ekko agent for summarization', async () => {
-    const { callSummarizer } = await import('../../packages/server/src/lib/context-compressor')
+  it('uses a fresh prompt-isolated, tool-free, skill-free Ekko agent for summarization', async () => {
+    const { callSummarizer } = await import('../../packages/server/src/modules/studio/services/context-compressor')
     ekkoRuntimeRunMock.mockResolvedValue({
       output: { role: 'assistant', content: 'ekko summary', finishReason: 'stop' },
     })
@@ -128,6 +140,7 @@ describe('ChatContextCompressor', () => {
       }),
       toolsEnabled: false,
       skillsEnabled: false,
+      runtimeInstructions: [],
       maxSteps: 1,
       maxModelRetries: 0,
       modelDefaults: expect.objectContaining({
@@ -156,7 +169,7 @@ describe('ChatContextCompressor', () => {
   })
 
   it('falls back to the existing Hermes summarizer when the caller allows it', async () => {
-    const { callSummarizer } = await import('../../packages/server/src/lib/context-compressor')
+    const { callSummarizer } = await import('../../packages/server/src/modules/studio/services/context-compressor')
     ekkoRuntimeRunMock.mockRejectedValueOnce(new Error('provider unavailable'))
     bridgeRequestMock.mockResolvedValue({
       status: 'completed',
@@ -184,7 +197,7 @@ describe('ChatContextCompressor', () => {
   })
 
   it('does not fall back to Hermes when the caller disables it', async () => {
-    const { callSummarizer } = await import('../../packages/server/src/lib/context-compressor')
+    const { callSummarizer } = await import('../../packages/server/src/modules/studio/services/context-compressor')
     ekkoRuntimeRunMock.mockRejectedValueOnce(new Error('provider unavailable'))
 
     await expect(callSummarizer(
@@ -208,7 +221,7 @@ describe('ChatContextCompressor', () => {
   })
 
   it('keeps full history when full summarization fails', async () => {
-    const { ChatContextCompressor } = await import('../../packages/server/src/lib/context-compressor')
+    const { ChatContextCompressor } = await import('../../packages/server/src/modules/studio/services/context-compressor')
     const compressor = new ChatContextCompressor({ config: { tailMessageCount: 3 } })
     const messages = Array.from({ length: 8 }, (_, i) => ({
       role: i % 2 === 0 ? 'user' : 'assistant',
@@ -227,7 +240,7 @@ describe('ChatContextCompressor', () => {
   })
 
   it('keeps all new messages when incremental summarization fails', async () => {
-    const { ChatContextCompressor, SUMMARY_PREFIX } = await import('../../packages/server/src/lib/context-compressor')
+    const { ChatContextCompressor, SUMMARY_PREFIX } = await import('../../packages/server/src/modules/studio/services/context-compressor')
     const compressor = new ChatContextCompressor({ config: { tailMessageCount: 3 } })
     const messages = Array.from({ length: 8 }, (_, i) => ({
       role: i % 2 === 0 ? 'user' : 'assistant',
@@ -256,7 +269,7 @@ describe('ChatContextCompressor', () => {
   })
 
   it('does not call the summarizer when snapshot has only tail messages after it', async () => {
-    const { ChatContextCompressor, SUMMARY_PREFIX } = await import('../../packages/server/src/lib/context-compressor')
+    const { ChatContextCompressor, SUMMARY_PREFIX } = await import('../../packages/server/src/modules/studio/services/context-compressor')
     const compressor = new ChatContextCompressor({ config: { tailMessageCount: 10 } })
     const messages = Array.from({ length: 6 }, (_, i) => ({
       role: i % 2 === 0 ? 'user' : 'assistant',
@@ -283,7 +296,7 @@ describe('ChatContextCompressor', () => {
   })
 
   it('keeps configured first and last messages during full compression', async () => {
-    const { ChatContextCompressor, SUMMARY_PREFIX } = await import('../../packages/server/src/lib/context-compressor')
+    const { ChatContextCompressor, SUMMARY_PREFIX } = await import('../../packages/server/src/modules/studio/services/context-compressor')
     const compressor = new ChatContextCompressor({
       config: { headMessageCount: 2, tailMessageCount: 3, summaryBudget: 1000 },
     })
@@ -315,7 +328,7 @@ describe('ChatContextCompressor', () => {
   })
 
   it('routes summarization through the provided worker key and destroys only the temporary agent session', async () => {
-    const { ChatContextCompressor } = await import('../../packages/server/src/lib/context-compressor')
+    const { ChatContextCompressor } = await import('../../packages/server/src/modules/studio/services/context-compressor')
     const compressor = new ChatContextCompressor({
       config: { headMessageCount: 0, tailMessageCount: 1, summaryBudget: 1000 },
     })
@@ -357,7 +370,7 @@ describe('ChatContextCompressor', () => {
   })
 
   it('does not pre-prune tool results before sending them to the summarizer', async () => {
-    const { ChatContextCompressor } = await import('../../packages/server/src/lib/context-compressor')
+    const { ChatContextCompressor } = await import('../../packages/server/src/modules/studio/services/context-compressor')
     const compressor = new ChatContextCompressor({
       config: { headMessageCount: 0, tailMessageCount: 1, summaryBudget: 1000 },
     })
@@ -387,7 +400,7 @@ describe('ChatContextCompressor', () => {
   })
 
   it('keeps protected head tool results verbatim after successful full compression', async () => {
-    const { ChatContextCompressor, SUMMARY_PREFIX } = await import('../../packages/server/src/lib/context-compressor')
+    const { ChatContextCompressor, SUMMARY_PREFIX } = await import('../../packages/server/src/modules/studio/services/context-compressor')
     const compressor = new ChatContextCompressor({
       config: { headMessageCount: 2, tailMessageCount: 1, summaryBudget: 1000 },
     })
@@ -420,7 +433,7 @@ describe('ChatContextCompressor', () => {
   })
 
   it('uses the previous summary plus a safe tail when an existing snapshot index is stale', async () => {
-    const { ChatContextCompressor, SUMMARY_PREFIX } = await import('../../packages/server/src/lib/context-compressor')
+    const { ChatContextCompressor, SUMMARY_PREFIX } = await import('../../packages/server/src/modules/studio/services/context-compressor')
     const compressor = new ChatContextCompressor({
       config: { headMessageCount: 2, tailMessageCount: 3, summaryBudget: 1000 },
     })
@@ -455,7 +468,7 @@ describe('ChatContextCompressor', () => {
   })
 
   it('folds a stale snapshot safe tail into a new summary when it still exceeds budget', async () => {
-    const { ChatContextCompressor, SUMMARY_PREFIX } = await import('../../packages/server/src/lib/context-compressor')
+    const { ChatContextCompressor, SUMMARY_PREFIX } = await import('../../packages/server/src/modules/studio/services/context-compressor')
     const compressor = new ChatContextCompressor({
       config: { triggerTokens: 800, headMessageCount: 2, tailMessageCount: 3, summaryBudget: 1000 },
     })
@@ -494,7 +507,7 @@ describe('ChatContextCompressor', () => {
   })
 
   it('compresses the full history when protected windows cover all messages', async () => {
-    const { ChatContextCompressor, SUMMARY_PREFIX } = await import('../../packages/server/src/lib/context-compressor')
+    const { ChatContextCompressor, SUMMARY_PREFIX } = await import('../../packages/server/src/modules/studio/services/context-compressor')
     const compressor = new ChatContextCompressor({
       config: { headMessageCount: 3, tailMessageCount: 20, summaryBudget: 1000 },
     })
@@ -523,7 +536,7 @@ describe('ChatContextCompressor', () => {
   })
 
   it('drops protected messages when compressed output still exceeds the trigger budget', async () => {
-    const { ChatContextCompressor, SUMMARY_PREFIX } = await import('../../packages/server/src/lib/context-compressor')
+    const { ChatContextCompressor, SUMMARY_PREFIX } = await import('../../packages/server/src/modules/studio/services/context-compressor')
     const compressor = new ChatContextCompressor({
       config: { triggerTokens: 200, headMessageCount: 2, tailMessageCount: 2, summaryBudget: 100 },
     })
@@ -554,7 +567,7 @@ describe('ChatContextCompressor', () => {
   })
 
   it('truncates the summary when the summary alone exceeds the trigger budget', async () => {
-    const { ChatContextCompressor, SUMMARY_PREFIX, countTokens } = await import('../../packages/server/src/lib/context-compressor')
+    const { ChatContextCompressor, SUMMARY_PREFIX, countTokens } = await import('../../packages/server/src/modules/studio/services/context-compressor')
     const compressor = new ChatContextCompressor({
       config: { triggerTokens: 120, headMessageCount: 2, tailMessageCount: 2, summaryBudget: 100 },
     })
@@ -580,7 +593,7 @@ describe('ChatContextCompressor', () => {
   })
 
   it('keeps configured first messages when incremental compression reuses an existing snapshot', async () => {
-    const { ChatContextCompressor, SUMMARY_PREFIX } = await import('../../packages/server/src/lib/context-compressor')
+    const { ChatContextCompressor, SUMMARY_PREFIX } = await import('../../packages/server/src/modules/studio/services/context-compressor')
     const compressor = new ChatContextCompressor({
       config: { headMessageCount: 2, tailMessageCount: 10 },
     })
@@ -610,7 +623,7 @@ describe('ChatContextCompressor', () => {
   })
 
   it('folds all new messages into the summary when incremental tail protection would exceed budget', async () => {
-    const { ChatContextCompressor, SUMMARY_PREFIX } = await import('../../packages/server/src/lib/context-compressor')
+    const { ChatContextCompressor, SUMMARY_PREFIX } = await import('../../packages/server/src/modules/studio/services/context-compressor')
     const compressor = new ChatContextCompressor({
       config: { triggerTokens: 1000, headMessageCount: 3, tailMessageCount: 20, summaryBudget: 100 },
     })
@@ -662,7 +675,7 @@ describe('ChatContextCompressor', () => {
   })
 
   it('stores message cursors on the first successful compression', async () => {
-    const { ChatContextCompressor } = await import('../../packages/server/src/lib/context-compressor')
+    const { ChatContextCompressor } = await import('../../packages/server/src/modules/studio/services/context-compressor')
     const compressor = new ChatContextCompressor({
       config: { headMessageCount: 2, tailMessageCount: 2, summaryBudget: 1000 },
     })
@@ -700,7 +713,7 @@ describe('ChatContextCompressor', () => {
   })
 
   it('does not advance a cursor when only the protected tail follows it', async () => {
-    const { ChatContextCompressor, SUMMARY_PREFIX } = await import('../../packages/server/src/lib/context-compressor')
+    const { ChatContextCompressor, SUMMARY_PREFIX } = await import('../../packages/server/src/modules/studio/services/context-compressor')
     const compressor = new ChatContextCompressor({ config: { tailMessageCount: 10 } })
     getCompressionSnapshotMock.mockReturnValue({
       summary: 'previous summary',
@@ -729,7 +742,7 @@ describe('ChatContextCompressor', () => {
   })
 
   it('moves a cursor tail boundary backward instead of orphaning tool results', async () => {
-    const { ChatContextCompressor } = await import('../../packages/server/src/lib/context-compressor')
+    const { ChatContextCompressor } = await import('../../packages/server/src/modules/studio/services/context-compressor')
     const compressor = new ChatContextCompressor({ config: { tailMessageCount: 3 } })
     getCompressionSnapshotMock.mockReturnValue({
       summary: 'previous summary',
@@ -765,7 +778,7 @@ describe('ChatContextCompressor', () => {
   })
 
   it('upgrades a legacy snapshot to a cursor only during a successful compression cycle', async () => {
-    const { ChatContextCompressor } = await import('../../packages/server/src/lib/context-compressor')
+    const { ChatContextCompressor } = await import('../../packages/server/src/modules/studio/services/context-compressor')
     const compressor = new ChatContextCompressor({
       config: { triggerTokens: 100, headMessageCount: 1, tailMessageCount: 1, summaryBudget: 100 },
     })
@@ -806,7 +819,7 @@ describe('ChatContextCompressor', () => {
   })
 
   it('reuses a cursor summary for export without applying the legacy index to bounded input', async () => {
-    const { ExportCompressor } = await import('../../packages/server/src/lib/context-compressor/export-compressor')
+    const { ExportCompressor } = await import('../../packages/server/src/modules/studio/services/context-compressor/export-compressor')
     const compressor = new ExportCompressor()
     getCompressionSnapshotMock.mockReturnValue({
       summary: 'existing cursor summary',
@@ -836,12 +849,12 @@ describe('ChatContextCompressor', () => {
 
 describe('countTokens', () => {
   it('returns a positive estimate for normal text via the exact tokenizer', async () => {
-    const { countTokens } = await import('../../packages/server/src/lib/context-compressor')
+    const { countTokens } = await import('../../packages/server/src/modules/studio/services/context-compressor')
     expect(countTokens('The quick brown fox jumps over the lazy dog.')).toBeGreaterThan(0)
   })
 
   it('does not hang on a long contiguous CJK run (quadratic BPE guard)', async () => {
-    const { countTokens } = await import('../../packages/server/src/lib/context-compressor')
+    const { countTokens } = await import('../../packages/server/src/modules/studio/services/context-compressor')
     // A long run of CJK characters with no spaces forms a single huge
     // pre-tokenizer "piece". js-tiktoken's BPE merge loop is O(n^2) over the
     // bytes of that piece, which pins the event loop for seconds/minutes and
@@ -856,7 +869,7 @@ describe('countTokens', () => {
   })
 
   it('bounds token estimation time for very large non-pathological text', async () => {
-    const { countTokens } = await import('../../packages/server/src/lib/context-compressor')
+    const { countTokens } = await import('../../packages/server/src/modules/studio/services/context-compressor')
     const unit = 'abcdefghijklmnopqrstuvwxyz0123456789 '
     const text = unit.repeat(Math.ceil(1_000_000 / unit.length)).slice(0, 1_000_000)
     const start = performance.now()
@@ -867,7 +880,7 @@ describe('countTokens', () => {
   })
 
   it('bounds token estimation time for large separated multibyte text', async () => {
-    const { countTokens } = await import('../../packages/server/src/lib/context-compressor')
+    const { countTokens } = await import('../../packages/server/src/modules/studio/services/context-compressor')
     const text = '汉 '.repeat(100_000)
     const start = performance.now()
     const tokens = countTokens(text)
@@ -877,7 +890,7 @@ describe('countTokens', () => {
   })
 
   it('uses the exact tokenizer through the 256 KiB UTF-8 boundary and falls back above it', async () => {
-    const { countTokens, countTokensForModel } = await import('../../packages/server/src/lib/context-compressor')
+    const { countTokens, countTokensForModel } = await import('../../packages/server/src/modules/studio/services/context-compressor')
     const { getEncoding } = await import('js-tiktoken')
     const encoder = getEncoding('cl100k_base')
     const atBoundary = 'a '.repeat(131_072)
@@ -891,7 +904,7 @@ describe('countTokens', () => {
   })
 
   it('applies the 256 KiB cap by UTF-8 bytes for separated multibyte text', async () => {
-    const { countTokens, countTokensForModel } = await import('../../packages/server/src/lib/context-compressor')
+    const { countTokens, countTokensForModel } = await import('../../packages/server/src/modules/studio/services/context-compressor')
     const { getEncoding } = await import('js-tiktoken')
     const encoder = getEncoding('cl100k_base')
     const atBoundary = '汉 '.repeat(65_536)
@@ -906,7 +919,7 @@ describe('countTokens', () => {
   })
 
   it('does not materialize a full regex match array for oversized heuristic input', async () => {
-    const { countTokens, countTokensForModel } = await import('../../packages/server/src/lib/context-compressor')
+    const { countTokens, countTokensForModel } = await import('../../packages/server/src/modules/studio/services/context-compressor')
     const oversized = '汉字 mixed text '.repeat(100_000)
     const originalMatch = String.prototype.match
     const matchSpy = vi.spyOn(String.prototype, 'match').mockImplementation(function (this: string, regexp: any) {
@@ -922,7 +935,7 @@ describe('countTokens', () => {
   })
 
   it('samples oversized heterogeneous text across its full length', async () => {
-    const { countTokens } = await import('../../packages/server/src/lib/context-compressor')
+    const { countTokens } = await import('../../packages/server/src/modules/studio/services/context-compressor')
     const ascii = 'a'.repeat(400_000)
     const cjk = '汉'.repeat(400_000)
     const tokens = countTokens(ascii + cjk)
@@ -931,7 +944,7 @@ describe('countTokens', () => {
   })
 
   it('does not let a periodic adversarial layout hide CJK from oversized estimation', async () => {
-    const { countTokens } = await import('../../packages/server/src/lib/context-compressor')
+    const { countTokens } = await import('../../packages/server/src/modules/studio/services/context-compressor')
     const length = 800_000
     const adversarial = new Array<string>(length).fill('汉')
     const blockCount = 256
@@ -948,7 +961,7 @@ describe('countTokens', () => {
   })
 
   it('keeps oversized token estimation work bounded independently of input length', async () => {
-    const { countTokens } = await import('../../packages/server/src/lib/context-compressor')
+    const { countTokens } = await import('../../packages/server/src/modules/studio/services/context-compressor')
     const small = 'a'.repeat(8 * 1024 * 1024)
     const large = 'a'.repeat(128 * 1024 * 1024)
     const smallStart = performance.now()
@@ -962,7 +975,7 @@ describe('countTokens', () => {
   })
 
   it('still uses the exact tokenizer for long space-separated text', async () => {
-    const { countTokens } = await import('../../packages/server/src/lib/context-compressor')
+    const { countTokens } = await import('../../packages/server/src/modules/studio/services/context-compressor')
     // Long but with frequent spaces => no single piece exceeds the guard
     // threshold, so the exact tiktoken path runs and stays fast.
     const longText = 'word '.repeat(10000)

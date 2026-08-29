@@ -47,7 +47,7 @@ const deleteWorkspaceFileMock = vi.fn(async (ctx: any) => { ctx.body = { ok: tru
 const renameWorkspaceFileMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
 const copyWorkspaceFileMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
 
-vi.mock('../../packages/server/src/controllers/hermes/sessions', () => ({
+vi.mock('../../packages/server/src/modules/studio/controllers/sessions', () => ({
   listConversations: listConversationsMock,
   getConversationMessages: getConversationMessagesMock,
   getConversationMessagesPaginated: getConversationMessagesPaginatedMock,
@@ -141,69 +141,69 @@ describe('session routes', () => {
   })
 
   it('registers conversations, session list, and search routes', async () => {
-    const { sessionRoutes } = await import('../../packages/server/src/routes/hermes/sessions')
+    const { sessionRoutes } = await import('../../packages/server/src/modules/studio/routes/sessions')
     const paths = sessionRoutes.stack.map((entry: any) => entry.path)
 
     expect(paths).toEqual(expect.arrayContaining([
-      '/api/hermes/sessions/conversations',
-      '/api/hermes/sessions/conversations/:id/messages',
-      '/api/hermes/sessions/conversations/:id/messages/paginated',
-      '/api/hermes/session-categories',
-      '/api/hermes/session-categories/:id',
-      '/api/hermes/sessions',
-      '/api/hermes/sessions/count',
-      '/api/hermes/sessions/hermes',
-      '/api/hermes/sessions/hermes/groups',
-      '/api/hermes/sessions/hermes/:id',
-      '/api/hermes/sessions/hermes/:id/import',
-      '/api/hermes/search/sessions',
-      '/api/hermes/sessions/search',
-      '/api/hermes/sessions/usage',
-      '/api/hermes/usage/stats',
-      '/api/hermes/sessions/context-length',
-      '/api/hermes/sessions/:id/context',
-      '/api/hermes/sessions/:id/workspace-run-changes',
-      '/api/hermes/sessions/:id/workspace-run-changes/:changeId/files/:fileId',
-      '/api/hermes/sessions/:id/workspace-files/list',
-      '/api/hermes/sessions/:id/workspace-file/diff',
-      '/api/hermes/sessions/:id/workspace-file/read',
-      '/api/hermes/sessions/:id/workspace-file/content',
-      '/api/hermes/sessions/:id/workspace-file/write',
-      '/api/hermes/sessions/:id/workspace-file/mkdir',
-      '/api/hermes/sessions/:id/workspace-file/delete',
-      '/api/hermes/sessions/:id/workspace-file/rename',
-      '/api/hermes/sessions/:id/workspace-file/copy',
-      '/api/hermes/sessions/:id',
-      '/api/hermes/sessions/:id/export',
-      '/api/hermes/sessions/:id/usage',
-      '/api/hermes/sessions/:id/rename',
-      '/api/hermes/sessions/:id/archive',
-      '/api/hermes/sessions/:id/unarchive',
-      '/api/hermes/sessions/:id/push-enabled',
-      '/api/hermes/sessions/:id/category',
-      '/api/hermes/sessions/:id/model',
-      '/api/hermes/sessions/:id/reasoning-effort',
-      '/api/hermes/workspace/folders',
-      '/api/hermes/workspace/folders/rename',
+      '/api/studio/sessions/conversations',
+      '/api/studio/sessions/conversations/:id/messages',
+      '/api/studio/sessions/conversations/:id/messages/paginated',
+      '/api/studio/session-categories',
+      '/api/studio/session-categories/:id',
+      '/api/studio/sessions',
+      '/api/studio/sessions/count',
+      '/api/studio/sessions/hermes',
+      '/api/studio/sessions/hermes/groups',
+      '/api/studio/sessions/hermes/:id',
+      '/api/studio/sessions/hermes/:id/import',
+      '/api/studio/search/sessions',
+      '/api/studio/sessions/search',
+      '/api/studio/sessions/usage',
+      '/api/studio/usage/stats',
+      '/api/studio/sessions/context-length',
+      '/api/studio/sessions/:id/context',
+      '/api/studio/sessions/:id/workspace-run-changes',
+      '/api/studio/sessions/:id/workspace-run-changes/:changeId/files/:fileId',
+      '/api/studio/sessions/:id/workspace-files/list',
+      '/api/studio/sessions/:id/workspace-file/diff',
+      '/api/studio/sessions/:id/workspace-file/read',
+      '/api/studio/sessions/:id/workspace-file/content',
+      '/api/studio/sessions/:id/workspace-file/write',
+      '/api/studio/sessions/:id/workspace-file/mkdir',
+      '/api/studio/sessions/:id/workspace-file/delete',
+      '/api/studio/sessions/:id/workspace-file/rename',
+      '/api/studio/sessions/:id/workspace-file/copy',
+      '/api/studio/sessions/:id',
+      '/api/studio/sessions/:id/export',
+      '/api/studio/sessions/:id/usage',
+      '/api/studio/sessions/:id/rename',
+      '/api/studio/sessions/:id/archive',
+      '/api/studio/sessions/:id/unarchive',
+      '/api/studio/sessions/:id/push-enabled',
+      '/api/studio/sessions/:id/category',
+      '/api/studio/sessions/:id/model',
+      '/api/studio/sessions/:id/reasoning-effort',
+      '/api/studio/workspace/folders',
+      '/api/studio/workspace/folders/rename',
     ]))
   })
 
   it('delegates global category routes and session assignment', async () => {
-    const { sessionRoutes } = await import('../../packages/server/src/routes/hermes/sessions')
+    const { sessionRoutes } = await import('../../packages/server/src/modules/studio/routes/sessions')
     const listLayer = sessionRoutes.stack.find((entry: any) =>
-      entry.path === '/api/hermes/session-categories' && entry.methods.includes('HEAD'),
+      entry.path === '/api/studio/session-categories' && entry.methods.includes('HEAD'),
     )
     const createLayer = sessionRoutes.stack.find((entry: any) =>
-      entry.path === '/api/hermes/session-categories' && entry.methods.includes('POST'),
+      entry.path === '/api/studio/session-categories' && entry.methods.includes('POST'),
     )
     const renameLayer = sessionRoutes.stack.find((entry: any) =>
-      entry.path === '/api/hermes/session-categories/:id' && entry.methods.includes('PATCH'),
+      entry.path === '/api/studio/session-categories/:id' && entry.methods.includes('PATCH'),
     )
     const removeLayer = sessionRoutes.stack.find((entry: any) =>
-      entry.path === '/api/hermes/session-categories/:id' && entry.methods.includes('DELETE'),
+      entry.path === '/api/studio/session-categories/:id' && entry.methods.includes('DELETE'),
     )
     const assignLayer = sessionRoutes.stack.find((entry: any) =>
-      entry.path === '/api/hermes/sessions/:id/category',
+      entry.path === '/api/studio/sessions/:id/category',
     )
 
     const listCtx: any = { query: {}, request: { body: {} }, body: null, params: {} }
@@ -228,9 +228,9 @@ describe('session routes', () => {
   })
 
   it('delegates session count route before the session id route', async () => {
-    const { sessionRoutes } = await import('../../packages/server/src/routes/hermes/sessions')
-    const countLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/count')
-    const idLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/:id')
+    const { sessionRoutes } = await import('../../packages/server/src/modules/studio/routes/sessions')
+    const countLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/studio/sessions/count')
+    const idLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/studio/sessions/:id')
     expect(sessionRoutes.stack.indexOf(countLayer)).toBeLessThan(sessionRoutes.stack.indexOf(idLayer))
 
     const ctx: any = { query: { source: 'cli' }, body: null, params: {} }
@@ -242,9 +242,9 @@ describe('session routes', () => {
   })
 
   it('registers Hermes history groups before the Hermes session id route', async () => {
-    const { sessionRoutes } = await import('../../packages/server/src/routes/hermes/sessions')
-    const groupsLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/hermes/groups')
-    const idLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/hermes/:id')
+    const { sessionRoutes } = await import('../../packages/server/src/modules/studio/routes/sessions')
+    const groupsLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/studio/sessions/hermes/groups')
+    const idLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/studio/sessions/hermes/:id')
 
     expect(sessionRoutes.stack.indexOf(groupsLayer)).toBeLessThan(sessionRoutes.stack.indexOf(idLayer))
 
@@ -257,8 +257,8 @@ describe('session routes', () => {
   })
 
   it('delegates session context route to the controller', async () => {
-    const { sessionRoutes } = await import('../../packages/server/src/routes/hermes/sessions')
-    const layer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/:id/context')
+    const { sessionRoutes } = await import('../../packages/server/src/modules/studio/routes/sessions')
+    const layer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/studio/sessions/:id/context')
     const handler = layer.stack[0]
     const ctx: any = { query: {}, body: null, params: { id: 'session-1' } }
 
@@ -269,11 +269,11 @@ describe('session routes', () => {
   })
 
   it('delegates workspace folder routes to the controller', async () => {
-    const { sessionRoutes } = await import('../../packages/server/src/routes/hermes/sessions')
-    const listLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/workspace/folders' && entry.methods.includes('HEAD'))
-    const createLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/workspace/folders' && entry.methods.includes('POST'))
-    const renameLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/workspace/folders/rename')
-    const deleteLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/workspace/folders' && entry.methods.includes('DELETE'))
+    const { sessionRoutes } = await import('../../packages/server/src/modules/studio/routes/sessions')
+    const listLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/studio/workspace/folders' && entry.methods.includes('HEAD'))
+    const createLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/studio/workspace/folders' && entry.methods.includes('POST'))
+    const renameLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/studio/workspace/folders/rename')
+    const deleteLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/studio/workspace/folders' && entry.methods.includes('DELETE'))
 
     const listCtx: any = { query: {}, request: { body: {} }, body: null, params: {} }
     await listLayer.stack[0](listCtx)
@@ -293,16 +293,16 @@ describe('session routes', () => {
   })
 
   it('delegates session workspace file routes to the controller', async () => {
-    const { sessionRoutes } = await import('../../packages/server/src/routes/hermes/sessions')
-    const listLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/:id/workspace-files/list')
-    const diffLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/:id/workspace-file/diff')
-    const readLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/:id/workspace-file/read')
-    const contentLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/:id/workspace-file/content')
-    const writeLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/:id/workspace-file/write')
-    const mkdirLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/:id/workspace-file/mkdir')
-    const deleteLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/:id/workspace-file/delete')
-    const renameLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/:id/workspace-file/rename')
-    const copyLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/:id/workspace-file/copy')
+    const { sessionRoutes } = await import('../../packages/server/src/modules/studio/routes/sessions')
+    const listLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/studio/sessions/:id/workspace-files/list')
+    const diffLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/studio/sessions/:id/workspace-file/diff')
+    const readLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/studio/sessions/:id/workspace-file/read')
+    const contentLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/studio/sessions/:id/workspace-file/content')
+    const writeLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/studio/sessions/:id/workspace-file/write')
+    const mkdirLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/studio/sessions/:id/workspace-file/mkdir')
+    const deleteLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/studio/sessions/:id/workspace-file/delete')
+    const renameLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/studio/sessions/:id/workspace-file/rename')
+    const copyLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/studio/sessions/:id/workspace-file/copy')
 
     const ctx: any = { query: {}, request: { body: {} }, body: null, params: { id: 'session-1' } }
     await listLayer.stack[0](ctx)
@@ -327,8 +327,8 @@ describe('session routes', () => {
   })
 
   it('delegates session search to the controller', async () => {
-    const { sessionRoutes } = await import('../../packages/server/src/routes/hermes/sessions')
-    const layer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/search/sessions')
+    const { sessionRoutes } = await import('../../packages/server/src/modules/studio/routes/sessions')
+    const layer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/studio/search/sessions')
     const handler = layer.stack[0]
     const ctx: any = { query: { q: 'docker', limit: '8' }, body: null, params: {} }
 
@@ -339,8 +339,8 @@ describe('session routes', () => {
   })
 
   it('keeps the legacy search path wired to the same controller', async () => {
-    const { sessionRoutes } = await import('../../packages/server/src/routes/hermes/sessions')
-    const layer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/search')
+    const { sessionRoutes } = await import('../../packages/server/src/modules/studio/routes/sessions')
+    const layer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/studio/sessions/search')
     const handler = layer.stack[0]
     const ctx: any = { query: { q: 'docker' }, body: null, params: {} }
 
@@ -351,9 +351,9 @@ describe('session routes', () => {
   })
 
   it('delegates conversations list and detail routes', async () => {
-    const { sessionRoutes } = await import('../../packages/server/src/routes/hermes/sessions')
-    const listLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/conversations')
-    const detailLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/conversations/:id/messages')
+    const { sessionRoutes } = await import('../../packages/server/src/modules/studio/routes/sessions')
+    const listLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/studio/sessions/conversations')
+    const detailLayer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/studio/sessions/conversations/:id/messages')
 
     const listCtx: any = { query: {}, body: null, params: {} }
     await listLayer.stack[0](listCtx)
@@ -367,8 +367,8 @@ describe('session routes', () => {
   })
 
   it('delegates Hermes session import to the controller', async () => {
-    const { sessionRoutes } = await import('../../packages/server/src/routes/hermes/sessions')
-    const layer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/hermes/:id/import')
+    const { sessionRoutes } = await import('../../packages/server/src/modules/studio/routes/sessions')
+    const layer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/studio/sessions/hermes/:id/import')
     const handler = layer.stack[0]
     const ctx: any = { params: { id: 'hermes-abc' }, query: {}, request: { body: { profile: 'default' } }, body: null }
 
@@ -379,8 +379,8 @@ describe('session routes', () => {
   })
 
   it('delegates session export to the controller', async () => {
-    const { sessionRoutes } = await import('../../packages/server/src/routes/hermes/sessions')
-    const layer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/:id/export')
+    const { sessionRoutes } = await import('../../packages/server/src/modules/studio/routes/sessions')
+    const layer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/studio/sessions/:id/export')
     const handler = layer.stack[0]
     const ctx: any = { params: { id: 'session-abc' }, query: {}, body: null, set: vi.fn() }
 
@@ -390,8 +390,8 @@ describe('session routes', () => {
   })
 
   it('delegates session archive to the controller', async () => {
-    const { sessionRoutes } = await import('../../packages/server/src/routes/hermes/sessions')
-    const layer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/:id/archive')
+    const { sessionRoutes } = await import('../../packages/server/src/modules/studio/routes/sessions')
+    const layer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/studio/sessions/:id/archive')
     const handler = layer.stack[0]
     const ctx: any = { params: { id: 'session-abc' }, query: {}, body: null }
 
@@ -402,8 +402,8 @@ describe('session routes', () => {
   })
 
   it('delegates session unarchive to the controller', async () => {
-    const { sessionRoutes } = await import('../../packages/server/src/routes/hermes/sessions')
-    const layer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/:id/unarchive')
+    const { sessionRoutes } = await import('../../packages/server/src/modules/studio/routes/sessions')
+    const layer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/studio/sessions/:id/unarchive')
     const handler = layer.stack[0]
     const ctx: any = { params: { id: 'session-abc' }, query: {}, body: null }
 

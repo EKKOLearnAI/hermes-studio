@@ -11,7 +11,7 @@ let hermesHome = ''
 async function loadHelpers() {
   vi.resetModules()
   process.env.HERMES_HOME = hermesHome
-  return import('../../packages/server/src/services/config-helpers')
+  return import('../../packages/server/src/modules/hermes/services/profiles/config')
 }
 
 beforeEach(async () => {

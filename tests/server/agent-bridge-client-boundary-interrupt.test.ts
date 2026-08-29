@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 describe('AgentBridgeClient boundary interrupts', () => {
   it('forwards the expected run ID and profile to the Hermes Bridge', async () => {
-    const { AgentBridgeClient } = await import('../../packages/server/src/services/hermes/agent-bridge/client')
+    const { AgentBridgeClient } = await import('../../packages/server/src/modules/hermes/services/bridge/client')
     const client = new AgentBridgeClient({ endpoint: 'tcp://127.0.0.1:1', connectRetryMs: 0, timeoutMs: 1 })
     const request = vi.spyOn(client, 'request').mockResolvedValue({
       ok: true,
@@ -30,7 +30,7 @@ describe('AgentBridgeClient boundary interrupts', () => {
   })
 
   it('omits optional routing fields when they are unavailable', async () => {
-    const { AgentBridgeClient } = await import('../../packages/server/src/services/hermes/agent-bridge/client')
+    const { AgentBridgeClient } = await import('../../packages/server/src/modules/hermes/services/bridge/client')
     const client = new AgentBridgeClient({ endpoint: 'tcp://127.0.0.1:1', connectRetryMs: 0, timeoutMs: 1 })
     const request = vi.spyOn(client, 'request').mockResolvedValue({
       ok: true,

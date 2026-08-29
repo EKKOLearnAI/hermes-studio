@@ -73,7 +73,7 @@ import PageSidebarFooter from '@/components/layout/PageSidebarFooter.vue'
 import { useAppStore } from '@/stores/hermes/app'
 import { useChatStore } from '@/stores/hermes/chat'
 import { useProfilesStore } from '@/stores/hermes/profiles'
-import { uploadRuntimeFiles } from '@/api/hermes/files'
+import { uploadRuntimeFiles } from '@/api/studio/files'
 import {
   approveWorkflowNode,
   batchDeleteWorkflows,
@@ -100,7 +100,7 @@ import {
   type WorkflowRunRecord,
   type WorkflowRecord,
   type WorkflowViewport,
-} from '@/api/hermes/workflows'
+} from '@/api/studio/workflows'
 import {
   listWorkflowsSocket,
   onWorkflowStatusError,
@@ -108,9 +108,9 @@ import {
   subscribeWorkflowStatuses,
   type WorkflowRuntimeState,
   type WorkflowRuntimeStatus,
-} from '@/api/hermes/workflow-socket'
+} from '@/api/studio/workflow-socket'
 import { fetchSkills } from '@/api/hermes/skills'
-import { fetchSession } from '@/api/hermes/sessions'
+import { fetchSession } from '@/api/studio/sessions'
 import { inferCodingAgentApiMode, normalizeCodingAgentApiMode, type ChatCodingAgentId } from '@/api/coding-agents'
 import { buildWorkflowSkillOptions, workflowAgentToSkillTarget } from '@/utils/hermes/workflow-skills'
 import type {
@@ -120,6 +120,11 @@ import type {
   WorkflowSelectOption,
 } from '@/components/hermes/workflow/types'
 import type { AvailableModelGroup } from '@/api/hermes/system'
+import {
+  fetchAgentStatusSnapshot,
+  isAgentStatusAvailable,
+  type AgentStatusSnapshot,
+} from '@/api/agent-status'
 
 import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
@@ -149,6 +154,7 @@ const workflowImportConfirmVisible = ref(false)
 const workflowImportPreview = ref<Awaited<ReturnType<typeof previewWorkflowImport>> | null>(null)
 const workflowImportProfile = ref('default')
 const workflowImportConfirming = ref(false)
+const agentStatusSnapshot = ref<AgentStatusSnapshot | null>(null)
 const WORKFLOW_CHAT_PANEL_MIN_WIDTH = 360
 const WORKFLOW_CHAT_PANEL_DEFAULT_WIDTH = 560
 const WORKFLOW_CANVAS_MIN_WIDTH = 360
@@ -407,13 +413,38 @@ const workflowSchedulePendingIds = ref<Set<string>>(new Set())
 let edgePreviewTimer: number | null = null
 let workflowBudgetClock: number | null = null
 
-const agentOptions = computed<WorkflowSelectOption[]>(() => [
+const workflowAgentDefinitions: WorkflowSelectOption[] = [
   { label: 'Hermes', value: 'hermes' },
   { label: 'Ekko', value: 'ekko-agent' },
   { label: 'Claude', value: 'claude-code' },
   { label: 'Codex', value: 'codex' },
   { label: 'Pi', value: 'pi' },
-])
+]
+
+const agentOptions = computed<WorkflowSelectOption[]>(() => workflowAgentDefinitions.map((option) => {
+  const disabled = !isAgentStatusAvailable(agentStatusSnapshot.value, option.value)
+  return {
+    ...option,
+    disabled,
+    label: disabled ? `${option.label} · ${t('codingAgents.notInstalled')}` : option.label,
+  }
+}))
+
+const firstAvailableWorkflowAgent = computed(() =>
+  agentOptions.value.find(option => !option.disabled)?.value || null,
+)
+
+function workflowAgentDisplayName(agent: string): string {
+  return String(workflowAgentDefinitions.find(option => option.value === agent)?.label || agent)
+}
+
+async function refreshAgentAvailability() {
+  try {
+    agentStatusSnapshot.value = await fetchAgentStatusSnapshot()
+  } catch {
+    agentStatusSnapshot.value = null
+  }
+}
 const workflowRunBudgetOptions = computed(() => WORKFLOW_RUN_BUDGET_PRESETS.map(option => ({
   value: option.value,
   label: t(`workflow.budget.options.${option.value}`),
@@ -612,6 +643,7 @@ function makeNode(
   position: { x: number; y: number },
   data: Partial<WorkflowAgentNodeEditableData> & { status?: WorkflowNodeStatus } = {},
 ): WorkflowNode {
+  const agent = data.agent || firstAvailableWorkflowAgent.value || 'hermes'
   return {
     id,
     type: 'agent',
@@ -620,7 +652,7 @@ function makeNode(
     style: { width: `${WORKFLOW_NODE_DEFAULT_WIDTH}px`, height: `${WORKFLOW_NODE_DEFAULT_HEIGHT}px` },
     data: {
       title,
-      agent: data.agent || agentOptions.value[0]?.value || 'hermes',
+      agent,
       provider: data.provider || defaultModelSelection.value.provider,
       model: data.model || defaultModelSelection.value.model,
       apiMode: data.apiMode || defaultApiMode(data.provider || defaultModelSelection.value.provider),
@@ -632,8 +664,8 @@ function makeNode(
       orchestration: { join: data.orchestration?.join === 'any' ? 'any' : 'all' },
       status: data.status || 'idle',
       agentOptions: agentOptions.value,
-      skillOptions: skillOptionsForAgent(data.agent || agentOptions.value[0]?.value || 'hermes'),
-      skillsLoading: skillsLoadingForAgent(data.agent || agentOptions.value[0]?.value || 'hermes'),
+      skillOptions: skillOptionsForAgent(agent),
+      skillsLoading: skillsLoadingForAgent(agent),
       modelGroups: modelGroups.value,
       onUpdate: updateNodeData,
       onUploadImages: uploadNodeImages,
@@ -647,6 +679,10 @@ function makeInitialNodes(): WorkflowNode[] {
 
 const nodes = ref<WorkflowNode[]>(makeInitialNodes())
 const edges = ref<WorkflowEdge[]>([])
+
+function unavailableWorkflowAgent() {
+  return nodes.value.find(node => !isAgentStatusAvailable(agentStatusSnapshot.value, node.data.agent))
+}
 
 const edgeEditorEdge = computed(() => edges.value.find(edge => edge.id === edgeEditorId.value) || null)
 function workflowEditorNodeName(nodeId: string): string {
@@ -886,6 +922,7 @@ onMounted(() => {
   window.addEventListener('resize', handleWorkflowChatPanelViewportResize)
   window.addEventListener('keydown', handleWorkflowUndoShortcut)
   handleWorkflowChatPanelViewportResize()
+  void refreshAgentAvailability()
   void initializeWorkflowPage()
 })
 
@@ -2621,6 +2658,14 @@ async function confirmWorkflowRunBudget() {
 
 async function executeWorkflowWithBudget(timeoutMs: number | undefined): Promise<boolean> {
   if (!activeWorkflowId.value || executingWorkflow.value || selectedWorkflowRunId.value) return false
+  await refreshAgentAvailability()
+  const unavailableAgentNode = unavailableWorkflowAgent()
+  if (unavailableAgentNode) {
+    message.warning(t('codingAgents.installRequired', {
+      agent: workflowAgentDisplayName(unavailableAgentNode.data.agent),
+    }))
+    return false
+  }
   const workflowId = activeWorkflowId.value
   const saved = await saveActiveWorkflow({ quiet: true })
   if (!saved) return false
@@ -3081,6 +3126,11 @@ async function addAgentNode() {
   if (selectedWorkflowRunId.value) return
   if (!activeWorkflowId.value) {
     message.warning(t('workflow.actions.createWorkflowFirst'))
+    return
+  }
+  await refreshAgentAvailability()
+  if (!firstAvailableWorkflowAgent.value) {
+    message.warning(t('codingAgents.notInstalled'))
     return
   }
   const id = `agent-${nextNodeIndex.value}`

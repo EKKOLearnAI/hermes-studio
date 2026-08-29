@@ -37,7 +37,7 @@ describe('HermesSkillInjector', () => {
     await mkdir(distSkills, { recursive: true })
     await mkdir(devSkills, { recursive: true })
 
-    const { HermesSkillInjector } = await import('../../packages/server/src/services/hermes/skill-injector')
+    const { HermesSkillInjector } = await import('../../packages/server/src/modules/hermes/services/skills/injector')
 
     expect(HermesSkillInjector.resolveSourceDir({ HERMES_WEB_UI_SKILLS_DIR: override } as any, join(root, 'dist', 'server'))).toBe(override)
     expect(HermesSkillInjector.resolveSourceDir({} as any, join(root, 'dist', 'server'))).toBe(distSkills)
@@ -57,7 +57,7 @@ describe('HermesSkillInjector', () => {
     await mkdir(join(hermesHome, 'skills', 'existing-skill'), { recursive: true })
     await writeFile(join(hermesHome, 'skills', 'existing-skill', 'SKILL.md'), '# User Existing\n', 'utf-8')
 
-    const { HermesSkillInjector } = await import('../../packages/server/src/services/hermes/skill-injector')
+    const { HermesSkillInjector } = await import('../../packages/server/src/modules/hermes/services/skills/injector')
     const result = await new HermesSkillInjector(source).injectMissingSkills()
 
     expect(result.injected).toEqual(['new-skill'])
@@ -81,7 +81,7 @@ describe('HermesSkillInjector', () => {
     await mkdir(join(sourceV2, 'webui-skill'), { recursive: true })
     await writeFile(join(sourceV2, 'webui-skill', 'SKILL.md'), '# WebUI Skill v2\n', 'utf-8')
 
-    const { HermesSkillInjector } = await import('../../packages/server/src/services/hermes/skill-injector')
+    const { HermesSkillInjector } = await import('../../packages/server/src/modules/hermes/services/skills/injector')
     await new HermesSkillInjector(sourceV1).injectMissingSkills()
     const result = await new HermesSkillInjector(sourceV2).injectMissingSkills()
 
@@ -103,7 +103,7 @@ describe('HermesSkillInjector', () => {
     await mkdir(join(sourceV2, 'webui-skill'), { recursive: true })
     await writeFile(join(sourceV2, 'webui-skill', 'SKILL.md'), '# WebUI Skill v2\n', 'utf-8')
 
-    const { HermesSkillInjector } = await import('../../packages/server/src/services/hermes/skill-injector')
+    const { HermesSkillInjector } = await import('../../packages/server/src/modules/hermes/services/skills/injector')
     await new HermesSkillInjector(sourceV1).injectMissingSkills()
     await writeFile(join(hermesHome, 'skills', 'webui-skill', '.DS_Store'), 'finder metadata', 'utf-8')
     const result = await new HermesSkillInjector(sourceV2).injectMissingSkills()
@@ -123,7 +123,7 @@ describe('HermesSkillInjector', () => {
     await mkdir(join(hermesHome, 'skills', 'webui-skill'), { recursive: true })
     await writeFile(join(hermesHome, 'skills', 'webui-skill', 'SKILL.md'), '# WebUI Skill\n', 'utf-8')
 
-    const { HermesSkillInjector } = await import('../../packages/server/src/services/hermes/skill-injector')
+    const { HermesSkillInjector } = await import('../../packages/server/src/modules/hermes/services/skills/injector')
     const result = await new HermesSkillInjector(source).injectMissingSkills()
 
     expect(result.injected).toEqual([])
@@ -152,7 +152,7 @@ describe('HermesSkillInjector', () => {
     await mkdir(join(hermesHome, 'profiles', 'beta', 'skills', 'profile-local'), { recursive: true })
     await writeFile(join(hermesHome, 'profiles', 'beta', 'skills', 'profile-local', 'SKILL.md'), '# Profile Local\n', 'utf-8')
 
-    const { HermesSkillInjector } = await import('../../packages/server/src/services/hermes/skill-injector')
+    const { HermesSkillInjector } = await import('../../packages/server/src/modules/hermes/services/skills/injector')
     const result = await new HermesSkillInjector(source).injectMissingSkills()
 
     expect(result.targets.map(target => target.targetDir)).toEqual([

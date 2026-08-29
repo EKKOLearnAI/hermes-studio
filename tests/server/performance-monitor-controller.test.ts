@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const getOpsRuntimeSnapshot = vi.fn()
 
-vi.mock('../../packages/server/src/services/hermes/ops-monitor', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/monitoring/ops-monitor', () => ({
   createEmptyOpsRuntimeSnapshot: (error?: string) => ({ timestamp: 0, error }),
   getOpsRuntimeSnapshot,
 }))
@@ -21,7 +21,7 @@ describe('performance monitor controller', () => {
     getOpsRuntimeSnapshot.mockResolvedValue(snapshot)
     const ctx: any = {}
 
-    const { runtime } = await import('../../packages/server/src/controllers/hermes/performance-monitor')
+    const { runtime } = await import('../../packages/server/src/modules/studio/controllers/performance-monitor')
     await runtime(ctx)
 
     expect(ctx.body).toBe(snapshot)
@@ -31,7 +31,7 @@ describe('performance monitor controller', () => {
     getOpsRuntimeSnapshot.mockRejectedValue(new Error('boom'))
     const ctx: any = {}
 
-    const { runtime } = await import('../../packages/server/src/controllers/hermes/performance-monitor')
+    const { runtime } = await import('../../packages/server/src/modules/studio/controllers/performance-monitor')
     await runtime(ctx)
 
     expect(ctx.status).toBeUndefined()
@@ -39,8 +39,8 @@ describe('performance monitor controller', () => {
   })
 
   it('requires super admin on the runtime route', async () => {
-    const { performanceMonitorRoutes } = await import('../../packages/server/src/routes/hermes/performance-monitor')
-    const layer = performanceMonitorRoutes.stack.find((entry: any) => entry.path === '/api/hermes/performance/runtime')
+    const { performanceMonitorRoutes } = await import('../../packages/server/src/modules/studio/routes/performance-monitor')
+    const layer = performanceMonitorRoutes.stack.find((entry: any) => entry.path === '/api/studio/performance/runtime')
     expect(layer).toBeTruthy()
 
     const deniedCtx: any = { state: { user: { role: 'admin' } }, status: 200, body: null }

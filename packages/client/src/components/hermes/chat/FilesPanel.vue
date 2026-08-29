@@ -8,9 +8,9 @@ import FileToolbar from '@/components/hermes/files/FileToolbar.vue'
 import FileContextMenu from '@/components/hermes/files/FileContextMenu.vue'
 import FileUploadModal from '@/components/hermes/files/FileUploadModal.vue'
 import FileRenameModal from '@/components/hermes/files/FileRenameModal.vue'
-import type { FileEntry } from '@/api/hermes/files'
-import { fetchSessionWorkspaceAttachmentBlob } from '@/api/hermes/sessions'
-import { fetchGroupWorkspaceAttachmentBlob } from '@/api/hermes/group-chat'
+import type { FileEntry } from '@/api/studio/files'
+import { fetchSessionWorkspaceAttachmentBlob } from '@/api/studio/sessions'
+import { fetchGroupWorkspaceAttachmentBlob } from '@/api/studio/group-chat'
 
 const FileEditor = defineAsyncComponent(async () => (await import('@/components/hermes/files/FileEditor.vue')).default)
 const FilePreview = defineAsyncComponent(async () => (await import('@/components/hermes/files/FilePreview.vue')).default)

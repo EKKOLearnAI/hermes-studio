@@ -2,8 +2,10 @@ import { randomUUID } from 'node:crypto'
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite'
 import { EkkoDatabaseManager, type EkkoDatabaseMigration } from '../database'
 import { memorySlotForKind } from './schema'
+import { memoryScopeColumns, memoryScopeFromColumns, normalizeMemoryOrigin } from './scope'
 import type {
   MemoryAuditEvent,
+  MemoryAuditQuery,
   MemoryMessage,
   MemoryNode,
   MemoryQuery,
@@ -115,6 +117,23 @@ const MEMORY_MIGRATIONS: EkkoDatabaseMigration[] = [{
         ON memory_nodes (category_path_text);
       CREATE INDEX IF NOT EXISTS idx_memory_audit_events_node
         ON memory_audit_events (node_id, row_id);
+    `)
+  },
+}, {
+  component: 'memory',
+  version: 4,
+  migrate(db) {
+    db.exec(`
+      ALTER TABLE memory_nodes ADD COLUMN scope_type TEXT NOT NULL DEFAULT 'profile';
+      ALTER TABLE memory_nodes ADD COLUMN scope_namespace TEXT NOT NULL DEFAULT '';
+      ALTER TABLE memory_nodes ADD COLUMN scope_id TEXT NOT NULL DEFAULT '';
+      ALTER TABLE memory_nodes ADD COLUMN origin_json TEXT;
+      DROP INDEX IF EXISTS idx_memory_nodes_unique_active_key;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_nodes_unique_active_scope_key
+        ON memory_nodes (profile_id, scope_type, scope_namespace, scope_id, key)
+        WHERE status = 'active';
+      CREATE INDEX IF NOT EXISTS idx_memory_nodes_scope
+        ON memory_nodes (profile_id, scope_type, scope_namespace, scope_id, status, updated_at);
     `)
   },
 }]
@@ -288,7 +307,18 @@ export class SqliteMemoryStore implements MemoryStore {
     if (!query.profileId) return []
     clauses.push('profile_id = ?')
     params.push(query.profileId)
-    if (query.includeExpired) {
+    if (query.scopes?.length) {
+      const scopeClauses: string[] = []
+      for (const scope of query.scopes) {
+        const columns = memoryScopeColumns(scope)
+        scopeClauses.push('(scope_type = ? AND scope_namespace = ? AND scope_id = ?)')
+        params.push(columns.type, columns.namespace, columns.id)
+      }
+      clauses.push(`(${scopeClauses.join(' OR ')})`)
+    }
+    if (query.statuses?.length) {
+      addInClause(clauses, params, 'status', query.statuses)
+    } else if (query.includeExpired) {
       clauses.push("status IN ('active', 'expired')")
     } else {
       clauses.push("status = 'active' AND (expires_at IS NULL OR expires_at > ?)")
@@ -364,13 +394,51 @@ export class SqliteMemoryStore implements MemoryStore {
     const rows = this.db.prepare(`
       SELECT * FROM memory_nodes ${where}
       ORDER BY ${relevanceOrder} importance DESC, confidence DESC, updated_at DESC
-      LIMIT ?
-    `).all(...params, ...relevanceParams, boundedLimit(query.limit ?? 50, 500)) as Row[]
+      LIMIT ? OFFSET ?
+    `).all(
+      ...params,
+      ...relevanceParams,
+      boundedLimit(query.limit ?? 50, 500),
+      boundedOffset(query.offset),
+    ) as Row[]
     return rows.map(nodeFromRow)
   }
 
   async appendAuditEvent(event: MemoryAuditEvent): Promise<void> {
     this.writeAudit(event)
+  }
+
+  async listAuditEvents(query: MemoryAuditQuery = {}): Promise<MemoryAuditEvent[]> {
+    const clauses: string[] = []
+    const params: SQLInputValue[] = []
+    if (query.profileId) {
+      clauses.push('profile_id = ?')
+      params.push(query.profileId)
+    }
+    if (query.nodeId) {
+      clauses.push('node_id = ?')
+      params.push(query.nodeId)
+    }
+    if (query.sessionId) {
+      clauses.push('session_id = ?')
+      params.push(query.sessionId)
+    }
+    if (query.eventTypes?.length) addInClause(clauses, params, 'event_type', query.eventTypes)
+    if (query.actor) {
+      clauses.push('actor = ?')
+      params.push(query.actor)
+    }
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
+    const rows = this.db.prepare(`
+      SELECT * FROM memory_audit_events ${where}
+      ORDER BY row_id DESC
+      LIMIT ? OFFSET ?
+    `).all(
+      ...params,
+      boundedLimit(query.limit ?? 50, 500),
+      boundedOffset(query.offset),
+    ) as Row[]
+    return rows.map(auditFromRow)
   }
 
   async getSessionState(sessionId: string): Promise<MemorySessionState | undefined> {
@@ -430,14 +498,19 @@ export class SqliteMemoryStore implements MemoryStore {
     this.db.prepare(`
       INSERT INTO memory_nodes (
         id, parent_id, supersedes_id, profile_id,
+        scope_type, scope_namespace, scope_id, origin_json,
         domain, category_path_json, category_path_text, type, key, revision, value_json,
         title, content, status, confidence, importance, tags_json, entities_json,
         source_message_ids_json, created_at, updated_at, expires_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         parent_id = excluded.parent_id,
         supersedes_id = excluded.supersedes_id,
         profile_id = excluded.profile_id,
+        scope_type = excluded.scope_type,
+        scope_namespace = excluded.scope_namespace,
+        scope_id = excluded.scope_id,
+        origin_json = excluded.origin_json,
         domain = excluded.domain,
         category_path_json = excluded.category_path_json,
         category_path_text = excluded.category_path_text,
@@ -488,11 +561,16 @@ export class SqliteMemoryStore implements MemoryStore {
 }
 
 function nodeValues(node: MemoryNode): SQLInputValue[] {
+  const scope = memoryScopeColumns(node.scope)
   return [
     node.id,
     node.parentId ?? null,
     node.supersedesId ?? null,
     node.profileId,
+    scope.type,
+    scope.namespace,
+    scope.id,
+    jsonOrNull(node.origin),
     node.domain,
     JSON.stringify(node.categoryPath),
     categoryPathText(node.categoryPath),
@@ -551,6 +629,8 @@ function nodeFromRow(row: Row): MemoryNode {
     parentId: optionalString(row.parent_id),
     supersedesId: optionalString(row.supersedes_id),
     profileId: String(row.profile_id),
+    scope: memoryScopeFromColumns(row.scope_type, row.scope_namespace, row.scope_id),
+    origin: normalizeMemoryOrigin(parseJsonObject(row.origin_json)),
     domain: String(row.domain),
     categoryPath: parseStringArray(row.category_path_json),
     type: String(row.type) as MemoryNode['type'],
@@ -568,6 +648,20 @@ function nodeFromRow(row: Row): MemoryNode {
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
     expiresAt: optionalString(row.expires_at),
+  }
+}
+
+function auditFromRow(row: Row): MemoryAuditEvent {
+  return {
+    id: String(row.id),
+    eventType: String(row.event_type) as MemoryAuditEvent['eventType'],
+    nodeId: optionalString(row.node_id),
+    sessionId: optionalString(row.session_id),
+    profileId: String(row.profile_id),
+    actor: String(row.actor),
+    reason: String(row.reason),
+    payload: parseJsonObject(row.payload_json),
+    createdAt: String(row.created_at),
   }
 }
 
@@ -599,6 +693,11 @@ function categoryPathText(path: string[]): string {
 function boundedLimit(value: number, maximum: number): number {
   if (!Number.isFinite(value)) return Math.min(20, maximum)
   return Math.max(1, Math.min(Math.floor(value), maximum))
+}
+
+function boundedOffset(value: number | undefined): number {
+  if (!Number.isFinite(value)) return 0
+  return Math.max(0, Math.floor(Number(value)))
 }
 
 function addInClause(clauses: string[], params: SQLInputValue[], column: string, values: readonly string[]): void {

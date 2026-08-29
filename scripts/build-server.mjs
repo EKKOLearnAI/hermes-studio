@@ -29,7 +29,7 @@ await esbuild.build({
 })
 
 const bridgeOutDir = resolve(serverOutDir, 'agent-bridge', 'python')
-const bridgeSrcDir = resolve(rootDir, 'packages/server/src/services/hermes/agent-bridge/python')
+const bridgeSrcDir = resolve(rootDir, 'packages/server/src/modules/hermes/services/bridge/python')
 mkdirSync(bridgeOutDir, { recursive: true })
 for (const fileName of readdirSync(bridgeSrcDir)) {
   if (fileName.endsWith('.py')) {
@@ -53,6 +53,14 @@ rmSync(skillsOutDir, { recursive: true, force: true })
 cpSync(
   resolve(rootDir, 'packages/skills'),
   skillsOutDir,
+  { recursive: true },
+)
+
+const ekkoSkillsOutDir = resolve(rootDir, 'dist/ekko-skills')
+rmSync(ekkoSkillsOutDir, { recursive: true, force: true })
+cpSync(
+  resolve(rootDir, 'packages/ekko-agent/skills'),
+  ekkoSkillsOutDir,
   { recursive: true },
 )
 

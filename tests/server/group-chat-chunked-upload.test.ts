@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 let appHome = ''
 
-vi.mock('../../packages/server/src/config', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/config', () => ({
   config: {
     get appHome() {
       return appHome
@@ -27,9 +27,9 @@ describe('group chat chunked uploads', () => {
       appendGroupChatUploadChunk,
       completeGroupChatUpload,
       openGroupChatUpload,
-    } = await import('../../packages/server/src/services/hermes/group-chat/chunked-upload')
+    } = await import('../../packages/server/src/modules/studio/services/group-chat/chunked-upload')
     const { getGroupChatAttachmentPath } = await import(
-      '../../packages/server/src/services/hermes/group-chat/attachments'
+      '../../packages/server/src/modules/studio/services/group-chat/attachments'
     )
     const id = 'group_upload_test_1234'
     await openGroupChatUpload({ id, owner: '7', roomId: 'room-1', name: 'clip.mp4', size: 5 })
@@ -58,7 +58,7 @@ describe('group chat chunked uploads', () => {
 
   it('rejects another member and out-of-order chunks', async () => {
     const { appendGroupChatUploadChunk, openGroupChatUpload } = await import(
-      '../../packages/server/src/services/hermes/group-chat/chunked-upload'
+      '../../packages/server/src/modules/studio/services/group-chat/chunked-upload'
     )
     const id = 'group_upload_owner_1234'
     await openGroupChatUpload({ id, owner: '7', roomId: 'room-1', name: 'clip.mp4', size: 2 })

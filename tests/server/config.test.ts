@@ -8,7 +8,7 @@ import {
   getWebUiHome,
   isAppEntitlementRequired,
   shouldCreateWebUiDataDir,
-} from '../../packages/server/src/config'
+} from '../../packages/server/src/modules/studio/public/config'
 
 describe('server config', () => {
   it('defaults to an IPv4 bind host', () => {

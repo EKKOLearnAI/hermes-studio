@@ -1,6 +1,8 @@
 import { socialMessagesFr } from '../social-messages-locales'
+import { ekkoConfigFr } from './ekko-config'
 
 export default {
+  ekkoConfig: ekkoConfigFr,
   socialMessages: socialMessagesFr,
   browser: {
     title: 'Navigateur', settings: 'Paramètres du navigateur', desktopOnly: 'Le navigateur intégré est disponible uniquement dans Hermes Studio Desktop.', newTab: 'Nouvel onglet',
@@ -233,6 +235,7 @@ export default {
     files: 'Fichiers',
     devices: 'Appareils',
     connections: 'Connexions des appareils',
+    agentManager: 'Gestion des agents',
     groupChat: 'Chat de groupe',
     groupConversation: 'Conversation',
     groupConversationShort: 'Conv.',
@@ -271,6 +274,32 @@ export default {
     gateways: 'Passerelles',
     expand: 'Déplier le menu',
     collapse: 'Replier le menu',
+  },
+
+  agentManager: {
+    title: 'Gestion des agents',
+    subtitle: 'Détectez et gérez les agents disponibles sur cet appareil.',
+    refresh: 'Actualiser',
+    hermesDescription: 'Hermes peut utiliser un Runtime géré par Studio ou une CLI locale installée par l’utilisateur.',
+    managedRuntime: 'Hermes Runtime',
+    managedRuntimeHint: 'Studio installe et gère uniquement des packages Runtime complets, jamais la CLI Hermes séparément.',
+    studioManaged: 'Géré par Studio',
+    manageRuntime: 'Gérer le Runtime',
+    runtimeVersion: 'Version du Runtime',
+    agentVersion: 'Version de Hermes Agent',
+    path: 'Chemin',
+    userCli: 'Hermes CLI',
+    userCliReadonly: 'La CLI Hermes de l’environnement actuel est détectée en priorité et reste gérée par l’utilisateur.',
+    readOnly: 'Lecture seule',
+    noUserCli: 'Aucune CLI Hermes disponible détectée',
+    unknownVersion: 'Version inconnue',
+    inUse: 'En cours d’utilisation',
+    builtIn: 'Intégré',
+    ekkoDescription: 'Ekko est fourni avec Studio et ne nécessite aucune installation, mise à jour ou suppression distincte.',
+    version: 'Version',
+    codingAgentDescription: 'Studio peut installer, rechercher les mises à jour et supprimer cet agent.',
+    updateToVersion: 'Mettre à jour vers {version}',
+    deleteConfirm: 'Supprimer {name} ?',
   },
 
   runtimeVersions: {
