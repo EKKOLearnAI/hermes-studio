@@ -90,6 +90,90 @@ describe('ekko-agent model requests', () => {
     ]))
   })
 
+  it('retries a streamed response whose tool call has an empty function name', async () => {
+    const encoder = new TextEncoder()
+    let call = 0
+    const fetchMock = vi.fn(async () => {
+      call += 1
+      const frames = call === 1
+        ? [
+            'data: {"id":"chatcmpl_invalid","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_invalid","type":"function","function":{"name":"","arguments":""}}]},"finish_reason":"tool_calls"}]}\n\n',
+            'data: [DONE]\n\n',
+          ]
+        : [
+            'data: {"id":"chatcmpl_recovered","choices":[{"delta":{"content":"Recovered"},"finish_reason":"stop"}]}\n\n',
+            'data: [DONE]\n\n',
+          ]
+      return new Response(new ReadableStream({
+        start(controller) {
+          for (const frame of frames) controller.enqueue(encoder.encode(frame))
+          controller.close()
+        },
+      }), { status: 200 })
+    })
+    const client = createModelClient(providerConfig, { fetch: fetchMock })
+    const runtime = new AgentRuntime({ modelClient: client })
+
+    const result = await runtime.run({ messages: ['Answer without an empty tool call.'] })
+
+    expect(result.output.content).toBe('Recovered')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(result.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'model.retry',
+        error: expect.stringContaining('complete id and function name'),
+      }),
+    ]))
+  })
+
+  it('filters invalid Chat tool history and its orphaned tool result', () => {
+    const payload = toOpenAIChatPayload(providerConfig, {
+      messages: [
+        { role: 'user', content: 'Check the weather.' },
+        {
+          role: 'assistant',
+          content: '',
+          toolCalls: [{ id: 'call_invalid', name: '', arguments: {} }],
+        },
+        {
+          role: 'tool',
+          content: 'orphaned result',
+          toolCallId: 'call_invalid',
+          name: '',
+        },
+        { role: 'user', content: 'Try again.' },
+      ],
+      tools: [{ name: 'weather', parameters: { type: 'object' } }],
+    })
+
+    expect(payload.messages).toEqual([
+      expect.objectContaining({ role: 'user', content: 'Check the weather.' }),
+      expect.objectContaining({ role: 'user', content: 'Try again.' }),
+    ])
+  })
+
+  it('normalizes empty Chat tool arguments and drops incomplete parallel calls', () => {
+    const response = normalizeOpenAIChatResponse('deepseek', {
+      choices: [{
+        message: {
+          content: '',
+          tool_calls: [
+            { id: 'call_valid', type: 'function', function: { name: 'weather', arguments: '' } },
+            { id: 'call_invalid', type: 'function', function: { name: '', arguments: '{}' } },
+          ],
+        },
+        finish_reason: 'tool_calls',
+      }],
+    })
+
+    expect(response.toolCalls).toEqual([{
+      id: 'call_valid',
+      name: 'weather',
+      arguments: {},
+      rawArguments: '{}',
+    }])
+  })
+
   it('remembers image-rejecting Chat targets across client instances', async () => {
     const model = `text-only-memory-test-${Date.now()}-${Math.random()}`
     const config: ModelProviderConfig = {
