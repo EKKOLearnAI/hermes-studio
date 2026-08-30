@@ -31,6 +31,18 @@ export interface EkkoBackgroundContinuationContext {
   memoryPolicy: 'disabled'
 }
 
+export interface AgentRuntimeRecoveryToolCall {
+  name: string
+  arguments?: Record<string, unknown>
+}
+
+export interface AgentRuntimeRecoveryDirective {
+  active: boolean
+  automaticToolCalls: AgentRuntimeRecoveryToolCall[]
+  allowedToolNames: string[]
+  reminder: string
+}
+
 export interface AgentRuntimeOptions {
   /** Fixed profile identity for tool and memory operations. Per-run input cannot override it. */
   profileId?: string
@@ -57,6 +69,8 @@ export interface AgentRuntimeOptions {
   runtimeInstructions?: string[]
   /** Re-evaluated for every run; intended for process-local diagnostics, never memory. */
   temporaryRuntimeInstructions?: () => string[]
+  /** Re-evaluated before and during every run so active incidents cannot be silently skipped. */
+  recoveryDirective?: () => AgentRuntimeRecoveryDirective
   maxSteps?: number
   maxModelRetries?: number
   maxConsecutiveToolFailures?: number

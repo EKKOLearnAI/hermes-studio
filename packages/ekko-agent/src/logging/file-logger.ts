@@ -35,6 +35,7 @@ export interface EkkoFileLoggerOptions {
   directory: string
   maxBytes?: number
   now?: () => Date
+  onError?: (error: unknown) => void
 }
 
 export interface EkkoFileLogReaderOptions {
@@ -86,12 +87,18 @@ export class EkkoFileLogger implements EkkoLogWriter {
   readonly filePath: string
   readonly maxBytes: number
   private readonly now: () => Date
+  private readonly onError?: (error: unknown) => void
 
   constructor(options: EkkoFileLoggerOptions) {
     this.filePath = join(options.directory, EKKO_LOG_FILE_NAME)
     this.maxBytes = positiveInteger(options.maxBytes, DEFAULT_EKKO_LOG_MAX_BYTES)
     this.now = options.now ?? (() => new Date())
-    mkdirSync(options.directory, { recursive: true, mode: 0o700 })
+    this.onError = options.onError
+    try {
+      mkdirSync(options.directory, { recursive: true, mode: 0o700 })
+    } catch (error) {
+      this.reportError(error)
+    }
   }
 
   write(entry: EkkoLogEntry): boolean {
@@ -136,7 +143,8 @@ export class EkkoFileLogger implements EkkoLogWriter {
       }
       appendFileSync(this.filePath, line, { encoding: 'utf8', mode: 0o600 })
       return true
-    } catch {
+    } catch (error) {
+      this.reportError(error)
       return false
     }
   }
@@ -158,6 +166,14 @@ export class EkkoFileLogger implements EkkoLogWriter {
       ...(entry.data === undefined ? {} : { data: sanitizeLogValue(entry.data) }),
     }
     return `${JSON.stringify(record)}\n`
+  }
+
+  private reportError(error: unknown): void {
+    try {
+      this.onError?.(error)
+    } catch {
+      // Logging failures and diagnostics callbacks must never break Ekko Core.
+    }
   }
 }
 

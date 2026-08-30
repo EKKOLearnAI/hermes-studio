@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
-export type EkkoCapability = 'skills' | 'database' | 'memory'
+export type EkkoCapability = 'skills' | 'database' | 'memory' | 'logs'
 export type EkkoDiagnosticScope = 'global' | `profile:${string}`
 export type EkkoDiagnosticStatus = 'active' | 'resolved'
 
@@ -161,6 +161,8 @@ export class EkkoDiagnosticsRegistry {
       'Ekko Core is available, but optional capabilities are degraded.',
       'This is ephemeral host diagnostics, not remembered conversation content.',
       'Do not invent paths or SQL. Use the named built-in recovery tools and trust only their self-check results.',
+      'Active automatic incidents are mandatory maintenance: repair them before answering unrelated requests, and do not ask the user whether to run a safe retry.',
+      'Never interpret an ephemeral or degraded memory result as proof that the durable memory store is empty.',
     ]
     for (const incident of incidents) {
       lines.push(

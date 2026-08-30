@@ -328,10 +328,24 @@ export class EkkoAgentSetup {
     } catch (error) {
       this.recovery.recordSkillsFailure(normalizedProfile, 'profile.sync_bundled_skills', error)
     }
+    let logDirectory = this.directories.profileLogsPath(normalizedProfile)
+    try {
+      logDirectory = this.directories.profileLogsDirectory(normalizedProfile)
+      const selfCheck = this.recovery.selfCheckAndResolve('logs', normalizedProfile)
+      if (!selfCheck.ok) {
+        this.recovery.recordLogsFailure(
+          normalizedProfile,
+          'profile.validate_log_directory',
+          new Error(selfCheck.checks.filter(check => !check.ok).map(check => check.detail).join('; ')),
+        )
+      }
+    } catch (error) {
+      this.recovery.recordLogsFailure(normalizedProfile, 'profile.initialize_log_directory', error)
+    }
     const layout = {
       profile: normalizedProfile,
       skillDirectory,
-      logDirectory: this.directories.profileLogsDirectory(normalizedProfile),
+      logDirectory,
       workspaceDirectory: this.directories.profileWorkspaceDirectory(normalizedProfile),
     }
     this.profileLayouts.set(normalizedProfile, layout)
@@ -477,6 +491,9 @@ export class EkkoAgentSetup {
         ...(runtimeOverrides.temporaryRuntimeInstructions?.() ?? []),
         this.recovery.temporaryContext(profileLayout.profile) ?? '',
       ].filter(Boolean),
+      recoveryDirective: runtimeOverrides.recoveryDirective ?? (() => (
+        this.recovery.runtimeDirective(profileLayout.profile)
+      )),
       maxSteps: runtimeOverrides.maxSteps ?? config.runtime.maxSteps,
       maxModelRetries: runtimeOverrides.maxModelRetries ?? config.runtime.maxModelRetries,
       maxConsecutiveToolFailures: runtimeOverrides.maxConsecutiveToolFailures
@@ -491,6 +508,11 @@ export class EkkoAgentSetup {
       logWriter: runtimeOverrides.logWriter ?? new EkkoFileLogger({
         directory: profileLayout.logDirectory,
         maxBytes: config.logging.maxBytes,
+        onError: error => this.recovery.recordLogsFailure(
+          profileLayout.profile,
+          'runtime.write_log',
+          error,
+        ),
       }),
       logProfile: runtimeOverrides.logProfile ?? profile,
     })
@@ -533,6 +555,11 @@ export class EkkoAgentSetup {
       skills: this.skill,
       toolApprovals: () => this.toolApprovals,
       createRuntime: options => this.createRuntime(options),
+      onLogError: error => this.recovery.recordLogsFailure(
+        profileLayout.profile,
+        'profile.write_log',
+        error,
+      ),
     })
   }
 
@@ -583,9 +610,14 @@ export class EkkoAgentSetup {
   }
 
   private createMemoryService(config: EkkoConfig, store = this.memoryStore): MemoryService {
+    const ephemeral = this.database.databasePath === ':memory:'
     return new MemoryService({
       store,
       enabled: config.memory.enabled,
+      storageMode: ephemeral ? 'ephemeral' : 'persistent',
+      ...(ephemeral ? {
+        warning: 'Persistent Ekko memory is unavailable; the active store is ephemeral and cannot establish whether durable memories exist.',
+      } : {}),
       recentMessageLimit: config.memory.recentMessageLimit,
       automaticRecallTokenBudget: config.memory.automaticRecallTokenBudget,
       searchResultLimit: config.memory.searchResultLimit,

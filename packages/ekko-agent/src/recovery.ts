@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs'
+import { accessSync, constants, existsSync, statSync } from 'node:fs'
 import { DatabaseSync } from 'node:sqlite'
 import type { EkkoDirectoryManager } from './directories'
 import {
@@ -11,6 +11,7 @@ import {
 import { EkkoConversationStore } from './conversations/store'
 import { EkkoDatabaseManager } from './database'
 import { SqliteMemoryStore } from './memory/store'
+import type { AgentRuntimeRecoveryDirective } from './runtime/types'
 
 export const EKKO_RECOVERABLE_DATABASE_TABLES = [
   'memory_messages',
@@ -57,7 +58,7 @@ export const EKKO_DATABASE_SCHEMA_BLUEPRINT = {
 } as const
 
 export type EkkoDatabaseRecoveryStrategy = 'retry' | 'rebuild'
-export type EkkoSelfCheckComponent = 'all' | 'skills' | 'database' | 'memory'
+export type EkkoSelfCheckComponent = 'all' | 'skills' | 'database' | 'memory' | 'logs'
 
 export interface EkkoRecoveryServiceOptions {
   diagnostics: EkkoDiagnosticsRegistry
@@ -131,6 +132,8 @@ export class EkkoRecoveryService {
         steps: [
           'Call ekko_database_schema for the code-owned schema and required fields.',
           'Use strategy=retry first; it does not delete or quarantine the database.',
+          'If retry fails, inspect the exact target type and parent permissions with terminal_exec. Repair obvious blockers only inside the Ekko-owned target path, then retry.',
+          'Safe retry and repair of an obvious Ekko-owned path blocker do not require asking the user. Never claim persistent memory is empty while ephemeral storage is active.',
           'Use strategy=rebuild only with confirmed=true; the original database family is preserved as a backup.',
           'The repair tool runs ekko_self_check logic internally. After it succeeds, the host must reload Ekko Setup at a completed-run boundary; Hermes Studio does this automatically.',
         ],
@@ -167,6 +170,29 @@ export class EkkoRecoveryService {
         schema: databaseSchemaFields(),
       },
       metadata: { activeStorage: this.activeStorage },
+    })
+  }
+
+  recordLogsFailure(profile: string | undefined, operation: string, error: unknown): EkkoDiagnosticIncident {
+    const target = this.options.directories.profileLogsPath(profile)
+    return this.options.diagnostics.report({
+      component: 'logs',
+      scope: profile ? profileScope(profile) : 'global',
+      operation,
+      error,
+      effect: 'Structured Ekko file logging is unavailable; Core dialogue and every other capability continue with logging disabled.',
+      recovery: {
+        tool: 'ekko_repair_logs',
+        summary: 'Recreate the exact Profile log directory, verify it is writable, and resume file logging without restarting Ekko.',
+        steps: [
+          'Inspect the exact log target with ekko_diagnostics.',
+          'Release a file handle or repair permissions/type blockers only inside the Ekko-owned log path.',
+          'Call ekko_repair_logs for the affected Profile.',
+          'Accept recovery only when the built-in log directory self-check passes.',
+        ],
+        automatic: true,
+        target,
+      },
     })
   }
 
@@ -211,6 +237,44 @@ export class EkkoRecoveryService {
     return [incidentContext, restartContext].filter(Boolean).join('\n') || undefined
   }
 
+  runtimeDirective(profile = 'default'): AgentRuntimeRecoveryDirective {
+    const scope = profileScope(profile)
+    const incidents = this.options.diagnostics.snapshot().active
+      .filter(incident => incident.scope === 'global' || incident.scope === scope)
+    const automaticToolCalls = [...new Map(incidents.map(incident => {
+      const call = incident.component === 'database'
+        ? { name: 'ekko_repair_database', arguments: { strategy: 'retry' } }
+        : incident.component === 'skills'
+          ? { name: 'ekko_repair_skills', arguments: { profile } }
+          : incident.component === 'logs'
+            ? { name: 'ekko_repair_logs', arguments: { profile } }
+            : { name: 'ekko_self_check', arguments: { component: 'memory', profile } }
+      return [call.name, call] as const
+    })).values()]
+    return {
+      active: incidents.length > 0,
+      automaticToolCalls,
+      allowedToolNames: [
+        'ekko_diagnostics',
+        'ekko_database_schema',
+        'ekko_repair_skills',
+        'ekko_repair_logs',
+        'ekko_repair_database',
+        'ekko_self_check',
+        'terminal_exec',
+        'read_file',
+        'write_file',
+      ],
+      reminder: [
+        'Ekko runtime recovery guard: active capability incidents remain unresolved.',
+        'Continue diagnosis and repair now with the available recovery and filesystem tools.',
+        'Safe database retry and Profile Skill synchronization are automatic maintenance; do not ask the user for permission.',
+        'Only a database rebuild may wait for its existing explicit approval flow.',
+        'Do not answer memory availability or claim that memory is empty while persistent storage is unavailable.',
+      ].join('\n'),
+    }
+  }
+
   databaseSchema() {
     return structuredClone(EKKO_DATABASE_SCHEMA_BLUEPRINT)
   }
@@ -221,12 +285,15 @@ export class EkkoRecoveryService {
           ...this.checkSkills(profile).checks,
           ...this.checkDatabase().checks,
           ...this.checkMemory().checks,
+          ...this.checkLogs(profile).checks,
         ]
       : component === 'skills'
         ? this.checkSkills(profile).checks
         : component === 'database'
           ? this.checkDatabase().checks
-          : this.checkMemory().checks
+          : component === 'memory'
+            ? this.checkMemory().checks
+            : this.checkLogs(profile).checks
     return {
       ok: checks.every(check => check.ok),
       component,
@@ -251,6 +318,9 @@ export class EkkoRecoveryService {
     const memoryResult = component === 'all' || component === 'memory'
       ? this.selfCheck('memory', profile)
       : undefined
+    const logsResult = component === 'all' || component === 'logs'
+      ? this.selfCheck('logs', profile)
+      : undefined
     if (skillsResult?.ok) {
       for (const scope of [profileScope(profile), 'global'] as const) {
         const incident = this.options.diagnostics.get('skills', scope)
@@ -272,12 +342,26 @@ export class EkkoRecoveryService {
         this.options.diagnostics.resolve('memory', 'global', memoryResult, incident.incidentId)
       }
     }
+    if (logsResult?.ok) {
+      for (const scope of [profileScope(profile), 'global'] as const) {
+        const incident = this.options.diagnostics.get('logs', scope)
+        if (incident) {
+          this.options.diagnostics.resolve('logs', scope, logsResult, incident.incidentId)
+        }
+      }
+    }
     if (component === 'skills') return skillsResult!
     if (component === 'database') return databaseResult!
     if (component === 'memory') return memoryResult!
-    const checks = [...skillsResult!.checks, ...databaseResult!.checks, ...memoryResult!.checks]
+    if (component === 'logs') return logsResult!
+    const checks = [
+      ...skillsResult!.checks,
+      ...databaseResult!.checks,
+      ...memoryResult!.checks,
+      ...logsResult!.checks,
+    ]
     return {
-      ok: skillsResult!.ok && databaseResult!.ok && memoryResult!.ok,
+      ok: skillsResult!.ok && databaseResult!.ok && memoryResult!.ok && logsResult!.ok,
       component: 'all',
       checkedAt: new Date().toISOString(),
       checks,
@@ -285,6 +369,7 @@ export class EkkoRecoveryService {
         skills: skillsResult!.metadata,
         database: databaseResult!.metadata,
         memory: memoryResult!.metadata,
+        logs: logsResult!.metadata,
       },
     }
   }
@@ -316,6 +401,35 @@ export class EkkoRecoveryService {
       ...(check.sourceDirectory ? { sourceDirectory: check.sourceDirectory } : {}),
       targetDirectory: check.targetDirectory,
       selfCheck,
+    }
+  }
+
+  repairLogs(profile = 'default'): {
+    ok: boolean
+    targetDirectory: string
+    selfCheck: EkkoSelfCheckResult
+    error?: string
+  } {
+    const scope = profileScope(profile)
+    const incidentId = this.options.diagnostics.get('logs', scope)?.incidentId
+    let operationError: unknown
+    try {
+      this.options.directories.profileLogsDirectory(profile)
+    } catch (error) {
+      operationError = error
+      this.recordLogsFailure(profile, 'repair.create_profile_log_directory', error)
+    }
+    const selfCheck = this.selfCheck('logs', profile)
+    if (!operationError && selfCheck.ok) {
+      this.options.diagnostics.resolve('logs', scope, selfCheck, incidentId)
+      const globalIncident = this.options.diagnostics.get('logs', 'global')
+      if (globalIncident) this.options.diagnostics.resolve('logs', 'global', selfCheck, globalIncident.incidentId)
+    }
+    return {
+      ok: !operationError && selfCheck.ok,
+      targetDirectory: this.options.directories.profileLogsPath(profile),
+      selfCheck,
+      ...(operationError ? { error: operationError instanceof Error ? operationError.message : String(operationError) } : {}),
     }
   }
 
@@ -548,6 +662,39 @@ export class EkkoRecoveryService {
           detail: error instanceof Error ? error.message : String(error),
         }],
         metadata: { activeStorage: this.activeStorage },
+      }
+    }
+  }
+
+  private checkLogs(profile: string): EkkoSelfCheckResult {
+    const checkedAt = new Date().toISOString()
+    const targetDirectory = this.options.directories.profileLogsPath(profile)
+    try {
+      const stat = statSync(targetDirectory)
+      if (!stat.isDirectory()) throw new Error(`Ekko Profile log path is not a directory: ${targetDirectory}`)
+      accessSync(targetDirectory, constants.R_OK | constants.W_OK | constants.X_OK)
+      return {
+        ok: true,
+        component: 'logs',
+        checkedAt,
+        checks: [{
+          name: 'profile_log_directory_writable',
+          ok: true,
+          detail: `Profile log directory is writable: ${targetDirectory}`,
+        }],
+        metadata: { profile, targetDirectory },
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        component: 'logs',
+        checkedAt,
+        checks: [{
+          name: 'profile_log_directory_writable',
+          ok: false,
+          detail: error instanceof Error ? error.message : String(error),
+        }],
+        metadata: { profile, targetDirectory },
       }
     }
   }

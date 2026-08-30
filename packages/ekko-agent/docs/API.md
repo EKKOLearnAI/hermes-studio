@@ -595,6 +595,7 @@ export interface EkkoProfileAgentOptions {
   skills: EkkoSkillManager
   toolApprovals: () => EkkoToolApprovalService
   createRuntime: (options?: CreateEkkoRuntimeOptions) => AgentRuntime
+  onLogError?: (error: unknown) => void
 }
 
 export interface EkkoProfileAgentValidation {
@@ -1110,7 +1111,7 @@ export class EkkoDatabaseManager {
 ### `src/diagnostics.ts`
 
 ```ts
-export type EkkoCapability = 'skills' | 'database' | 'memory'
+export type EkkoCapability = 'skills' | 'database' | 'memory' | 'logs'
 
 export type EkkoDiagnosticScope = 'global' | `profile:${string}`
 
@@ -1396,6 +1397,7 @@ export interface EkkoFileLoggerOptions {
   directory: string
   maxBytes?: number
   now?: () => Date
+  onError?: (error: unknown) => void
 }
 
 export interface EkkoFileLogReaderOptions {
@@ -1584,6 +1586,7 @@ export interface MemoryServiceOptions {
   store?: MemoryStore
   enabled?: boolean
   warning?: string
+  storageMode?: 'persistent' | 'ephemeral'
   onWarning?: (error: unknown) => void
   recentMessageLimit?: number
   automaticRecallTokenBudget?: number
@@ -1603,6 +1606,7 @@ export class MemoryService {
   constructor(options: MemoryServiceOptions = {})
   configure(options: Pick< MemoryServiceOptions, | 'enabled' | 'recentMessageLimit' | 'automaticRecallTokenBudget' | 'searchResultLimit' >): void
   get isEnabled(): boolean
+  get toolUnavailableReason(): string | undefined
   async captureMessages(identity: MemoryRuntimeIdentity, messages: MemoryCaptureMessage[]): Promise<string[]>
   async retrieve(identity: MemoryRuntimeIdentity, queryText?: string, overrides: Partial<MemoryQuery> = {}): Promise<MemoryContext>
   async search(identity: MemoryRuntimeIdentity, query: MemoryQuery): Promise<MemoryQueryResult>
@@ -2455,7 +2459,7 @@ export const EKKO_DATABASE_SCHEMA_BLUEPRINT = { owner: 'ekko-agent compiled migr
 
 export type EkkoDatabaseRecoveryStrategy = 'retry' | 'rebuild'
 
-export type EkkoSelfCheckComponent = 'all' | 'skills' | 'database' | 'memory'
+export type EkkoSelfCheckComponent = 'all' | 'skills' | 'database' | 'memory' | 'logs'
 
 export interface EkkoRecoveryServiceOptions {
   diagnostics: EkkoDiagnosticsRegistry
@@ -2473,13 +2477,16 @@ export class EkkoRecoveryService {
   recordSkillsFailure(profile: string | undefined, operation: string, error: unknown): EkkoDiagnosticIncident
   recordDatabaseFailure(operation: string, error: unknown): EkkoDiagnosticIncident
   recordMemoryFailure(operation: string, error: unknown): EkkoDiagnosticIncident
+  recordLogsFailure(profile: string | undefined, operation: string, error: unknown): EkkoDiagnosticIncident
   configureMemorySelfCheck(check: () => { ok: boolean; detail: string }): void
   snapshot(): EkkoRecoverySnapshot
   temporaryContext(profile = 'default'): string | undefined
+  runtimeDirective(profile = 'default'): AgentRuntimeRecoveryDirective
   databaseSchema()
   selfCheck(component: EkkoSelfCheckComponent, profile = 'default'): EkkoSelfCheckResult
   selfCheckAndResolve(component: EkkoSelfCheckComponent, profile = 'default'): EkkoSelfCheckResult
   repairSkills(profile = 'default'): { ok: boolean sourceDirectory?: string targetDirectory: string selfCheck: EkkoSelfCheckResult }
+  repairLogs(profile = 'default'): { ok: boolean targetDirectory: string selfCheck: EkkoSelfCheckResult error?: string }
   repairDatabase(strategy: EkkoDatabaseRecoveryStrategy, confirmed = false): { ok: boolean strategy: EkkoDatabaseRecoveryStrategy backupPath?: string recoveredTables?: Array<{ table: string; rows: number }> skippedTables?: Array<{ table: string; reason: string }> restartRequired: boolean selfCheck: EkkoSelfCheckResult error?: string }
 }
 ```
@@ -2562,6 +2569,18 @@ export interface EkkoBackgroundContinuationContext {
   memoryPolicy: 'disabled'
 }
 
+export interface AgentRuntimeRecoveryToolCall {
+  name: string
+  arguments?: Record<string, unknown>
+}
+
+export interface AgentRuntimeRecoveryDirective {
+  active: boolean
+  automaticToolCalls: AgentRuntimeRecoveryToolCall[]
+  allowedToolNames: string[]
+  reminder: string
+}
+
 export interface AgentRuntimeOptions {
   profileId?: string
   modelClient?: ModelClient
@@ -2578,6 +2597,7 @@ export interface AgentRuntimeOptions {
   systemPrompt?: string
   runtimeInstructions?: string[]
   temporaryRuntimeInstructions?: () => string[]
+  recoveryDirective?: () => AgentRuntimeRecoveryDirective
   maxSteps?: number
   maxModelRetries?: number
   maxConsecutiveToolFailures?: number

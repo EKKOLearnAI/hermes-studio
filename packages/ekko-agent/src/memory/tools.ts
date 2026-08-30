@@ -54,6 +54,7 @@ class MemorySearchTool implements AgentTool {
   constructor(private readonly service: MemoryService) {}
 
   async execute(input: Record<string, unknown>, context?: AgentToolContext): Promise<AgentToolResult> {
+    if (this.service.toolUnavailableReason) return failure(this.service.toolUnavailableReason)
     const identity = runtimeIdentity(context)
     if (!identity) return failure('memory_search requires a sessionId.')
     const queryText = optionalString(input.queryText)
@@ -102,6 +103,7 @@ class MemoryGetTool implements AgentTool {
   constructor(private readonly service: MemoryService) {}
 
   async execute(input: Record<string, unknown>, context?: AgentToolContext): Promise<AgentToolResult> {
+    if (this.service.toolUnavailableReason) return failure(this.service.toolUnavailableReason)
     const id = optionalString(input.id)
     const identity = runtimeIdentity(context)
     if (id) {
@@ -195,6 +197,7 @@ class MemoryWriteTool implements AgentTool {
   constructor(private readonly service: MemoryService) {}
 
   async execute(input: Record<string, unknown>, context?: AgentToolContext): Promise<AgentToolResult> {
+    if (this.service.toolUnavailableReason) return failure(this.service.toolUnavailableReason)
     const identity = runtimeIdentity(context)
     if (!identity) return failure('memory_write requires a sessionId.')
     if (context?.memoryWritePolicy === 'explicit-only' && context.memoryExplicitIntent !== true) {
@@ -302,6 +305,7 @@ class MemoryForgetTool implements AgentTool {
   constructor(private readonly service: MemoryService) {}
 
   async execute(input: Record<string, unknown>, context?: AgentToolContext): Promise<AgentToolResult> {
+    if (this.service.toolUnavailableReason) return failure(this.service.toolUnavailableReason)
     const identity = runtimeIdentity(context)
     if (!identity) return failure('memory_forget requires a sessionId.')
     if (context?.memoryWritePolicy === 'explicit-only' && context.memoryExplicitIntent !== true) {

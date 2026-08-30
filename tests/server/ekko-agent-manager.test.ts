@@ -111,24 +111,7 @@ describe('GlobalEkkoAgent', () => {
       env: { NODE_ENV: 'test' },
     })
     const degradedAgent = getGlobalEkkoAgent()
-    let modelCall = 0
-    const repairClient: ModelClient = {
-      ...modelClient('unused'),
-      create: vi.fn(async () => {
-        modelCall += 1
-        return modelCall === 1
-          ? {
-              content: '',
-              toolCalls: [{
-                id: 'repair-database',
-                name: 'ekko_repair_database',
-                arguments: { strategy: 'retry' },
-              }],
-              finishReason: 'tool_calls',
-            }
-          : { content: 'database repaired' }
-      }),
-    }
+    const repairClient = modelClient('database repaired automatically')
 
     try {
       expect(degradedSetup.database.databasePath).toBe(':memory:')
@@ -138,7 +121,10 @@ describe('GlobalEkkoAgent', () => {
       await expect(degradedAgent.run({
         messages: ['Repair the persistent database.'],
         modelClient: repairClient,
-      })).resolves.toMatchObject({ output: { content: 'database repaired' } })
+      })).resolves.toMatchObject({ output: { content: 'database repaired automatically' } })
+      expect(vi.mocked(repairClient.create).mock.calls[0]?.[0]).toMatchObject({
+        toolChoice: undefined,
+      })
 
       const recoveredSetup = setupGlobalEkkoAgent()
       const recoveredAgent = getGlobalEkkoAgent()

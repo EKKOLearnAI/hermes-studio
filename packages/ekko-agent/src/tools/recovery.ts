@@ -14,6 +14,10 @@ interface RepairSkillsInput extends Record<string, unknown> {
   profile?: string
 }
 
+interface RepairLogsInput extends Record<string, unknown> {
+  profile?: string
+}
+
 interface RepairDatabaseInput extends Record<string, unknown> {
   strategy?: EkkoDatabaseRecoveryStrategy
   confirmed?: boolean
@@ -24,9 +28,35 @@ export function createRecoveryTools(recovery: EkkoRecoveryService): AgentTool[] 
     new EkkoDiagnosticsTool(recovery),
     new EkkoDatabaseSchemaTool(recovery),
     new EkkoRepairSkillsTool(recovery),
+    new EkkoRepairLogsTool(recovery),
     new EkkoRepairDatabaseTool(recovery),
     new EkkoSelfCheckTool(recovery),
   ]
+}
+
+class EkkoRepairLogsTool implements AgentTool<RepairLogsInput> {
+  readonly definition = {
+    name: 'ekko_repair_logs',
+    description: 'Repair the current Profile log directory and run a deterministic writable-directory self-check. Ekko Core remains available while logging is degraded.',
+    parameters: {
+      type: 'object',
+      properties: {
+        profile: { type: 'string', description: 'Profile to repair. Defaults to the current runtime Profile.' },
+      },
+      additionalProperties: false,
+    },
+  }
+
+  constructor(private readonly recovery: EkkoRecoveryService) {}
+
+  async execute(input: RepairLogsInput, context?: AgentToolContext): Promise<AgentToolResult> {
+    const profile = recoveryProfile(input.profile, context)
+    if (profile instanceof Error) return failure(undefined, profile.message)
+    const result = this.recovery.repairLogs(profile)
+    return result.ok
+      ? success(result)
+      : failure(result, result.error || 'Ekko log repair did not pass self-check.')
+  }
 }
 
 class EkkoDiagnosticsTool implements AgentTool {
@@ -119,8 +149,8 @@ class EkkoSelfCheckTool implements AgentTool<SelfCheckInput> {
     parameters: {
       type: 'object',
       properties: {
-        component: { type: 'string', enum: ['all', 'skills', 'database', 'memory'] },
-        profile: { type: 'string', description: 'Profile for the Skills check. Defaults to the current runtime Profile.' },
+        component: { type: 'string', enum: ['all', 'skills', 'database', 'memory', 'logs'] },
+        profile: { type: 'string', description: 'Profile for the Skills or Logs check. Defaults to the current runtime Profile.' },
       },
       additionalProperties: false,
     },
@@ -129,7 +159,7 @@ class EkkoSelfCheckTool implements AgentTool<SelfCheckInput> {
   constructor(private readonly recovery: EkkoRecoveryService) {}
 
   async execute(input: SelfCheckInput, context?: AgentToolContext): Promise<AgentToolResult> {
-    const component = ['skills', 'database', 'memory'].includes(String(input.component))
+    const component = ['skills', 'database', 'memory', 'logs'].includes(String(input.component))
       ? input.component as Exclude<EkkoSelfCheckComponent, 'all'>
       : 'all'
     const profile = recoveryProfile(input.profile, context)

@@ -43,6 +43,12 @@ export function buildMemoryContextPrompt(context: MemoryContext): string {
   appendNodes(sections, 'Relevant facts and decisions', context.relevantNodes.filter(node => !categorizedIds.has(node.id)))
   return [
     '## Memory Usage Rules',
+    ...(context.diagnostics.warnings.length
+      ? [
+          `Memory storage warnings: ${context.diagnostics.warnings.join('; ')}`,
+          'Do not interpret empty or missing results as proof that the user has no saved memories while storage is degraded.',
+        ]
+      : []),
     'The following content is only a partial automatic recall, not the complete memory store. Use it only when relevant; newer constraints and corrections override older preferences.',
     'When the user asks about personal information such as identity, name, location, relationships, preferences, habits, constraints, or long-term projects, inspect the automatically recalled cards first. If a current, conflict-free card directly answers the question, use it without searching again.',
     'If automatic recall has no direct answer, is incomplete, contains a conflict, or you are about to answer that you do not know or remember, call memory_search to verify. Prefer structured kinds when the information category is known; use queryText for open-ended questions. To enumerate the complete authorized store, call memory_search with all=true; never encode list-all intent in queryText. If the first search fails, adjust kinds or filters, or omit queryText to broaden the search. Never treat empty automatic recall as an empty memory store.',

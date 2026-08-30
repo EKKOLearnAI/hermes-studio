@@ -33,7 +33,11 @@ describe('Ekko capability recovery', () => {
 
     const setup = setupEkkoAgent({ baseDirectory, env: { NODE_ENV: 'test' } })
     const requests: ModelRequest[] = []
-    const runtime = setup.createRuntime({ modelClient: recordingClient(requests), memory: false })
+    const runtime = setup.createRuntime({
+      modelClient: recordingClient(requests),
+      memory: false,
+      recoveryDirective: inactiveRecoveryDirective,
+    })
     try {
       expect(setup.database.databasePath).toBe(setup.layout.databasePath)
       expect(setup.recovery.snapshot()).toMatchObject({
@@ -87,6 +91,64 @@ describe('Ekko capability recovery', () => {
     }
   })
 
+  it('keeps Core available when Profile Logs cannot initialize and resumes logging after repair', async () => {
+    const baseDirectory = await temporaryDirectory('ekko-recovery-logs-')
+    const initial = setupEkkoAgent({ baseDirectory, env: { NODE_ENV: 'test' } })
+    const logsDirectory = initial.layout.logsDirectory
+    const profileLogsDirectory = initial.default.layout.logDirectory
+    initial.close()
+    await rm(logsDirectory, { recursive: true })
+    await writeFile(logsDirectory, 'blocks the Ekko Logs directory', 'utf8')
+
+    const setup = setupEkkoAgent({ baseDirectory, env: { NODE_ENV: 'test' } })
+    const requests: ModelRequest[] = []
+    const runtime = setup.createRuntime({
+      modelClient: recordingClient(requests),
+      memory: false,
+      recoveryDirective: inactiveRecoveryDirective,
+    })
+    try {
+      expect(setup.recovery.snapshot()).toMatchObject({
+        coreAvailable: true,
+        status: 'degraded',
+        active: [expect.objectContaining({
+          component: 'logs',
+          scope: 'profile:default',
+          recovery: expect.objectContaining({
+            tool: 'ekko_repair_logs',
+            target: profileLogsDirectory,
+          }),
+        })],
+      })
+
+      await expect(runtime.run({ messages: ['Can Core still answer without file logs?'] }))
+        .resolves.toMatchObject({ output: { content: 'Core response' } })
+      expect(requests[0].tools).toEqual(expect.arrayContaining([
+        expect.objectContaining({ name: 'ekko_repair_logs' }),
+        expect.objectContaining({ name: 'ekko_self_check' }),
+      ]))
+
+      await expect(setup.tool.execute('ekko_repair_logs', {}, { profileId: 'default' }))
+        .resolves.toMatchObject({ ok: false })
+
+      await rm(logsDirectory)
+      await expect(setup.tool.execute('ekko_repair_logs', {}, { profileId: 'default' }))
+        .resolves.toMatchObject({
+          ok: true,
+          data: {
+            ok: true,
+            targetDirectory: profileLogsDirectory,
+            selfCheck: { ok: true, component: 'logs' },
+          },
+        })
+      expect(setup.recovery.snapshot().status).toBe('ok')
+      expect(setup.default.log.write({ category: 'system', event: 'logs.recovered' })).toBe(true)
+      expect(setup.default.log.query({ event: 'logs.recovered' })).toHaveLength(1)
+    } finally {
+      setup.close()
+    }
+  })
+
   it('falls back to ephemeral SQLite and repairs the persistent target with migrations', async () => {
     const baseDirectory = await temporaryDirectory('ekko-recovery-database-')
     const databasePath = join(baseDirectory, '.ekko', 'ekko.db')
@@ -100,7 +162,11 @@ describe('Ekko capability recovery', () => {
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     const setup = setupEkkoAgent({ baseDirectory, env: { NODE_ENV: 'test' } })
     const requests: ModelRequest[] = []
-    const runtime = setup.createRuntime({ modelClient: recordingClient(requests), memory: false })
+    const runtime = setup.createRuntime({
+      modelClient: recordingClient(requests),
+      memory: false,
+      recoveryDirective: inactiveRecoveryDirective,
+    })
     try {
       expect(setup.database.databasePath).toBe(':memory:')
       expect(setup.recovery.snapshot()).toMatchObject({
@@ -308,6 +374,10 @@ function recordingClient(requests: ModelRequest[]): ModelClient {
     },
     async *stream() {},
   }
+}
+
+function inactiveRecoveryDirective() {
+  return { active: false, automaticToolCalls: [], allowedToolNames: [], reminder: '' }
 }
 
 function diagnosticInput(error: Error) {

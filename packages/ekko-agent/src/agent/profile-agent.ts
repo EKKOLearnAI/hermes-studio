@@ -43,6 +43,7 @@ export interface EkkoProfileAgentOptions {
   skills: EkkoSkillManager
   toolApprovals: () => EkkoToolApprovalService
   createRuntime: (options?: CreateEkkoRuntimeOptions) => AgentRuntime
+  onLogError?: (error: unknown) => void
 }
 
 export interface EkkoProfileAgentValidation {
@@ -109,6 +110,7 @@ export class EkkoProfileAgent {
     this.log = new EkkoProfileLogManager(this.profile, new EkkoFileLogger({
       directory: options.layout.logDirectory,
       maxBytes: logConfig.maxBytes,
+      onError: options.onLogError,
     }))
     this.logger = this.log
     this.getToolApprovals = options.toolApprovals
@@ -131,7 +133,7 @@ function validateProfileAgent(
     throw new Error(`Ekko profile layout mismatch: ${options.profile} != ${options.layout.profile}`)
   }
   assertManagedDirectory('skill', options.layout.skillDirectory, options.skillsDirectory, false)
-  assertManagedDirectory('log', options.layout.logDirectory, options.logsDirectory)
+  assertManagedDirectory('log', options.layout.logDirectory, options.logsDirectory, false)
   assertManagedDirectory('workspace', options.layout.workspaceDirectory, options.workspaceDirectory)
   assertInsideRoot(options.layout.skillDirectory, options.rootDirectory)
   assertInsideRoot(options.layout.logDirectory, options.rootDirectory)
