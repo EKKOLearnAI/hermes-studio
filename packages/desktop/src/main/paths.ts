@@ -1,5 +1,5 @@
 import { app } from 'electron'
-import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import { homedir, platform } from 'node:os'
 import {
@@ -10,8 +10,6 @@ import {
 import { hermesAgentVersionFromRuntimeTag } from './runtime-version'
 
 const isWin = platform() === 'win32'
-const HERMES_HOME_FILE_MARKERS = ['config.yaml', '.env', 'SOUL.md', 'active_profile'] as const
-const HERMES_HOME_DIRECTORY_MARKERS = ['profiles', 'sessions', 'skills', 'memories', 'cron'] as const
 const DEFAULT_HERMES_AGENT_VERSION = '0.20.6'
 const PACKAGED_RUNTIME_RELEASE_NAME = 'runtime-release.json'
 const ACTIVE_RUNTIME_VERSION_NAME = 'active-version.json'
@@ -457,46 +455,24 @@ export function webUiHome(): string {
   return process.env.HERMES_WEB_UI_HOME?.trim() || resolve(homedir(), '.hermes-web-ui')
 }
 
-function isHermesDataHome(directory: string): boolean {
-  try {
-    if (!statSync(directory).isDirectory()) return false
-  } catch {
-    return false
-  }
-
-  const hasFileMarker = HERMES_HOME_FILE_MARKERS.some((marker) => {
-    try {
-      return statSync(join(directory, marker)).isFile()
-    } catch {
-      return false
-    }
-  })
-  if (hasFileMarker) return true
-
-  return HERMES_HOME_DIRECTORY_MARKERS.some((marker) => {
-    try {
-      return statSync(join(directory, marker)).isDirectory()
-    } catch {
-      return false
-    }
-  })
-}
-
 export function hermesHome(): string {
   const override = process.env.HERMES_HOME?.trim()
   if (override) return resolve(override)
 
-  const userHome = isWin ? process.env.USERPROFILE?.trim() || homedir() : homedir()
-  const defaultHome = resolve(userHome, '.hermes')
+  const defaultHome = resolve(homedir(), '.hermes')
 
   if (isWin) {
-    if (isHermesDataHome(defaultHome)) return defaultHome
+    const candidates = [
+      process.env.LOCALAPPDATA,
+      process.env.APPDATA,
+    ]
+      .map(value => value?.trim())
+      .filter((value): value is string => !!value)
+      .map(value => resolve(value, 'hermes'))
 
-    const localAppData = process.env.LOCALAPPDATA?.trim()
-    if (localAppData) return resolve(localAppData, 'hermes')
-
-    const appData = process.env.APPDATA?.trim()
-    if (appData) return resolve(appData, 'hermes')
+    for (const candidate of candidates) {
+      if (existsSync(candidate)) return candidate
+    }
   }
 
   return defaultHome

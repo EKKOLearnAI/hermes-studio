@@ -93,7 +93,7 @@ For an existing checkout, preserve local changes. Inspect `git status`, update o
 ## Installation-owned paths
 
 - Studio state: `HERMES_WEB_UI_HOME`, default `~/.hermes-web-ui`.
-- Hermes data: `HERMES_HOME`; default `~/.hermes` on macOS/Linux. Windows prefers `~/.hermes` when it contains recognizable Hermes data, then uses `%LOCALAPPDATA%\hermes` (or `%APPDATA%\hermes` when `LOCALAPPDATA` is unavailable).
+- Hermes data: `HERMES_HOME`; default `~/.hermes` on macOS/Linux, and an existing `%LOCALAPPDATA%\hermes` or `%APPDATA%\hermes` on Windows.
 - npm daemon PID, log, token, and database are stored under the Studio home.
 - Docker maps Hermes and Studio state to separate container directories even when both originate below `./hermes_data` on the host.
 
