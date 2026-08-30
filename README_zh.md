@@ -276,10 +276,7 @@ hermes-web-ui reset-default-login
 下载最新的 **Hermes Studio** 桌面安装包。
 
 桌面版会发布 macOS、Windows 和 Linux 构建；适用时会区分不同 CPU 架构。
-桌面应用内置 Studio 运行时，Hermes Agent 数据会保存到原生 Hermes 目录：
-
-- Windows：当 `~/.hermes` 包含可识别的 Hermes 数据时优先使用该目录；否则使用 `%LOCALAPPDATA%\hermes`（`LOCALAPPDATA` 不可用时回退到 `%APPDATA%\hermes`）
-- macOS/Linux：`~/.hermes`
+桌面应用内置 Studio 运行时；在 Windows、macOS 和 Linux 上，Hermes Agent 数据统一保存到 `~/.hermes`。
 
 桌面壳自身的 Studio 状态会单独保存到 `~/.hermes-web-ui`，除非设置了
 `HERMES_WEB_UI_HOME`。
@@ -368,7 +365,7 @@ Studio 启动后端聊天能力时，会优先使用包含 `run_agent.py` 的源
 | `MAX_DOWNLOAD_SIZE` | `200MB` | 最大文件下载大小。 |
 | `MAX_EDIT_SIZE` | `10MB` | 最大可编辑文件大小。 |
 | `WORKSPACE_BASE` | 当前用户 Home 目录 | Workspace 浏览根目录。 |
-| `HERMES_HOME` | 平台默认值 | Hermes 数据目录。Windows 优先使用包含可识别 Hermes 数据的 `~/.hermes`，然后使用 `%LOCALAPPDATA%\hermes`；macOS/Linux 使用 `~/.hermes`。 |
+| `HERMES_HOME` | `~/.hermes` | Windows、macOS 和 Linux 上的 Hermes 数据目录。 |
 | `HERMES_BIN` | `hermes` | 自定义 Hermes CLI 二进制路径。 |
 | `HERMES_AGENT_ROOT` | 自动发现 | 包含 `run_agent.py` 的 Hermes Agent 源码目录。 |
 | `HERMES_AGENT_BRIDGE_PYTHON` | 自动发现 | 用于启动 agent bridge 的 Python 解释器。 |

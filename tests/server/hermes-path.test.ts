@@ -1,5 +1,5 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
-import { tmpdir } from 'os'
+import { mkdirSync, mkdtempSync, rmSync } from 'fs'
+import { homedir, tmpdir } from 'os'
 import { join, resolve } from 'path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { detectHermesHome } from '../../packages/server/src/modules/hermes/services/runtime/path'
@@ -31,67 +31,34 @@ describe('Hermes path detection', () => {
     expect(detectHermesHome()).toBe(resolve(tempDir, 'custom-home'))
   })
 
-  it('uses ~/.hermes with a Hermes config before LOCALAPPDATA and APPDATA', () => {
+  it('always uses USERPROFILE/.hermes on Windows even when AppData Hermes directories exist', () => {
     Object.defineProperty(process, 'platform', { value: 'win32' })
     const userHermes = join(process.env.USERPROFILE!, '.hermes')
-    mkdirSync(userHermes, { recursive: true })
-    writeFileSync(join(userHermes, 'config.yaml'), 'model: test\n')
     process.env.LOCALAPPDATA = join(tempDir, 'Local')
     process.env.APPDATA = join(tempDir, 'Roaming')
+    mkdirSync(join(process.env.LOCALAPPDATA, 'hermes'), { recursive: true })
+    mkdirSync(join(process.env.APPDATA, 'hermes'), { recursive: true })
 
     expect(detectHermesHome()).toBe(resolve(userHermes))
   })
 
-  it('uses a legacy ~/.hermes with a known data directory', () => {
+  it('uses USERPROFILE/.hermes on Windows even when the directory does not exist', () => {
     Object.defineProperty(process, 'platform', { value: 'win32' })
     const userHermes = join(process.env.USERPROFILE!, '.hermes')
-    mkdirSync(join(userHermes, 'sessions'), { recursive: true })
-    process.env.LOCALAPPDATA = join(tempDir, 'Local')
 
     expect(detectHermesHome()).toBe(resolve(userHermes))
   })
 
-  it('ignores an empty ~/.hermes directory', () => {
+  it('falls back to the OS home on Windows when USERPROFILE is blank', () => {
     Object.defineProperty(process, 'platform', { value: 'win32' })
-    const userHermes = join(process.env.USERPROFILE!, '.hermes')
-    const localHermes = join(tempDir, 'Local', 'hermes')
-    mkdirSync(userHermes, { recursive: true })
-    process.env.LOCALAPPDATA = join(tempDir, 'Local')
+    process.env.USERPROFILE = '   '
 
-    expect(detectHermesHome()).toBe(resolve(localHermes))
+    expect(detectHermesHome()).toBe(resolve(homedir(), '.hermes'))
   })
 
-  it('ignores ~/.hermes with unrelated entries or marker names of the wrong type', () => {
-    Object.defineProperty(process, 'platform', { value: 'win32' })
-    const userHermes = join(process.env.USERPROFILE!, '.hermes')
-    const localHermes = join(tempDir, 'Local', 'hermes')
-    mkdirSync(join(userHermes, 'config.yaml'), { recursive: true })
-    writeFileSync(join(userHermes, 'notes.txt'), 'not Hermes data\n')
-    process.env.LOCALAPPDATA = join(tempDir, 'Local')
+  it('uses the OS home on non-Windows platforms', () => {
+    Object.defineProperty(process, 'platform', { value: 'linux' })
 
-    expect(detectHermesHome()).toBe(resolve(localHermes))
-  })
-
-  it('falls back to Windows LOCALAPPDATA when ~/.hermes is missing', () => {
-    Object.defineProperty(process, 'platform', { value: 'win32' })
-    const localHermes = join(tempDir, 'Local', 'hermes')
-    process.env.LOCALAPPDATA = join(tempDir, 'Local')
-    process.env.APPDATA = join(tempDir, 'Roaming')
-
-    expect(detectHermesHome()).toBe(resolve(localHermes))
-  })
-
-  it('falls back to Windows APPDATA when LOCALAPPDATA is unavailable', () => {
-    Object.defineProperty(process, 'platform', { value: 'win32' })
-    const roamingHermes = join(tempDir, 'Roaming', 'hermes')
-    process.env.APPDATA = join(tempDir, 'Roaming')
-
-    expect(detectHermesHome()).toBe(resolve(roamingHermes))
-  })
-
-  it('uses ~/.hermes on Windows when AppData environment variables are unavailable', () => {
-    Object.defineProperty(process, 'platform', { value: 'win32' })
-
-    expect(detectHermesHome()).toBe(resolve(process.env.USERPROFILE!, '.hermes'))
+    expect(detectHermesHome()).toBe(resolve(homedir(), '.hermes'))
   })
 })

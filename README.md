@@ -271,10 +271,7 @@ Download the latest **Hermes Studio** desktop installer from
 
 Desktop builds are published for macOS, Windows, and Linux, with separate
 architecture assets where applicable. The desktop app bundles the Studio
-runtime and stores Hermes Agent data in the native Hermes location:
-
-- Windows: `~/.hermes` when it contains recognizable Hermes data; otherwise `%LOCALAPPDATA%\hermes` (falls back to `%APPDATA%\hermes` when `LOCALAPPDATA` is unavailable)
-- macOS/Linux: `~/.hermes`
+runtime and stores Hermes Agent data in `~/.hermes` on Windows, macOS, and Linux.
 
 The desktop wrapper stores its own Studio state separately in
 `~/.hermes-web-ui` unless `HERMES_WEB_UI_HOME` is set.
@@ -366,7 +363,7 @@ These variables configure Hermes Studio, its local Hermes runtime integration, a
 | `MAX_DOWNLOAD_SIZE` | `200MB` | Maximum file download size. |
 | `MAX_EDIT_SIZE` | `10MB` | Maximum editable file size. |
 | `WORKSPACE_BASE` | current user's home directory | Base directory for workspace browsing. |
-| `HERMES_HOME` | platform default | Hermes data home. Windows prefers `~/.hermes` when it contains recognizable Hermes data, then uses `%LOCALAPPDATA%\hermes`; macOS/Linux uses `~/.hermes`. |
+| `HERMES_HOME` | `~/.hermes` | Hermes data home on Windows, macOS, and Linux. |
 | `HERMES_BIN` | `hermes` | Custom Hermes CLI binary path. |
 | `HERMES_AGENT_ROOT` | auto-discovered | Hermes Agent source checkout containing `run_agent.py`. |
 | `HERMES_AGENT_BRIDGE_PYTHON` | auto-discovered | Python interpreter used to launch the agent bridge. |

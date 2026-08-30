@@ -1,53 +1,20 @@
 /**
  * Hermes 路径检测工具 - 跨平台兼容
  *
- * Hermes 数据目录在不同平台上的位置：
- * - Windows 原生安装: ~/.hermes with recognizable Hermes data, otherwise %LOCALAPPDATA%\hermes
- * - Linux/macOS/WSL2: ~/.hermes
+ * Hermes 数据目录在所有平台上的默认位置：~/.hermes
  * - 用户自定义: HERMES_HOME 环境变量
  */
 
-import { statSync } from 'fs'
 import { realpath } from 'fs/promises'
 import { basename, dirname, isAbsolute, relative, resolve, join, win32 as pathWin32 } from 'path'
 import { homedir } from 'os'
 
-const HERMES_HOME_FILE_MARKERS = ['config.yaml', '.env', 'SOUL.md', 'active_profile'] as const
-const HERMES_HOME_DIRECTORY_MARKERS = ['profiles', 'sessions', 'skills', 'memories', 'cron'] as const
-
-function isHermesDataHome(directory: string): boolean {
-  try {
-    if (!statSync(directory).isDirectory()) return false
-  } catch {
-    return false
-  }
-
-  const hasFileMarker = HERMES_HOME_FILE_MARKERS.some((marker) => {
-    try {
-      return statSync(join(directory, marker)).isFile()
-    } catch {
-      return false
-    }
-  })
-  if (hasFileMarker) return true
-
-  return HERMES_HOME_DIRECTORY_MARKERS.some((marker) => {
-    try {
-      return statSync(join(directory, marker)).isDirectory()
-    } catch {
-      return false
-    }
-  })
-}
-
 /**
- * 智能检测 Hermes 数据目录
+ * 获取 Hermes 数据目录
  *
- * 检测优先级：
+ * 解析优先级：
  * 1. HERMES_HOME 环境变量（用户自定义）
- * 2. Windows: ~/.hermes with recognizable Hermes data
- * 3. Windows: %LOCALAPPDATA%\hermes, or %APPDATA%\hermes when LOCALAPPDATA is unavailable
- * 4. 默认: ~/.hermes（Linux/macOS/WSL2）
+ * 2. 默认: ~/.hermes（Windows/Linux/macOS/WSL2）
  *
  * @returns Hermes 数据目录的绝对路径
  */
@@ -60,21 +27,7 @@ export function detectHermesHome(): string {
   const userHome = process.platform === 'win32'
     ? process.env.USERPROFILE?.trim() || homedir()
     : homedir()
-  const defaultHome = resolve(userHome, '.hermes')
-
-  // 2. Windows：优先复用用户主目录中有 Hermes 标志的 CLI 数据。
-  if (process.platform === 'win32') {
-    if (isHermesDataHome(defaultHome)) return defaultHome
-
-    const localAppData = process.env.LOCALAPPDATA?.trim()
-    if (localAppData) return resolve(localAppData, 'hermes')
-
-    const appData = process.env.APPDATA?.trim()
-    if (appData) return resolve(appData, 'hermes')
-  }
-
-  // 4. Linux/macOS，或 Windows 缺少 AppData 环境变量：~/.hermes
-  return defaultHome
+  return resolve(userHome, '.hermes')
 }
 
 /**

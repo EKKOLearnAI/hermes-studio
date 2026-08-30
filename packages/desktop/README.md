@@ -28,11 +28,7 @@ Use `hermes-studio cli -h` for Hermes Agent CLI help and
 
 ## Data directories
 
-Hermes Agent data is stored in the same platform-specific location as native
-Hermes installs:
-
-- Windows: `~/.hermes` when it contains recognizable Hermes data; otherwise `%LOCALAPPDATA%\hermes` (falls back to `%APPDATA%\hermes` when `LOCALAPPDATA` is unavailable)
-- macOS/Linux: `~/.hermes`
+Hermes Agent data is stored in `~/.hermes` on Windows, macOS, and Linux.
 
 The desktop wrapper's own Web UI state is stored separately in
 `~/.hermes-web-ui` unless `HERMES_WEB_UI_HOME` is set.
