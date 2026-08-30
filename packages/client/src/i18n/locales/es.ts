@@ -3018,6 +3018,11 @@ jobTriggered: 'Job ejecutado',
   },
 
   changelog: {
+    new_0_7_11_1: 'Ekko ahora procesa respuestas de razonamiento y llamadas de herramientas de DeepSeek tanto en cargas compatibles con OpenAI heredadas como de estilo Responses (#2788)',
+    new_0_7_11_2: 'El puente de Agent ahora recupera inicios de runtime envueltos por shell, ignora procesos descendientes no relacionados y espera la señal real de disponibilidad del broker (#2789)',
+    new_0_7_11_3: 'Las aprobaciones, preguntas y selecciones pendientes muestran cuentas regresivas sincronizadas, se reanudan de forma segura y evitan errores de tiempo de espera obsoletos en el chat y el chat grupal (#2790)',
+    new_0_7_11_4: 'Las actualizaciones reemplazan una sola vez el directorio de Skills por los Skills incluidos y guardan un marcador atómico, evitando fallos de Windows al borrar directorios Git en inicios posteriores (#2792)',
+    new_0_7_11_5: 'El inicio está protegido frente a solicitudes WebSocket malformadas y fallos de registro, Runtime, Ekko o inicialización de base de datos; Desktop abre rápidamente y recupera salidas del backend o renderer sin cambiar los flujos correctos (#2792)',
     new_0_7_1_1: 'Las operaciones de escritura y olvido de memoria de Ekko ahora actualizan el almacenamiento directamente, sin aprobación del modelo ni una cola de revisión en segundo plano que pueda agotar el tiempo o restaurar tarjetas antiguas (#2785)',
     new_0_7_1_2: 'Se eliminó el proceso oculto de resumen continuo de sesiones junto con sus revisores, configuración, API, estado de interfaz y tablas de base de datos (#2785)',
     new_0_7_1_3: 'Listar y borrar todas las memorias ahora funciona de forma fiable; los fallos de herramientas de memoria detienen la ejecución con un error claro, y las actualizaciones de base de datos pueden reintentar bloqueos, respaldar, reconstruir y recuperar datos compatibles (#2785)',

@@ -3018,6 +3018,11 @@ jobTriggered: 'Job ausgelost',
   },
 
   changelog: {
+    new_0_7_11_1: 'Ekko verarbeitet jetzt DeepSeek-Reasoning-Antworten und Tool-Aufrufe sowohl in älteren als auch in Responses-kompatiblen OpenAI-Payloads (#2788)',
+    new_0_7_11_2: 'Die Agent Bridge stellt jetzt shell-umschlossene Runtime-Starts wieder her, ignoriert unabhängige Nachfolgeprozesse und wartet auf das echte Broker-Bereitschaftssignal (#2789)',
+    new_0_7_11_3: 'Ausstehende Freigaben, Fragen und Auswahlen zeigen jetzt synchronisierte Countdowns, werden sicher fortgesetzt und vermeiden veraltete Zeitüberschreitungsfehler in Chat und Gruppenchat (#2790)',
+    new_0_7_11_4: 'Bei Upgrades wird das Skill-Verzeichnis einmalig durch gebündelte Skills ersetzt und eine atomare Abschlussmarkierung gespeichert, wodurch Windows-Abstürze beim Löschen von Git-Verzeichnissen bei späteren Starts vermieden werden (#2792)',
+    new_0_7_11_5: 'Der Start ist gegen fehlerhafte WebSocket-Anfragen sowie Fehler bei Logging-, Runtime-, Ekko- oder Datenbankinitialisierung abgesichert; Desktop öffnet sich sofort und stellt Backend- oder Renderer-Ausfälle wieder her, ohne erfolgreiche Abläufe zu ändern (#2792)',
     new_0_7_1_1: 'Ekko schreibt und vergisst Erinnerungen jetzt direkt, ohne Modellfreigabe oder Hintergrundprüfung, die durch Zeitüberschreitungen alte Karten wiederherstellen konnte (#2785)',
     new_0_7_1_2: 'Die verborgene fortlaufende Sitzungszusammenfassung sowie zugehörige Prüfprozesse, Konfiguration, APIs, UI-Zustände und Datenbanktabellen wurden entfernt (#2785)',
     new_0_7_1_3: 'Alle Erinnerungen lassen sich zuverlässig auflisten und löschen; fehlgeschlagene Speicherwerkzeuge stoppen den Lauf mit einem klaren Fehler, und Datenbank-Upgrades unterstützen Sperrwiederholungen, Sicherung, Neuaufbau und kompatible Datenwiederherstellung (#2785)',

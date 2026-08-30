@@ -3455,6 +3455,11 @@ export default {
 
   // Changelog
   changelog: {
+    new_0_7_11_1: 'Ekko now handles DeepSeek reasoning responses and tool calls across both legacy and Responses-style OpenAI-compatible payloads (#2788)',
+    new_0_7_11_2: 'The Agent bridge now recovers shell-wrapped runtime launches, ignores unrelated descendant processes, and waits for the real broker readiness signal (#2789)',
+    new_0_7_11_3: 'Pending approvals, questions, and selections now show synchronized countdowns, resume safely, and avoid stale timeout errors across chat and group chat (#2790)',
+    new_0_7_11_4: 'Upgrades now perform a one-time replacement of the Skill directory with bundled Skills and persist an atomic marker, avoiding Windows Git directory deletion crashes on later launches (#2792)',
+    new_0_7_11_5: 'Startup is hardened against malformed WebSocket requests and logging, Runtime, Ekko, or database initialization failures; Desktop opens promptly and recovers backend or renderer exits without altering successful flows (#2792)',
     new_0_7_1_1: 'Ekko memory writes and forget requests now update stored memory directly, without model approval or a background review queue that can time out or restore stale cards (#2785)',
     new_0_7_1_2: 'The hidden rolling session-summary pipeline and its review workers, configuration, APIs, UI state, and database tables have been removed (#2785)',
     new_0_7_1_3: 'List-all and forget-all memory requests now behave reliably, failed memory tools stop the run with a clear error, and database upgrades can retry locks, back up the original database, rebuild the schema, and recover compatible data (#2785)',

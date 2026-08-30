@@ -3018,6 +3018,11 @@ jobTriggered: 'Job declenche',
   },
 
   changelog: {
+    new_0_7_11_1: 'Ekko gère désormais les réponses de raisonnement et les appels d’outils DeepSeek dans les charges compatibles OpenAI historiques comme au format Responses (#2788)',
+    new_0_7_11_2: 'Le pont Agent récupère désormais les lancements de runtime enveloppés par un shell, ignore les processus descendants sans rapport et attend le véritable signal de disponibilité du broker (#2789)',
+    new_0_7_11_3: 'Les approbations, questions et sélections en attente affichent désormais des comptes à rebours synchronisés, reprennent sans risque et évitent les erreurs de délai obsolètes dans les discussions et discussions de groupe (#2790)',
+    new_0_7_11_4: 'Les mises à niveau remplacent une seule fois le dossier Skills par les Skills intégrés et enregistrent un marqueur atomique, évitant les plantages Windows lors de la suppression de dossiers Git aux démarrages suivants (#2792)',
+    new_0_7_11_5: 'Le démarrage résiste aux requêtes WebSocket malformées et aux échecs de journalisation, Runtime, Ekko ou initialisation de base de données ; Desktop s’ouvre rapidement et récupère les arrêts du backend ou du renderer sans modifier les parcours réussis (#2792)',
     new_0_7_1_1: 'Les écritures et suppressions de mémoire Ekko mettent désormais directement à jour le stockage, sans approbation du modèle ni file de révision en arrière-plan susceptible d’expirer ou de restaurer d’anciennes cartes (#2785)',
     new_0_7_1_2: 'Le pipeline masqué de résumé continu des sessions ainsi que ses tâches de révision, sa configuration, ses API, son état d’interface et ses tables de base de données ont été supprimés (#2785)',
     new_0_7_1_3: 'La liste et l’effacement de toutes les mémoires sont désormais fiables ; un outil mémoire en échec arrête l’exécution avec une erreur claire, et les mises à niveau de base de données peuvent réessayer les verrous, sauvegarder, reconstruire et récupérer les données compatibles (#2785)',
