@@ -5,7 +5,7 @@ import { spawn, type ChildProcess } from 'child_process'
 import { createSession, addMessage, getSession, updateSession, updateSessionStats } from '../../../studio/public/sessions'
 import type { ApiMode, CodingAgentImageInput } from '../../protocol/types'
 import { logger } from '../../../studio/public/logging'
-import { normalizeTokenUsage, recordSessionUsage } from '../../../studio/public/usage'
+import { estimateSessionContextTokens, normalizeTokenUsage, recordSessionUsage } from '../../../studio/public/usage'
 import {
   applyResponseStreamEvent,
   calcAndUpdateUsage,
@@ -1174,12 +1174,20 @@ export class CodingAgentRunManager {
     }
     const usage = await calcAndUpdateUsage(run.launch.sessionId, run.state, emitUsage, {
       nativeSource: 'coding_agent',
+      emit: false,
     })
-    const contextTokens = usage.contextInputTokens != null || usage.contextOutputTokens != null
-      ? (usage.contextInputTokens || 0) + (usage.contextOutputTokens || 0)
-      : undefined
+    const contextTokens = await estimateSessionContextTokens(run.launch.sessionId)
     if (contextTokens != null && contextTokens > 0) {
       updateContextTokenUsage(run.launch.sessionId, run.state, emitUsage, contextTokens, usage)
+    } else {
+      // Keep the last known context value when the local estimate is
+      // unavailable; a model-call usage row is not a context-window size.
+      emitUsage('usage.updated', {
+        event: 'usage.updated',
+        session_id: run.launch.sessionId,
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+      })
     }
   }
 

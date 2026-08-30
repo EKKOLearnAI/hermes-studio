@@ -1149,6 +1149,12 @@ describe('coding agent run state', () => {
       workspaceDir: process.cwd(),
       state,
     })
+    addMessage({
+      session_id: chatSessionId,
+      role: 'user',
+      content: 'This earlier turn is intentionally much longer than the final model-call usage.',
+      timestamp: Math.floor(Date.now() / 1000),
+    })
     const run = (manager as any).runs.get(agentSessionId)
     run.printResponseId = 'resp_codex_1'
     run.printMessageId = 'msg_resp_codex_1'
@@ -1184,9 +1190,13 @@ describe('coding agent run state', () => {
 
     expect(emitted.map(event => event.event)).toContain('message.delta')
     expect(emitted.map(event => event.event)).toContain('usage.updated')
-    expect(emitted.find(event => event.event === 'usage.updated' && event.payload.contextTokens != null)?.payload).toEqual(expect.objectContaining({
+    const usageUpdates = emitted.filter(event => event.event === 'usage.updated')
+    expect(usageUpdates).toHaveLength(1)
+    const contextUpdate = emitted.find(event => event.event === 'usage.updated' && event.payload.contextTokens != null)?.payload
+    expect(contextUpdate).toEqual(expect.objectContaining({
       contextTokens: expect.any(Number),
     }))
+    expect(contextUpdate.contextTokens).toBeGreaterThan(19)
     expect(emitted.find(event => event.event === 'run.completed')?.payload).not.toHaveProperty('usage')
     const eventNames = emitted.map(event => event.event)
     expect(eventNames.lastIndexOf('usage.updated')).toBeLessThan(eventNames.indexOf('run.completed'))
