@@ -48,5 +48,13 @@ describe('Studio crash isolation wiring', () => {
     expect(logging).toContain("pino.destination({ dest: 2, sync: true })")
     expect(client).toContain('app.config.errorHandler')
     expect(client).toContain('mountApp().catch')
+
+    const runtimeErrorHandler = client.slice(
+      client.indexOf('app.config.errorHandler'),
+      client.indexOf('app.use(createPinia())'),
+    )
+    const mountFailureHandler = client.slice(client.indexOf('mountApp().catch'))
+    expect(runtimeErrorHandler).not.toContain('renderFatalError')
+    expect(mountFailureHandler).toContain('renderFatalError(error)')
   })
 })

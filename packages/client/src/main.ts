@@ -58,7 +58,6 @@ async function mountApp(): Promise<void> {
   const app = createApp(App)
   app.config.errorHandler = (error, _instance, info) => {
     console.error(`[client] uncaught Vue error (${info})`, error)
-    renderFatalError(error)
   }
   app.use(createPinia())
   app.use(i18n)
