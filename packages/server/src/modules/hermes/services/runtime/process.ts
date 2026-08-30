@@ -2,6 +2,10 @@ import { execFile, spawn } from 'child_process'
 import type { ChildProcess, ExecFileOptions, SpawnOptions } from 'child_process'
 import { existsSync } from 'fs'
 import { basename, dirname, resolve } from 'path'
+import {
+  windowsCmdShimExecution,
+  windowsCommandNeedsShell,
+} from '../../../studio/public/windows-command'
 
 export interface HermesInvocation {
   command: string
@@ -47,11 +51,21 @@ export function execHermesWithBin(
   options?: ExecFileOptions,
 ): Promise<HermesExecResult> {
   const invocation = resolveHermesInvocation(hermesBin)
+  const invocationArgs = [...invocation.argsPrefix, ...args]
+  const execution = process.platform === 'win32' && windowsCommandNeedsShell(invocation.command)
+    ? windowsCmdShimExecution(invocation.command, invocationArgs)
+    : { command: invocation.command, args: invocationArgs }
   return new Promise((resolveExec, rejectExec) => {
     execFile(
-      invocation.command,
-      [...invocation.argsPrefix, ...args],
-      { ...withWindowsHide(options), encoding: 'utf8' },
+      execution.command,
+      execution.args,
+      {
+        ...withWindowsHide(options),
+        encoding: 'utf8',
+        ...('windowsVerbatimArguments' in execution
+          ? { windowsVerbatimArguments: execution.windowsVerbatimArguments }
+          : {}),
+      },
       (error, stdout, stderr) => {
         if (error) {
           rejectExec(Object.assign(error, { stdout, stderr }))
@@ -73,7 +87,16 @@ export function spawnHermesWithBin(
   options?: SpawnOptions,
 ): ChildProcess {
   const invocation = resolveHermesInvocation(hermesBin)
-  return spawn(invocation.command, [...invocation.argsPrefix, ...args], withWindowsHide(options))
+  const invocationArgs = [...invocation.argsPrefix, ...args]
+  const execution = process.platform === 'win32' && windowsCommandNeedsShell(invocation.command)
+    ? windowsCmdShimExecution(invocation.command, invocationArgs)
+    : { command: invocation.command, args: invocationArgs }
+  return spawn(execution.command, execution.args, {
+    ...withWindowsHide(options),
+    ...('windowsVerbatimArguments' in execution
+      ? { windowsVerbatimArguments: execution.windowsVerbatimArguments }
+      : {}),
+  })
 }
 
 export function spawnHermes(args: readonly string[], options?: SpawnOptions): ChildProcess {

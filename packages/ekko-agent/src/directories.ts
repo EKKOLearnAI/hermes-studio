@@ -23,6 +23,7 @@ const BUILTIN_SKILL_MANIFEST_FILENAME = '.ekko-builtin-skills.json'
 const BUILTIN_SKILL_MANIFEST_OWNER = 'ekko-agent'
 const BUILTIN_SKILL_HASH_IGNORED_FILENAMES = new Set(['.DS_Store', 'Thumbs.db'])
 const LEGACY_HERMES_SKILL_CLEANUP_FILENAME = '.ekko-hermes-skill-cleanup-v2.json'
+const SKILL_RESET_QUARANTINE_PREFIX = '.ekko-skills-reset-'
 
 interface BuiltinSkillManifestEntry {
   owner?: string
@@ -82,6 +83,7 @@ export class EkkoDirectoryManager {
   initialize(options: EkkoDirectoryInitializationOptions = {}): EkkoDirectoryLayout {
     this.builtinSkills = EkkoBuiltinSkillSynchronizer.createDefault()
     this.initializeConfigDirectory()
+    this.cleanupSkillResetQuarantines()
     if (options.hermesRootDirectory) {
       this.resetLegacySkillsDirectory(options.hermesRootDirectory)
     } else {
@@ -189,12 +191,14 @@ export class EkkoDirectoryManager {
       throw new Error('Bundled Ekko Skills are unavailable; refusing to reset the existing Skill directory')
     }
     const profiles = new Set(['default', ...this.profileNames()])
-    rmSync(this.skillsDirectory, {
-      recursive: true,
-      force: true,
-      maxRetries: 5,
-      retryDelay: 200,
-    })
+    if (!this.quarantineSkillsDirectoryForReset()) {
+      // A Windows process can temporarily deny both deletion and rename. Keep
+      // Ekko available for this run and retry the full reset next startup; no
+      // migration marker is written until the old directory is detached.
+      for (const profile of profiles) this.profileSkillsDirectory(profile)
+      return
+    }
+
     mkdirSync(this.skillsDirectory, { recursive: true })
     for (const profile of profiles) this.profileSkillsDirectory(profile)
     const marker = `${JSON.stringify({
@@ -212,7 +216,68 @@ export class EkkoDirectoryManager {
       } catch {
         // Preserve the marker write failure that caused the cleanup attempt.
       }
-      throw error
+      // The marker is only an optimization that prevents repeating this safe,
+      // idempotent migration. Failure to persist it must not make Ekko
+      // unavailable when its config/database directories remain usable.
+      console.warn(
+        `[ekko-agent] failed to persist legacy Skill migration marker at ${cleanupPath}: ` +
+        `${error instanceof Error ? error.message : String(error)}`,
+      )
+    }
+  }
+
+  /**
+   * Atomically removes the complete active Skills tree before recreating it.
+   * Deleting the detached tree is best-effort because Windows scanners can
+   * keep individual files open even after the active path has been reset.
+   */
+  private quarantineSkillsDirectoryForReset(): boolean {
+    if (!existsSync(this.skillsDirectory)) return true
+    const quarantineDirectory = join(
+      this.rootDirectory,
+      `${SKILL_RESET_QUARANTINE_PREFIX}${randomUUID()}`,
+    )
+    try {
+      renameSync(this.skillsDirectory, quarantineDirectory)
+    } catch (error) {
+      if (!isTransientWindowsFilesystemError(error)) throw error
+      console.warn(
+        `[ekko-agent] Skill reset was deferred because Windows denied access to ${this.skillsDirectory}: ` +
+        `${error instanceof Error ? error.message : String(error)}`,
+      )
+      return false
+    }
+
+    this.removeSkillResetQuarantine(quarantineDirectory)
+    return true
+  }
+
+  private cleanupSkillResetQuarantines(): void {
+    let entries
+    try {
+      entries = readdirSync(this.rootDirectory, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory() || !entry.name.startsWith(SKILL_RESET_QUARANTINE_PREFIX)) continue
+      this.removeSkillResetQuarantine(join(this.rootDirectory, entry.name))
+    }
+  }
+
+  private removeSkillResetQuarantine(directory: string): void {
+    try {
+      rmSync(directory, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 200,
+      })
+    } catch (error) {
+      console.warn(
+        `[ekko-agent] detached legacy Skill directory will be cleaned on a later startup (${directory}): ` +
+        `${error instanceof Error ? error.message : String(error)}`,
+      )
     }
   }
 }
@@ -432,4 +497,9 @@ function isPlainDirectory(path: string): boolean {
 
 function isErrorWithCode(error: unknown, code: string): error is NodeJS.ErrnoException {
   return error instanceof Error && 'code' in error && error.code === code
+}
+
+function isTransientWindowsFilesystemError(error: unknown): boolean {
+  if (process.platform !== 'win32' || !(error instanceof Error) || !('code' in error)) return false
+  return ['EACCES', 'EBUSY', 'EPERM'].includes(String(error.code))
 }

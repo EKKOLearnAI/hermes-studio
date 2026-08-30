@@ -96,6 +96,34 @@ describe('Hermes process invocation', () => {
     }
   })
 
+  it('runs a standalone Windows hermes.cmd launcher through cmd.exe', async () => {
+    setPlatform('win32')
+    const root = mkdtempSync(join(tmpdir(), 'hermes-process-'))
+    try {
+      const scripts = join(root, 'Scripts')
+      mkdirSync(scripts)
+      const hermes = join(scripts, 'hermes.cmd')
+      writeFileSync(hermes, '@echo off\r\n')
+      const { execHermesWithBin } = await import('../../packages/server/src/modules/hermes/services/runtime/process')
+
+      await execHermesWithBin(hermes, ['profile', 'list'])
+
+      expect(execFileCalls[0]).toMatchObject({
+        command: process.env.comspec || 'cmd.exe',
+        args: expect.arrayContaining(['/d', '/s', '/c']),
+        options: expect.objectContaining({
+          windowsHide: true,
+          windowsVerbatimArguments: true,
+        }),
+      })
+      expect(execFileCalls[0].args.at(-1)).toContain('hermes.cmd')
+      expect(execFileCalls[0].args.at(-1)).toContain('profile')
+      expect(execFileCalls[0].args.at(-1)).toContain('list')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it('keeps normal Hermes command execution unchanged on non-Windows platforms', async () => {
     setPlatform('darwin')
     const { execHermesWithBin } = await import('../../packages/server/src/modules/hermes/services/runtime/process')
@@ -120,5 +148,32 @@ describe('Hermes process invocation', () => {
       args: ['-m', 'hermes_cli.main', 'gateway', 'run'],
       options: expect.objectContaining({ windowsHide: true }),
     })
+  })
+
+  it('spawns a standalone Windows hermes.cmd gateway through cmd.exe', async () => {
+    setPlatform('win32')
+    const root = mkdtempSync(join(tmpdir(), 'hermes-process-'))
+    try {
+      const scripts = join(root, 'Scripts')
+      mkdirSync(scripts)
+      const hermes = join(scripts, 'hermes.cmd')
+      writeFileSync(hermes, '@echo off\r\n')
+      const { spawnHermesWithBin } = await import('../../packages/server/src/modules/hermes/services/runtime/process')
+
+      spawnHermesWithBin(hermes, ['gateway', 'run'])
+
+      expect(spawnCalls[0]).toMatchObject({
+        command: process.env.comspec || 'cmd.exe',
+        args: expect.arrayContaining(['/d', '/s', '/c']),
+        options: expect.objectContaining({
+          windowsHide: true,
+          windowsVerbatimArguments: true,
+        }),
+      })
+      expect(spawnCalls[0].args.at(-1)).toContain('gateway')
+      expect(spawnCalls[0].args.at(-1)).toContain('run')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 })
