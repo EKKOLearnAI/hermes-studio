@@ -3629,6 +3629,7 @@ export const useChatStore = defineStore('chat', () => {
         if (data.session_id !== sid) return
         const target = sessions.value.find(s => s.id === sid)
         if (!target) return
+        markSessionPersisted(sid)
 
         if (data.isWorking) serverWorking.value.add(sid)
         else serverWorking.value.delete(sid)

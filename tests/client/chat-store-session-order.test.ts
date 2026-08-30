@@ -218,6 +218,29 @@ describe('chat session ordering', () => {
     )
   })
 
+  it('marks a local-only chat persisted after a successful reconnect resume', async () => {
+    vi.mocked(fetchSessions).mockResolvedValue([])
+
+    const store = useChatStore()
+    const newSession = store.newChat()
+    await store.sendMessage('first message')
+
+    const runCall = vi.mocked(startRunViaSocket).mock.calls.at(-1)
+    const shouldResumeOnReconnect = runCall?.[5]?.shouldResumeOnReconnect
+    expect(newSession.isLocalOnly).toBe(true)
+    expect(shouldResumeOnReconnect?.()).toBe(false)
+
+    runCall?.[5]?.onReconnectResume?.({
+      session_id: newSession.id,
+      messages: [],
+      isWorking: true,
+      events: [],
+    })
+
+    expect(newSession.isLocalOnly).toBe(false)
+    expect(shouldResumeOnReconnect?.()).toBe(true)
+  })
+
   it('does not let an in-flight session load replace a newly created chat', async () => {
     const pending: Array<(sessions: any[]) => void> = []
     vi.mocked(fetchSessions).mockImplementation(() => new Promise(resolve => pending.push(resolve)))

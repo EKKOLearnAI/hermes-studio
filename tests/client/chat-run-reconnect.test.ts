@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const socketState = vi.hoisted(() => ({
   sockets: [] as any[],
@@ -83,6 +83,10 @@ describe('chat-run socket reconnect handling', () => {
   beforeEach(() => {
     vi.resetModules()
     socketState.sockets = []
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   it('keeps transient mobile disconnects alive and resumes after reconnect', async () => {
@@ -203,7 +207,42 @@ describe('chat-run socket reconnect handling', () => {
 
     await vi.advanceTimersByTimeAsync(1_000)
     expect(socket.emit).toHaveBeenCalledTimes(4)
-    vi.useRealTimers()
+  })
+
+  it('keeps reconnect resume handlers scoped when responses arrive out of order', async () => {
+    const { startRunViaSocket } = await import('../../packages/client/src/api/studio/chat')
+    const onSessionAResume = vi.fn()
+    const onSessionBResume = vi.fn()
+
+    startRunViaSocket(
+      { session_id: 'session-a', input: 'hello a', profile: 'default', source: 'cli' },
+      vi.fn(),
+      vi.fn(),
+      vi.fn(),
+      undefined,
+      { onReconnectResume: onSessionAResume },
+    )
+    startRunViaSocket(
+      { session_id: 'session-b', input: 'hello b', profile: 'default', source: 'cli' },
+      vi.fn(),
+      vi.fn(),
+      vi.fn(),
+      undefined,
+      { onReconnectResume: onSessionBResume },
+    )
+
+    const socket = socketState.sockets[0]
+    socket.__trigger('disconnect', 'ping timeout')
+    socket.__trigger('connect')
+
+    const resumedB = { session_id: 'session-b', messages: [], isWorking: true, events: [] }
+    socket.__trigger('resumed', resumedB)
+    expect(onSessionAResume).not.toHaveBeenCalled()
+    expect(onSessionBResume).toHaveBeenCalledWith(resumedB)
+
+    const resumedA = { session_id: 'session-a', messages: [], isWorking: true, events: [] }
+    socket.__trigger('resumed', resumedA)
+    expect(onSessionAResume).toHaveBeenCalledWith(resumedA)
   })
 
   it('keeps concurrent resume callbacks scoped to their requested session', async () => {

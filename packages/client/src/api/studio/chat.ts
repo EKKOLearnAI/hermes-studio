@@ -967,8 +967,8 @@ export function startRunViaSocket(
   const emitReconnectResume = () => {
     clearReconnectResumeHandler()
     reconnectResumeHandler = (data: ResumeSessionPayload) => {
-      clearReconnectResumeHandler()
       if (closed || data.session_id !== sid) return
+      clearReconnectResumeHandler()
       waitingForLocalPersistence = false
       reconnectResumeRetryDelayMs = 100
       reconnectResumeRetryAttempts = 0
