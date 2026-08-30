@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
 import {
+  agentInstallationState,
   isAgentStatusAvailable,
   resolveAgentStatusId,
+  type AgentAvailabilitySnapshot,
   type AgentStatusSnapshot,
 } from '../../packages/client/src/api/agent-status'
 
@@ -34,5 +36,20 @@ describe('Agent status availability', () => {
     expect(isAgentStatusAvailable(status, 'ekko')).toBe(true)
     expect(isAgentStatusAvailable(status, 'claude-code')).toBe(false)
     expect(isAgentStatusAvailable(status, 'codex')).toBe(true)
+  })
+
+  it('uses the shared inventory state without requiring a version or executable path', () => {
+    const availability: AgentAvailabilitySnapshot = {
+      revision: 2,
+      updatedAt: new Date(0).toISOString(),
+      agents: [
+        { id: 'hermes', installed: true, source: 'managed-runtime' },
+      ],
+    }
+
+    expect(agentInstallationState(availability, 'hermes')).toBe('installed')
+    availability.agents[0] = { id: 'hermes', installed: false, source: 'not-installed' }
+    expect(agentInstallationState(availability, 'hermes')).toBe('not-installed')
+    expect(agentInstallationState(null, 'hermes')).toBe('unknown')
   })
 })

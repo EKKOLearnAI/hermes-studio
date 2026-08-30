@@ -222,6 +222,32 @@
     }
   ],
   "paths": {
+    "/api/agents/availability": {
+      "get": {
+        "tags": [
+          "Agent Status"
+        ],
+        "summary": "Get availability",
+        "description": "GET /api/agents/availability",
+        "operationId": "availability",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
     "/api/agents/status": {
       "get": {
         "tags": [

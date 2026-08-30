@@ -1,5 +1,12 @@
 import type { Context } from 'koa'
-import { getAgentStatusSnapshot } from '../public/agent-status-registry'
+import {
+  getAgentAvailabilitySnapshot,
+  getAgentStatusSnapshot,
+} from '../public/agent-status-registry'
+
+export function availability(ctx: Context) {
+  ctx.body = getAgentAvailabilitySnapshot()
+}
 
 export function status(ctx: Context) {
   ctx.body = getAgentStatusSnapshot()

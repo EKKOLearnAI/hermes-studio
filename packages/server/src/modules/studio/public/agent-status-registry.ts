@@ -34,6 +34,18 @@ export interface AgentStatusSnapshot {
   agents: AgentStatusRecord[]
 }
 
+export interface AgentAvailabilityRecord {
+  id: AgentStatusId
+  installed: boolean
+  source: AgentStatusSource
+}
+
+export interface AgentAvailabilitySnapshot {
+  revision: number
+  updatedAt: string
+  agents: AgentAvailabilityRecord[]
+}
+
 const AGENT_ORDER: AgentStatusId[] = ['hermes', 'ekko-agent', 'claude-code', 'codex', 'pi']
 
 const DEFAULTS: Record<AgentStatusId, Omit<AgentStatusRecord, 'updatedAt'>> = {
@@ -150,6 +162,21 @@ export function getAgentStatusSnapshot(): AgentStatusSnapshot {
     revision,
     updatedAt,
     agents: AGENT_ORDER.map(id => cloneRecord(records.get(id)!)),
+  }
+}
+
+export function getAgentAvailabilitySnapshot(): AgentAvailabilitySnapshot {
+  return {
+    revision,
+    updatedAt,
+    agents: AGENT_ORDER.map(id => {
+      const record = records.get(id)!
+      return {
+        id,
+        installed: record.installed,
+        source: record.source,
+      }
+    }),
   }
 }
 

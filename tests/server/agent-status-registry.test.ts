@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
+  getAgentAvailabilitySnapshot,
   getAgentStatusSnapshot,
   isAgentAvailable,
   isHermesAgentAvailable,
@@ -49,6 +50,24 @@ describe('Agent status registry', () => {
       path: '/Users/test/.local/bin/hermes',
       installations: [expect.objectContaining({ selected: true })],
     })
+  })
+
+  it('exposes installation state without local paths or versions', () => {
+    updateAgentStatus('hermes', {
+      installed: true,
+      version: '0.20.4',
+      source: 'managed-runtime',
+      path: '/private/runtime/hermes',
+    })
+
+    const hermes = getAgentAvailabilitySnapshot().agents.find(agent => agent.id === 'hermes')
+    expect(hermes).toEqual({
+      id: 'hermes',
+      installed: true,
+      source: 'managed-runtime',
+    })
+    expect(hermes).not.toHaveProperty('path')
+    expect(hermes).not.toHaveProperty('version')
   })
 
   it('only reports Hermes available when the inventory has an executable path', () => {
