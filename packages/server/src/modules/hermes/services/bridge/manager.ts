@@ -1,7 +1,7 @@
 import { execFileSync, spawn, type ChildProcess } from 'child_process'
 import { existsSync, readFileSync } from 'fs'
 import { createConnection, createServer } from 'net'
-import { dirname, isAbsolute, join, resolve } from 'path'
+import { basename, dirname, isAbsolute, join, resolve } from 'path'
 import { logger } from '../../../studio/public/logging'
 import { detectHermesHome, getHermesBin } from '../runtime/path'
 import { AgentBridgeClient, DEFAULT_AGENT_BRIDGE_ENDPOINT } from './client'
@@ -9,6 +9,7 @@ import { AgentBridgeClient, DEFAULT_AGENT_BRIDGE_ENDPOINT } from './client'
 const DEFAULT_AGENT_BRIDGE_STARTUP_TIMEOUT_MS = 120000
 const DEFAULT_AGENT_BRIDGE_RESTART_DELAY_MS = 1000
 const MAX_AGENT_BRIDGE_RESTART_DELAY_MS = 30000
+const MAX_AGENT_BRIDGE_STARTUP_RESTART_ATTEMPTS = 3
 const DEFAULT_AGENT_BRIDGE_RECOVERY_EXIT_TIMEOUT_MS = 5000
 const DEFAULT_AGENT_BRIDGE_RECOVERY_SIGKILL_WAIT_MS = 250
 const DEFAULT_AGENT_BRIDGE_SHUTDOWN_TIMEOUT_MS = 10_000
@@ -194,17 +195,43 @@ function agentRootFromHermesBin(): string | undefined {
   return undefined
 }
 
+function isPythonExecutable(command: string): boolean {
+  return /^(?:python|pypy)(?:\d+(?:\.\d+)*)?(?:\.exe)?$/i.test(basename(command))
+}
+
+function pythonFromShebang(firstLine: string): string | undefined {
+  const match = firstLine.match(/^#!\s*(.+)$/)
+  const parts = match?.[1]?.trim().split(/\s+/).filter(Boolean) || []
+  if (parts.length === 0) return undefined
+
+  const interpreter = parts[0]
+  if (/^env(?:\.exe)?$/i.test(basename(interpreter))) {
+    const envCommand = parts.slice(1).find(part => !part.startsWith('-'))
+    return envCommand && isPythonExecutable(envCommand)
+      ? resolveExecutable(envCommand)
+      : undefined
+  }
+
+  return isPythonExecutable(interpreter)
+    ? resolveExecutable(interpreter)
+    : undefined
+}
+
 function hermesBinPython(): string | undefined {
   const hermesBin = resolveExecutable(getHermesBin())
   if (!hermesBin) return undefined
   try {
     const first = readFileSync(hermesBin, 'utf-8').split(/\r?\n/, 1)[0]
-    const match = first.match(/^#!\s*(.+)$/)
-    const python = match?.[1]?.trim().split(/\s+/)[0]
-    return python && existsSync(python) ? python : undefined
+    const shebangPython = pythonFromShebang(first)
+    if (shebangPython) return shebangPython
   } catch {
-    return undefined
+    // Binary launchers and unreadable wrappers can still live beside Python.
   }
+
+  const binDir = dirname(hermesBin)
+  return firstExistingExecutable(process.platform === 'win32'
+    ? [join(binDir, 'python.exe'), join(binDir, 'python3.exe')]
+    : [join(binDir, 'python3'), join(binDir, 'python')])
 }
 
 function firstExistingExecutable(candidates: string[]): string | undefined {
@@ -1049,10 +1076,13 @@ export class AgentBridgeManager {
     })
 
     await new Promise<void>((resolveReady, rejectReady) => {
+      let startupSettled = false
       const startupTimeoutMs = this.options.startupTimeoutMs
         ?? envPositiveInt('HERMES_AGENT_BRIDGE_STARTUP_TIMEOUT_MS')
         ?? DEFAULT_AGENT_BRIDGE_STARTUP_TIMEOUT_MS
       const timeout = setTimeout(() => {
+        if (startupSettled) return
+        startupSettled = true
         cleanup()
         rejectReady(new Error(`agent bridge did not become ready within ${startupTimeoutMs}ms`))
       }, startupTimeoutMs)
@@ -1064,25 +1094,29 @@ export class AgentBridgeManager {
       }
 
       const markReady = () => {
-        if (readyResolved) return
+        if (startupSettled) return
         this.ready = true
         this.restartAttempts = 0
-        readyResolved = true
+        startupSettled = true
         cleanup()
         resolveReady()
       }
 
       const onError = (err: Error) => {
+        if (startupSettled) return
+        startupSettled = true
         cleanup()
+        this.scheduleRestart(null, null, true)
         rejectReady(err)
       }
 
       const onExitBeforeReady = (code: number | null, signal: NodeJS.Signals | null) => {
+        if (startupSettled) return
+        startupSettled = true
         cleanup()
+        this.scheduleRestart(code, signal, true)
         rejectReady(new Error(`agent bridge exited before ready code=${code} signal=${signal}`))
       }
-
-      let readyResolved = false
 
       child.once('error', onError)
       child.once('exit', onExitBeforeReady)
@@ -1093,7 +1127,7 @@ export class AgentBridgeManager {
           timeoutMs: 1000,
           connectRetryMs: 0,
         })
-        while (!readyResolved && !child.killed) {
+        while (!startupSettled && !child.killed) {
           try {
             await client.ping()
             markReady()
@@ -1154,8 +1188,19 @@ export class AgentBridgeManager {
     return !['0', 'false', 'no', 'off'].includes(raw)
   }
 
-  private scheduleRestart(code: number | null, signal: NodeJS.Signals | null): void {
-    if (this.restartTimer || this.stopping) return
+  private scheduleRestart(
+    code: number | null,
+    signal: NodeJS.Signals | null,
+    startupFailure = false,
+  ): void {
+    if (this.restartTimer || this.stopping || !this.autoRestartEnabled()) return
+    if (startupFailure && this.restartAttempts >= MAX_AGENT_BRIDGE_STARTUP_RESTART_ATTEMPTS) {
+      logger.warn(
+        '[agent-bridge] failed to become ready after %d restart attempts; automatic restart stopped',
+        this.restartAttempts,
+      )
+      return
+    }
     this.restartAttempts += 1
     const envDelay = envPositiveInt('HERMES_AGENT_BRIDGE_RESTART_DELAY_MS') ?? DEFAULT_AGENT_BRIDGE_RESTART_DELAY_MS
     const delayMs = Math.min(
@@ -1174,7 +1219,7 @@ export class AgentBridgeManager {
       if (this.stopping) return
       this.start().catch((err) => {
         logger.warn(err, '[agent-bridge] automatic restart failed')
-        if (!this.stopping) this.scheduleRestart(null, null)
+        if (!this.stopping) this.scheduleRestart(null, null, true)
       })
     }, delayMs)
   }

@@ -116,6 +116,30 @@ describe('agent bridge manager command resolution', () => {
     })
   })
 
+  it('uses the Python beside a shell-wrapped hermes command', async () => {
+    const binDir = join(tempDir, 'bin')
+    const homeDir = join(tempDir, 'home')
+    const siblingPython = join(binDir, 'python3')
+    const shellWrappedHermes = join(binDir, 'hermes')
+    mkdirSync(binDir, { recursive: true })
+    mkdirSync(homeDir, { recursive: true })
+    writeFileSync(siblingPython, '#!/bin/sh\n')
+    chmodSync(siblingPython, 0o755)
+    writeFileSync(shellWrappedHermes, '#!/bin/sh\nexec "$(dirname "$0")/python3" "$0" "$@"\n')
+    chmodSync(shellWrappedHermes, 0o755)
+    process.env.HERMES_HOME = homeDir
+    process.env.HERMES_BIN = shellWrappedHermes
+
+    const { resolveAgentBridgeCommand } = await import('../../packages/server/src/modules/hermes/services/bridge/manager')
+
+    expect(resolveAgentBridgeCommand()).toEqual({
+      command: siblingPython,
+      argsPrefix: [],
+      agentRoot: undefined,
+      hermesHome: homeDir,
+    })
+  })
+
   it('discovers hermes-agent from a global lib install next to the hermes command', async () => {
     const installDir = join(tempDir, 'usr', 'local')
     const binDir = join(installDir, 'bin')
@@ -368,6 +392,71 @@ describe('agent bridge manager command resolution', () => {
     }
 
     expect(pingSpy).not.toHaveBeenCalled()
+  })
+
+  it('schedules a restart when a managed bridge exits before ready', async () => {
+    vi.useFakeTimers()
+    process.env.HERMES_AGENT_BRIDGE_RESTART_DELAY_MS = '1000'
+    const child = createMockManagedChild(45670)
+    const spawnMock = vi.fn().mockReturnValue(child)
+
+    vi.doMock('child_process', async () => {
+      const actual = await vi.importActual<typeof import('child_process')>('child_process')
+      return {
+        ...actual,
+        spawn: spawnMock,
+      }
+    })
+
+    try {
+      const { AgentBridgeClient } = await import('../../packages/server/src/modules/hermes/services/bridge/client')
+      vi.spyOn(AgentBridgeClient.prototype, 'ping').mockRejectedValue(new Error('bridge offline'))
+      const { AgentBridgeManager } = await import('../../packages/server/src/modules/hermes/services/bridge/manager')
+      const manager = new AgentBridgeManager({ endpoint: 'tcp://127.0.0.1:6564', startupTimeoutMs: 5000 })
+
+      const starting = manager.start()
+      for (let attempt = 0; attempt < 10 && spawnMock.mock.calls.length === 0; attempt += 1) {
+        await Promise.resolve()
+      }
+      expect(spawnMock).toHaveBeenCalledTimes(1)
+
+      child.emit('exit', 2, null)
+
+      await expect(starting).rejects.toThrow('agent bridge exited before ready code=2 signal=null')
+      expect(manager.getRuntimeState()).toMatchObject({
+        ready: false,
+        running: false,
+        restartScheduled: true,
+        restartAttempts: 1,
+      })
+      manager.forceStop()
+    } finally {
+      vi.doUnmock('child_process')
+      vi.useRealTimers()
+    }
+  })
+
+  it('caps automatic restart attempts after startup failures', async () => {
+    vi.useFakeTimers()
+    process.env.HERMES_AGENT_BRIDGE_RESTART_DELAY_MS = '1'
+    try {
+      const { AgentBridgeManager } = await import('../../packages/server/src/modules/hermes/services/bridge/manager')
+      const manager = new AgentBridgeManager({ endpoint: 'tcp://127.0.0.1:6565' })
+      const startSpy = vi.spyOn(manager, 'start').mockRejectedValue(new Error('bridge startup failed'))
+
+      ;(manager as any).scheduleRestart(null, null, true)
+      await vi.advanceTimersByTimeAsync(1)
+      await vi.advanceTimersByTimeAsync(2)
+      await vi.advanceTimersByTimeAsync(3)
+
+      expect(startSpy).toHaveBeenCalledTimes(3)
+      expect(manager.getRuntimeState()).toMatchObject({
+        restartScheduled: false,
+        restartAttempts: 3,
+      })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('attaches to an already running bridge instead of spawning a replacement', async () => {
