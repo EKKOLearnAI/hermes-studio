@@ -39,9 +39,16 @@ let serverProc: ChildProcess | null = null
 let cachedToken: string | null = null
 let currentServerPort = DEFAULT_PORT
 let runtimeRestartHandler: (() => void) | null = null
+let unexpectedExitHandler: ((details: { code: number | null; signal: NodeJS.Signals | null }) => void) | null = null
 
 export function setWebUiRuntimeRestartHandler(handler: (() => void) | null): void {
   runtimeRestartHandler = handler
+}
+
+export function setWebUiUnexpectedExitHandler(
+  handler: ((details: { code: number | null; signal: NodeJS.Signals | null }) => void) | null,
+): void {
+  unexpectedExitHandler = handler
 }
 
 function posixDescendantPids(rootPid: number): number[] {
@@ -480,6 +487,7 @@ async function launchWebUiServer(webUiDirectory: string, entry: string, env: Nod
 
   const launchedProc = serverProc
   const bridgeStartup = createAgentBridgeStartupTracker()
+  let startupReady = false
 
   launchedProc.stdout?.on('data', (chunk: Buffer) => {
     bridgeStartup.observe(chunk)
@@ -502,9 +510,12 @@ async function launchWebUiServer(webUiDirectory: string, entry: string, env: Nod
   launchedProc.on('exit', (code, signal) => {
     console.error(`[webui] server exited code=${code} signal=${signal}`)
     if (serverProc === launchedProc) serverProc = null
-    if (code === 75) runtimeRestartHandler?.()
-    if (!app.isReady() || code !== 0) {
-      // Best-effort: if server dies abnormally during startup, surface to user
+    if (code === 75) {
+      runtimeRestartHandler?.()
+      return
+    }
+    if (startupReady && code !== 0 && app.isReady()) {
+      unexpectedExitHandler?.({ code, signal })
     }
   })
 
@@ -517,6 +528,7 @@ async function launchWebUiServer(webUiDirectory: string, entry: string, env: Nod
   })
   try {
     await Promise.race([waitForReady(port, timeoutMs), exitBeforeReady])
+    startupReady = true
   } catch (err) {
     await terminateLaunchedProcess(launchedProc)
     if (serverProc === launchedProc) serverProc = null
@@ -553,7 +565,7 @@ async function terminateLaunchedProcess(proc: ChildProcess): Promise<void> {
 
 async function waitForReady(port: number, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs
-  const url = `http://127.0.0.1:${port}/`
+  const url = `http://127.0.0.1:${port}/health/ready`
   while (Date.now() < deadline) {
     try {
       const res = await fetch(url, { signal: AbortSignal.timeout(1000) })

@@ -12,7 +12,12 @@ import type { LanDeviceInfo } from './lan-discovery'
 import { createDeviceSignature, getPublicSystemInfo, verifyDeviceSignature } from '../../public/system-info'
 import { logger } from '../../public/logging'
 import { config } from '../../public/config'
-import { shouldRejectUpgradeOrigin, writeForbiddenOrigin } from '../../middleware/security'
+import {
+  parseUpgradeRequestUrl,
+  shouldRejectUpgradeOrigin,
+  writeBadUpgradeRequest,
+  writeForbiddenOrigin,
+} from '../../middleware/security'
 import { killOwnedProcessTree } from '../../infrastructure/process-tree'
 
 export interface LanPeerFilesystemDependencies {
@@ -940,7 +945,11 @@ export class LanPeerSocketManager {
 
     servers.forEach(httpServer => {
       const onUpgrade = async (req: IncomingMessage, socket: Duplex, head: Buffer) => {
-        const url = new URL(req.url || '', `http://${req.headers.host}`)
+        const url = parseUpgradeRequestUrl(req)
+        if (!url) {
+          writeBadUpgradeRequest(socket)
+          return
+        }
         if (url.pathname !== PEER_SOCKET_PATH) return
 
         if (shouldRejectUpgradeOrigin(req, config.corsOrigins)) {

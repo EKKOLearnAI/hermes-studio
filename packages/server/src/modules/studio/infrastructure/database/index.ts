@@ -38,20 +38,31 @@ export function getDb(): DatabaseSync | null {
   if (!SQLITE_AVAILABLE) return null
   if (!_db) {
     mkdirSync(DB_DIR, { recursive: true })
-    _db = new DatabaseSync(DB_PATH)
-    // Use WAL mode for better concurrency and WSL compatibility
-    if (isTest) {
-      _db.exec('PRAGMA journal_mode=WAL')
-      _db.exec('PRAGMA synchronous=NORMAL')
-      _db.exec('PRAGMA busy_timeout=5000')
-      _db.exec('PRAGMA foreign_keys=ON')
-    } else if (isDev) {
-      _db.exec('PRAGMA journal_mode=DELETE')
-    } else {
-      _db.exec('PRAGMA journal_mode=WAL')
-      _db.exec('PRAGMA synchronous=NORMAL')
-      _db.exec('PRAGMA busy_timeout=5000')
-      _db.exec('PRAGMA foreign_keys=ON')
+    const candidate = new DatabaseSync(DB_PATH)
+    try {
+      // Install the busy handler before changing journal mode so a transient
+      // lock during startup does not immediately abort the whole bootstrap.
+      candidate.exec('PRAGMA busy_timeout=5000')
+      // Use WAL mode for better concurrency and WSL compatibility
+      if (isTest) {
+        candidate.exec('PRAGMA journal_mode=WAL')
+        candidate.exec('PRAGMA synchronous=NORMAL')
+        candidate.exec('PRAGMA foreign_keys=ON')
+      } else if (isDev) {
+        candidate.exec('PRAGMA journal_mode=DELETE')
+      } else {
+        candidate.exec('PRAGMA journal_mode=WAL')
+        candidate.exec('PRAGMA synchronous=NORMAL')
+        candidate.exec('PRAGMA foreign_keys=ON')
+      }
+      _db = candidate
+    } catch (error) {
+      try {
+        candidate.close()
+      } catch {
+        // Preserve the original initialization error.
+      }
+      throw error
     }
   }
   return _db

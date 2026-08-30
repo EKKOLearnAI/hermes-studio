@@ -9,7 +9,12 @@ import { getTerminalConfig, type TerminalConfig } from '../../studio/public/work
 import { authenticateUserToken, isAuthEnabled } from '../../studio/public/auth'
 import { logger } from '../../studio/public/logging'
 import { config } from '../../studio/public/config'
-import { shouldRejectUpgradeOrigin, writeForbiddenOrigin } from '../../studio/public/security'
+import {
+  parseUpgradeRequestUrl,
+  shouldRejectUpgradeOrigin,
+  writeBadUpgradeRequest,
+  writeForbiddenOrigin,
+} from '../../studio/public/security'
 import { killOwnedProcessTree } from '../../studio/public/process-tree'
 
 let pty: any = null
@@ -158,7 +163,11 @@ export function setupTerminalWebSocket(httpServers: HttpServer | HttpServer[]) {
   const servers = Array.isArray(httpServers) ? httpServers : [httpServers]
 
   const onUpgrade = async (req: IncomingMessage, socket: Duplex, head: Buffer) => {
-    const url = new URL(req.url || '', `http://${req.headers.host}`)
+    const url = parseUpgradeRequestUrl(req)
+    if (!url) {
+      writeBadUpgradeRequest(socket)
+      return
+    }
     if (url.pathname !== '/api/hermes/terminal') {
       return
     }

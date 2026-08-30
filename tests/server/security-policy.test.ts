@@ -1,11 +1,13 @@
 import http from 'http'
 import Koa from 'koa'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   createCorsOriginResolver,
   isOriginAllowed,
+  parseUpgradeRequestUrl,
   securityHeaders,
   shouldRejectUpgradeOrigin,
+  writeBadUpgradeRequest,
 } from '../../packages/server/src/modules/studio/middleware/security'
 
 function fakeCtx(origin: string, host: string) {
@@ -49,6 +51,21 @@ describe('server security policy', () => {
     expect(shouldRejectUpgradeOrigin({ headers: { origin: 'http://localhost', host: '192.168.10.102:8647' } } as any, '')).toBe(false)
     expect(shouldRejectUpgradeOrigin({ headers: { origin: 'http://localhost:5173', host: '192.168.10.102:8647' } } as any, '')).toBe(false)
     expect(shouldRejectUpgradeOrigin({ headers: { host: '127.0.0.1:8648' } } as any, '')).toBe(false)
+  })
+
+  it('rejects malformed websocket upgrade URLs without throwing', () => {
+    expect(parseUpgradeRequestUrl({ url: '/socket', headers: { host: '127.0.0.1:8648' } } as any)?.pathname)
+      .toBe('/socket')
+    expect(parseUpgradeRequestUrl({ url: '/socket', headers: { host: '[' } } as any)).toBeNull()
+
+    const socket = {
+      destroyed: false,
+      write: vi.fn(),
+      destroy: vi.fn(),
+    }
+    writeBadUpgradeRequest(socket)
+    expect(socket.write).toHaveBeenCalledWith('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n')
+    expect(socket.destroy).toHaveBeenCalledOnce()
   })
 
   it('adds baseline browser security headers', async () => {

@@ -159,6 +159,21 @@ describe('runtime version manager storage migration', () => {
     expect(status.hermes.remoteVersions).toEqual([])
   })
 
+  it('ignores Runtime storage entries that cannot be read as directories', async () => {
+    const storageRoot = join(state.appHome, 'desktop-runtime')
+    mkdirSync(storageRoot, { recursive: true })
+    writeFileSync(join(storageRoot, 'hermes'), 'not a directory')
+    writeFileSync(join(storageRoot, 'webui'), 'not a directory')
+
+    const {
+      listInstalledRuntimeVersions,
+      listInstalledWebUiVersions,
+    } = await import('../../packages/server/src/modules/hermes/services/runtime/version-manager')
+
+    expect(listInstalledRuntimeVersions()).toEqual([])
+    expect(listInstalledWebUiVersions()).toEqual([])
+  })
+
   it('probes local Runtime storage without loading remote versions in Web UI mode', async () => {
     delete process.env.HERMES_DESKTOP
     const platform = runtimePlatformKey()

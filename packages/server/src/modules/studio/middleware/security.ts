@@ -109,6 +109,27 @@ export function shouldRejectUpgradeOrigin(req: IncomingMessage, corsOrigins = ''
     && !isLocalAppDevelopmentOrigin(selectedOrigin)
 }
 
+export function parseUpgradeRequestUrl(req: IncomingMessage): URL | null {
+  try {
+    return new URL(req.url || '', `http://${req.headers.host}`)
+  } catch {
+    return null
+  }
+}
+
+export function writeBadUpgradeRequest(socket: {
+  destroyed?: boolean
+  write: (chunk: string) => void
+  destroy: () => void
+}): void {
+  if (socket.destroyed) return
+  try {
+    socket.write('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n')
+  } finally {
+    socket.destroy()
+  }
+}
+
 export function writeForbiddenOrigin(socket: { write: (chunk: string) => void; destroy: () => void }): void {
   socket.write('HTTP/1.1 403 Forbidden\r\n\r\n')
   socket.destroy()

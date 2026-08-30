@@ -1,5 +1,5 @@
 import { createHash } from 'crypto'
-import { accessSync, constants, createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'fs'
+import { accessSync, constants, createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync, type Dirent } from 'fs'
 import { get as httpGet } from 'http'
 import { get as httpsGet } from 'https'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path'
@@ -284,11 +284,11 @@ function scanInstalledRuntimeVersions(active = readActiveVersionManifest()): Ins
   const installed: InstalledRuntimeVersion[] = []
 
   if (existsSync(root)) {
-    for (const versionEntry of readdirSync(root, { withFileTypes: true })) {
+    for (const versionEntry of safeReadDirectoryEntries(root)) {
       if (!versionEntry.isDirectory()) continue
       const version = versionEntry.name
       const platformRoot = join(root, version)
-      for (const platformEntry of readdirSync(platformRoot, { withFileTypes: true })) {
+      for (const platformEntry of safeReadDirectoryEntries(platformRoot)) {
         if (!platformEntry.isDirectory()) continue
         const directory = join(platformRoot, platformEntry.name)
         installed.push({
@@ -343,7 +343,7 @@ export function listInstalledWebUiVersions(active = readActiveVersionManifest())
   const activeDir = activeWebUiDirectory(active)
   const installed: InstalledWebUiVersion[] = []
 
-  for (const versionEntry of readdirSync(root, { withFileTypes: true })) {
+  for (const versionEntry of safeReadDirectoryEntries(root)) {
     if (!versionEntry.isDirectory()) continue
     const directory = join(root, versionEntry.name)
     if (!existsSync(join(directory, 'package.json'))) continue
@@ -359,6 +359,14 @@ export function listInstalledWebUiVersions(active = readActiveVersionManifest())
   }
 
   return installed.sort((left, right) => right.version.localeCompare(left.version, undefined, { numeric: true }))
+}
+
+function safeReadDirectoryEntries(directory: string): Dirent[] {
+  try {
+    return readdirSync(directory, { withFileTypes: true })
+  } catch {
+    return []
+  }
 }
 
 function isStudioVersionManifest(value: unknown): value is StudioVersionManifest {

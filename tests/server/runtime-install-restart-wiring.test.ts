@@ -21,7 +21,8 @@ describe('Runtime install restart wiring', () => {
 
     expect(bootstrap).toContain("getShutdownHandler()('runtime-installed', 75)")
     expect(bootstrap).toContain('scheduleWebUiRestart()')
-    expect(desktopServer).toContain('if (code === 75) runtimeRestartHandler?.()')
+    expect(desktopServer).toContain('if (code === 75) {')
+    expect(desktopServer).toContain('runtimeRestartHandler?.()')
     expect(desktopMain).toContain('setWebUiRuntimeRestartHandler(() => {')
     expect(desktopMain).toContain('app.relaunch()')
     expect(desktopMain).toContain('quitApp()')

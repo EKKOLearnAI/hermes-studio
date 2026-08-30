@@ -10,10 +10,35 @@ const CHECK_INTERVAL = 60_000 // Check every minute
 const logDir = process.env.VITEST
   ? resolve(tmpdir(), 'hermes-web-ui-test-logs', String(process.pid))
   : resolve(config.appHome, 'logs')
-mkdirSync(logDir, { recursive: true })
 
 const logFile = resolve(logDir, 'server.log')
 const bridgeLogFile = resolve(logDir, 'bridge.log')
+const VALID_LOG_LEVELS = new Set(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
+
+function logLevel(value: string | undefined, fallback = 'info'): string {
+  const normalized = String(value || '').trim().toLowerCase()
+  return VALID_LOG_LEVELS.has(normalized) ? normalized : fallback
+}
+
+function createDestination(file: string) {
+  try {
+    mkdirSync(logDir, { recursive: true })
+    const destination = pino.destination({ dest: file, sync: true })
+    destination.on('error', error => {
+      console.error(`[logging] write failed for ${file}`, error)
+    })
+    return destination
+  } catch (error) {
+    // Logging must never make Studio unbootable. stderr remains available to
+    // Desktop's child-process capture and to service managers.
+    console.error(`[logging] unable to open ${file}; falling back to stderr`, error)
+    const destination = pino.destination({ dest: 2, sync: true })
+    destination.on('error', destinationError => {
+      console.error('[logging] stderr destination failed', destinationError)
+    })
+    return destination
+  }
+}
 
 function rotateFileIfNeeded(file: string) {
   try {
@@ -42,16 +67,10 @@ rotateIfNeeded()
 setInterval(rotateIfNeeded, CHECK_INTERVAL)
 
 export const logger = pino({
-  level: process.env.LOG_LEVEL || 'info',
-}, pino.destination({
-  dest: logFile,
-  sync: true,
-}))
+  level: logLevel(process.env.LOG_LEVEL),
+}, createDestination(logFile))
 
 export const bridgeLogger = pino({
-  level: process.env.BRIDGE_LOG_LEVEL || process.env.LOG_LEVEL || 'info',
+  level: logLevel(process.env.BRIDGE_LOG_LEVEL, logLevel(process.env.LOG_LEVEL)),
   name: 'bridge',
-}, pino.destination({
-  dest: bridgeLogFile,
-  sync: true,
-}))
+}, createDestination(bridgeLogFile))

@@ -1,0 +1,52 @@
+import { readFileSync } from 'node:fs'
+import { describe, expect, it } from 'vitest'
+
+describe('Studio crash isolation wiring', () => {
+  it('uses guarded URL parsing in every raw WebSocket upgrade handler', () => {
+    const files = [
+      'packages/server/src/bootstrap/http.ts',
+      'packages/server/src/modules/hermes/sockets/terminal.ts',
+      'packages/server/src/modules/hermes/sockets/kanban-events.ts',
+      'packages/server/src/modules/studio/services/network/lan-peer-socket.ts',
+    ]
+
+    for (const file of files) {
+      const source = readFileSync(file, 'utf8')
+      expect(source, file).toContain('parseUpgradeRequestUrl(req)')
+      expect(source, file).not.toContain("new URL(req.url || '', `http://${req.headers.host}`)")
+    }
+  })
+
+  it('reports ready only after late bootstrap services complete', () => {
+    const bootstrap = readFileSync('packages/server/src/bootstrap/http.ts', 'utf8')
+    const listen = bootstrap.indexOf('await listenWithFallback(')
+    const recovery = bootstrap.indexOf('recoverActiveRuns()', listen)
+    const versionCheck = bootstrap.indexOf('startVersionCheck()', recovery)
+    const ready = bootstrap.indexOf('bootstrapReady = true', versionCheck)
+
+    expect(listen).toBeGreaterThan(-1)
+    expect(recovery).toBeGreaterThan(listen)
+    expect(versionCheck).toBeGreaterThan(recovery)
+    expect(ready).toBeGreaterThan(versionCheck)
+  })
+
+  it('makes Desktop poll readiness and recover one unexpected server exit', () => {
+    const server = readFileSync('packages/desktop/src/main/webui-server.ts', 'utf8')
+    const desktop = readFileSync('packages/desktop/src/main/index.ts', 'utf8')
+
+    expect(server).toContain('/health/ready')
+    expect(server).toContain('setWebUiUnexpectedExitHandler')
+    expect(desktop).toContain('recoverUnexpectedWebUiExit')
+    expect(desktop).toContain('unexpectedWebUiExitCount > 1')
+  })
+
+  it('keeps logger initialization and client mounting on explicit fallback paths', () => {
+    const logging = readFileSync('packages/server/src/modules/studio/public/logging.ts', 'utf8')
+    const client = readFileSync('packages/client/src/main.ts', 'utf8')
+
+    expect(logging).toContain('falling back to stderr')
+    expect(logging).toContain("pino.destination({ dest: 2, sync: true })")
+    expect(client).toContain('app.config.errorHandler')
+    expect(client).toContain('mountApp().catch')
+  })
+})
