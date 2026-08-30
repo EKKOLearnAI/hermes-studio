@@ -382,4 +382,52 @@ describe('MessageList session scroll position', () => {
     expect(wrapper.find('.message-float-stack .approval-float-panel').exists()).toBe(true)
     wrapper.unmount()
   })
+
+  it('has no close control and keeps explicit approval and reply actions usable', async () => {
+    const chatStore = useChatStore()
+    const session = makeSession('stale-prompt-session')
+    chatStore.activeSessionId = session.id
+    chatStore.activeSession = session
+    chatStore.pendingApprovals.set(session.id, {
+      sessionId: session.id,
+      approvalId: 'stale-approval',
+      command: 'npm run test',
+      description: 'Run tests',
+      choices: ['once', 'deny'],
+      allowPermanent: false,
+      isMemoryWrite: false,
+      requestedAt: Date.now() - 10,
+    })
+    chatStore.pendingClarifies.set(session.id, {
+      sessionId: session.id,
+      clarifyId: 'stale-clarify',
+      question: 'Which environment?',
+      choices: ['staging'],
+      initialResponse: '',
+      responseMode: 'input',
+      timeoutMs: 1,
+      requestedAt: Date.now() - 10,
+    })
+
+    const wrapper = mount(MessageList, {
+      global: { stubs: { Transition: false } },
+    })
+    await nextTick()
+
+    expect(wrapper.find('.float-panel-close').exists()).toBe(false)
+    const approvalPanel = wrapper.findAll('.approval-float-panel')
+      .find(panel => panel.text().includes('chat.approvalTitle'))
+    expect(approvalPanel).toBeTruthy()
+    await approvalPanel!.get('.approval-float-actions button').trigger('click')
+    expect(chatStore.pendingApprovals.has(session.id)).toBe(false)
+    expect(chatStore.pendingClarifies.has(session.id)).toBe(true)
+
+    await nextTick()
+    const clarifyPanel = wrapper.findAll('.approval-float-panel')
+      .find(panel => panel.text().includes('chat.clarifyTitle'))
+    expect(clarifyPanel).toBeTruthy()
+    await clarifyPanel!.get('.approval-float-actions button').trigger('click')
+    expect(chatStore.pendingClarifies.has(session.id)).toBe(false)
+    wrapper.unmount()
+  })
 })

@@ -267,6 +267,9 @@ describe('ekko-agent context usage events', () => {
         command: 'rm -rf build',
         choices: ['once', 'session', 'always', 'deny'],
         allow_permanent: true,
+        timeout_ms: 300_000,
+        remaining_timeout_ms: 300_000,
+        requested_at: expect.any(Number),
         permission_key: 'terminal:delete',
         session_id: 'session-1',
       }),
@@ -325,6 +328,8 @@ describe('ekko-agent context usage events', () => {
         question: 'Which option should I use?',
         choices: ['A', 'B'],
         timeout_ms: 300_000,
+        remaining_timeout_ms: 300_000,
+        requested_at: expect.any(Number),
         session_id: 'session-1',
       }),
     })

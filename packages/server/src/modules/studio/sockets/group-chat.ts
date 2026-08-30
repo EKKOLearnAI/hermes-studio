@@ -3196,6 +3196,7 @@ export class GroupChatServer {
                 allow_permanent: route.allowPermanent,
                 timeout_ms: route.timeoutMs,
                 requested_at: route.requestedAt,
+                remaining_timeout_ms: Math.max(0, route.timeoutMs - (Date.now() - route.requestedAt)),
             }))
     }
 
@@ -3214,6 +3215,7 @@ export class GroupChatServer {
                 response_mode: route.responseMode,
                 timeout_ms: route.timeoutMs,
                 requested_at: route.requestedAt,
+                remaining_timeout_ms: Math.max(0, route.timeoutMs - (Date.now() - route.requestedAt)),
             }))
     }
     /** roomId -> blocked Bridge session ids from room-level interrupts/rotations. */
@@ -5036,6 +5038,8 @@ export class GroupChatServer {
             choices,
             allow_permanent: Boolean(data.allow_permanent),
             timeout_ms: pendingRoute.timeoutMs,
+            remaining_timeout_ms: pendingRoute.timeoutMs,
+            requested_at: pendingRoute.requestedAt,
         })
     }
 
@@ -5290,6 +5294,8 @@ export class GroupChatServer {
             initial_response: route.initialResponse,
             response_mode: route.responseMode,
             timeout_ms: route.timeoutMs,
+            remaining_timeout_ms: route.timeoutMs,
+            requested_at: route.requestedAt,
         })
     }
 

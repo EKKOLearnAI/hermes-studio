@@ -137,6 +137,8 @@ export interface RunEvent {
   phase?: 'requesting' | 'waiting_for_tool_batch' | 'stopping_current_turn' | 'starting_queued_message' | 'cancelled'
   guarantee?: 'strict' | 'immediate'
   requested_at?: number
+  timeout_ms?: number
+  remaining_timeout_ms?: number
   reason?: string
   /** True when a terminal event intentionally stopped the previous run. */
   interrupted?: boolean

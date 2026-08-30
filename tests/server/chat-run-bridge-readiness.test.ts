@@ -269,6 +269,12 @@ describe('ChatRunSocket global pending interactions', () => {
     expect(socket.emit).toHaveBeenCalledWith('clarify.resolved', expect.objectContaining({
       clarify_id: 'clarify-research', resolved: false,
     }))
+    expect(socket.emit).toHaveBeenCalledWith('clarify.resolved', expect.objectContaining({
+      clarify_id: 'clarify-default',
+      resolved: false,
+      stale: true,
+      error: 'Clarification is no longer pending.',
+    }))
   })
 })
 

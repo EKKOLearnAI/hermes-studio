@@ -14,6 +14,12 @@ import { showCompletionNotification } from '@/utils/completion-notification'
 import { detectThinkingBoundary } from '@/utils/thinking-parser'
 import { isKnownBridgeSessionCommand } from '@/utils/hermes/bridge-session-commands'
 import { responseErrorMessage } from '@/utils/http-error'
+import {
+  isPendingInteractionExpiredError,
+  notifyPendingInteractionExpired,
+  pendingInteractionDeadline,
+  type PendingInteractionSubmitResult,
+} from '@/utils/pending-interaction'
 
 // Re-export ContentBlock for convenience
 export type ContentBlock = ContentBlockImport
@@ -408,6 +414,7 @@ export interface PendingApproval {
   allowPermanent: boolean
   isMemoryWrite: boolean
   requestedAt: number
+  countdownDeadline: number
 }
 
 export interface PendingClarify {
@@ -419,6 +426,7 @@ export interface PendingClarify {
   responseMode: string
   timeoutMs: number
   requestedAt: number
+  countdownDeadline: number
 }
 
 export interface QueueInsertionState {
@@ -1348,12 +1356,14 @@ export const useChatStore = defineStore('chat', () => {
     return sid ? messageReferences.value.get(sid) || null : null
   })
   const pendingApprovals = ref<Map<string, PendingApproval>>(new Map())
+  const pendingApprovalResponseIds = new Map<string, string>()
   const activePendingApproval = computed(() => {
     const sid = activeSessionId.value
     return sid ? pendingApprovals.value.get(sid) || null : null
   })
 
   const pendingClarifies = ref<Map<string, PendingClarify>>(new Map())
+  const pendingClarifyResponseIds = new Map<string, string>()
   const activePendingClarify = computed(() => {
     const sid = activeSessionId.value
     return sid ? pendingClarifies.value.get(sid) || null : null
@@ -1451,6 +1461,8 @@ export const useChatStore = defineStore('chat', () => {
     queueInsertionStates.value = new Map()
     pendingApprovals.value = new Map()
     pendingClarifies.value = new Map()
+    pendingApprovalResponseIds.clear()
+    pendingClarifyResponseIds.clear()
     streamStates.value = new Map()
     serverWorking.value = new Set()
     pendingForkCommands.value = new Set()
@@ -3133,6 +3145,7 @@ export const useChatStore = defineStore('chat', () => {
     const sid = evt.session_id
     const approvalId = (evt as any).approval_id as string | undefined
     if (!sid || !approvalId) return
+    if (pendingApprovalResponseIds.get(sid) !== approvalId) pendingApprovalResponseIds.delete(sid)
     const description = String((evt as any).description || '')
     const normalizedDescription = description.trim().toLowerCase().replace(/\s+/g, ' ')
     const isMemoryWrite = !Boolean((evt as any).allow_permanent) && (
@@ -3153,18 +3166,35 @@ export const useChatStore = defineStore('chat', () => {
       allowPermanent: Boolean((evt as any).allow_permanent),
       isMemoryWrite,
       requestedAt: Date.now(),
+      countdownDeadline: pendingInteractionDeadline(
+        (evt as any).remaining_timeout_ms,
+        (evt as any).timeout_ms,
+      ),
     })
     pendingApprovals.value = new Map(pendingApprovals.value)
   }
 
   function clearPendingApproval(evt: RunEvent) {
-    if ((evt as any).resolved === false) return
     const sid = evt.session_id
     if (!sid) return
+    const approvalId = String((evt as any).approval_id || '')
+    const attempted = Boolean(approvalId && pendingApprovalResponseIds.get(sid) === approvalId)
+    if (attempted) pendingApprovalResponseIds.delete(sid)
     const current = pendingApprovals.value.get(sid)
-    if (!current) return
-    const approvalId = (evt as any).approval_id
+    if (!current) {
+      if (attempted && (evt as any).resolved === false && ((evt as any).stale === true || isPendingInteractionExpiredError((evt as any).error || (evt as any).reason))) {
+        notifyPendingInteractionExpired()
+      }
+      return
+    }
     if (approvalId && current.approvalId !== approvalId) return
+    if ((evt as any).resolved === false) {
+      if ((evt as any).stale === true || isPendingInteractionExpiredError((evt as any).error || (evt as any).reason)) {
+        dismissPendingApprovalFor(sid, current.approvalId)
+        if (attempted) notifyPendingInteractionExpired()
+      }
+      return
+    }
     pendingApprovals.value.delete(sid)
     pendingApprovals.value = new Map(pendingApprovals.value)
   }
@@ -3173,6 +3203,7 @@ export const useChatStore = defineStore('chat', () => {
     const sid = evt.session_id
     const clarifyId = (evt as any).clarify_id as string | undefined
     if (!sid || !clarifyId) return
+    if (pendingClarifyResponseIds.get(sid) !== clarifyId) pendingClarifyResponseIds.delete(sid)
     pendingClarifies.value.set(sid, {
       sessionId: sid,
       clarifyId,
@@ -3182,23 +3213,42 @@ export const useChatStore = defineStore('chat', () => {
       responseMode: String((evt as any).response_mode || ''),
       timeoutMs: Number((evt as any).timeout_ms) || 300000,
       requestedAt: Date.now(),
+      countdownDeadline: pendingInteractionDeadline(
+        (evt as any).remaining_timeout_ms,
+        (evt as any).timeout_ms,
+      ),
     })
     pendingClarifies.value = new Map(pendingClarifies.value)
   }
 
   function clearPendingClarify(evt: RunEvent) {
-    if ((evt as any).resolved === false) return
     const sid = evt.session_id
     if (!sid) return
+    const clarifyId = String((evt as any).clarify_id || '')
+    const attempted = Boolean(clarifyId && pendingClarifyResponseIds.get(sid) === clarifyId)
+    if (attempted) pendingClarifyResponseIds.delete(sid)
     const current = pendingClarifies.value.get(sid)
-    if (!current) return
-    const clarifyId = (evt as any).clarify_id
+    if (!current) {
+      if (attempted && (evt as any).resolved === false && ((evt as any).stale === true || isPendingInteractionExpiredError((evt as any).error || (evt as any).reason))) {
+        notifyPendingInteractionExpired()
+      }
+      return
+    }
     if (clarifyId && current.clarifyId !== clarifyId) return
+    if ((evt as any).resolved === false) {
+      if ((evt as any).stale === true || isPendingInteractionExpiredError((evt as any).error || (evt as any).reason)) {
+        dismissPendingClarifyFor(sid, current.clarifyId)
+        if (attempted) notifyPendingInteractionExpired()
+      }
+      return
+    }
     pendingClarifies.value.delete(sid)
     pendingClarifies.value = new Map(pendingClarifies.value)
   }
 
   function clearPendingInteractions(sessionId: string) {
+    pendingApprovalResponseIds.delete(sessionId)
+    pendingClarifyResponseIds.delete(sessionId)
     let changed = false
     if (pendingApprovals.value.has(sessionId)) {
       pendingApprovals.value.delete(sessionId)
@@ -3214,33 +3264,51 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  function respondToClarifyFor(sessionId: string, clarifyId: string, response: string) {
-    const pending = pendingClarifies.value.get(sessionId)
-    if (!pending || pending.clarifyId !== clarifyId) return
-    respondClarify(sessionId, clarifyId, response, runtimeTransport())
+  function dismissPendingApprovalFor(sessionId: string, approvalId: string) {
+    const pending = pendingApprovals.value.get(sessionId)
+    if (!pending || pending.approvalId !== approvalId) return
+    pendingApprovals.value.delete(sessionId)
+    pendingApprovals.value = new Map(pendingApprovals.value)
   }
 
-  function respondToClarify(response: string) {
-    const pending = activePendingClarify.value
-    if (!pending) return
-    respondToClarifyFor(pending.sessionId, pending.clarifyId, response)
-    pendingClarifies.value.delete(pending.sessionId)
+  function dismissPendingClarifyFor(sessionId: string, clarifyId: string) {
+    const pending = pendingClarifies.value.get(sessionId)
+    if (!pending || pending.clarifyId !== clarifyId) return
+    pendingClarifies.value.delete(sessionId)
     pendingClarifies.value = new Map(pendingClarifies.value)
   }
 
-
-  function respondApprovalFor(sessionId: string, approvalId: string, choice: PendingApproval['choices'][number]) {
-    const pending = pendingApprovals.value.get(sessionId)
-    if (!pending || pending.approvalId !== approvalId) return
-    respondToolApproval(sessionId, approvalId, choice, runtimeTransport())
+  function respondToClarifyFor(sessionId: string, clarifyId: string, response: string): PendingInteractionSubmitResult {
+    const pending = pendingClarifies.value.get(sessionId)
+    if (!pending || pending.clarifyId !== clarifyId) return 'missing'
+    respondClarify(sessionId, clarifyId, response, runtimeTransport())
+    pendingClarifyResponseIds.set(sessionId, clarifyId)
+    return 'submitted'
   }
 
-  function respondApproval(choice: PendingApproval['choices'][number]) {
+  function respondToClarify(response: string): PendingInteractionSubmitResult {
+    const pending = activePendingClarify.value
+    if (!pending) return 'missing'
+    const result = respondToClarifyFor(pending.sessionId, pending.clarifyId, response)
+    if (result === 'submitted') dismissPendingClarifyFor(pending.sessionId, pending.clarifyId)
+    return result
+  }
+
+
+  function respondApprovalFor(sessionId: string, approvalId: string, choice: PendingApproval['choices'][number]): PendingInteractionSubmitResult {
+    const pending = pendingApprovals.value.get(sessionId)
+    if (!pending || pending.approvalId !== approvalId) return 'missing'
+    respondToolApproval(sessionId, approvalId, choice, runtimeTransport())
+    pendingApprovalResponseIds.set(sessionId, approvalId)
+    return 'submitted'
+  }
+
+  function respondApproval(choice: PendingApproval['choices'][number]): PendingInteractionSubmitResult {
     const pending = activePendingApproval.value
-    if (!pending) return
-    respondApprovalFor(pending.sessionId, pending.approvalId, choice)
-    pendingApprovals.value.delete(pending.sessionId)
-    pendingApprovals.value = new Map(pendingApprovals.value)
+    if (!pending) return 'missing'
+    const result = respondApprovalFor(pending.sessionId, pending.approvalId, choice)
+    if (result === 'submitted') dismissPendingApprovalFor(pending.sessionId, pending.approvalId)
+    return result
   }
 
   function updateSessionTitle(sessionId: string) {

@@ -1205,6 +1205,53 @@ describe('group chat store baseline lifecycle', () => {
     expect(store.pendingClarifies.size).toBe(0)
   })
 
+  it('does not use the browser clock to expire old group interactions', async () => {
+    const store = await loadStore()
+    const expired = vi.fn()
+    window.addEventListener('hermes:pending-interaction-expired', expired)
+    await store.connect()
+    emitSocket('approval.requested', {
+      roomId: 'room-1', agentName: 'Agent', approval_id: 'approval-1', choices: ['once', 'deny'], timeout_ms: 1,
+    })
+    emitSocket('clarify.requested', {
+      roomId: 'room-1', agentName: 'Agent', clarify_id: 'clarify-1', question: 'Continue?', timeout_ms: 1,
+    })
+    for (const pending of store.pendingApprovals.values()) pending.requestedAt = Date.now() - 10
+    for (const pending of store.pendingClarifies.values()) pending.requestedAt = Date.now() - 10
+    groupChatApiMock.socket.emit.mockImplementation((event: string, _data: any, ack?: Function) => {
+      if (event === 'approval.respond' || event === 'clarify.respond') ack?.({ ok: true, resolved: true })
+      return groupChatApiMock.socket
+    })
+
+    expect(await store.respondApprovalFor('room-1', 'approval-1', 'once')).toBe('submitted')
+    expect(await store.respondClarifyFor('room-1', 'clarify-1', 'Continue')).toBe('submitted')
+
+    expect(store.pendingApprovals.size).toBe(0)
+    expect(store.pendingClarifies.size).toBe(0)
+    expect(expired).not.toHaveBeenCalled()
+    expect(groupChatApiMock.socket.emit.mock.calls.filter(call => call[0] === 'approval.respond' || call[0] === 'clarify.respond')).toHaveLength(2)
+    window.removeEventListener('hermes:pending-interaction-expired', expired)
+  })
+
+  it('reports a server-confirmed stale group approval and removes it', async () => {
+    const store = await loadStore()
+    const expired = vi.fn()
+    window.addEventListener('hermes:pending-interaction-expired', expired)
+    await store.connect()
+    emitSocket('approval.requested', {
+      roomId: 'room-1', agentName: 'Agent', approval_id: 'approval-stale', choices: ['once', 'deny'], timeout_ms: 300_000,
+    })
+    groupChatApiMock.socket.emit.mockImplementationOnce((event: string, _data: any, ack?: Function) => {
+      if (event === 'approval.respond') ack?.({ ok: true, resolved: true, stale: true })
+      return groupChatApiMock.socket
+    })
+
+    expect(await store.respondApprovalFor('room-1', 'approval-stale', 'once')).toBe('expired')
+    expect(store.pendingApprovals.size).toBe(0)
+    expect(expired).toHaveBeenCalledOnce()
+    window.removeEventListener('hermes:pending-interaction-expired', expired)
+  })
+
   it('responds to a clarification from an inactive room without switching rooms', async () => {
     const store = await loadStore()
     await store.connect()
@@ -1234,10 +1281,12 @@ describe('group chat store baseline lifecycle', () => {
         pendingApprovals: [{
           roomId: 'room-1', agentName: 'Agent', approval_id: 'approval-restored',
           command: 'touch file', description: 'needs approval', choices: ['once', 'deny'],
+          timeout_ms: 300000, remaining_timeout_ms: 45_000,
         }],
         pendingClarifies: [{
           roomId: 'room-1', agentName: 'Agent', clarify_id: 'clarify-restored',
           question: 'Which environment?', choices: null, timeout_ms: 300000,
+          remaining_timeout_ms: 20_000,
         }],
       })
       return groupChatApiMock.socket
@@ -1248,6 +1297,8 @@ describe('group chat store baseline lifecycle', () => {
 
     expect([...store.pendingApprovals.values()]).toContainEqual(expect.objectContaining({ approvalId: 'approval-restored' }))
     expect([...store.pendingClarifies.values()]).toContainEqual(expect.objectContaining({ clarifyId: 'clarify-restored' }))
+    expect(store.activePendingApproval!.countdownDeadline - performance.now()).toBeGreaterThan(44_000)
+    expect(store.activePendingClarify!.countdownDeadline - performance.now()).toBeGreaterThan(19_000)
   })
 
   it('keeps same-id approvals isolated across rooms', async () => {

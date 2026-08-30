@@ -296,9 +296,22 @@ export function buildOutboundRunEvent(event: string, payload: any): any {
   return changed ? outbound : payload
 }
 
-export function buildResumeEvents(events: RunEventRecord[]): RunEventRecord[] {
+export function buildResumeEvents(events: RunEventRecord[], nowMs = Date.now()): RunEventRecord[] {
   return events.map((entry) => {
-    const data = buildOutboundRunEvent(entry.event, entry.data)
+    let data = buildOutboundRunEvent(entry.event, entry.data)
+    if (entry.event === 'approval.requested' || entry.event === 'clarify.requested') {
+      const timeoutMs = Number(data?.timeout_ms)
+      const requestedAt = Number(data?.requested_at)
+      if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
+        const elapsedMs = Number.isFinite(requestedAt) && requestedAt > 0
+          ? Math.max(0, nowMs - requestedAt)
+          : 0
+        data = {
+          ...data,
+          remaining_timeout_ms: Math.max(0, Math.trunc(timeoutMs - elapsedMs)),
+        }
+      }
+    }
     return data === entry.data ? entry : { ...entry, data }
   })
 }

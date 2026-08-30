@@ -748,6 +748,12 @@ describe('group chat approval and context baseline', () => {
     expect(joined.pendingClarifies).toEqual([
       expect.objectContaining({ clarify_id: 'clarify-restored', question: 'Which environment?' }),
     ])
+    expect(joined.pendingApprovals[0].remaining_timeout_ms).toBeGreaterThan(0)
+    expect(joined.pendingApprovals[0].remaining_timeout_ms).toBeLessThanOrEqual(joined.pendingApprovals[0].timeout_ms)
+    expect(joined.pendingApprovals[0].requested_at).toEqual(expect.any(Number))
+    expect(joined.pendingClarifies[0].remaining_timeout_ms).toBeGreaterThan(0)
+    expect(joined.pendingClarifies[0].remaining_timeout_ms).toBeLessThanOrEqual(joined.pendingClarifies[0].timeout_ms)
+    expect(joined.pendingClarifies[0].requested_at).toEqual(expect.any(Number))
   })
 
   it('routes approval responses back to the pending Ekko Agent session', async () => {

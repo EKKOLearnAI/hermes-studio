@@ -1214,6 +1214,7 @@ export async function handleEkkoAgentRun(
         sessionId,
         signal: abortController.signal,
         onRequested: (pending: any) => {
+          const requestedAt = Date.now()
           emit('approval.requested', {
             event: 'approval.requested',
             run_id: runId || turnId,
@@ -1223,6 +1224,8 @@ export async function handleEkkoAgentRun(
             choices: pending.choices,
             allow_permanent: pending.allowPermanent,
             timeout_ms: pending.timeoutMs,
+            remaining_timeout_ms: pending.timeoutMs,
+            requested_at: requestedAt,
             tool: pending.toolName,
             permission_key: pending.key,
           })
@@ -1242,6 +1245,7 @@ export async function handleEkkoAgentRun(
         runId: runId || turnId,
         signal: abortController.signal,
         onRequested: (pending: any) => {
+          const requestedAt = Date.now()
           emit('clarify.requested', {
             event: 'clarify.requested',
             run_id: runId || turnId,
@@ -1249,6 +1253,8 @@ export async function handleEkkoAgentRun(
             question: pending.question,
             choices: pending.choices || null,
             timeout_ms: pending.timeoutMs,
+            remaining_timeout_ms: pending.timeoutMs,
+            requested_at: requestedAt,
           })
         },
         onResolved: (resolution: any) => {

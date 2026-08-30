@@ -2,6 +2,12 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { useSettingsStore } from './settings'
 import { primeCompletionSound } from '@/utils/completion-sound'
+import {
+    isPendingInteractionExpiredError,
+    notifyPendingInteractionExpired,
+    pendingInteractionDeadline,
+    type PendingInteractionSubmitResult,
+} from '@/utils/pending-interaction'
 import { getActiveProfileName, getStoredUsername } from '@/api/client'
 import { fetchCurrentUser } from '@/api/studio/auth'
 import { formatMessageWithReference, type Attachment, type ContentBlock, type MessageReference } from './chat'
@@ -155,6 +161,7 @@ export interface GroupPendingApproval {
     allowPermanent: boolean
     isMemoryWrite: boolean
     requestedAt: number
+    countdownDeadline: number
 }
 
 export interface GroupPendingClarify {
@@ -167,6 +174,7 @@ export interface GroupPendingClarify {
     responseMode: string
     timeoutMs: number
     requestedAt: number
+    countdownDeadline: number
 }
 
 export const useGroupChatStore = defineStore('groupChat', () => {
@@ -465,7 +473,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         return null
     })
 
-    function upsertPendingApproval(data: { roomId: string; agentName?: string; approval_id?: string; command?: string; description?: string; choices?: string[]; allow_permanent?: boolean; requested_at?: number }) {
+    function upsertPendingApproval(data: { roomId: string; agentName?: string; approval_id?: string; command?: string; description?: string; choices?: string[]; allow_permanent?: boolean; timeout_ms?: number; remaining_timeout_ms?: number; requested_at?: number }) {
         if (!data.roomId || !data.approval_id) return
         const description = data.description || ''
         const normalizedDescription = description.trim().toLowerCase().replace(/\s+/g, ' ')
@@ -487,10 +495,11 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             allowPermanent: Boolean(data.allow_permanent),
             isMemoryWrite,
             requestedAt: Number(data.requested_at) || Date.now(),
+            countdownDeadline: pendingInteractionDeadline(data.remaining_timeout_ms, data.timeout_ms),
         })
     }
 
-    function upsertPendingClarify(data: { roomId: string; agentName?: string; clarify_id?: string; question?: string; choices?: string[] | null; initial_response?: string; response_mode?: string; timeout_ms?: number; requested_at?: number }) {
+    function upsertPendingClarify(data: { roomId: string; agentName?: string; clarify_id?: string; question?: string; choices?: string[] | null; initial_response?: string; response_mode?: string; timeout_ms?: number; remaining_timeout_ms?: number; requested_at?: number }) {
         if (!data.roomId || !data.clarify_id) return
         pendingClarifies.value.set(pendingClarifyKey(data.roomId, data.clarify_id), {
             roomId: data.roomId,
@@ -502,6 +511,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             responseMode: String(data.response_mode || ''),
             timeoutMs: Number(data.timeout_ms) || 300_000,
             requestedAt: Number(data.requested_at) || Date.now(),
+            countdownDeadline: pendingInteractionDeadline(data.remaining_timeout_ms, data.timeout_ms),
         })
     }
 
@@ -1175,7 +1185,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             handoffChains.value = new Map(handoffChains.value)
         })
 
-        socket.on('approval.requested', (data: { roomId: string; agentName?: string; approval_id?: string; command?: string; description?: string; choices?: string[]; allow_permanent?: boolean }) => {
+        socket.on('approval.requested', (data: { roomId: string; agentName?: string; approval_id?: string; command?: string; description?: string; choices?: string[]; allow_permanent?: boolean; timeout_ms?: number; remaining_timeout_ms?: number; requested_at?: number }) => {
             upsertPendingApproval(data)
             pendingApprovals.value = new Map(pendingApprovals.value)
         })
@@ -1186,7 +1196,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
             pendingApprovals.value = new Map(pendingApprovals.value)
         })
 
-        socket.on('clarify.requested', (data: { roomId: string; agentName?: string; clarify_id?: string; question?: string; choices?: string[] | null; initial_response?: string; response_mode?: string; timeout_ms?: number }) => {
+        socket.on('clarify.requested', (data: { roomId: string; agentName?: string; clarify_id?: string; question?: string; choices?: string[] | null; initial_response?: string; response_mode?: string; timeout_ms?: number; remaining_timeout_ms?: number; requested_at?: number }) => {
             upsertPendingClarify(data)
             pendingClarifies.value = new Map(pendingClarifies.value)
         })
@@ -1815,66 +1825,92 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         })
     }
 
-    async function respondApprovalFor(roomId: string, approvalId: string, choice: GroupPendingApproval['choices'][number]) {
+    async function respondApprovalFor(roomId: string, approvalId: string, choice: GroupPendingApproval['choices'][number]): Promise<PendingInteractionSubmitResult> {
         const key = pendingApprovalKey(roomId, approvalId)
         const pending = pendingApprovals.value.get(key)
-        if (!pending) return
+        if (!pending) return 'missing'
         const socket = await ensureRealtimeSocket()
         let resolved = false
-        await new Promise<void>((resolve, reject) => {
-            socket.emit('approval.respond', {
-                roomId: pending.roomId,
-                approval_id: pending.approvalId,
-                choice,
-            }, (res: any) => {
-                if (res?.error) reject(new Error(res.error))
-                else {
-                    resolved = res?.resolved !== false
-                    resolve()
-                }
+        let stale = false
+        try {
+            await new Promise<void>((resolve, reject) => {
+                socket.emit('approval.respond', {
+                    roomId: pending.roomId,
+                    approval_id: pending.approvalId,
+                    choice,
+                }, (res: any) => {
+                    if (res?.error) reject(new Error(res.error))
+                    else {
+                        resolved = res?.resolved !== false
+                        stale = res?.stale === true
+                        resolve()
+                    }
+                })
             })
-        })
+        } catch (error) {
+            if (!isPendingInteractionExpiredError(error)) throw error
+            stale = true
+            resolved = true
+        }
         if (resolved) {
             pendingApprovals.value.delete(key)
             pendingApprovals.value = new Map(pendingApprovals.value)
         }
+        if (stale) {
+            notifyPendingInteractionExpired()
+            return 'expired'
+        }
+        return 'submitted'
     }
 
-    async function respondApproval(choice: GroupPendingApproval['choices'][number]) {
+    async function respondApproval(choice: GroupPendingApproval['choices'][number]): Promise<PendingInteractionSubmitResult> {
         const pending = activePendingApproval.value
-        if (!pending) return
-        await respondApprovalFor(pending.roomId, pending.approvalId, choice)
+        if (!pending) return 'missing'
+        return respondApprovalFor(pending.roomId, pending.approvalId, choice)
     }
 
-    async function respondClarifyFor(roomId: string, clarifyId: string, response: string) {
+    async function respondClarifyFor(roomId: string, clarifyId: string, response: string): Promise<PendingInteractionSubmitResult> {
         const key = pendingClarifyKey(roomId, clarifyId)
         const pending = pendingClarifies.value.get(key)
-        if (!pending) return
+        if (!pending) return 'missing'
         const socket = await ensureRealtimeSocket()
         let resolved = false
-        await new Promise<void>((resolve, reject) => {
-            socket.emit('clarify.respond', {
-                roomId: pending.roomId,
-                clarify_id: pending.clarifyId,
-                response,
-            }, (res: any) => {
-                if (res?.error) reject(new Error(res.error))
-                else {
-                    resolved = res?.resolved !== false
-                    resolve()
-                }
+        let stale = false
+        try {
+            await new Promise<void>((resolve, reject) => {
+                socket.emit('clarify.respond', {
+                    roomId: pending.roomId,
+                    clarify_id: pending.clarifyId,
+                    response,
+                }, (res: any) => {
+                    if (res?.error) reject(new Error(res.error))
+                    else {
+                        resolved = res?.resolved !== false
+                        stale = res?.stale === true
+                        resolve()
+                    }
+                })
             })
-        })
+        } catch (error) {
+            if (!isPendingInteractionExpiredError(error)) throw error
+            stale = true
+            resolved = true
+        }
         if (resolved) {
             pendingClarifies.value.delete(key)
             pendingClarifies.value = new Map(pendingClarifies.value)
         }
+        if (stale) {
+            notifyPendingInteractionExpired()
+            return 'expired'
+        }
+        return 'submitted'
     }
 
-    async function respondClarify(response: string) {
+    async function respondClarify(response: string): Promise<PendingInteractionSubmitResult> {
         const pending = activePendingClarify.value
-        if (!pending) return
-        await respondClarifyFor(pending.roomId, pending.clarifyId, response)
+        if (!pending) return 'missing'
+        return respondClarifyFor(pending.roomId, pending.clarifyId, response)
     }
 
     async function cancelExecutionQueueItem(queueId: string) {

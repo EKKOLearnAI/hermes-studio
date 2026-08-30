@@ -27,7 +27,7 @@ const routeState = reactive({ name: 'hermes.chat' as string })
 const routerPush = vi.fn(async () => undefined)
 const created: any[] = []
 const clipboardMock = vi.hoisted(() => ({ copyToClipboard: vi.fn(async () => true) }))
-const uiMock = vi.hoisted(() => ({ messageError: vi.fn() }))
+const uiMock = vi.hoisted(() => ({ messageError: vi.fn(), messageWarning: vi.fn() }))
 const systemNotificationMock = vi.hoisted(() => ({ showSystemNotification: vi.fn(async () => true) }))
 const workflowMock = vi.hoisted(() => ({
   statusHandlers: [] as Array<(status: any) => void>,
@@ -58,7 +58,7 @@ vi.mock('naive-ui', async () => {
   return {
     NButton: button,
     NInput: input,
-    useMessage: () => ({ error: uiMock.messageError }),
+    useMessage: () => ({ error: uiMock.messageError, warning: uiMock.messageWarning }),
     useNotification: () => ({
       create: vi.fn((options: any) => {
         const entry = { options, destroy: vi.fn() }
@@ -502,6 +502,12 @@ describe('GlobalPendingActions', () => {
     const action = await render(created[0].options.action)
     await action.get('button').trigger('click')
     expect(chatState.respondToClarifyFor).toHaveBeenCalledWith('session-b', 'clarify-b', 'staging')
+  })
+
+  it('warns when a timed-out interaction is closed after an attempted response', async () => {
+    mount(GlobalPendingActions)
+    window.dispatchEvent(new CustomEvent('hermes:pending-interaction-expired'))
+    expect(uiMock.messageWarning).toHaveBeenCalledWith('chat.interactionExpired')
   })
 
   it('opens and responds to a clarification from an inactive group room', async () => {

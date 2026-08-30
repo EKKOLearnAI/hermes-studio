@@ -688,11 +688,16 @@ export class ChatRunSocket {
       }
       try {
         const result = await this.bridge.approvalRespond(data.approval_id, data.choice || 'deny')
+        const resolved = Boolean(result.resolved)
         this.emitToSession(socket, data.session_id, 'approval.resolved', {
           event: 'approval.resolved',
           approval_id: data.approval_id,
           choice: data.choice || 'deny',
-          resolved: Boolean(result.resolved),
+          resolved,
+          ...(!resolved ? {
+            stale: true,
+            error: 'Approval is no longer pending.',
+          } : {}),
         })
       } catch (err) {
         this.emitToSession(socket, data.session_id, 'approval.resolved', {
@@ -756,12 +761,17 @@ export class ChatRunSocket {
       }
       try {
         const result = await this.bridge.clarifyRespond(data.clarify_id, data.response || '')
+        const resolved = Boolean((result as any)?.resolved)
         this.emitToSession(socket, data.session_id, 'clarify.resolved', {
           event: 'clarify.resolved',
           clarify_id: data.clarify_id,
-          resolved: Boolean((result as any)?.resolved),
+          resolved,
+          ...(!resolved ? {
+            stale: true,
+            error: 'Clarification is no longer pending.',
+          } : {}),
         })
-        if ((result as any)?.resolved) {
+        if (resolved) {
           this.clearClarifyEventState(data.session_id, data.clarify_id)
         }
       } catch (err) {

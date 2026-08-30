@@ -3,14 +3,16 @@ import { h, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { NButton, NInput, useMessage, useNotification, type NotificationReactive } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
-import { useChatStore, type PendingApproval } from '@/stores/hermes/chat'
+import { useChatStore, type PendingApproval, type PendingClarify } from '@/stores/hermes/chat'
 import { useGroupChatStore, type GroupPendingApproval, type GroupPendingClarify } from '@/stores/hermes/group-chat'
+import PendingInteractionCountdown from '@/components/hermes/chat/PendingInteractionCountdown.vue'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import { useSettingsStore } from '@/stores/hermes/settings'
 import { copyToClipboard } from '@/utils/clipboard'
 import { playCompletionSound } from '@/utils/completion-sound'
 import { showSystemNotification } from '@/utils/completion-notification'
 import { workflowApprovalKey } from '@/utils/workflow-approval-key'
+import { PENDING_INTERACTION_EXPIRED_EVENT } from '@/utils/pending-interaction'
 import { approveWorkflowNode, type WorkflowRecord } from '@/api/studio/workflows'
 import { listWorkflowsSocket, onWorkflowStatusUpdated, subscribeWorkflowStatuses, disconnectWorkflowSocket, type WorkflowRuntimeStatus } from '@/api/studio/workflow-socket'
 
@@ -99,7 +101,7 @@ function resetWorkflowSubscriptions(profile?: string | null) {
 type ApprovalChoice = PendingApproval['choices'][number]
 type GlobalPendingAction =
   | { key: string; profile: string; kind: 'chat-approval'; title: string; pending: PendingApproval }
-  | { key: string; profile: string; kind: 'chat-clarify'; title: string; pending: { sessionId: string; clarifyId: string; question: string; choices: string[] | null } }
+  | { key: string; profile: string; kind: 'chat-clarify'; title: string; pending: PendingClarify }
   | { key: string; profile: string; kind: 'group-approval'; title: string; pending: GroupPendingApproval }
   | { key: string; profile: string; kind: 'group-clarify'; title: string; pending: GroupPendingClarify }
   | { key: string; profile: string; kind: 'workflow-approval'; title: string; workflowId: string; runId: string; nodeId: string; executionId?: string }
@@ -214,6 +216,10 @@ function approvalCommand(action: Extract<GlobalPendingAction, { kind: 'chat-appr
   ])
 }
 
+function interactionCountdown(action: Extract<GlobalPendingAction, { kind: 'chat-approval' | 'chat-clarify' | 'group-approval' | 'group-clarify' }>) {
+  return h(PendingInteractionCountdown, { deadline: action.pending.countdownDeadline })
+}
+
 function approvalButtons(action: Extract<GlobalPendingAction, { kind: 'chat-approval' | 'group-approval' }>) {
   const pending = action.pending
   const choices: ApprovalChoice[] = pending.isMemoryWrite ? ['once', 'deny'] : pending.choices
@@ -247,6 +253,7 @@ async function submitApproval(action: Extract<GlobalPendingAction, { kind: 'chat
 
 function clarifyContent(action: Extract<GlobalPendingAction, { kind: 'chat-clarify' | 'group-clarify' }>) {
   return h('div', { class: 'global-clarify-content' }, [
+    interactionCountdown(action),
     h('div', { class: 'global-clarify-question' }, action.pending.question),
     action.pending.choices?.length
       ? h('div', { class: 'global-clarify-choices' }, action.pending.choices.map(choice => h(NButton, {
@@ -363,6 +370,10 @@ function notificationTitle(action: GlobalPendingAction, clarify: boolean) {
   }, `${action.title} · ${clarify ? t('chat.clarifyTitle') : t('chat.approvalTitle')}`)
 }
 
+function showPendingInteractionExpired() {
+  message.warning(t('chat.interactionExpired'))
+}
+
 function createGlobalNotification(action: GlobalPendingAction): NotificationReactive {
   const clarify = action.kind === 'chat-clarify' || action.kind === 'group-clarify'
   return notification.create({
@@ -372,6 +383,7 @@ function createGlobalNotification(action: GlobalPendingAction): NotificationReac
       : action.kind === 'workflow-approval'
         ? () => h('div', { class: 'global-approval-content' }, t('workflow.status.pending_approval'))
         : () => h('div', { class: 'global-approval-content' }, [
+            interactionCountdown(action),
             action.pending.description
               ? h('div', { class: 'global-approval-description' }, action.pending.description)
               : null,
@@ -438,6 +450,7 @@ watch(pendingActions, actions => {
 }, { deep: true, immediate: true })
 
 onMounted(() => {
+  window.addEventListener(PENDING_INTERACTION_EXPIRED_EVENT, showPendingInteractionExpired)
   window.addEventListener('hermes:workflow-approval-visible', handleVisibleWorkflowApproval)
   resetWorkflowSubscriptions(profilesStore.activeProfileName)
   void groupChatStore.connect().catch(() => undefined)
@@ -450,6 +463,7 @@ watch(() => profilesStore.activeProfileName, profile => {
 })
 
 onUnmounted(() => {
+  window.removeEventListener(PENDING_INTERACTION_EXPIRED_EVENT, showPendingInteractionExpired)
   window.removeEventListener('hermes:workflow-approval-visible', handleVisibleWorkflowApproval)
   visibleWorkflowApprovalKeys.clear()
   settingsLoadGeneration++

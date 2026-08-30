@@ -818,6 +818,8 @@ test('renders tool trace and sends explicit approval decisions over the chat-run
       description: 'Allow write_file to create /tmp/approved.txt',
       choices: ['once', 'deny'],
       allow_permanent: false,
+      timeout_ms: 300_000,
+      remaining_timeout_ms: 90_000,
     })
   }, run.session_id)
 
@@ -827,6 +829,7 @@ test('renders tool trace and sends explicit approval decisions over the chat-run
   await expect(page.locator('.tool-calls-panel .tool-call-name').filter({ hasText: 'write_file' })).toBeVisible()
   await expect(page.getByText('Allow write_file to create /tmp/approved.txt')).toBeVisible()
   await expect(page.getByText('write_file /tmp/approved.txt')).toBeVisible()
+  await expect(page.locator('.pending-interaction-countdown')).toContainText(/01:(29|30) remaining/)
   await expect(page.getByRole('button', { name: 'Allow once' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Allow session' })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Deny' })).toBeVisible()
@@ -937,11 +940,13 @@ test('renders free-text and choice clarifications and sends responses over the c
       question: 'Which directory should I update?',
       choices: null,
       timeout_ms: 300_000,
+      remaining_timeout_ms: 75_000,
     })
   }, run.session_id)
 
   await expect(page.getByText('Agent has a question for you')).toBeVisible()
   await expect(page.getByText('Which directory should I update?')).toBeVisible()
+  await expect(page.locator('.pending-interaction-countdown')).toContainText(/01:(14|15) remaining/)
   const clarifyInput = page.getByPlaceholder('Type your answer...')
   await clarifyInput.fill('packages/client')
   await page.getByRole('button', { name: 'Reply' }).click()
@@ -1001,6 +1006,105 @@ test('renders free-text and choice clarifications and sends responses over the c
   }, run.session_id)
 
   await expect(page.getByText('Updated the selected target.')).toBeVisible()
+  expect(api.unexpectedRequests).toEqual([])
+})
+
+test('reports and closes timed-out approval and clarification prompts after an attempted action', async ({ page }) => {
+  await authenticate(page, TEST_ACCESS_KEY, 'research')
+  const api = await mockHermesApi(page)
+  await mockChatSocket(page)
+
+  await page.goto('/#/hermes/chat')
+  await sendChatMessage(page, 'Wait for a stale prompt')
+  const { run } = await waitForRun(page)
+
+  await page.evaluate((sid) => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('run.started', { event: 'run.started', session_id: sid, run_id: 'run-stale-prompt' })
+    socket.__trigger('approval.requested', {
+      event: 'approval.requested',
+      session_id: sid,
+      run_id: 'run-stale-prompt',
+      approval_id: 'approval-stale',
+      command: 'write_file stale.txt',
+      description: 'This approval has already timed out',
+      choices: ['once', 'deny'],
+      timeout_ms: 1,
+      remaining_timeout_ms: 0,
+    })
+  }, run.session_id)
+
+  const prompt = page.locator('.approval-float-panel')
+  await expect(prompt).toContainText('This approval has already timed out')
+  await expect(prompt.locator('.pending-interaction-countdown')).toContainText('00:00 · Awaiting server confirmation')
+  await expect(prompt.locator('.float-panel-close')).toHaveCount(0)
+  await prompt.locator('.approval-float-actions button').first().click()
+  await expect(prompt).toHaveCount(0)
+  await page.evaluate((sid) => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('approval.resolved', {
+      event: 'approval.resolved',
+      session_id: sid,
+      approval_id: 'approval-stale',
+      resolved: false,
+      stale: true,
+      error: 'Approval is no longer pending.',
+    })
+  }, run.session_id)
+  await expect(page.getByText('This request has timed out and was closed.').last()).toBeVisible()
+
+  await page.evaluate((sid) => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('clarify.requested', {
+      event: 'clarify.requested',
+      session_id: sid,
+      run_id: 'run-stale-prompt',
+      clarify_id: 'clarify-stale',
+      question: 'This question has already timed out',
+      choices: ['staging'],
+      timeout_ms: 1,
+      remaining_timeout_ms: 0,
+    })
+  }, run.session_id)
+
+  await expect(prompt).toContainText('This question has already timed out')
+  await expect(prompt.locator('.pending-interaction-countdown')).toContainText('00:00 · Awaiting server confirmation')
+  await expect(prompt.locator('.float-panel-close')).toHaveCount(0)
+  await prompt.locator('.approval-float-actions button').first().click()
+  await expect(prompt).toHaveCount(0)
+  await page.evaluate((sid) => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('clarify.resolved', {
+      event: 'clarify.resolved',
+      session_id: sid,
+      clarify_id: 'clarify-stale',
+      resolved: false,
+      stale: true,
+      error: 'Clarification is no longer pending.',
+    })
+  }, run.session_id)
+  await expect(page.getByText('This request has timed out and was closed.').last()).toBeVisible()
+  expect(await page.evaluate(() => (
+    (window as any).__PW_CHAT_SOCKET__.emitted
+      .filter((item: any) => item.event === 'approval.respond' || item.event === 'clarify.respond')
+  ))).toEqual([
+    {
+      event: 'approval.respond',
+      payload: {
+        session_id: run.session_id,
+        approval_id: 'approval-stale',
+        choice: 'once',
+      },
+    },
+    {
+      event: 'clarify.respond',
+      payload: {
+        session_id: run.session_id,
+        clarify_id: 'clarify-stale',
+        response: 'staging',
+      },
+    },
+  ])
   expect(api.unexpectedRequests).toEqual([])
 })
 

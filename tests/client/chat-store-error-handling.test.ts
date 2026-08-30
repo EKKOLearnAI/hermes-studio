@@ -155,6 +155,26 @@ describe('chat store error handling - #1644', () => {
     expect(store.activePendingApproval).toBeNull()
   })
 
+  it('anchors approval and clarification countdowns to server-provided remaining time', () => {
+    const store = useChatStore()
+    store.sessions = [makeSession('session-b')]
+    const now = performance.now()
+
+    chatApi.globalPendingHandler?.({
+      event: 'approval.requested', session_id: 'session-b', approval_id: 'approval-b',
+      choices: ['once', 'deny'], timeout_ms: 300_000, remaining_timeout_ms: 42_000,
+    })
+    chatApi.globalPendingHandler?.({
+      event: 'clarify.requested', session_id: 'session-b', clarify_id: 'clarify-b',
+      question: 'Continue?', timeout_ms: 300_000, remaining_timeout_ms: 17_000,
+    })
+
+    expect(store.pendingApprovals.get('session-b')!.countdownDeadline - now).toBeGreaterThanOrEqual(41_900)
+    expect(store.pendingApprovals.get('session-b')!.countdownDeadline - now).toBeLessThanOrEqual(42_100)
+    expect(store.pendingClarifies.get('session-b')!.countdownDeadline - now).toBeGreaterThanOrEqual(16_900)
+    expect(store.pendingClarifies.get('session-b')!.countdownDeadline - now).toBeLessThanOrEqual(17_100)
+  })
+
   it('keeps a pending approval when the authoritative response is unresolved', () => {
     const store = useChatStore()
     store.sessions = [makeSession('session-a'), makeSession('session-b')]
@@ -167,6 +187,64 @@ describe('chat store error handling - #1644', () => {
     })
 
     expect(store.pendingApprovals.get('session-b')).toMatchObject({ approvalId: 'approval-b' })
+  })
+
+  it('waits for the server to decide whether old approval and clarification prompts expired', () => {
+    const store = useChatStore()
+    const expired = vi.fn()
+    window.addEventListener('hermes:pending-interaction-expired', expired)
+    store.sessions = [makeSession('session-b')]
+    chatApi.globalPendingHandler?.({
+      event: 'approval.requested', session_id: 'session-b', approval_id: 'approval-b', choices: ['once', 'deny'], timeout_ms: 1,
+    })
+    chatApi.globalPendingHandler?.({
+      event: 'clarify.requested', session_id: 'session-b', clarify_id: 'clarify-b', question: 'Continue?', timeout_ms: 1,
+    })
+    store.pendingApprovals.get('session-b')!.requestedAt = Date.now() - 10
+    store.pendingClarifies.get('session-b')!.requestedAt = Date.now() - 10
+
+    expect(store.respondApprovalFor('session-b', 'approval-b', 'once')).toBe('submitted')
+    expect(store.respondToClarifyFor('session-b', 'clarify-b', 'Continue')).toBe('submitted')
+    expect(store.pendingApprovals.has('session-b')).toBe(true)
+    expect(store.pendingClarifies.has('session-b')).toBe(true)
+    expect(expired).not.toHaveBeenCalled()
+
+    chatApi.globalPendingHandler?.({
+      event: 'approval.resolved', session_id: 'session-b', approval_id: 'approval-b', resolved: false,
+      stale: true, error: 'Approval is no longer pending.',
+    })
+    chatApi.globalPendingHandler?.({
+      event: 'clarify.resolved', session_id: 'session-b', clarify_id: 'clarify-b', resolved: false,
+      stale: true, error: 'Clarification is no longer pending.',
+    })
+
+    expect(store.pendingApprovals.has('session-b')).toBe(false)
+    expect(store.pendingClarifies.has('session-b')).toBe(false)
+    expect(expired).toHaveBeenCalledTimes(2)
+    window.removeEventListener('hermes:pending-interaction-expired', expired)
+  })
+
+  it('reports a server-confirmed stale response after optimistic local removal', () => {
+    const store = useChatStore()
+    const session = makeSession('session-b')
+    const expired = vi.fn()
+    window.addEventListener('hermes:pending-interaction-expired', expired)
+    store.sessions = [session]
+    store.activeSessionId = session.id
+    store.activeSession = session
+    chatApi.globalPendingHandler?.({
+      event: 'approval.requested', session_id: session.id, approval_id: 'approval-b', choices: ['once', 'deny'], timeout_ms: 300_000,
+    })
+
+    expect(store.respondApproval('once')).toBe('submitted')
+    expect(store.pendingApprovals.has(session.id)).toBe(false)
+    chatApi.globalPendingHandler?.({
+      event: 'approval.resolved', session_id: session.id, approval_id: 'approval-b', resolved: false,
+      stale: true, error: 'Approval is no longer pending.',
+    })
+
+    expect(expired).toHaveBeenCalledOnce()
+    window.removeEventListener('hermes:pending-interaction-expired', expired)
   })
 
   it('preserves assistant content when run.failed fires during streaming with substantial content', async () => {

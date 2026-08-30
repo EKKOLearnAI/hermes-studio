@@ -1563,6 +1563,7 @@ export class CodingAgentRunManager {
         request.timeoutTimer.unref?.()
       }
       run.piUiRequests.set(approvalId, request)
+      const requestedAt = Date.now()
       if (event.method === 'confirm') {
         this.emitToChat(run.launch.sessionId, 'approval.requested', {
           event: 'approval.requested',
@@ -1573,6 +1574,7 @@ export class CodingAgentRunManager {
           choices: ['once', 'deny'],
           source: 'pi',
           ...(timeoutMs > 0 ? { timeout_ms: timeoutMs } : {}),
+          ...(timeoutMs > 0 ? { remaining_timeout_ms: timeoutMs, requested_at: requestedAt } : {}),
         })
       } else {
         const options = event.method === 'select' && Array.isArray(event.options)
@@ -1587,6 +1589,7 @@ export class CodingAgentRunManager {
           initial_response: event.method === 'editor' ? String(event.prefill || '').slice(0, 20_000) : '',
           response_mode: event.method,
           ...(timeoutMs > 0 ? { timeout_ms: timeoutMs } : {}),
+          ...(timeoutMs > 0 ? { remaining_timeout_ms: timeoutMs, requested_at: requestedAt } : {}),
           source: 'pi',
         })
       }
