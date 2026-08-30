@@ -570,6 +570,36 @@ describe('ekko-agent model requests', () => {
     })
   })
 
+  it('omits tool choice for DeepSeek thinking models across providers', () => {
+    const request = {
+      messages: [{ role: 'user' as const, content: 'Remember this.' }],
+      tools: [{ name: 'memory_write', parameters: { type: 'object' } }],
+      toolChoice: 'required' as const,
+    }
+    const thinkingPayload = toOpenAIChatPayload({
+      id: 'custom:deepseek-relay',
+      type: 'openai-compatible',
+      requestStyle: 'openai-chat',
+      baseUrl: 'https://relay.example/v1',
+      defaultModel: 'deepseek/deepseek-v4-flash',
+    }, request)
+    const legacyNonThinkingPayload = toOpenAIChatPayload({
+      id: 'custom:deepseek-relay',
+      type: 'openai-compatible',
+      requestStyle: 'openai-chat',
+      baseUrl: 'https://relay.example/v1',
+      defaultModel: 'deepseek-chat',
+    }, request)
+
+    expect(thinkingPayload).toMatchObject({
+      tools: [expect.objectContaining({
+        function: expect.objectContaining({ name: 'memory_write' }),
+      })],
+    })
+    expect(thinkingPayload).not.toHaveProperty('tool_choice')
+    expect(legacyNonThinkingPayload.tool_choice).toBe('required')
+  })
+
   it('strips tool choice inside AgentRuntime when its tool registry is empty', async () => {
     const create = vi.fn(async () => ({ content: 'done' }))
     const runtime = new AgentRuntime({
@@ -764,6 +794,37 @@ describe('ekko-agent model requests', () => {
       tool_calls: [expect.objectContaining({ id: 'call_weather' })],
     })
     expect(payload.messages[1]).not.toHaveProperty('reasoning')
+  })
+
+  it('includes empty reasoning_content for synthetic DeepSeek tool-call messages', () => {
+    const payload = toOpenAIChatPayload(providerConfig, {
+      messages: [
+        { role: 'user', content: 'Use the matched skill.' },
+        {
+          role: 'assistant',
+          content: '',
+          toolCalls: [{
+            id: 'skill-auto-1',
+            name: 'skill_view',
+            arguments: { name: 'matched-skill' },
+          }],
+        },
+        {
+          role: 'tool',
+          content: 'Matched skill instructions.',
+          toolCallId: 'skill-auto-1',
+          name: 'skill_view',
+        },
+      ],
+      tools: [{ name: 'memory_search' }],
+    })
+
+    expect(payload.messages[1]).toMatchObject({
+      role: 'assistant',
+      content: '',
+      reasoning_content: '',
+      tool_calls: [expect.objectContaining({ id: 'skill-auto-1' })],
+    })
   })
 
   it.each([

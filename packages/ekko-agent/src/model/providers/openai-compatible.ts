@@ -355,17 +355,19 @@ function isUnsupportedImageError(error: unknown): boolean {
 export function toOpenAIChatPayload(config: ModelProviderConfig, request: ModelRequest): OpenAIChatPayload {
   const isQwenOAuth = config.id === 'qwen-oauth'
   const supportsVision = config.capabilities?.vision !== false
+  const model = request.model ?? config.defaultModel
   const reasoningReplayField = openAIReasoningReplayField(
     config,
-    request.model ?? config.defaultModel,
+    model,
   )
   const requiresAssistantContent = requiresNonNullAssistantContent(
     config,
-    request.model ?? config.defaultModel,
+    model,
   )
+  const supportsToolChoice = supportsOpenAIChatToolChoice(model)
   const tools = request.tools?.length ? request.tools.map(toOpenAIToolDefinition) : undefined
   return {
-    model: request.model ?? config.defaultModel,
+    model,
     messages: request.messages.flatMap(message =>
       toOpenAIChatMessages(message, isQwenOAuth, reasoningReplayField, requiresAssistantContent, supportsVision)),
     temperature: request.temperature,
@@ -373,13 +375,23 @@ export function toOpenAIChatPayload(config: ModelProviderConfig, request: ModelR
     ...(tools
       ? {
           tools,
-          ...(request.toolChoice ? { tool_choice: request.toolChoice } : {}),
+          ...(request.toolChoice && supportsToolChoice ? { tool_choice: request.toolChoice } : {}),
         }
       : {}),
     stream: request.stream,
     stream_options: request.stream ? { include_usage: true } : undefined,
     vl_high_resolution_images: isQwenOAuth && supportsVision ? true : undefined,
   }
+}
+
+function supportsOpenAIChatToolChoice(model: string): boolean {
+  // DeepSeek Chat thinking mode rejects the tool_choice parameter. V4 models
+  // enable thinking by default; the legacy deepseek-reasoner alias does too.
+  const modelId = model.trim().toLowerCase()
+  return !(
+    modelId.includes('deepseek-v4') ||
+    modelId.endsWith('deepseek-reasoner')
+  )
 }
 
 export function normalizeOpenAIChatResponse(provider: string, response: OpenAIChatResponse): ModelResponse {
@@ -436,8 +448,8 @@ function toOpenAIChatMessages(
     ? {}
     : reasoningReplayField === 'reasoning' && reasoningText
       ? { reasoning: reasoningText }
-      : reasoningReplayField === 'reasoning_content' && reasoningText
-        ? { reasoning_content: reasoningText }
+      : reasoningReplayField === 'reasoning_content'
+        ? { reasoning_content: reasoningText || '' }
         : reasoningReplayField === 'reasoning_details' && reasoningDetails
           ? { reasoning_details: reasoningDetails }
           : reasoningReplayField === 'reasoning_details' && reasoningText
