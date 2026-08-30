@@ -1,5 +1,5 @@
 import { createHash } from 'crypto'
-import { accessSync, constants, createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync, type Dirent } from 'fs'
+import { accessSync, constants, createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync, type Dirent } from 'fs'
 import { get as httpGet } from 'http'
 import { get as httpsGet } from 'https'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path'
@@ -8,6 +8,7 @@ import { config } from '../../../studio/public/config'
 import { getHermesAgentVersion, getHermesWebUiVersion } from '../../../studio/public/system-info'
 import { updateAgentStatus } from '../../../studio/public/agent-status-registry'
 import { discoverHermesCliInstallations, type HermesCliInstallation } from './discovery'
+import { cleanupRuntimePath, removeRuntimePath, renameRuntimePath } from './runtime-filesystem'
 
 const ACTIVE_VERSION_FILE = 'active-version.json'
 const DEFAULT_REMOTE_MANIFEST_URL = 'https://api.hermes-studio.ai/api/studio/versions'
@@ -570,7 +571,7 @@ export async function downloadRuntimeVersion(version: string, source: VersionDow
   const tempRoot = join(storageRoot, `.runtime-download-${process.pid}-${Date.now()}`)
 
   mkdirSync(storageRoot, { recursive: true })
-  rmSync(tempRoot, { recursive: true, force: true })
+  removeRuntimePath(tempRoot)
   mkdirSync(tempRoot, { recursive: true })
 
   try {
@@ -584,12 +585,12 @@ export async function downloadRuntimeVersion(version: string, source: VersionDow
     await extractTarGzip(archive, tempRoot)
     validateRuntimeDirectory(tempRoot, platform)
     onProgress?.({ stage: 'install', message: 'runtimeVersions.jobStage.installRuntime' })
-    rmSync(targetRoot, { recursive: true, force: true })
+    removeRuntimePath(targetRoot)
     mkdirSync(dirname(targetRoot), { recursive: true })
-    renameSync(tempRoot, targetRoot)
+    await renameRuntimePath(tempRoot, targetRoot)
   } finally {
-    rmSync(archive, { force: true })
-    rmSync(tempRoot, { recursive: true, force: true })
+    cleanupRuntimePath(archive)
+    cleanupRuntimePath(tempRoot)
   }
 
   return {
@@ -618,7 +619,7 @@ export async function downloadWebUiVersion(version: string, source: VersionDownl
   const assetUrl = downloadAssetUrl(assetName, releaseTag, source)
 
   mkdirSync(storageRoot, { recursive: true })
-  rmSync(tempRoot, { recursive: true, force: true })
+  removeRuntimePath(tempRoot)
   mkdirSync(tempRoot, { recursive: true })
 
   try {
@@ -635,12 +636,12 @@ export async function downloadWebUiVersion(version: string, source: VersionDownl
       if (!existsSync(join(extractedRoot, required))) throw new Error(`Web UI archive is missing required file: ${required}`)
     }
     onProgress?.({ stage: 'install', message: 'runtimeVersions.jobStage.installWebUi' })
-    rmSync(targetRoot, { recursive: true, force: true })
+    removeRuntimePath(targetRoot)
     mkdirSync(dirname(targetRoot), { recursive: true })
-    renameSync(extractedRoot, targetRoot)
+    await renameRuntimePath(extractedRoot, targetRoot)
   } finally {
-    rmSync(archive, { force: true })
-    rmSync(tempRoot, { recursive: true, force: true })
+    cleanupRuntimePath(archive)
+    cleanupRuntimePath(tempRoot)
   }
 
   return { version: cleanVersion, directory: targetRoot, active: false }
@@ -730,11 +731,11 @@ export function deleteInstalledRuntimeVersion(version: string): InstalledRuntime
   if (!target) throw new Error(`Installed runtime version not found for this platform: ${cleanVersion}`)
   if (target.active) throw new Error('Active runtime version cannot be deleted')
 
-  rmSync(target.directory, { recursive: true, force: true })
+  removeRuntimePath(target.directory)
   try {
     const versionRoot = dirname(target.directory)
     if (existsSync(versionRoot) && readdirSync(versionRoot).length === 0) {
-      rmSync(versionRoot, { recursive: true, force: true })
+      removeRuntimePath(versionRoot)
     }
   } catch {
     /* ignore empty parent cleanup failures */
@@ -783,7 +784,7 @@ export function deleteDownloadedWebUiVersion(version: string): InstalledWebUiVer
     throw new Error('Only downloaded Web UI versions can be deleted')
   }
 
-  rmSync(targetDir, { recursive: true, force: true })
+  removeRuntimePath(targetDir)
   return target
 }
 
