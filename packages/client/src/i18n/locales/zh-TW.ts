@@ -3379,6 +3379,11 @@ export default {
 
   // 更新日誌
   changelog: {
+    new_0_7_12_1: 'Windows 現統一使用 %USERPROFILE%\\.hermes 儲存 Hermes 資料，同時繼續支援 HERMES_HOME，確保 Desktop 與後端使用同一組 Profile（#2795）',
+    new_0_7_12_2: 'Windows 上的 Ekko 與 Hermes 啟動流程現會延後重試被占用的 Skill 重設，並正確啟動命令包裝指令碼，避免 EPERM 與 spawn EINVAL 導致啟動失敗（#2796）',
+    new_0_7_12_3: 'Ekko 現會拒絕模型產生的不完整工具呼叫，並在重試前清理無效工具呼叫歷史，避免相容模型因 function、name 或 arguments 為空而失敗（#2796）',
+    new_0_7_12_4: '資料庫、Skills、記憶與日誌現可獨立降級：核心對話保持可用，不可用模組會明確標記，每個故障都會提供原因與修復內容（#2797）',
+    new_0_7_12_5: 'Ekko 現會自動執行安全修復與修復後自我檢查：還原內建 Skills 和日誌目錄，資料庫重試失敗後可先備份再重建，並在活動 Run 結束後由 Studio 自動重新載入持久儲存（#2797）',
     new_0_7_11_1: 'Ekko 現支援 DeepSeek 推理回應與工具呼叫，並相容舊版及 Responses 風格的 OpenAI 相容載荷（#2788）',
     new_0_7_11_2: 'Agent Bridge 現可復原由 shell 包裝的執行階段啟動，忽略無關的後代程序，並等待真正的 broker 就緒訊號（#2789）',
     new_0_7_11_3: '待處理的審批、問題與選項現在會顯示同步倒數，可安全復原，並避免聊天與群聊出現過期逾時錯誤（#2790）',

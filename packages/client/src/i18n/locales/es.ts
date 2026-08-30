@@ -3018,6 +3018,11 @@ jobTriggered: 'Job ejecutado',
   },
 
   changelog: {
+    new_0_7_12_1: 'Windows ahora usa de forma coherente %USERPROFILE%\\.hermes para los datos de Hermes y sigue respetando HERMES_HOME, por lo que Desktop y el backend comparten los mismos perfiles (#2795)',
+    new_0_7_12_2: 'El inicio de Ekko y Hermes en Windows ahora aplaza los restablecimientos de Skills bloqueados para reintentarlos y ejecuta correctamente los wrappers de comandos, evitando fallos de inicio EPERM y spawn EINVAL (#2796)',
+    new_0_7_12_3: 'Ekko ahora rechaza llamadas de herramientas incompletas del modelo y elimina del historial las llamadas no válidas antes de reintentar, evitando errores por function, name o arguments vacíos en modelos compatibles (#2796)',
+    new_0_7_12_4: 'La base de datos, los Skills, la memoria y los registros ahora pueden degradarse de forma independiente: el chat Core sigue disponible, los módulos no disponibles se marcan y cada incidente muestra su causa y contexto de reparación (#2797)',
+    new_0_7_12_5: 'Ekko ahora ejecuta automáticamente reparaciones seguras y autocomprobaciones posteriores; restaura los Skills incluidos y los directorios de registros, reintenta las bases de datos o las respalda antes de reconstruirlas, y Studio recarga el almacenamiento persistente al terminar los Runs activos (#2797)',
     new_0_7_11_1: 'Ekko ahora procesa respuestas de razonamiento y llamadas de herramientas de DeepSeek tanto en cargas compatibles con OpenAI heredadas como de estilo Responses (#2788)',
     new_0_7_11_2: 'El puente de Agent ahora recupera inicios de runtime envueltos por shell, ignora procesos descendientes no relacionados y espera la señal real de disponibilidad del broker (#2789)',
     new_0_7_11_3: 'Las aprobaciones, preguntas y selecciones pendientes muestran cuentas regresivas sincronizadas, se reanudan de forma segura y evitan errores de tiempo de espera obsoletos en el chat y el chat grupal (#2790)',

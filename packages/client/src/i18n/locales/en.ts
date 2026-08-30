@@ -3455,6 +3455,11 @@ export default {
 
   // Changelog
   changelog: {
+    new_0_7_12_1: 'Windows now consistently uses %USERPROFILE%\\.hermes for Hermes data while honoring HERMES_HOME, keeping Desktop and backend profiles aligned (#2795)',
+    new_0_7_12_2: 'Windows Ekko and Hermes startup now defers locked Skill resets for retry and launches command shims correctly, preventing EPERM and spawn EINVAL startup failures (#2796)',
+    new_0_7_12_3: 'Ekko now rejects incomplete model tool calls and removes invalid tool-call history before retrying, preventing empty function, name, or arguments failures across compatible models (#2796)',
+    new_0_7_12_4: 'Database, Skills, memory, and logs now fail independently: Core chat remains available, unavailable modules are marked degraded, and each incident exposes its cause and repair context (#2797)',
+    new_0_7_12_5: 'Ekko now runs safe repairs and post-repair self-checks automatically; bundled Skills and log directories are restored, databases are retried or backed up before rebuild, and Studio reloads persistent storage after active runs finish (#2797)',
     new_0_7_11_1: 'Ekko now handles DeepSeek reasoning responses and tool calls across both legacy and Responses-style OpenAI-compatible payloads (#2788)',
     new_0_7_11_2: 'The Agent bridge now recovers shell-wrapped runtime launches, ignores unrelated descendant processes, and waits for the real broker readiness signal (#2789)',
     new_0_7_11_3: 'Pending approvals, questions, and selections now show synchronized countdowns, resume safely, and avoid stale timeout errors across chat and group chat (#2790)',

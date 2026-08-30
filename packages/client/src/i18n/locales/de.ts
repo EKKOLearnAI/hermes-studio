@@ -3018,6 +3018,11 @@ jobTriggered: 'Job ausgelost',
   },
 
   changelog: {
+    new_0_7_12_1: 'Windows verwendet jetzt einheitlich %USERPROFILE%\\.hermes für Hermes-Daten und berücksichtigt weiterhin HERMES_HOME, sodass Desktop und Backend dieselben Profile verwenden (#2795)',
+    new_0_7_12_2: 'Die Windows-Starts von Ekko und Hermes verschieben gesperrte Skill-Zurücksetzungen auf einen späteren Versuch und starten Befehls-Shims korrekt, wodurch EPERM- und spawn-EINVAL-Startfehler vermieden werden (#2796)',
+    new_0_7_12_3: 'Ekko lehnt jetzt unvollständige Tool-Aufrufe des Modells ab und entfernt vor einem erneuten Versuch ungültige Tool-Aufrufe aus dem Verlauf, wodurch leere function-, name- oder arguments-Felder keine Fehler mehr auslösen (#2796)',
+    new_0_7_12_4: 'Datenbank, Skills, Speicher und Protokolle können jetzt unabhängig ausfallen: Der Core-Chat bleibt verfügbar, nicht verfügbare Module werden als beeinträchtigt markiert und jeder Vorfall zeigt Ursache und Reparaturkontext (#2797)',
+    new_0_7_12_5: 'Ekko führt sichere Reparaturen und anschließende Selbstprüfungen jetzt automatisch aus; integrierte Skills und Protokollverzeichnisse werden wiederhergestellt, Datenbanken erneut versucht oder vor dem Neuaufbau gesichert und Studio lädt den persistenten Speicher nach Abschluss aktiver Runs neu (#2797)',
     new_0_7_11_1: 'Ekko verarbeitet jetzt DeepSeek-Reasoning-Antworten und Tool-Aufrufe sowohl in älteren als auch in Responses-kompatiblen OpenAI-Payloads (#2788)',
     new_0_7_11_2: 'Die Agent Bridge stellt jetzt shell-umschlossene Runtime-Starts wieder her, ignoriert unabhängige Nachfolgeprozesse und wartet auf das echte Broker-Bereitschaftssignal (#2789)',
     new_0_7_11_3: 'Ausstehende Freigaben, Fragen und Auswahlen zeigen jetzt synchronisierte Countdowns, werden sicher fortgesetzt und vermeiden veraltete Zeitüberschreitungsfehler in Chat und Gruppenchat (#2790)',
