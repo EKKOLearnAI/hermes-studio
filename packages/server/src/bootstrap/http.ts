@@ -483,6 +483,11 @@ export async function bootstrap() {
   server = listenResult.primary
   servers.splice(0, servers.length, ...listenResult.servers)
   console.log('[bootstrap] app.listen called')
+  // The Desktop shell only needs registered HTTP routes and static assets before
+  // it can render. Keep slower runtime, socket, and recovery work below in the
+  // background startup path, matching the pre-readiness launch behavior.
+  bootstrapReady = true
+  console.log('[bootstrap] web UI shell ready')
 
   const terminalWebSocket = setupTerminalWebSocket(servers)
   if (terminalWebSocket) {
@@ -633,8 +638,7 @@ export async function bootstrap() {
     additionalShutdownSteps,
   )
   startVersionCheck()
-  bootstrapReady = true
-  console.log('[bootstrap] startup ready')
+  console.log('[bootstrap] startup complete')
 }
 
 bootstrap().catch((error) => {

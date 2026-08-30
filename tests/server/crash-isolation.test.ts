@@ -17,17 +17,17 @@ describe('Studio crash isolation wiring', () => {
     }
   })
 
-  it('reports ready only after late bootstrap services complete', () => {
+  it('reports the HTTP shell ready without waiting for late bootstrap services', () => {
     const bootstrap = readFileSync('packages/server/src/bootstrap/http.ts', 'utf8')
     const listen = bootstrap.indexOf('await listenWithFallback(')
-    const recovery = bootstrap.indexOf('recoverActiveRuns()', listen)
+    const ready = bootstrap.indexOf('bootstrapReady = true', listen)
+    const recovery = bootstrap.indexOf('recoverActiveRuns()', ready)
     const versionCheck = bootstrap.indexOf('startVersionCheck()', recovery)
-    const ready = bootstrap.indexOf('bootstrapReady = true', versionCheck)
 
     expect(listen).toBeGreaterThan(-1)
-    expect(recovery).toBeGreaterThan(listen)
+    expect(ready).toBeGreaterThan(listen)
+    expect(recovery).toBeGreaterThan(ready)
     expect(versionCheck).toBeGreaterThan(recovery)
-    expect(ready).toBeGreaterThan(versionCheck)
   })
 
   it('makes Desktop poll readiness and recover one unexpected server exit', () => {
