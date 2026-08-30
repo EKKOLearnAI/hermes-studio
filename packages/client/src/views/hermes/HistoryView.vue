@@ -5,7 +5,7 @@ import { type Session } from '@/stores/hermes/chat'
 import { useAppStore } from '@/stores/hermes/app'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import { useSessionBrowserPrefsStore } from '@/stores/hermes/session-browser-prefs'
-import { NButton, NDropdown, NPopconfirm, NTooltip, useMessage, type DropdownOption } from 'naive-ui'
+import { NButton, NDropdown, NPopconfirm, NSelect, NTooltip, useMessage, type DropdownOption } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { getSourceLabel } from '@/shared/session-display'
 import { copyToClipboard } from '@/utils/clipboard'
@@ -33,6 +33,18 @@ const routeProfile = computed(() => {
   const value = route.query.profile
   return typeof value === 'string' && value.trim() ? value : null
 })
+
+const effectiveHistorySource = computed(() => {
+  const value = route.query.source
+  return value === 'cli' || value === 'claude' || value === 'codex' ? value : undefined
+})
+
+const historySourceFilterOptions = computed(() => [
+  { label: t('logs.all'), value: '' },
+  { label: t('devices.endpoint.web'), value: 'cli' },
+  { label: getSourceLabel('claude'), value: 'claude' },
+  { label: getSourceLabel('codex'), value: 'codex' },
+])
 
 const effectiveHistoryProfile = computed(() => profilesStore.activeProfileName || routeProfile.value || null)
 
@@ -70,13 +82,25 @@ function openNewChatPage() {
   void router.push({ name: 'hermes.chat' })
 }
 
+function handleHistorySourceFilter(source: string) {
+  const query = { ...route.query }
+  if (source) query.source = source
+  else delete query.source
+  void router.push({ name: 'hermes.history', query })
+}
+
 async function loadHermesSessions() {
   const requestId = ++hermesSessionsRequestId
   hermesSessionsLoading.value = true
   try {
     const includedIds = [...sessionBrowserPrefsStore.pinnedIds]
     if (routeSessionId.value && !includedIds.includes(routeSessionId.value)) includedIds.push(routeSessionId.value)
-    const result = await fetchHermesSessionGroups(HISTORY_GROUP_PAGE_SIZE, effectiveHistoryProfile.value, includedIds)
+    const result = await fetchHermesSessionGroups(
+      HISTORY_GROUP_PAGE_SIZE,
+      effectiveHistoryProfile.value,
+      includedIds,
+      effectiveHistorySource.value,
+    )
     if (requestId !== hermesSessionsRequestId) return
     const sessionsByKey = new Map<string, SessionSummary>()
     for (const session of result.groups.flatMap(group => group.sessions)) {
@@ -123,8 +147,26 @@ const contextSessionPinned = computed(() =>
   contextSessionId.value ? sessionBrowserPrefsStore.isPinned(contextSessionId.value) : false,
 )
 
+function isCodingAgentHistorySession(session?: {
+  source?: string | null
+  agent?: string | null
+  agent_session_id?: string | null
+  agentSessionId?: string | null
+} | null): boolean {
+  return session?.source === 'coding_agent'
+    || session?.agent === 'claude'
+    || session?.agent === 'codex'
+    || session?.agent === 'pi'
+    || Boolean(session?.agent_session_id || session?.agentSessionId)
+}
+
+const canContinueActiveSession = computed(() => isCodingAgentHistorySession(historySession.value))
+
 const contextMenuOptions = computed<DropdownOption[]>(() => {
   const options: DropdownOption[] = [
+    ...(isCodingAgentHistorySession(contextSessionSummary.value)
+      ? [{ label: t('chat.continueInChat'), key: 'continue-chat' }]
+      : []),
     {
       label: t('chat.importToWebUi'),
       key: 'import-webui',
@@ -266,6 +308,7 @@ async function loadHistorySession(sessionId: string, profile?: string | null) {
       profile: sessionDetail.profile || sessionProfile || undefined,
       title: sessionDetail.title || '',
       source: sessionDetail.source,
+      ...codingAgentFields(sessionDetail),
       createdAt: sessionDetail.started_at * 1000,
       updatedAt: (sessionDetail.last_active || sessionDetail.started_at) * 1000,
       model: sessionDetail.model,
@@ -322,8 +365,15 @@ async function handleSessionClick(sessionId: string, profile?: string | null) {
   await router.push({
     name: 'hermes.historySession',
     params: { sessionId },
-    query: profile ? { profile } : undefined,
+    query: historyRouteQuery(profile),
   })
+}
+
+function historyRouteQuery(profile?: string | null): Record<string, string> {
+  const query: Record<string, string> = {}
+  if (profile) query.profile = profile
+  if (effectiveHistorySource.value) query.source = effectiveHistorySource.value
+  return query
 }
 
 async function openDefaultHistorySession(replace = false) {
@@ -343,7 +393,7 @@ async function openDefaultHistorySession(replace = false) {
   const location = {
     name: 'hermes.historySession',
     params: { sessionId: firstSession.id },
-    query: firstSession.profile ? { profile: firstSession.profile } : undefined,
+    query: historyRouteQuery(firstSession.profile),
   }
   if (replace) await router.replace(location)
   else await router.push(location)
@@ -422,6 +472,14 @@ watch(
 watch(() => profilesStore.activeProfileName, async () => {
   if (!hermesSessionsLoaded.value) return
   if (profilesStore.switching) return
+  historySessionId.value = null
+  historySession.value = null
+  await loadHermesSessions()
+  await openDefaultHistorySession(true)
+})
+
+watch(effectiveHistorySource, async (source, previousSource) => {
+  if (source === previousSource || !hermesSessionsLoaded.value) return
   historySessionId.value = null
   historySession.value = null
   await loadHermesSessions()
@@ -668,11 +726,23 @@ function historySessionProfile(sessionId: string): string | null {
     : findHistorySession(sessionId)?.profile || null
 }
 
+async function continueInChat(id?: string) {
+  const sessionId = id || historySessionId.value
+  if (!sessionId) return
+  const summary = findHistorySession(sessionId)
+  if (!summary || !isCodingAgentHistorySession(summary)) return
+  await router.push({
+    name: 'hermes.session',
+    params: { sessionId },
+    query: summary.profile ? { profile: summary.profile } : undefined,
+  })
+}
+
 function buildHistorySessionUrl(sessionId: string, profile?: string | null) {
   const href = router.resolve({
     name: 'hermes.historySession',
     params: { sessionId },
-    query: profile ? { profile } : undefined,
+    query: historyRouteQuery(profile),
   }).href
   return `${window.location.origin}${window.location.pathname}${href}`
 }
@@ -716,7 +786,9 @@ async function handleImportToWebUi(sessionId: string) {
 async function handleContextMenuSelect(key: string) {
   showContextMenu.value = false
   if (!contextSessionId.value) return
-  if (key === 'pin') {
+  if (key === 'continue-chat') {
+    await continueInChat(contextSessionId.value)
+  } else if (key === 'pin') {
     sessionBrowserPrefsStore.togglePinned(contextSessionId.value)
   } else if (key === 'copy-link') {
     await copySessionLink(contextSessionId.value)
@@ -838,6 +910,13 @@ function handleBatchDeleteConfirm() {
         />
         <div class="session-list-toolbar">
           <span class="session-list-title">{{ t('chat.hermesHistory') }}</span>
+          <NSelect
+            class="history-source-filter"
+            size="small"
+            :value="effectiveHistorySource || ''"
+            :options="historySourceFilterOptions"
+            @update:value="handleHistorySourceFilter"
+          />
           <div class="session-list-actions">
             <button class="session-close-btn" @click="showSessions = false">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -1030,6 +1109,16 @@ function handleBatchDeleteConfirm() {
             </template>
             {{ t('chat.copySessionId') }}
           </NTooltip>
+          <NTooltip v-if="canContinueActiveSession" trigger="hover">
+            <template #trigger>
+              <NButton data-testid="continue-in-chat" quaternary size="small" circle :aria-label="t('chat.continueInChat')" @click="continueInChat()">
+                <template #icon>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 4h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H9l-4 3v-3a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"/><path d="M8 9h8M8 13h5"/></svg>
+                </template>
+              </NButton>
+            </template>
+            {{ t('chat.continueInChat') }}
+          </NTooltip>
         </div>
       </header>
 
@@ -1190,6 +1279,11 @@ function handleBatchDeleteConfirm() {
   color: $text-muted;
   text-transform: uppercase;
   letter-spacing: 0.5px;
+}
+
+.history-source-filter {
+  width: 132px;
+  flex-shrink: 0;
 }
 
 .session-group-header {

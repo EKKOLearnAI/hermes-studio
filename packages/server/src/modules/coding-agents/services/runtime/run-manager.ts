@@ -18,7 +18,7 @@ import {
 } from '../../../studio/public/run-state'
 import type { SessionState } from '../../../studio/contracts/runs/session'
 import type { CanonicalResponsesEvent } from '../../protocol/adapters/responses-stream'
-import { normalizeWindowsCommandPath, windowsCmdShimExecution, windowsCommandNeedsShell } from '../../../studio/public/windows-command'
+import { normalizeWindowsCommandPath, windowsCmdShimExecution, windowsCommandNeedsShell, windowsNpmShimExecution } from '../../../studio/public/windows-command'
 import { killOwnedProcessTree } from '../../../studio/public/process-tree'
 import { attachPiJsonlReader } from '../pi/jsonl-parser'
 import { normalizePiThinkingLevel } from '../pi/thinking'
@@ -410,7 +410,7 @@ function spawnCodingAgentChild(command: string, args: string[], options: {
 }): ChildProcess {
   const normalizedCommand = process.platform === 'win32' ? normalizeWindowsCommandPath(command) : command
   if (process.platform === 'win32' && windowsCommandNeedsShell(command)) {
-    const execution = windowsCmdShimExecution(normalizedCommand, args)
+    const execution = windowsNpmShimExecution(normalizedCommand, args) || windowsCmdShimExecution(normalizedCommand, args)
     return spawn(execution.command, execution.args, {
       cwd: options.cwd,
       env: options.env,

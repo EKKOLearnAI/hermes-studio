@@ -880,6 +880,7 @@ export default {
     rename: 'Переименовать',
     archiveSession: 'Архивировать',
     unarchiveSession: 'Вернуть из архива',
+    continueInChat: 'Продолжить в чате',
     pin: 'Закрепить',
     unpin: 'Открепить',
     pinned: 'Закреплено',

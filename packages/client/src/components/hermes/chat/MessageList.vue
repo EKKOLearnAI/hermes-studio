@@ -265,7 +265,12 @@ const displayMessagesWithForkDivider = computed<Message[]>(() => {
 const canForkActiveSession = computed(() => {
   const session = chatStore.activeSession;
   const hasConversation = displayMessages.value.some((message) => message.role === "user" || message.role === "assistant");
-  return !!session && session.source !== "coding_agent" && !chatStore.isStreaming && !chatStore.isForkPending && hasConversation;
+  const isCodingAgent = session?.source === "coding_agent"
+    || Boolean(session?.codingAgentId)
+    || session?.agent === "claude"
+    || session?.agent === "codex"
+    || session?.agent === "pi";
+  return !!session && !isCodingAgent && !chatStore.isStreaming && !chatStore.isForkPending && hasConversation;
 });
 
 const lastForkActionMessageId = computed(() => {

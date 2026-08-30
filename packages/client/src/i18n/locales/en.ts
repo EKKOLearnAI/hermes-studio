@@ -1022,6 +1022,7 @@ export default {
     batchDeletePartial: '{failed} sessions failed to delete',
     batchDeleteFailed: 'Batch delete failed',
     importToWebUi: 'Import to Web UI',
+    continueInChat: 'Continue in chat',
     importSessionSuccess: 'Session imported to Web UI',
     importSessionAlreadyExists: 'Session already exists in Web UI',
     importSessionFailed: 'Failed to import session',

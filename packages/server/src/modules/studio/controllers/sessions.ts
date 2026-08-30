@@ -58,6 +58,7 @@ import { getChatRunServer } from '../services/chat-run/server-registry'
 import { isSensitivePath, MAX_DOWNLOAD_SIZE, MAX_EDIT_SIZE } from '../services/files/file-policy'
 import { buildFileContentHeaders, getFilePreviewDescriptor } from '../services/files/file-preview'
 import { decorateWorkspaceEntries, getWorkspaceFileGitDiff } from '../services/files/workspace-git-status'
+import { syncExternalCodingAgentHistory } from '../services/external-history-sync'
 import { copyFile, mkdir, readFile, readdir, rename as fsRename, rm as fsRm, stat as fsStat, writeFile } from 'fs/promises'
 import { relative, normalize as pathNormalize, resolve as pathResolve } from 'path'
 
@@ -138,11 +139,12 @@ function denySessionAccess(ctx: any, session: any | null | undefined): boolean {
 }
 
 function isVisibleWebUiSessionSource(source?: string | null): boolean {
-  return source === 'api_server' || source === 'cli' || source === 'coding_agent' || source === 'global_agent'
+  return source === 'api_server' || source === 'cli' || source === 'coding_agent' || source === 'claude' || source === 'codex' || source === 'global_agent'
 }
 
 function isRequestedSessionSource(source: string | undefined, sessionSource?: string | null): boolean {
   if (source === 'global_agent') return sessionSource === 'global_agent'
+  if (source === 'claude' || source === 'codex') return sessionSource === source
   if (source === 'workflow') return sessionSource === 'workflow'
   if (source === 'group_chat') return sessionSource === 'group_chat'
   return isVisibleWebUiSessionSource(sessionSource)
@@ -150,9 +152,10 @@ function isRequestedSessionSource(source: string | undefined, sessionSource?: st
 
 function requestedSessionSources(source?: string): string[] {
   if (source === 'global_agent') return ['global_agent']
+  if (source === 'claude' || source === 'codex') return [source]
   if (source === 'workflow') return ['workflow']
   if (source === 'group_chat') return ['group_chat']
-  return ['api_server', 'cli', 'coding_agent', 'global_agent']
+  return ['api_server', 'cli', 'coding_agent', 'claude', 'codex', 'global_agent']
 }
 
 function isHermesHistorySessionSource(source?: string | null): boolean {
@@ -576,6 +579,7 @@ export async function listHermesSessions(ctx: any) {
   const limit = ctx.query.limit ? parseInt(ctx.query.limit as string, 10) : undefined
   const offset = ctx.query.offset ? parseInt(ctx.query.offset as string, 10) : 0
   const profile = requestedProfile(ctx)
+  await syncExternalCodingAgentHistory({ profile: profile || getActiveProfileName() })
   const effectiveLimit = limit && limit > 0 ? limit : 2000
   const normalizedOffset = Number.isFinite(offset) && offset > 0 ? offset : 0
   const paginated = Boolean(source) || normalizedOffset > 0
@@ -610,16 +614,18 @@ export async function listHermesSessions(ctx: any) {
 export async function listHermesSessionGroups(ctx: any) {
   const requestedLimit = ctx.query.limit ? parseInt(ctx.query.limit as string, 10) : 20
   const limit = Number.isFinite(requestedLimit) ? Math.min(100, Math.max(1, requestedLimit)) : 20
+  const source = typeof ctx.query.source === 'string' ? ctx.query.source : undefined
   const profile = requestedProfile(ctx)
+  await syncExternalCodingAgentHistory({ profile: profile || getActiveProfileName() })
   const rawIncluded = ctx.query.include
   const includedIds = (Array.isArray(rawIncluded) ? rawIncluded : rawIncluded ? [rawIncluded] : [])
     .map(value => String(value || '').trim())
     .filter(Boolean)
     .slice(0, 100)
 
-  const localSessions = localListSessions(profile, undefined, 2000)
+  const localSessions = localListSessions(profile, source, 2000)
   const hermesResult = isHermesAgentAvailable()
-    ? await listHermesSessionSummaryGroups(limit, profile, includedIds)
+    ? await listHermesSessionSummaryGroups(limit, profile, includedIds, source)
     : { groups: [], included: [] }
   const hermesGroups = new Map<string, { source: string; sessions: any[]; hasMore: boolean }>(
     hermesResult.groups.map((group: any) => [group.source, group]),
@@ -1101,6 +1107,7 @@ export async function getContext(ctx: any) {
  */
 export async function getHermesSession(ctx: any) {
   const profile = requestedProfile(ctx)
+  await syncExternalCodingAgentHistory({ profile: profile || getActiveProfileName() })
 
   // Prefer the Web UI local session store. Hermes state.db can lag behind or
   // miss messages for Bridge-backed runs, while the local store is the source

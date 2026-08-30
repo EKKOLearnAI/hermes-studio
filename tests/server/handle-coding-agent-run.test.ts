@@ -192,6 +192,47 @@ describe('handleCodingAgentRun', () => {
     expect(sendCodingAgentRunInputMock).toHaveBeenCalledWith('session-1', 'hello codex', 'system prompt')
   })
 
+  it('uses the stored global mode when a resumed socket request omits mode', async () => {
+    managerMock.runIdForSession.mockReturnValue(undefined)
+    managerMock.isSessionLaunchCompatible.mockReturnValue(true)
+    getSessionMock.mockReturnValue({
+      id: 'session-1',
+      source: 'coding_agent',
+      agent: 'codex',
+      agent_mode: 'global',
+      provider: 'global',
+      model: '',
+    })
+    startCodingAgentRunMock.mockResolvedValue({ agentSessionId: 'agent-session-1' })
+    sendCodingAgentRunInputMock.mockResolvedValue({ runId: 'agent-session-1' })
+
+    const { handleCodingAgentRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-coding-agent-run')
+    const state = {
+      messages: [],
+      isWorking: false,
+      isAborting: false,
+      events: [],
+      queue: [],
+    }
+    const sessionMap = new Map([['session-1', state]])
+    const socket = {
+      join: vi.fn(),
+      emit: vi.fn(),
+    }
+
+    await handleCodingAgentRun({} as any, socket as any, {
+      session_id: 'session-1',
+      input: 'continue imported codex',
+      coding_agent_id: 'codex',
+    }, 'default', sessionMap as any)
+
+    expect(startCodingAgentRunMock).toHaveBeenCalledWith('codex', expect.objectContaining({
+      sessionId: 'session-1',
+      mode: 'global',
+      profile: 'default',
+    }), state)
+  })
+
   it.each([
     ['claude-code', 'claude'],
     ['pi', 'pi'],

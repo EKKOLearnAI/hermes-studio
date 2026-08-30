@@ -1022,6 +1022,7 @@ export default {
     batchDeletePartial: '{failed} 个会话删除失败',
     batchDeleteFailed: '批量删除失败',
     importToWebUi: '导入到 Web UI',
+    continueInChat: '在聊天中继续',
     importSessionSuccess: '会话已导入 Web UI',
     importSessionAlreadyExists: '会话已存在于 Web UI',
     importSessionFailed: '导入会话失败',

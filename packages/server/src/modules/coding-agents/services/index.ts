@@ -19,7 +19,7 @@ import { codingAgentRunManager } from './runtime/run-manager'
 import { PI_EXTENDED_THINKING_LEVEL_MAP, piModelSupportsThinking } from './pi/thinking'
 import { getSession, updateSession, type HermesSessionRow } from '../../studio/public/sessions'
 import type { SessionState } from '../../studio/contracts/runs/session'
-import { normalizeWindowsCommandPath, windowsCmdShimExecution, windowsCommandNeedsShell, type WindowsCommandExecution } from '../../studio/public/windows-command'
+import { normalizeWindowsCommandPath, windowsCmdShimExecution, windowsCommandNeedsShell, windowsNpmShimExecution, type WindowsCommandExecution } from '../../studio/public/windows-command'
 import { updateAgentStatus } from '../../studio/public/agent-status-registry'
 import { assertScopedCodingAgentProviderAllowed } from '../protocol/provider-policy'
 import type { CodingAgentRuntime } from '../../studio/contracts/agents/runtime'
@@ -671,7 +671,13 @@ async function resolveStoredProviderLaunchInput(
   input: CodingAgentLaunchInput & { sessionId: string },
   existingSession: HermesSessionRow | null,
 ): Promise<CodingAgentLaunchInput & { sessionId: string }> {
-  if (input.mode === 'global') return input
+  if (input.mode === 'global') {
+    return {
+      ...input,
+      provider: input.provider || 'global',
+      model: input.model || '',
+    }
+  }
 
   const profile = String(input.profile || existingSession?.profile || 'default').trim() || 'default'
   const inputProvider = String(input.provider || '').trim()
@@ -1901,7 +1907,7 @@ async function resolveCommandForExecution(command: string, env: NodeJS.ProcessEn
 function commandExecution(command: string, args: string[]): CommandExecution {
   const normalizedCommand = normalizeWindowsCommandPath(command)
   if (process.platform === 'win32' && windowsCommandNeedsShell(normalizedCommand)) {
-    return windowsCmdShimExecution(normalizedCommand, args)
+    return windowsNpmShimExecution(normalizedCommand, args) || windowsCmdShimExecution(normalizedCommand, args)
   }
   return { command: normalizedCommand, args }
 }
@@ -2744,11 +2750,12 @@ export async function startCodingAgentRun(
       ? 'workflow'
       : 'coding_agent'
   const existingAgentSessionId = existingSession?.agent_session_id || ''
-  const resolvedInput = await resolveStoredProviderLaunchInput(input, existingSession)
-  const requestedMode = resolvedInput.mode === 'global' ? 'global' : 'scoped'
+  const requestedMode = input.mode || (existingSession ? storedCodingAgentMode(existingSession) : 'scoped')
+  const resolvedInput = await resolveStoredProviderLaunchInput({ ...input, mode: requestedMode }, existingSession)
+  const effectiveMode = resolvedInput.mode === 'global' ? 'global' : 'scoped'
   const requestedProvider = String(resolvedInput.provider || '').trim().toLowerCase()
-  assertScopedCodingAgentProviderAllowed(requestedMode, requestedProvider)
-  if (requestedMode !== 'global' && (!String(resolvedInput.baseUrl || '').trim() || !String(resolvedInput.apiKey || '').trim())) {
+  assertScopedCodingAgentProviderAllowed(effectiveMode, requestedProvider)
+  if (effectiveMode !== 'global' && (!String(resolvedInput.baseUrl || '').trim() || !String(resolvedInput.apiKey || '').trim())) {
     const err = new Error('Coding agent provider credentials are missing. Re-select the provider/model or update the provider API key before continuing this session.')
     ;(err as any).status = 400
     throw err

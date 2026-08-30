@@ -1605,6 +1605,7 @@ export async function listSessionSummaryGroups(
   limitPerSource = 20,
   profile?: string,
   includedSessionIds: string[] = [],
+  source?: string,
 ): Promise<HermesSessionSummaryGroupsResult> {
   if (!SQLITE_AVAILABLE) {
     throw new Error(`node:sqlite requires Node >= 22.5, current: ${process.versions.node}`)
@@ -1620,6 +1621,7 @@ export async function listSessionSummaryGroups(
     for (const root of idx.byId.values()) {
       if (isCompressionContinuationChild(root, idx)) continue
       const summary = projectSessionSummary(root, collectSessionChain(root, idx))
+      if (source && summary.source !== source) continue
       const sessions = grouped.get(summary.source) || []
       sessions.push(summary)
       grouped.set(summary.source, sessions)

@@ -939,6 +939,7 @@ export default {
     batchDeletePartial: '{failed}件の削除に失敗しました',
     batchDeleteFailed: '一括削除に失敗しました',
     importToWebUi: 'Web UI にインポート',
+    continueInChat: 'チャットで続ける',
     importSessionSuccess: 'セッションを Web UI にインポートしました',
     importSessionAlreadyExists: 'セッションは既に Web UI に存在します',
     importSessionFailed: 'セッションのインポートに失敗しました',

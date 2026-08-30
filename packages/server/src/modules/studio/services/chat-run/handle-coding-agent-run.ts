@@ -82,8 +82,12 @@ export async function handleCodingAgentRun(
   }
 
   let runId = codingAgentRunManager.runIdForSession(sessionId)
-  const mode = data.mode === 'global' ? 'global' : 'scoped'
   const storedSession = getSession(sessionId)
+  const mode = data.mode || (
+    storedSession?.agent_mode === 'global' || storedSession?.provider === 'global'
+      ? 'global'
+      : 'scoped'
+  )
   if (storedSession && !storedSession.user_id && socketUser?.id != null) {
     updateSession(sessionId, { user_id: String(socketUser.id) })
   }

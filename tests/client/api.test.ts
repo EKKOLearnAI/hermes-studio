@@ -395,10 +395,10 @@ describe('API Client', () => {
         json: () => Promise.resolve({ groups: [], included: [] }),
       })
 
-      await fetchHermesSessionGroups(20, 'travel', ['pinned-1', 'route-1'])
+      await fetchHermesSessionGroups(20, 'travel', ['pinned-1', 'route-1'], 'codex')
 
       const [url] = mockFetch.mock.calls[0]
-      expect(url).toBe('/api/studio/sessions/hermes/groups?limit=20&profile=travel&include=pinned-1&include=route-1')
+      expect(url).toBe('/api/studio/sessions/hermes/groups?limit=20&profile=travel&source=codex&include=pinned-1&include=route-1')
     })
 
     it('requests the next page for one Hermes history source', async () => {

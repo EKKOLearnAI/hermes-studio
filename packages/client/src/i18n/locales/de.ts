@@ -939,6 +939,7 @@ export default {
     batchDeletePartial: '{failed} Sitzungen konnten nicht gelöscht werden',
     batchDeleteFailed: 'Batch-Löschung fehlgeschlagen',
     importToWebUi: 'In Web UI importieren',
+    continueInChat: 'Im Chat fortsetzen',
     importSessionSuccess: 'Sitzung in Web UI importiert',
     importSessionAlreadyExists: 'Sitzung existiert bereits in Web UI',
     importSessionFailed: 'Sitzung konnte nicht importiert werden',

@@ -1,5 +1,5 @@
 import { expect, test, type Page, type Route } from '@playwright/test'
-import { authenticate, TEST_MODEL_GROUP } from './fixtures'
+import { authenticate, mockChatSocket, mockHermesApi, TEST_MODEL_GROUP } from './fixtures'
 
 const historySessions = [
   {
@@ -73,6 +73,62 @@ const historySessions = [
     actual_cost_usd: null,
     cost_status: '',
     workspace: null,
+  },
+  {
+    id: 'hist-claude',
+    profile: 'default',
+    source: 'claude',
+    agent: 'claude',
+    agent_mode: 'scoped',
+    agent_session_id: 'hermes-claude-session',
+    agent_native_session_id: 'native-claude-session',
+    model: 'claude-sonnet',
+    provider: 'test-provider',
+    title: 'Claude CLI History Session',
+    preview: 'Claude CLI preview',
+    started_at: 1_790_000_600,
+    ended_at: null,
+    last_active: 1_790_000_700,
+    message_count: 2,
+    tool_call_count: 0,
+    input_tokens: 70,
+    output_tokens: 80,
+    cache_read_tokens: 0,
+    cache_write_tokens: 0,
+    reasoning_tokens: 0,
+    billing_provider: null,
+    estimated_cost_usd: 0,
+    actual_cost_usd: null,
+    cost_status: '',
+    workspace: 'C:/workspaces/claude-project',
+  },
+  {
+    id: 'hist-codex',
+    profile: 'default',
+    source: 'codex',
+    agent: 'codex',
+    agent_mode: 'scoped',
+    agent_session_id: 'hermes-codex-session',
+    agent_native_session_id: 'native-codex-session',
+    model: 'codex-mini',
+    provider: 'test-provider',
+    title: 'Codex CLI History Session',
+    preview: 'Codex CLI preview',
+    started_at: 1_790_000_800,
+    ended_at: null,
+    last_active: 1_790_000_900,
+    message_count: 2,
+    tool_call_count: 0,
+    input_tokens: 90,
+    output_tokens: 100,
+    cache_read_tokens: 0,
+    cache_write_tokens: 0,
+    reasoning_tokens: 0,
+    billing_provider: null,
+    estimated_cost_usd: 0,
+    actual_cost_usd: null,
+    cost_status: '',
+    workspace: 'C:/workspaces/codex-project',
   },
 ]
 
@@ -154,6 +210,7 @@ async function mockHistoryApi(page: Page, sessions = historySessions, groupRooms
     if (pathname === '/api/auth/status') return json({ hasPasswordLogin: false, username: null })
     if (pathname === '/api/hermes/available-models') return json({ default: 'test-model', default_provider: 'test-provider', groups: [TEST_MODEL_GROUP], allProviders: [TEST_MODEL_GROUP], model_aliases: {}, model_visibility: {} })
     if (pathname === '/api/hermes/profiles') return json({ profiles: [{ name: 'default', active: true, model: 'test-model', gateway: 'test' }] })
+    if (pathname === '/api/hermes/config') return json({ display: { streaming: true, show_reasoning: true, show_cost: true } })
     if (pathname === '/api/studio/group-chat/rooms') {
       const offset = Number(url.searchParams.get('offset') || 0)
       const limit = Number(url.searchParams.get('limit') || 50)
@@ -183,9 +240,11 @@ async function mockHistoryApi(page: Page, sessions = historySessions, groupRooms
     }
     if (pathname === '/api/studio/sessions/hermes/groups') {
       const limit = Number(url.searchParams.get('limit') || 20)
+      const source = url.searchParams.get('source')
       const includedIds = new Set(url.searchParams.getAll('include'))
       const bySource = new Map<string, typeof sessions>()
-      for (const session of sessions) {
+      const visibleSessions = source ? sessions.filter(session => session.source === source) : sessions
+      for (const session of visibleSessions) {
         const group = bySource.get(session.source) || []
         group.push(session)
         bySource.set(session.source, group)
@@ -291,6 +350,153 @@ test.describe('history session deep links', () => {
 
     await expect(page).toHaveURL(/#\/hermes\/history$/)
     await expect(page.getByText('API Server History Session').first()).toBeVisible()
+  })
+
+  test('filters Web, Claude CLI, and Codex CLI sessions without losing the selected source', async ({ page }) => {
+    await page.goto('/#/hermes/history/session/hist-alpha')
+
+    const filter = page.locator('.history-source-filter')
+    await filter.click()
+    await page.getByText('Claude CLI', { exact: true }).last().click()
+    await expect(page).toHaveURL(/source=claude/)
+    await expect(page.getByText('Claude CLI History Session').first()).toBeVisible()
+    await expect(page.getByText('Alpha History Session').first()).toHaveCount(0)
+    await expect(page.getByText('Codex CLI History Session').first()).toHaveCount(0)
+
+    await filter.click()
+    await page.getByText('Codex CLI', { exact: true }).last().click()
+    await expect(page).toHaveURL(/source=codex/)
+    await expect(page.getByText('Codex CLI History Session').first()).toBeVisible()
+    await expect(page.getByText('Claude CLI History Session').first()).toHaveCount(0)
+
+    await filter.click()
+    await page.getByText('Web', { exact: true }).last().click()
+    await expect(page).toHaveURL(/source=cli/)
+    await expect(page.getByText('Alpha History Session').first()).toBeVisible()
+    await expect(page.getByText('Claude CLI History Session').first()).toHaveCount(0)
+    await expect(page.getByText('Codex CLI History Session').first()).toHaveCount(0)
+  })
+
+  test('continues a Claude CLI history session in Chat with the same session and workspace', async ({ page }) => {
+    await authenticate(page)
+    await page.addInitScript(() => {
+      ;(window as any).__PW_CHAT_SOCKET_RESUMES__ = {
+        'hist-claude': {
+          session_id: 'hist-claude',
+          messages: [
+            {
+              id: 1,
+              session_id: 'hist-claude',
+              role: 'user',
+              content: 'Continue the native Claude session',
+              timestamp: 1_790_000_600,
+              tool_call_id: null,
+              tool_calls: null,
+              tool_name: null,
+              token_count: null,
+              finish_reason: null,
+              reasoning: null,
+            },
+          ],
+          workspace: 'C:/workspaces/claude-project',
+          isWorking: false,
+          events: [],
+        },
+      }
+    })
+    await mockHermesApi(page, { sessions: [historySessions[3]] })
+    await mockChatSocket(page)
+    await page.route('**/api/studio/sessions/hermes**', async (route) => {
+      const url = new URL(route.request().url())
+      const path = url.pathname
+      if (path === '/api/studio/sessions/hermes/groups') {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ groups: [{ source: 'claude', sessions: [historySessions[3]], hasMore: false }], included: [] }),
+        })
+        return
+      }
+      if (path === '/api/studio/sessions/hermes') {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ sessions: [historySessions[3]], hasMore: false, offset: 0, limit: 20 }) })
+        return
+      }
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ session: detailFor('hist-claude') }) })
+    })
+
+    await page.goto('/#/hermes/history/session/hist-claude')
+    await expect(page.getByText('Claude CLI History Session').first()).toBeVisible()
+    await page.getByTestId('continue-in-chat').click()
+    await expect(page).toHaveURL(/#\/hermes\/session\/hist-claude\?profile=default$/)
+    await expect(page.getByText('Continue the native Claude session')).toBeVisible()
+
+    const resume = await page.waitForFunction(() => {
+      const state = (window as any).__PW_CHAT_SOCKET__
+      return state?.emitted?.find((item: any) => item.event === 'resume' && item.payload?.session_id === 'hist-claude') || null
+    })
+    expect(await resume.jsonValue()).toBeTruthy()
+    await expect(page.getByText('claude-project')).toBeVisible()
+  })
+
+  test('continues a Codex CLI history session in Chat with the same session and workspace', async ({ page }) => {
+    await authenticate(page)
+    await page.addInitScript(() => {
+      ;(window as any).__PW_CHAT_SOCKET_RESUMES__ = {
+        'hist-codex': {
+          session_id: 'hist-codex',
+          messages: [
+            {
+              id: 1,
+              session_id: 'hist-codex',
+              role: 'user',
+              content: 'Continue the native Codex session',
+              timestamp: 1_790_000_800,
+              tool_call_id: null,
+              tool_calls: null,
+              tool_name: null,
+              token_count: null,
+              finish_reason: null,
+              reasoning: null,
+            },
+          ],
+          workspace: 'C:/workspaces/codex-project',
+          isWorking: false,
+          events: [],
+        },
+      }
+    })
+    await mockHermesApi(page, { sessions: [historySessions[4]] })
+    await mockChatSocket(page)
+    await page.route('**/api/studio/sessions/hermes**', async (route) => {
+      const url = new URL(route.request().url())
+      const path = url.pathname
+      if (path === '/api/studio/sessions/hermes/groups') {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ groups: [{ source: 'codex', sessions: [historySessions[4]], hasMore: false }], included: [] }),
+        })
+        return
+      }
+      if (path === '/api/studio/sessions/hermes') {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ sessions: [historySessions[4]], hasMore: false, offset: 0, limit: 20 }) })
+        return
+      }
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ session: detailFor('hist-codex') }) })
+    })
+
+    await page.goto('/#/hermes/history/session/hist-codex')
+    await expect(page.getByText('Codex CLI History Session').first()).toBeVisible()
+    await page.getByTestId('continue-in-chat').click()
+    await expect(page).toHaveURL(/#\/hermes\/session\/hist-codex\?profile=default$/)
+    await expect(page.getByText('Continue the native Codex session')).toBeVisible()
+
+    const resume = await page.waitForFunction(() => {
+      const state = (window as any).__PW_CHAT_SOCKET__
+      return state?.emitted?.find((item: any) => item.event === 'resume' && item.payload?.session_id === 'hist-codex') || null
+    })
+    expect(await resume.jsonValue()).toBeTruthy()
+    await expect(page.getByText('codex-project')).toBeVisible()
   })
 })
 
