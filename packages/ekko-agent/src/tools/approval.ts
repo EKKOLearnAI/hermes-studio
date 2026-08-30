@@ -264,6 +264,13 @@ export function toolApprovalRequirement(
   toolName: string,
   input: Record<string, unknown>,
 ): ToolApprovalRequirement | undefined {
+  if (toolName === 'ekko_repair_database' && input.strategy === 'rebuild') {
+    return {
+      key: 'ekko:database-rebuild',
+      command: 'ekko_repair_database strategy=rebuild',
+      description: 'quarantines and rebuilds the persistent Ekko database',
+    }
+  }
   if (toolName === 'code_exec') {
     const language = String(input.language || '').trim().toLowerCase()
     if (language !== 'node' && language !== 'python') return undefined

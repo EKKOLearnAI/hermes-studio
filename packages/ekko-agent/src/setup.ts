@@ -50,15 +50,11 @@ import type {
 } from './config'
 import { EkkoAgentManager } from './agent/manager'
 import { EkkoProfileAgent } from './agent/profile-agent'
-
-const EKKO_DATABASE_RECOVERY_TABLES = [
-  'memory_messages',
-  'memory_nodes',
-  'memory_audit_events',
-  'memory_embeddings',
-  'sessions',
-  'messages',
-] as const
+import { EkkoDiagnosticsRegistry, profileScope } from './diagnostics'
+import {
+  EKKO_RECOVERABLE_DATABASE_TABLES,
+  EkkoRecoveryService,
+} from './recovery'
 
 export interface SetupEkkoAgentOptions extends EkkoDirectoryInitializationOptions {
   baseDirectory?: string
@@ -127,6 +123,8 @@ function ensureStartupConfig(config: EkkoConfigStore): EkkoConfig {
 export class EkkoAgentSetup {
   readonly directories: EkkoDirectoryManager
   readonly layout: EkkoDirectoryLayout
+  readonly diagnostics: EkkoDiagnosticsRegistry
+  readonly recovery: EkkoRecoveryService
   readonly config: EkkoConfigStore
   readonly database: EkkoDatabaseManager
   readonly memoryStore: SqliteMemoryStore
@@ -154,10 +152,32 @@ export class EkkoAgentSetup {
       env: options.env,
       packageRoot: options.packageRoot,
     })
+    this.diagnostics = new EkkoDiagnosticsRegistry()
     this.directories = new EkkoDirectoryManager(dirname(dataDirectory))
+    let startupSkillError: unknown
     this.layout = this.directories.initialize({
       hermesRootDirectory: options.hermesRootDirectory,
+      onSkillError: error => {
+        startupSkillError = error
+        try {
+          options.onSkillError?.(error)
+        } catch (callbackError) {
+          console.warn(
+            `[ekko-agent] onSkillError callback failed: ` +
+            `${callbackError instanceof Error ? callbackError.message : String(callbackError)}`,
+          )
+        }
+      },
     })
+    this.recovery = new EkkoRecoveryService({
+      diagnostics: this.diagnostics,
+      directories: this.directories,
+      databasePath: this.layout.databasePath,
+      env: options.env,
+    })
+    if (startupSkillError) {
+      this.recovery.recordSkillsFailure(undefined, 'startup.initialize_skills', startupSkillError)
+    }
     this.config = new EkkoConfigStore({ configPath: this.layout.configPath })
     const startupConfig = ensureStartupConfig(this.config)
     const config = options.config
@@ -201,45 +221,64 @@ export class EkkoAgentSetup {
     let memoryStore: SqliteMemoryStore
     let conversations: EkkoConversationStore
     try {
-      memoryStore = new SqliteMemoryStore(database)
-      conversations = new EkkoConversationStore(database)
-    } catch (error) {
-      database.close()
-      if (!(error instanceof EkkoDatabaseMigrationError) || error.lockFailure) throw error
-
-      const backupPath = database.quarantineForRebuild()
-      database = new EkkoDatabaseManager({
-        databasePath: this.layout.databasePath,
-        env: options.env,
-      })
       try {
         memoryStore = new SqliteMemoryStore(database)
         conversations = new EkkoConversationStore(database)
-      } catch (rebuildError) {
-        database.restoreQuarantinedDatabase(backupPath)
-        throw new Error(
-          `Ekko database rebuild failed; the original database was restored from ${backupPath}.`,
-          { cause: rebuildError },
-        )
-      }
+      } catch (error) {
+        database.close()
+        if (!(error instanceof EkkoDatabaseMigrationError) || error.lockFailure) throw error
 
-      try {
-        const recovery = database.recoverCompatibleTables(backupPath, EKKO_DATABASE_RECOVERY_TABLES)
-        memoryStore.rebuildSearchIndex()
-        console.warn(
-          `[ekko-agent] database rebuilt after migration failure; backup=${backupPath}; ` +
-          `recovered=${JSON.stringify(recovery.recoveredTables)}; skipped=${JSON.stringify(recovery.skippedTables)}`,
-        )
-      } catch (recoveryError) {
-        console.warn(
-          `[ekko-agent] database rebuilt but data recovery could not read the backup at ${backupPath}: ` +
-          `${recoveryError instanceof Error ? recoveryError.message : String(recoveryError)}`,
-        )
+        const backupPath = database.quarantineForRebuild()
+        database = new EkkoDatabaseManager({
+          databasePath: this.layout.databasePath,
+          env: options.env,
+        })
+        try {
+          memoryStore = new SqliteMemoryStore(database)
+          conversations = new EkkoConversationStore(database)
+        } catch (rebuildError) {
+          database.restoreQuarantinedDatabase(backupPath)
+          throw new Error(
+            `Ekko database rebuild failed; the original database was restored from ${backupPath}.`,
+            { cause: rebuildError },
+          )
+        }
+
+        try {
+          const recovery = database.recoverCompatibleTables(
+            backupPath,
+            EKKO_RECOVERABLE_DATABASE_TABLES,
+          )
+          memoryStore.rebuildSearchIndex()
+          console.warn(
+            `[ekko-agent] database rebuilt after migration failure; backup=${backupPath}; ` +
+            `recovered=${JSON.stringify(recovery.recoveredTables)}; skipped=${JSON.stringify(recovery.skippedTables)}`,
+          )
+        } catch (recoveryError) {
+          console.warn(
+            `[ekko-agent] database rebuilt but data recovery could not read the backup at ${backupPath}: ` +
+            `${recoveryError instanceof Error ? recoveryError.message : String(recoveryError)}`,
+          )
+        }
       }
+    } catch (error) {
+      database.close()
+      this.recovery.recordDatabaseFailure('startup.initialize_persistent_database', error)
+      console.warn(
+        `[ekko-agent] persistent database unavailable; Core is continuing with ephemeral storage: ` +
+        `${error instanceof Error ? error.message : String(error)}`,
+      )
+      database = new EkkoDatabaseManager({ databasePath: ':memory:', env: options.env })
+      memoryStore = new SqliteMemoryStore(database)
+      conversations = new EkkoConversationStore(database)
     }
 
     this.database = database
     this.memoryStore = memoryStore
+    this.recovery.configureMemorySelfCheck(() => {
+      memoryStore.databaseManager.connection.prepare('SELECT 1 FROM memory_nodes LIMIT 1').get()
+      return { ok: true, detail: `Active memory store is readable (${database.databasePath}).` }
+    })
     this.memory = this.createMemoryService(config, memoryStore)
     this.conversations = conversations
     this.conversation = conversations
@@ -275,9 +314,23 @@ export class EkkoAgentSetup {
     const normalizedProfile = String(profile || '').trim() || 'default'
     const existing = this.profileLayouts.get(normalizedProfile)
     if (existing) return existing
+    const skillDirectory = this.directories.profileSkillsPath(normalizedProfile)
+    try {
+      this.directories.synchronizeProfileSkills(normalizedProfile)
+      const selfCheck = this.recovery.selfCheckAndResolve('skills', normalizedProfile)
+      if (!selfCheck.ok) {
+        this.recovery.recordSkillsFailure(
+          normalizedProfile,
+          'profile.validate_bundled_skills',
+          new Error(selfCheck.checks.filter(check => !check.ok).map(check => check.detail).join('; ')),
+        )
+      }
+    } catch (error) {
+      this.recovery.recordSkillsFailure(normalizedProfile, 'profile.sync_bundled_skills', error)
+    }
     const layout = {
       profile: normalizedProfile,
-      skillDirectory: this.directories.profileSkillsDirectory(normalizedProfile),
+      skillDirectory,
       logDirectory: this.directories.profileLogsDirectory(normalizedProfile),
       workspaceDirectory: this.directories.profileWorkspaceDirectory(normalizedProfile),
     }
@@ -409,6 +462,10 @@ export class EkkoAgentSetup {
       toolAuthorizer,
       toolContext,
       skillsEnabled,
+      skillsAvailable: runtimeOverrides.skillsAvailable ?? (() => (
+        !this.diagnostics.get('skills', 'global') &&
+        !this.diagnostics.get('skills', profileScope(profileLayout.profile))
+      )),
       skills: runtimeOverrides.skills ?? this.skill.runtimeSkills(profile),
       skillDirectory,
       externalSkillDirectories,
@@ -416,6 +473,10 @@ export class EkkoAgentSetup {
       skillReviewEveryToolCalls: runtimeOverrides.skillReviewEveryToolCalls
         ?? config.skills.reviewEveryToolCalls,
       runtimeInstructions: runtimeOverrides.runtimeInstructions ?? config.prompt.instructions,
+      temporaryRuntimeInstructions: () => [
+        ...(runtimeOverrides.temporaryRuntimeInstructions?.() ?? []),
+        this.recovery.temporaryContext(profileLayout.profile) ?? '',
+      ].filter(Boolean),
       maxSteps: runtimeOverrides.maxSteps ?? config.runtime.maxSteps,
       maxModelRetries: runtimeOverrides.maxModelRetries ?? config.runtime.maxModelRetries,
       maxConsecutiveToolFailures: runtimeOverrides.maxConsecutiveToolFailures
@@ -517,6 +578,7 @@ export class EkkoAgentSetup {
         maxStderrBytes: config.tools.codeExec.maxStderrBytes,
         maxSourceBytes: config.tools.codeExec.maxSourceBytes,
       },
+      recovery: this.recovery,
     })
   }
 
@@ -527,6 +589,7 @@ export class EkkoAgentSetup {
       recentMessageLimit: config.memory.recentMessageLimit,
       automaticRecallTokenBudget: config.memory.automaticRecallTokenBudget,
       searchResultLimit: config.memory.searchResultLimit,
+      onWarning: error => this.recovery.recordMemoryFailure('runtime.memory_operation', error),
     })
   }
 }

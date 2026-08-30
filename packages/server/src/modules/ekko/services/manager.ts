@@ -57,7 +57,7 @@ export class GlobalEkkoAgent {
     this.fileLogger = this.createFileLogger()
     this.memory = options.memory === false ? undefined : options.memory ?? this.setup.memory
     this.memoryDatabasePath = this.memory === this.setup.memory
-      ? this.setup.layout.databasePath
+      ? this.setup.database.databasePath
       : undefined
   }
 
@@ -71,6 +71,7 @@ export class GlobalEkkoAgent {
     } finally {
       this.activeRuns -= 1
       this.applyPendingRuntimeRefresh()
+      reloadGlobalEkkoSetupAfterRecovery()
     }
   }
 
@@ -85,7 +86,13 @@ export class GlobalEkkoAgent {
       logWriter: this.fileLogger,
       logProfile: this.options.profile || 'default',
     })
-    return runtime.run(input)
+    this.activeRuns += 1
+    try {
+      return await runtime.run(input)
+    } finally {
+      this.activeRuns -= 1
+      reloadGlobalEkkoSetupAfterRecovery()
+    }
   }
 
   async estimateContext(input: AgentRuntimeRunInput): Promise<AgentRuntimeContextEstimate> {
@@ -100,9 +107,14 @@ export class GlobalEkkoAgent {
     return this.runtime?.hasBackgroundTasks(sessionId) ?? false
   }
 
+  isIdleForSetupReload(): boolean {
+    return this.activeRuns === 0 && !this.hasBackgroundTasks()
+  }
+
   async abortBackgroundTasks(sessionId?: string): Promise<number> {
     const count = await (this.runtime?.abortBackgroundTasks(sessionId) ?? 0)
     this.applyPendingRuntimeRefresh()
+    reloadGlobalEkkoSetupAfterRecovery()
     return count
   }
 
@@ -143,6 +155,7 @@ export class GlobalEkkoAgent {
       workspaceDirectory: this.workspaceDirectory,
       logFilePath: this.fileLogger.filePath,
       profile: this.options.profile || 'default',
+      recovery: this.setup.recovery.snapshot(),
     }
   }
 
@@ -210,23 +223,48 @@ export interface SetupGlobalEkkoAgentOptions {
 }
 
 let globalEkkoSetup: EkkoAgentSetup | undefined
+let globalEkkoSetupOptions: SetupGlobalEkkoAgentOptions | undefined
 const globalEkkoAgents = new Map<string, GlobalEkkoAgent>()
+
+function reloadGlobalEkkoSetupAfterRecovery(): boolean {
+  if (!globalEkkoSetup?.recovery.snapshot().capabilities.database.restartRequired) return false
+  if ([...globalEkkoAgents.values()].some(agent => !agent.isIdleForSetupReload())) return false
+
+  const databasePath = globalEkkoSetup.layout.databasePath
+  for (const agent of globalEkkoAgents.values()) agent.close()
+  globalEkkoAgents.clear()
+  globalEkkoSetup.close()
+  globalEkkoSetup = undefined
+  logger.info({ databasePath }, '[ekko-agent] persistent database repaired; setup will reopen automatically')
+  return true
+}
 
 export function setupGlobalEkkoAgent(
   options: SetupGlobalEkkoAgentOptions = {},
 ): EkkoAgentSetup {
+  reloadGlobalEkkoSetupAfterRecovery()
   if (globalEkkoSetup) return globalEkkoSetup
+  if (!globalEkkoSetupOptions) {
+    globalEkkoSetupOptions = {
+      ...options,
+      ...(options.profiles ? { profiles: [...options.profiles] } : {}),
+      ...(options.env ? { env: { ...options.env } } : {}),
+    }
+  }
+  const setupOptions = globalEkkoSetupOptions
   globalEkkoSetup = setupEkkoAgent({
-    baseDirectory: options.baseDirectory ?? config.appHome,
+    baseDirectory: setupOptions.baseDirectory ?? config.appHome,
     hermesRootDirectory: getProfilesBaseDir(),
-    profiles: options.profiles ?? listProfileNames(),
-    config: options.config,
-    env: options.env,
+    profiles: setupOptions.profiles ?? listProfileNames(),
+    config: setupOptions.config,
+    env: setupOptions.env,
   })
   logger.info({
     dataDirectory: globalEkkoSetup.layout.rootDirectory,
     configPath: globalEkkoSetup.layout.configPath,
     databasePath: globalEkkoSetup.layout.databasePath,
+    activeDatabasePath: globalEkkoSetup.database.databasePath,
+    recoveryStatus: globalEkkoSetup.recovery.snapshot().status,
     profiles: globalEkkoSetup.profiles().map(profile => profile.profile),
   }, '[ekko-agent] setup complete')
   return globalEkkoSetup
@@ -234,9 +272,9 @@ export function setupGlobalEkkoAgent(
 
 export function getGlobalEkkoAgent(profile = 'default'): GlobalEkkoAgent {
   const normalizedProfile = String(profile || '').trim() || 'default'
+  const setup = setupGlobalEkkoAgent()
   let agent = globalEkkoAgents.get(normalizedProfile)
   if (!agent) {
-    const setup = setupGlobalEkkoAgent()
     setup.ensureProfile(normalizedProfile)
     agent = createGlobalEkkoAgent({
       setup,
@@ -278,4 +316,5 @@ export function closeGlobalEkkoAgent(): void {
   globalEkkoAgents.clear()
   globalEkkoSetup?.close()
   globalEkkoSetup = undefined
+  globalEkkoSetupOptions = undefined
 }

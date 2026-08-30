@@ -144,12 +144,14 @@ export class AgentRuntime {
   private readonly toolsEnabled: boolean
   private readonly tools: AgentToolRegistry
   private readonly skillsEnabled: boolean
+  private readonly skillsAvailable?: () => boolean
   private readonly skills: AgentSkill[]
   private readonly skillDirectory?: string
   private readonly externalSkillDirectories: EkkoExternalSkillDirectory[]
   private readonly disabledSkillNames: string[]
   private readonly systemPrompt?: string
   private readonly runtimeInstructions: string[]
+  private readonly temporaryRuntimeInstructions?: () => string[]
   private readonly maxSteps: number
   private readonly toolContext?: AgentToolContext
   private readonly modelDefaults?: AgentRuntimeOptions['modelDefaults']
@@ -184,12 +186,14 @@ export class AgentRuntime {
       this.tools.setAuthorizer(options.toolAuthorizer)
     }
     this.skillsEnabled = options.skillsEnabled !== false
+    this.skillsAvailable = options.skillsAvailable
     this.skills = this.skillsEnabled ? options.skills ?? [] : []
     this.skillDirectory = String(options.skillDirectory || '').trim() || undefined
     this.externalSkillDirectories = options.externalSkillDirectories ?? []
     this.disabledSkillNames = options.disabledSkillNames ?? []
     this.systemPrompt = options.systemPrompt
     this.runtimeInstructions = options.runtimeInstructions ?? []
+    this.temporaryRuntimeInstructions = options.temporaryRuntimeInstructions
     this.maxSteps = options.maxSteps ?? DEFAULT_AGENT_MAX_STEPS
     this.toolContext = options.toolContext
     this.modelDefaults = options.modelDefaults
@@ -337,7 +341,7 @@ export class AgentRuntime {
       input.onEvent?.(event)
     }
 
-    const inputSkills = this.skillsEnabled ? input.skills ?? [] : []
+    const inputSkills = this.areSkillsAvailable() ? input.skills ?? [] : []
     this.registerSkillTools(inputSkills)
     const memoryIdentity = this.memoryIdentityFor(input)
     const memoryPreparation = await this.prepareMemory(input, memoryIdentity, runId)
@@ -768,14 +772,14 @@ export class AgentRuntime {
     const toolContext = this.mergedToolContext(input)
     const systemPrompt = buildSystemPrompt({
       basePrompt: input.systemPrompt ?? this.systemPrompt,
-      runtimeInstructions: this.runtimeInstructions,
+      runtimeInstructions: this.currentRuntimeInstructions(),
       userSystemMessages,
       memoryContext,
       clarificationEnabled: this.toolsEnabled && !!this.tools.get('clarify'),
-      skillDiscoveryEnabled: this.toolsEnabled && this.skillsEnabled &&
+      skillDiscoveryEnabled: this.toolsEnabled && this.areSkillsAvailable() &&
         !!this.tools.get('skill_list') &&
         !!this.tools.get('skill_view'),
-      skillManagementEnabled: this.toolsEnabled && this.skillsEnabled && !!this.tools.get('skill_manage'),
+      skillManagementEnabled: this.toolsEnabled && this.areSkillsAvailable() && !!this.tools.get('skill_manage'),
       skillNames,
       context: {
         provider: modelClient.provider,
@@ -792,10 +796,25 @@ export class AgentRuntime {
     ]
   }
 
+  private currentRuntimeInstructions(): string[] {
+    if (!this.temporaryRuntimeInstructions) return this.runtimeInstructions
+    try {
+      return [
+        ...this.runtimeInstructions,
+        ...this.temporaryRuntimeInstructions().map(value => String(value || '').trim()).filter(Boolean),
+      ]
+    } catch (error) {
+      return [
+        ...this.runtimeInstructions,
+        `Ekko temporary diagnostics could not be loaded: ${error instanceof Error ? error.message : String(error)}`,
+      ]
+    }
+  }
+
   private async skillRouting(input: AgentRuntimeRunInput): Promise<SkillRoutingResolution> {
     if (
       !this.toolsEnabled ||
-      !this.skillsEnabled ||
+      !this.areSkillsAvailable() ||
       !this.skillDirectory ||
       !this.tools.get('skill_view')
     ) return { names: [], matches: [] }
@@ -907,7 +926,7 @@ export class AgentRuntime {
   }
 
   private recordSkillToolCall(contextKey: string | undefined, toolName: string): void {
-    if (!this.skillReview || this.skillReviewEveryToolCalls <= 0) return
+    if (!this.areSkillsAvailable() || !this.skillReview || this.skillReviewEveryToolCalls <= 0) return
     const key = contextKey || '__default__'
     if (toolName === 'skill_manage') {
       this.skillToolCallCounts.delete(key)
@@ -931,6 +950,7 @@ export class AgentRuntime {
   ): void {
     if (
       input.skillReviewEnabled === false ||
+      !this.areSkillsAvailable() ||
       (input.toolContext?.delegationDepth ?? this.toolContext?.delegationDepth ?? 0) > 0 ||
       !this.skillReview ||
       this.skillReviewEveryToolCalls <= 0 ||
@@ -1481,6 +1501,15 @@ export class AgentRuntime {
       if (skill.tools?.length) {
         this.tools.registerMany(skill.tools)
       }
+    }
+  }
+
+  private areSkillsAvailable(): boolean {
+    if (!this.skillsEnabled) return false
+    try {
+      return this.skillsAvailable?.() !== false
+    } catch {
+      return false
     }
   }
 }

@@ -36,6 +36,7 @@ import type {
 } from '../memory/types'
 import type { AgentRuntime } from '../runtime/runtime'
 import type { CreateEkkoRuntimeOptions } from '../setup'
+import type { EkkoProfileDirectoryLayout } from '../setup'
 import type {
   EkkoSkillCreateInput,
   EkkoSkillEditInput,
@@ -83,10 +84,11 @@ export class EkkoProfileDirectoryManager {
   constructor(
     readonly profile: string,
     private readonly directories: EkkoDirectoryManager,
+    layout?: EkkoProfileDirectoryLayout,
   ) {
-    this.skillDirectory = directories.profileSkillsDirectory(profile)
-    this.logDirectory = directories.profileLogsDirectory(profile)
-    this.workspaceDirectory = directories.profileWorkspaceDirectory(profile)
+    this.skillDirectory = layout?.skillDirectory ?? directories.profileSkillsPath(profile)
+    this.logDirectory = layout?.logDirectory ?? directories.profileLogsDirectory(profile)
+    this.workspaceDirectory = layout?.workspaceDirectory ?? directories.profileWorkspaceDirectory(profile)
   }
 
   sessionWorkspaceDirectory(sessionId: string): string {

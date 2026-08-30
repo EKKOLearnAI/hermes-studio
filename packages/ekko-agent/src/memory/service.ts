@@ -49,6 +49,7 @@ export interface MemoryServiceOptions {
   store?: MemoryStore
   enabled?: boolean
   warning?: string
+  onWarning?: (error: unknown) => void
   recentMessageLimit?: number
   automaticRecallTokenBudget?: number
   searchResultLimit?: number
@@ -71,10 +72,12 @@ export class MemoryService {
   private automaticRecallTokenBudget: number
   private searchResultLimit: number
   private readonly warnings = new Set<string>()
+  private readonly onWarning?: (error: unknown) => void
   private captureQueue: Promise<void> = Promise.resolve()
 
   constructor(options: MemoryServiceOptions = {}) {
     this.store = options.store
+    this.onWarning = options.onWarning
     this.enabled = options.enabled ?? Boolean(options.store)
     this.recentMessageLimit = options.recentMessageLimit ?? DEFAULT_MEMORY_RECENT_MESSAGE_LIMIT
     this.automaticRecallTokenBudget = positiveInteger(
@@ -575,6 +578,11 @@ export class MemoryService {
   private recordWarning(error: unknown): void {
     const message = error instanceof Error ? error.message : String(error)
     this.warnings.add(message)
+    try {
+      this.onWarning?.(error)
+    } catch {
+      // Diagnostics must never replace the underlying memory degradation path.
+    }
   }
 }
 

@@ -51,7 +51,7 @@ JavaScript 运行时也会为不与根字段冲突的 Profile 安装直接属性
 - 调用 `config.ensureDefaults()`，解析、迁移并验证完整配置。
 - Profile 名必须能安全映射为单个目录名，不能包含路径穿越或非法字符。
 - skill、log、workspace 路径必须位于各自的 `.ekko` 受管根目录内。
-- 三个路径必须已经存在且确实是目录。
+- log、workspace 路径必须已经存在且确实是目录。skill 路径只校验受管边界；Skill 初始化失败时 Profile 仍可创建，runtime 会禁用 Skill 路由并保留 Core 与恢复工具。
 - `layout.profile` 必须与 Agent 的 `profile` 一致。
 
 检查结果位于 `profileAgent.validation`。任一检查失败时，Agent 不会进入 `ekko.agent` 实例表。
@@ -66,6 +66,7 @@ JavaScript 运行时也会为不与根字段冲突的 Profile 安装直接属性
 | `profiles` | `string[]?` | 额外创建的命名 Profile；`default` 总会创建。省略时仍会从已有 Profile 目录自动发现。 |
 | `config` | `EkkoConfigPatch?` | 在创建 Profile Agent 和 runtime 服务前合并并持久化的安装级配置；支持下表全部配置段的局部字段。 |
 | `hermesRootDirectory` | `string?` | 仅用于一次性识别并删除 `.ekko` 中旧版同步留下的 Hermes Skill 副本；Hermes 源目录只读且永不修改。 |
+| `onSkillError` | `(error: unknown) => void?` | 可选启动诊断回调；Ekko Setup 会记录故障并以无 Skills 的降级模式继续。 |
 | `env` | `Record<string, string \| undefined>?` | 路径和开发/生产数据库策略使用的环境变量。 |
 | `packageRoot` | `string?` | 开发模式下包内 `.ekko` 数据目录所在的包根目录。 |
 | `authorizationRefresher` | `EkkoModelAuthorizationRefresher?` | Provider-aware OAuth 刷新回调。 |
@@ -83,8 +84,10 @@ JavaScript 运行时也会为不与根字段冲突的 Profile 安装直接属性
 | `<profile>` | `EkkoProfileAgent` | 无字段冲突时创建的运行时动态快捷属性，例如 `ekko.work`。 |
 | `directories` | `EkkoDirectoryManager` | 安装级目录创建与路径解析。 |
 | `layout` | `EkkoDirectoryLayout` | 安装级 base/root/config/database/skills/logs/workspace 绝对路径。 |
+| `diagnostics` | `EkkoDiagnosticsRegistry` | 不依赖数据库或 Skills 的进程内活动故障与审计注册表。 |
+| `recovery` | `EkkoRecoveryService` | Skills/数据库的确定性诊断、修复、自检与临时上下文服务。 |
 | `config` | `EkkoConfigStore` | 全局配置及模型、授权 CRUD。 |
-| `database` | `EkkoDatabaseManager` | 共享 SQLite 连接、迁移与事务。 |
+| `database` | `EkkoDatabaseManager` | 当前共享 SQLite 连接、迁移与事务；持久库不可用时其路径为 `:memory:`，目标持久路径仍位于 `layout.databasePath`。 |
 | `memoryStore` | `SqliteMemoryStore` | 未绑定 Profile 的底层 memory store。 |
 | `memory` | `MemoryService` | 兼容入口；调用者必须显式传 `profileId`。新代码用 `ekko.<profile>.memory`。 |
 | `conversations`, `conversation` | `EkkoConversationStore` | 兼容入口；不自动隔离 Profile。新代码用 Profile 模块。 |
@@ -107,6 +110,8 @@ JavaScript 运行时也会为不与根字段冲突的 Profile 安装直接属性
 | `createModelClient(input?, clientOptions?)` | Provider 选择和 fetch 选项 | `ModelClient` | 创建模型客户端；OAuth Provider 会自动包裹刷新逻辑。 |
 | `createRuntime(options?)` | `CreateEkkoRuntimeOptions` | `AgentRuntime` | 兼容的安装级 runtime 工厂。 |
 | `close()` | 无 | `void` | 幂等关闭监听、memory 与数据库；Profile Agent 不单独关闭共享资源。 |
+
+持久数据库修复并通过自检后，当前 Setup 仍保持临时内存库直到本轮结束，避免在一次 run 中混用新旧连接。Hermes Studio 会在所有活动 run 与后台任务结束后自动关闭该 Setup，下一次 run 自动重建并连接已修复的持久数据库；故障期间写入临时库的数据不迁移。独立宿主需要在同一边界自行重建 Setup。`restartRequired` 表示“当前 Setup 需要被宿主重载”，在 Studio 中不要求用户手动重启应用。
 
 根容器还保留配置/模型兼容转发方法：`readConfig`、`updateConfig`、`replaceConfig`、`resetConfig`；`list/get/set/update/deleteModelProviderPreset`、`installModelProviderPreset`；`list/get/set/update/deleteModelProvider`、`setDefaultModel`；`list/get/set/update/deleteModelAuthorization`、`modelAuthorizationNeedsRefresh`、`refreshModelAuthorization`、`resolveModelAuthorization`。参数和返回值与下文对应的 `config`、`model`、`authorization` 方法相同。
 
@@ -170,6 +175,8 @@ JavaScript 运行时也会为不与根字段冲突的 Profile 安装直接属性
 
 `AgentTool` 字段：`definition.name` 是唯一工具名，`definition.description?` 是模型说明，`definition.parameters?` 是 JSON Schema；`concurrency?` 默认为 `serial`，只有不共享可变状态且允许同批并发的工具才应设为 `parallel`；`execute(input, context?)` 返回 `{ ok, content, contentParts?, data?, error? }`。`AgentToolProvider` 字段为 `id`，并实现 `listTools(context?)`。Ekko runtime 将连续的 `parallel` 调用以最多 8 路并发执行，并把结果按原 tool-call 顺序回放；未标记工具仍是串行屏障。
 
+默认 registry 在由 `EkkoAgentSetup` 创建时还包含五个不依赖 Skill/持久数据库的恢复工具：`ekko_diagnostics`、`ekko_database_schema`、`ekko_repair_skills`、`ekko_repair_database`、`ekko_self_check`。Skills 修复使用打包源和 Ekko 所有权 manifest，不覆盖用户改过的同名 Skill；数据库 `retry` 原地运行代码 migrations，`rebuild` 必须显式 `confirmed=true`，并在重建前隔离原数据库族。每个修复内部都会执行目标自检，只有当前 incident revision 的自检通过后才清除活动故障。
+
 ## Profile `skill` 模块
 
 | 方法 | 参数 | 返回/说明 |
@@ -202,7 +209,9 @@ JavaScript 运行时也会为不与根字段冲突的 Profile 安装直接属性
 | `modelClient?` | 完全自定义 ModelClient；提供后不再按配置创建。 |
 | `toolsEnabled?`, `tools?`, `toolAuthorizer?`, `toolContext?` | 工具总开关、自定义 registry、审批器与默认上下文。 |
 | `skillsEnabled?`, `skills?`, `skillDirectory?`, `skillReviewEveryToolCalls?` | Skill 总开关、进程内 skills、目录覆盖和复盘频率。 |
-| `systemPrompt?`, `runtimeInstructions?` | 系统提示覆盖与附加指令。 |
+| `skillsAvailable?` | 每轮求值的动态 Skill 能力探针；故障修复后同一 runtime 可恢复发现与路由。 |
+| `systemPrompt?`, `runtimeInstructions?` | 系统提示覆盖与固定附加指令。 |
+| `temporaryRuntimeInstructions?` | 每轮重新求值的临时指令 Provider；用于进程诊断，不写入 memory。 |
 | `maxSteps?`, `maxModelRetries?`, `maxConsecutiveToolFailures?` | 主循环、模型重试和连续工具失败上限。 |
 | `backgroundDelegationEnabled?`, `subtaskMaxSteps?` | 后台委派开关和子任务步数。 |
 | `modelDefaults?` | 除 messages/tools/stream 外的默认模型请求字段。 |
@@ -470,7 +479,7 @@ export class EkkoProfileDirectoryManager {
   readonly skillDirectory: string
   readonly logDirectory: string
   readonly workspaceDirectory: string
-  constructor(readonly profile: string, private readonly directories: EkkoDirectoryManager)
+  constructor(readonly profile: string, private readonly directories: EkkoDirectoryManager, layout?: EkkoProfileDirectoryLayout)
   sessionWorkspaceDirectory(sessionId: string): string
 }
 
@@ -1098,6 +1107,80 @@ export class EkkoDatabaseManager {
   close(): void
 }
 ```
+### `src/diagnostics.ts`
+
+```ts
+export type EkkoCapability = 'skills' | 'database' | 'memory'
+
+export type EkkoDiagnosticScope = 'global' | `profile:${string}`
+
+export type EkkoDiagnosticStatus = 'active' | 'resolved'
+
+export interface EkkoRecoveryPlan {
+  tool: string
+  summary: string
+  steps: string[]
+  automatic: boolean
+  requiresConfirmation?: boolean
+  source?: string
+  target?: string
+  schemaOwner?: string
+  schema?: Record<string, string[]>
+}
+
+export interface EkkoDiagnosticInput {
+  component: EkkoCapability
+  scope?: EkkoDiagnosticScope
+  operation: string
+  error: unknown
+  effect: string
+  recovery: EkkoRecoveryPlan
+  metadata?: Record<string, unknown>
+}
+
+export interface EkkoDiagnosticIncident {
+  incidentId: string
+  revision: number
+  component: EkkoCapability
+  scope: EkkoDiagnosticScope
+  operation: string
+  code: string
+  message: string
+  effect: string
+  recovery: EkkoRecoveryPlan
+  metadata?: Record<string, unknown>
+  status: EkkoDiagnosticStatus
+  firstSeenAt: string
+  lastSeenAt: string
+  resolvedAt?: string
+  selfCheck?: EkkoSelfCheckResult
+}
+
+export interface EkkoSelfCheckResult {
+  ok: boolean
+  component: EkkoCapability | 'all'
+  checkedAt: string
+  checks: Array<{ name: string ok: boolean detail: string }>
+  metadata?: Record<string, unknown>
+}
+
+export interface EkkoDiagnosticsSnapshot {
+  coreAvailable: true
+  status: 'ok' | 'degraded'
+  active: EkkoDiagnosticIncident[]
+  recent: EkkoDiagnosticIncident[]
+}
+
+export class EkkoDiagnosticsRegistry {
+  report(input: EkkoDiagnosticInput): EkkoDiagnosticIncident
+  resolve(component: EkkoCapability, scope: EkkoDiagnosticScope, selfCheck: EkkoSelfCheckResult, incidentId?: string): boolean
+  get(component: EkkoCapability, scope: EkkoDiagnosticScope = 'global'): EkkoDiagnosticIncident | undefined
+  snapshot(): EkkoDiagnosticsSnapshot
+  temporaryContext(profile = 'default'): string | undefined
+}
+
+export function profileScope(profile: string): EkkoDiagnosticScope
+```
 ### `src/directories.ts`
 
 ```ts
@@ -1114,6 +1197,17 @@ export interface EkkoDirectoryLayout {
 
 export interface EkkoDirectoryInitializationOptions {
   hermesRootDirectory?: string
+  onSkillError?: (error: unknown) => void
+}
+
+export interface EkkoSkillDirectoryCheck {
+  ok: boolean
+  sourceDirectory?: string
+  targetDirectory: string
+  bundledSkillCount: number
+  missing: string[]
+  unreadable: string[]
+  detail: string
 }
 
 export class EkkoDirectoryManager {
@@ -1129,6 +1223,10 @@ export class EkkoDirectoryManager {
   initialize(options: EkkoDirectoryInitializationOptions = {}): EkkoDirectoryLayout
   initializeConfigDirectory(): string
   profileSkillsDirectory(profile = 'default'): string
+  profileSkillsPath(profile = 'default'): string
+  bundledSkillsSourceDirectory(): string | undefined
+  synchronizeProfileSkills(profile = 'default'): string
+  checkProfileSkills(profile = 'default'): EkkoSkillDirectoryCheck
   profileLogsDirectory(profile = 'default'): string
   profileLogsPath(profile = 'default'): string
   profileWorkspaceDirectory(profile = 'default'): string
@@ -1183,6 +1281,10 @@ export * from './config'
 export * from './config-store'
 
 export * from './directories'
+
+export * from './diagnostics'
+
+export * from './recovery'
 
 export * from './setup'
 
@@ -1249,6 +1351,8 @@ export * from './tools/images'
 export * from './tools/manager'
 
 export * from './tools/registry'
+
+export * from './tools/recovery'
 
 export * from './tools/skills'
 
@@ -1480,6 +1584,7 @@ export interface MemoryServiceOptions {
   store?: MemoryStore
   enabled?: boolean
   warning?: string
+  onWarning?: (error: unknown) => void
   recentMessageLimit?: number
   automaticRecallTokenBudget?: number
   searchResultLimit?: number
@@ -2341,6 +2446,43 @@ export interface ModelClientOptions {
   fetch?: FetchLike
 }
 ```
+### `src/recovery.ts`
+
+```ts
+export const EKKO_RECOVERABLE_DATABASE_TABLES = [ 'memory_messages', 'memory_nodes', 'memory_audit_events', 'memory_embeddings', 'sessions', 'messages', ] as const
+
+export const EKKO_DATABASE_SCHEMA_BLUEPRINT = { owner: 'ekko-agent compiled migrations (memory@8, conversations@1)', rule: 'Create or upgrade the database only by running Ekko migrations; never hand-write repair SQL.', tables: { schema_migrations: ['component', 'version', 'applied_at'], memory_messages: ['row_id', 'id', 'session_id', 'parent_id', 'role', 'content', 'metadata_json', 'created_at'], memory_nodes: [ 'row_id', 'id', 'parent_id', 'supersedes_id', 'profile_id', 'scope_type', 'scope_namespace', 'scope_id', 'origin_json', 'domain', 'category_path_json', 'category_path_text', 'type', 'key', 'revision', 'value_json', 'title', 'content', 'status', 'confidence', 'importance', 'tags_json', 'entities_json', 'source_message_ids_json', 'created_at', 'updated_at', 'expires_at', ], memory_audit_events: [ 'row_id', 'id', 'event_type', 'node_id', 'session_id', 'profile_id', 'actor', 'reason', 'payload_json', 'created_at', ], memory_embeddings: ['node_id', 'model', 'embedding', 'created_at'], sessions: [ 'id', 'profile', 'source', 'agent', 'agent_mode', 'agent_session_id', 'agent_native_session_id', 'user_id', 'model', 'provider', 'api_mode', 'title', 'parent_session_id', 'fork_point_message_id', 'started_at', 'ended_at', 'end_reason', 'message_count', 'tool_call_count', 'input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens', 'reasoning_tokens', 'billing_provider', 'estimated_cost_usd', 'actual_cost_usd', 'cost_status', 'preview', 'last_active', 'is_archived', 'workspace', 'category_id', 'history_revision', ], messages: [ 'id', 'session_id', 'role', 'content', 'display_role', 'display_content', 'tool_call_id', 'tool_calls', 'tool_name', 'timestamp', 'token_count', 'finish_reason', 'reasoning', 'reasoning_details', 'reasoning_content', ], }, } as const
+
+export type EkkoDatabaseRecoveryStrategy = 'retry' | 'rebuild'
+
+export type EkkoSelfCheckComponent = 'all' | 'skills' | 'database' | 'memory'
+
+export interface EkkoRecoveryServiceOptions {
+  diagnostics: EkkoDiagnosticsRegistry
+  directories: EkkoDirectoryManager
+  databasePath: string
+  env?: Record<string, string | undefined>
+}
+
+export interface EkkoRecoverySnapshot extends EkkoDiagnosticsSnapshot {
+  capabilities: { skills: { sourceDirectory?: string; rootDirectory: string } database: { targetPath: string activeStorage: 'persistent' | 'ephemeral' targetReady: boolean restartRequired: boolean schemaOwner: string } }
+}
+
+export class EkkoRecoveryService {
+  constructor(private readonly options: EkkoRecoveryServiceOptions)
+  recordSkillsFailure(profile: string | undefined, operation: string, error: unknown): EkkoDiagnosticIncident
+  recordDatabaseFailure(operation: string, error: unknown): EkkoDiagnosticIncident
+  recordMemoryFailure(operation: string, error: unknown): EkkoDiagnosticIncident
+  configureMemorySelfCheck(check: () => { ok: boolean; detail: string }): void
+  snapshot(): EkkoRecoverySnapshot
+  temporaryContext(profile = 'default'): string | undefined
+  databaseSchema()
+  selfCheck(component: EkkoSelfCheckComponent, profile = 'default'): EkkoSelfCheckResult
+  selfCheckAndResolve(component: EkkoSelfCheckComponent, profile = 'default'): EkkoSelfCheckResult
+  repairSkills(profile = 'default'): { ok: boolean sourceDirectory?: string targetDirectory: string selfCheck: EkkoSelfCheckResult }
+  repairDatabase(strategy: EkkoDatabaseRecoveryStrategy, confirmed = false): { ok: boolean strategy: EkkoDatabaseRecoveryStrategy backupPath?: string recoveredTables?: Array<{ table: string; rows: number }> skippedTables?: Array<{ table: string; reason: string }> restartRequired: boolean selfCheck: EkkoSelfCheckResult error?: string }
+}
+```
 ### `src/runtime/events.ts`
 
 ```ts
@@ -2427,6 +2569,7 @@ export interface AgentRuntimeOptions {
   tools?: AgentToolRegistry
   toolAuthorizer?: AgentToolAuthorizer
   skillsEnabled?: boolean
+  skillsAvailable?: () => boolean
   skills?: AgentSkill[]
   skillDirectory?: string
   externalSkillDirectories?: EkkoExternalSkillDirectory[]
@@ -2434,6 +2577,7 @@ export interface AgentRuntimeOptions {
   skillReviewEveryToolCalls?: number
   systemPrompt?: string
   runtimeInstructions?: string[]
+  temporaryRuntimeInstructions?: () => string[]
   maxSteps?: number
   maxModelRetries?: number
   maxConsecutiveToolFailures?: number
@@ -2531,6 +2675,8 @@ export interface CreateEkkoRuntimeOptions extends Omit<AgentRuntimeOptions, 'mem
 export class EkkoAgentSetup {
   readonly directories: EkkoDirectoryManager
   readonly layout: EkkoDirectoryLayout
+  readonly diagnostics: EkkoDiagnosticsRegistry
+  readonly recovery: EkkoRecoveryService
   readonly config: EkkoConfigStore
   readonly database: EkkoDatabaseManager
   readonly memoryStore: SqliteMemoryStore
@@ -2895,6 +3041,11 @@ export function createMcpToolProvider(): AgentToolProvider
 ```ts
 export function resolveToolPath(inputPath: string, context: { cwd?: string; workspaceRoot?: string } = {}): string
 ```
+### `src/tools/recovery.ts`
+
+```ts
+export function createRecoveryTools(recovery: EkkoRecoveryService): AgentTool[]
+```
 ### `src/tools/registry.ts`
 
 ```ts
@@ -2919,6 +3070,7 @@ export interface DefaultToolRegistryOptions {
   authorizer?: AgentToolAuthorizer
   executionTimeoutMs?: number
   codeExec?: (CodeExecToolOptions & { enabled?: boolean }) | false
+  recovery?: EkkoRecoveryService
 }
 
 export function createDefaultToolRegistry(options: DefaultToolRegistryOptions = {}): AgentToolRegistry

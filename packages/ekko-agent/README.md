@@ -98,6 +98,13 @@ Built-in tools:
 - `skill_manage` creates, patches, edits, archives, or manages support files when
   `skillDirectory` is configured. Created and updated skills require non-empty
   compact English ASCII frontmatter `metadata.keywords`; built-in skills cannot be deleted.
+- `ekko_diagnostics` reports active component incidents and exact recovery paths.
+- `ekko_database_schema` exposes the migration-owned SQLite tables and fields.
+- `ekko_repair_skills` re-syncs package-owned Skills and runs its self-check.
+- `ekko_repair_database` retries compiled migrations or performs an explicitly
+  confirmed quarantine-and-rebuild, then runs its self-check.
+- `ekko_self_check` validates Skills/database state and clears only the matching
+  current incident revision.
 
 Use `workspaceRoot` to keep file and terminal working directories inside a
 specific workspace.
@@ -206,7 +213,8 @@ The setup entry owns `EkkoDirectoryManager`, creates
 and opens and migrates the SQLite database. Development keeps the complete
 layout under the package-local `.ekko` directory, including `.ekko/ekko.db`;
 production uses `<base>/.ekko/ekko.db`. It returns
-the shared database-backed memory and conversation stores and closes that
+shared SQLite-backed memory and conversation stores (using an in-memory fallback
+when the persistent target is degraded) and closes that
 process-level resource through `setup.close()`. The global JSON file drives
 runtime limits, model defaults and providers, tools, approvals, profile-scoped
 MCP servers, delegation, context compression, memory, skills, logging, and
@@ -228,6 +236,20 @@ the Hermes root only as a read-only inventory: matching non-built-in copies are
 removed from Ekko-owned Profile directories, while the Hermes source directories
 are never changed. A migration marker prevents later startups from repeating the
 cleanup or removing Skills installed afterward.
+
+Skills and persistent SQLite are optional capabilities around a minimal Core.
+If bundled Skill synchronization fails, Ekko records a process-local incident,
+disables Skill discovery/routing for that Profile, and keeps model dialogue and
+packaged built-in tools available. If persistent SQLite cannot initialize or
+recover, Ekko uses an in-memory SQLite fallback so chat and storage-backed APIs
+do not fail startup. Every run receives current recovery details as temporary
+system context; this context is never captured as memory. Built-in repair tools
+own the source/target paths and migrations, run a deterministic self-check after
+repair, and clear an incident only when the matching revision passes. A repaired
+persistent database leaves the current run on ephemeral storage; Hermes Studio
+automatically closes that Setup after all active runs finish, so the next run
+opens the repaired persistent database. Standalone hosts must recreate their
+Setup at the same completed-run boundary.
 
 Each Profile may additionally reference read-only Skill roots through
 `skills.profiles.<profile>.externalDirectories`; those directories stay in

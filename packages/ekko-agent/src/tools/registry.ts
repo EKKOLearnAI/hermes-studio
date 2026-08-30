@@ -12,9 +12,11 @@ import { createDelegationTools } from './delegation'
 import { createFileTools } from './files'
 import { createImageTools } from './images'
 import { createMcpToolProvider } from './mcp'
+import { createRecoveryTools } from './recovery'
 import { createSkillTools } from './skills'
 import { createTerminalTools } from './terminal'
 import type { EkkoExternalSkillDirectory } from '../skills/external-directories'
+import type { EkkoRecoveryService } from '../recovery'
 
 export class AgentToolRegistry {
   private readonly tools = new Map<string, AgentTool>()
@@ -107,6 +109,7 @@ export interface DefaultToolRegistryOptions {
   authorizer?: AgentToolAuthorizer
   executionTimeoutMs?: number
   codeExec?: (CodeExecToolOptions & { enabled?: boolean }) | false
+  recovery?: EkkoRecoveryService
 }
 
 export function createDefaultToolRegistry(options: DefaultToolRegistryOptions = {}): AgentToolRegistry {
@@ -117,6 +120,7 @@ export function createDefaultToolRegistry(options: DefaultToolRegistryOptions = 
     ...createTerminalTools({ timeoutMs: options.executionTimeoutMs }),
     ...createBrowserTools(),
     ...createDelegationTools(),
+    ...(options.recovery ? createRecoveryTools(options.recovery) : []),
     ...createSkillTools(options.skillDirectory, {
       externalSkillDirectories: options.externalSkillDirectories,
       disabledSkillNames: options.disabledSkillNames,

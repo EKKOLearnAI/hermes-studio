@@ -87,7 +87,11 @@ export class EkkoProfileAgent {
     this.name = options.profile
     this.profile = options.profile
     this.layout = options.layout
-    this.directory = new EkkoProfileDirectoryManager(this.profile, options.directories)
+    this.directory = new EkkoProfileDirectoryManager(
+      this.profile,
+      options.directories,
+      options.layout,
+    )
     this.directories = this.directory
     this.config = options.config
     this.database = options.database
@@ -126,7 +130,7 @@ function validateProfileAgent(
   if (options.layout.profile !== options.profile) {
     throw new Error(`Ekko profile layout mismatch: ${options.profile} != ${options.layout.profile}`)
   }
-  assertManagedDirectory('skill', options.layout.skillDirectory, options.skillsDirectory)
+  assertManagedDirectory('skill', options.layout.skillDirectory, options.skillsDirectory, false)
   assertManagedDirectory('log', options.layout.logDirectory, options.logsDirectory)
   assertManagedDirectory('workspace', options.layout.workspaceDirectory, options.workspaceDirectory)
   assertInsideRoot(options.layout.skillDirectory, options.rootDirectory)
@@ -143,7 +147,7 @@ function validateProfileAgent(
   }
 }
 
-function assertManagedDirectory(kind: string, path: string, parent: string): void {
+function assertManagedDirectory(kind: string, path: string, parent: string, required = true): void {
   assertInsideRoot(path, parent)
   let isDirectory = false
   try {
@@ -151,7 +155,7 @@ function assertManagedDirectory(kind: string, path: string, parent: string): voi
   } catch {
     // The message below is deliberately stable for host diagnostics.
   }
-  if (!isDirectory) throw new Error(`Ekko profile ${kind} directory is not usable: ${path}`)
+  if (required && !isDirectory) throw new Error(`Ekko profile ${kind} directory is not usable: ${path}`)
 }
 
 function assertInsideRoot(path: string, root: string): void {

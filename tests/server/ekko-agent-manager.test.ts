@@ -1,11 +1,12 @@
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   closeGlobalEkkoAgent,
   createGlobalEkkoAgent,
+  getGlobalEkkoAgent,
   GlobalEkkoAgent,
   setupGlobalEkkoAgent,
 } from '../../packages/server/src/modules/ekko/services/manager'
@@ -92,6 +93,78 @@ describe('GlobalEkkoAgent', () => {
       runtime: { maxSteps: 48 },
       compression: { threshold: 0.65 },
     })
+  })
+
+  it('automatically reopens persistent storage after a repaired fallback database', async () => {
+    const ekkoRoot = join(baseDirectory, '.ekko')
+    const databasePath = join(ekkoRoot, 'ekko.db')
+    const initial = setupEkkoAgent({ baseDirectory, env: { NODE_ENV: 'test' } })
+    initial.close()
+    await rm(databasePath)
+    await mkdir(databasePath, { recursive: true })
+    await chmod(ekkoRoot, 0o500)
+
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const degradedSetup = setupGlobalEkkoAgent({
+      baseDirectory,
+      profiles: ['default'],
+      env: { NODE_ENV: 'test' },
+    })
+    const degradedAgent = getGlobalEkkoAgent()
+    let modelCall = 0
+    const repairClient: ModelClient = {
+      ...modelClient('unused'),
+      create: vi.fn(async () => {
+        modelCall += 1
+        return modelCall === 1
+          ? {
+              content: '',
+              toolCalls: [{
+                id: 'repair-database',
+                name: 'ekko_repair_database',
+                arguments: { strategy: 'retry' },
+              }],
+              finishReason: 'tool_calls',
+            }
+          : { content: 'database repaired' }
+      }),
+    }
+
+    try {
+      expect(degradedSetup.database.databasePath).toBe(':memory:')
+      await chmod(ekkoRoot, 0o700)
+      await rm(databasePath, { recursive: true })
+
+      await expect(degradedAgent.run({
+        messages: ['Repair the persistent database.'],
+        modelClient: repairClient,
+      })).resolves.toMatchObject({ output: { content: 'database repaired' } })
+
+      const recoveredSetup = setupGlobalEkkoAgent()
+      const recoveredAgent = getGlobalEkkoAgent()
+      expect(recoveredSetup).not.toBe(degradedSetup)
+      expect(recoveredAgent).not.toBe(degradedAgent)
+      expect(recoveredSetup.database.databasePath).toBe(databasePath)
+      expect(recoveredSetup.recovery.snapshot()).toMatchObject({
+        status: 'ok',
+        capabilities: {
+          database: {
+            activeStorage: 'persistent',
+            targetReady: true,
+            restartRequired: false,
+          },
+        },
+      })
+
+      await expect(recoveredAgent.run({
+        messages: ['Continue after recovery.'],
+        modelClient: modelClient('persistent again'),
+      })).resolves.toMatchObject({ output: { content: 'persistent again' } })
+      expect(recoveredAgent.status()).toMatchObject({ memoryDatabasePath: databasePath })
+    } finally {
+      await chmod(ekkoRoot, 0o700)
+      warning.mockRestore()
+    }
   })
 
   it('accepts a config patch when creating a Studio global agent', () => {

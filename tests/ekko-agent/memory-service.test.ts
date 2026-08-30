@@ -976,7 +976,8 @@ describe('MemoryService', () => {
       appendAuditEvent: failure,
       close() {},
     } as unknown as MemoryStore
-    const degraded = new MemoryService({ store: failingStore })
+    const onWarning = vi.fn()
+    const degraded = new MemoryService({ store: failingStore, onWarning })
     const client = modelClient()
     const runtime = new AgentRuntime({ modelClient: client, memory: degraded })
 
@@ -985,6 +986,7 @@ describe('MemoryService', () => {
     expect(result.output.content).toBe('ok')
     expect(result.memoryContext?.diagnostics).toMatchObject({ storeStatus: 'degraded', enabled: true })
     expect(result.memoryContext?.diagnostics.warnings).toContain('database unavailable')
+    expect(onWarning).toHaveBeenCalledWith(expect.objectContaining({ message: 'database unavailable' }))
     degraded.close()
   })
 })
