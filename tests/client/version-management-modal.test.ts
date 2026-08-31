@@ -118,6 +118,9 @@ describe('VersionManagementModal Runtime storage selector', () => {
 
     const dataDirectory = wrapper.get('[data-testid="active-data-directory"]')
     expect(dataDirectory.text()).toContain('/state/.hermes')
+    const dataDirectoryHint = wrapper.get('[data-testid="hermes-data-directory-env-hint"]')
+    expect(dataDirectoryHint.text()).toContain('runtimeVersions.dataDirectoryEnvDescription')
+    expect(dataDirectoryHint.text()).toContain('HERMES_HOME')
   })
 
   it('shows Runtime versions returned by the Studio version API', async () => {
@@ -162,6 +165,9 @@ describe('VersionManagementModal Runtime storage selector', () => {
     expect(details.text()).toContain('/Users/test/.hermes/hermes-agent/venv/bin/python3')
     expect(details.text()).toContain('/Users/test/.hermes/hermes-agent')
     expect(details.text()).toContain('/Users/test/.hermes')
+    expect(details.text()).toContain('runtimeVersions.dataDirectoryEnvDescription')
+    expect(details.text()).toContain('launchctl setenv HERMES_HOME')
+    expect(details.text()).toContain('HERMES_HOME=/home/agent/.hermes')
   })
 
   it('shows the Runtime fallback reason and hides Web UI version switching', async () => {

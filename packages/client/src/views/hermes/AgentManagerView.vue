@@ -14,6 +14,7 @@ import {
 } from '@/api/coding-agents'
 import { fetchAgentStatusSnapshot, type AgentStatusSnapshot } from '@/api/agent-status'
 import { fetchRuntimeVersionStatus, type RuntimeVersionStatus } from '@/api/hermes/runtime-versions'
+import HermesDataDirectoryHint from '@/components/hermes/HermesDataDirectoryHint.vue'
 import VersionManagementModal from '@/components/layout/VersionManagementModal.vue'
 import { useAppStore } from '@/stores/hermes/app'
 import { useChatStore } from '@/stores/hermes/chat'
@@ -546,6 +547,7 @@ onMounted(() => {
             <strong>{{ t('runtimeVersions.activeDataDirectory') }}</strong>
             <code>{{ hermesRuntimeStatus?.hermes.dataDirectory || '-' }}</code>
           </div>
+          <HermesDataDirectoryHint />
         </div>
       </NDrawerContent>
     </NDrawer>

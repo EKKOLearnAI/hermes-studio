@@ -308,6 +308,9 @@ describe('Agent Manager page', () => {
     expect(details.text()).toContain('/Users/test/.hermes/hermes-agent/venv/bin/python')
     expect(details.text()).toContain('/Users/test/.hermes/hermes-agent')
     expect(details.text()).toContain('/Users/test/.hermes')
+    expect(details.text()).toContain('runtimeVersions.dataDirectoryEnvDescription')
+    expect(details.text()).toContain('SetEnvironmentVariable("HERMES_HOME"')
+    expect(details.text()).toContain('HERMES_HOME=/home/agent/.hermes')
   })
 
   it('does not open Runtime management when cached Hermes status is unavailable', async () => {

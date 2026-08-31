@@ -17,6 +17,7 @@ import {
   type VersionDownloadKind,
   type VersionDownloadSource,
 } from '@/api/hermes/runtime-versions'
+import HermesDataDirectoryHint from '@/components/hermes/HermesDataDirectoryHint.vue'
 import { desktopBridge } from '@/utils/desktop-bridge'
 
 const props = defineProps<{ show: boolean }>()
@@ -366,6 +367,7 @@ async function removeRuntime(version: string) {
               {{ t('runtimeVersions.activeDataDirectory') }}: {{ status?.hermes.dataDirectory || '-' }}
             </span>
           </div>
+          <HermesDataDirectoryHint v-if="currentHermesSource === 'managed-runtime'" />
           <NAlert
             data-testid="runtime-cli-update-note"
             type="info"
@@ -537,6 +539,7 @@ async function removeRuntime(version: string) {
           <strong>{{ t('runtimeVersions.activeDataDirectory') }}</strong>
           <code :title="status?.hermes.dataDirectory || ''">{{ status?.hermes.dataDirectory || '-' }}</code>
         </div>
+        <HermesDataDirectoryHint />
       </div>
     </NDrawerContent>
   </NDrawer>
