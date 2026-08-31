@@ -1022,8 +1022,6 @@ export function startRunViaSocket(
     sawTransientDisconnect = false
     waitingForLocalPersistence = options?.shouldResumeOnReconnect?.() === false
     clearReconnectResumeRetry()
-    reconnectResumeRetryDelayMs = 100
-    reconnectResumeRetryAttempts = 0
     emitReconnectResume()
   }
   socket.on('connect', handleSocketReconnect)

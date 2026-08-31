@@ -190,8 +190,8 @@ describe('chat-run socket reconnect handling', () => {
     expect(onDone).not.toHaveBeenCalled()
 
     persisted = true
-    await vi.advanceTimersByTimeAsync(100)
-    expect(socket.emit).toHaveBeenCalledTimes(4)
+    await vi.advanceTimersByTimeAsync(200)
+    expect(socket.emit.mock.calls.filter(([event]: [string]) => event === 'resume')).toHaveLength(3)
 
     const resumed = { session_id: 'local-session', messages: [], isWorking: true, events: [] }
     socket.__trigger('resumed', resumed)
@@ -206,7 +206,50 @@ describe('chat-run socket reconnect handling', () => {
     expect(onEvent).toHaveBeenCalledWith(resumedDelta)
 
     await vi.advanceTimersByTimeAsync(1_000)
-    expect(socket.emit).toHaveBeenCalledTimes(4)
+    expect(socket.emit.mock.calls.filter(([event]: [string]) => event === 'resume')).toHaveLength(3)
+  })
+
+  it('keeps local-only resume retries bounded across repeated reconnects', async () => {
+    vi.useFakeTimers()
+    const { startRunViaSocket } = await import('../../packages/client/src/api/studio/chat')
+    const onEvent = vi.fn()
+    const onDone = vi.fn()
+
+    startRunViaSocket(
+      { session_id: 'flapping-session', input: 'hello', profile: 'default', source: 'cli' },
+      onEvent,
+      onDone,
+      vi.fn(),
+      undefined,
+      { shouldResumeOnReconnect: () => false },
+    )
+
+    const socket = socketState.sockets[0]
+    socket.__trigger('disconnect', 'ping timeout')
+    socket.__trigger('connect')
+
+    for (let attempt = 0; attempt < 60; attempt++) {
+      socket.__trigger('run.failed', {
+        event: 'run.failed',
+        session_id: 'flapping-session',
+        error: 'Session not found',
+      })
+      expect(onEvent).not.toHaveBeenCalled()
+      expect(onDone).not.toHaveBeenCalled()
+      socket.__trigger('disconnect', 'ping timeout')
+      socket.__trigger('connect')
+    }
+
+    const terminalFailure = {
+      event: 'run.failed',
+      session_id: 'flapping-session',
+      error: 'Session not found',
+    }
+    socket.__trigger('run.failed', terminalFailure)
+
+    expect(onEvent).toHaveBeenCalledWith(terminalFailure)
+    expect(onDone).toHaveBeenCalledOnce()
+    expect(socket.emit.mock.calls.filter(([event]: [string]) => event === 'resume')).toHaveLength(61)
   })
 
   it('keeps reconnect resume handlers scoped when responses arrive out of order', async () => {
