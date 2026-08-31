@@ -3030,6 +3030,8 @@ jobTriggered: 'Job acionado',
   },
 
   changelog: {
+    new_0_7_14_1: 'O Ekko agora limita cada leitura de arquivo a 50 KB com continuação por deslocamento de bytes e gera comandos de terminal nativos da plataforma, evitando enviar comandos exclusivos do Unix ao Windows (#2812)',
+    new_0_7_14_2: 'O Desktop e a Web UI independente agora validam cada Runtime sequencialmente com hermes --version, run_agent.py e cli.py; versões danificadas são marcadas como indisponíveis, o fallback continua na próxima instalação e o gerenciamento de versões permite baixá-las novamente (#2815)',
     new_0_7_13_1: 'A instalação e a limpeza do Runtime no Windows agora repetem operações em arquivos temporariamente bloqueados pelo Defender ou por indexadores, evitando erros EACCES, EBUSY, ENOTEMPTY e EPERM ao remover ou ativar versões baixadas (#2801)',
     new_0_7_13_2: 'A criação de chats Hermes agora reutiliza o estado leve de disponibilidade dos Agents; somente administradores são direcionados à instalação quando o Hermes está ausente, e falhas na verificação de estado não bloqueiam mais a criação do chat (#2805)',
     new_0_7_13_3: 'Desktop, Bridge do backend e CLI agora compartilham uma única seleção bloqueada do ambiente Hermes; o gerenciamento de versões mostra o CLI ativo, os detalhes do ambiente e as instruções para substituir o diretório de dados, além de instalar um Runtime ausente sob demanda (#2808)',

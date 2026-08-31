@@ -3391,6 +3391,8 @@ export default {
 
   // 更新日誌
   changelog: {
+    new_0_7_14_1: 'Ekko 現在將每次檔案讀取限制為 50 KB，支援以位元組偏移繼續讀取，並產生平台原生終端指令，避免向 Windows 傳送僅適用於 Unix 的指令（#2812）',
+    new_0_7_14_2: 'Desktop 與獨立 Web UI 現在會依序透過 hermes --version、run_agent.py 與 cli.py 驗證每個 Runtime；損壞版本會標記為不可用，fallback 繼續嘗試下一個已安裝版本，版本管理也可重新下載（#2815）',
     new_0_7_13_1: 'Windows Runtime 安裝與清理現在會重試遭 Defender 或索引器暫時鎖定的檔案，避免刪除或啟用已下載版本時發生 EACCES、EBUSY、ENOTEMPTY 或 EPERM 錯誤 (#2801)',
     new_0_7_13_2: '建立 Hermes 聊天現在會重用輕量級 Agent 可用狀態；只有在 Hermes 未安裝時才引導管理員前往安裝，狀態檢查失敗也不再阻止建立聊天 (#2805)',
     new_0_7_13_3: 'Desktop、後端 Bridge 與 CLI 現在共享同一套鎖定的 Hermes 環境選擇；版本管理會顯示目前的 CLI、環境詳情與資料目錄覆寫說明，並可依需求安裝缺少的 Runtime (#2808)',

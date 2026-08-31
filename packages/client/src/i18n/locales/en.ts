@@ -3467,6 +3467,8 @@ export default {
 
   // Changelog
   changelog: {
+    new_0_7_14_1: 'Ekko now caps each file read at 50 KB with byte-offset continuation and generates platform-native terminal commands, so Windows no longer receives Unix-only commands (#2812)',
+    new_0_7_14_2: 'Desktop and the standalone Web UI now validate each Runtime sequentially with hermes --version, run_agent.py, and cli.py; broken versions are marked unavailable, fallback continues to the next installed version, and Version Management lets users download them again (#2815)',
     new_0_7_13_1: 'Windows Runtime installation and cleanup now retry files temporarily locked by Defender or indexers, preventing EACCES, EBUSY, ENOTEMPTY, and EPERM failures when removing or activating downloaded versions (#2801)',
     new_0_7_13_2: 'Creating Hermes chats now reuses the lightweight Agent availability status; only administrators are sent to installation when Hermes is missing, and failed status checks no longer block chat creation (#2805)',
     new_0_7_13_3: 'Desktop, the backend Bridge, and CLI now share one locked Hermes environment selection; Version Management shows the active CLI, environment details, and data-directory override guidance, and can install a missing Runtime on demand (#2808)',

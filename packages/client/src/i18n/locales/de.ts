@@ -3030,6 +3030,8 @@ jobTriggered: 'Job ausgelost',
   },
 
   changelog: {
+    new_0_7_14_1: 'Ekko begrenzt jetzt jeden Dateilesevorgang auf 50 KB mit Fortsetzung per Byte-Offset und erzeugt plattformeigene Terminalbefehle, sodass Windows keine Unix-spezifischen Befehle mehr erhält (#2812)',
+    new_0_7_14_2: 'Desktop und die eigenständige Web UI prüfen jetzt jede Runtime nacheinander mit hermes --version, run_agent.py und cli.py; defekte Versionen werden als nicht verfügbar markiert, der Fallback setzt mit der nächsten Installation fort und die Versionsverwaltung ermöglicht ihren erneuten Download (#2815)',
     new_0_7_13_1: 'Die Installation und Bereinigung der Windows-Runtime wiederholt jetzt Dateivorgänge bei vorübergehenden Sperren durch Defender oder Indexdienste und verhindert so EACCES-, EBUSY-, ENOTEMPTY- und EPERM-Fehler beim Löschen oder Aktivieren heruntergeladener Versionen (#2801)',
     new_0_7_13_2: 'Beim Erstellen von Hermes-Chats wird jetzt der schlanke Agent-Verfügbarkeitsstatus wiederverwendet; nur Administratoren werden bei fehlender Hermes-Installation zur Installation weitergeleitet, und fehlgeschlagene Statusprüfungen blockieren die Chat-Erstellung nicht mehr (#2805)',
     new_0_7_13_3: 'Desktop, Backend-Bridge und CLI verwenden jetzt dieselbe gesperrte Auswahl der Hermes-Umgebung; die Versionsverwaltung zeigt die aktive CLI, Umgebungsdetails und Hinweise zum Überschreiben des Datenverzeichnisses und kann fehlende Runtimes bei Bedarf installieren (#2808)',

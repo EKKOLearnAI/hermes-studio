@@ -3030,6 +3030,8 @@ jobTriggered: 'Job declenche',
   },
 
   changelog: {
+    new_0_7_14_1: 'Ekko limite désormais chaque lecture de fichier à 50 Ko avec reprise par décalage d’octets et génère des commandes de terminal natives de la plateforme, afin que Windows ne reçoive plus de commandes réservées à Unix (#2812)',
+    new_0_7_14_2: 'Desktop et la Web UI autonome valident désormais chaque Runtime séquentiellement avec hermes --version, run_agent.py et cli.py ; les versions endommagées sont marquées indisponibles, le repli passe à l’installation suivante et la gestion des versions permet de les retélécharger (#2815)',
     new_0_7_13_1: 'L’installation et le nettoyage du Runtime Windows réessaient désormais les opérations sur les fichiers temporairement verrouillés par Defender ou les indexeurs, évitant les erreurs EACCES, EBUSY, ENOTEMPTY et EPERM lors de la suppression ou de l’activation de versions téléchargées (#2801)',
     new_0_7_13_2: 'La création de chats Hermes réutilise désormais le statut léger de disponibilité des Agents ; seuls les administrateurs sont dirigés vers l’installation lorsque Hermes est absent, et un échec de vérification ne bloque plus la création du chat (#2805)',
     new_0_7_13_3: 'Desktop, le Bridge backend et le CLI partagent désormais une sélection verrouillée de l’environnement Hermes ; la gestion des versions affiche le CLI actif, les détails de l’environnement et les instructions de remplacement du répertoire de données, et peut installer un Runtime manquant à la demande (#2808)',
