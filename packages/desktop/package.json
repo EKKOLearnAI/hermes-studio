@@ -1,6 +1,6 @@
 {
   "name": "hermes-studio",
-  "version": "0.7.12",
+  "version": "0.7.13",
   "description": "Hermes Studio desktop distribution with bundled Python runtime and hermes-agent",
   "homepage": "https://hermes-studio.ai",
   "author": {
