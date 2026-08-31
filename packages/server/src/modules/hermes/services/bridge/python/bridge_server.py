@@ -77,6 +77,20 @@ class BridgeServer:
             )
             # Local patch (reasoning-effort): per-session reasoning effort override (Web UI brain button).
             reasoning_effort = req.get("reasoning_effort")
+            # The conversation this reply belongs to, when the caller declares
+            # one. session_id names a single runtime execution and group chat
+            # issues a fresh one per reply, so without this Hermes re-keys every
+            # conversation-affinity hint on every reply
+            # (NousResearch/hermes-agent#96811). Absent = unchanged behaviour.
+            gateway_session_key = req.get("gateway_session_key")
+            # Only forwarded when the caller actually declares a conversation,
+            # so a pool implementation that does not know the parameter keeps
+            # working unchanged.
+            declared_conversation_kwargs = (
+                {"gateway_session_key": gateway_session_key}
+                if gateway_session_key
+                else {}
+            )
             record = self.pool.start_chat(
                 session_id,
                 message,
@@ -91,6 +105,7 @@ class BridgeServer:
                 source,
                 reasoning_effort,
                 background_delegation_enabled,
+                **declared_conversation_kwargs,
             )
             if req.get("wait"):
                 timeout = float(req.get("timeout", 0) or 0)

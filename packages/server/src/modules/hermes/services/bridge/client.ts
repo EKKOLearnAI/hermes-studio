@@ -56,6 +56,21 @@ export interface AgentBridgeChatOptions {
   /** Local patch (reasoning-effort): per-session reasoning effort override.
    * Empty/undefined = use config.yaml default. */
   reasoning_effort?: string
+  /** The conversation this reply belongs to, declared to Hermes.
+   *
+   * `session_id` names one runtime execution; a caller that issues a fresh
+   * one per reply (group chat does) leaves Hermes with no way to tell that
+   * two replies continue the same conversation, so every affinity hint it
+   * derives from that id — the OpenAI-wire `prompt_cache_key`, OpenRouter's
+   * and Nous' sticky `session_id`, xAI's `x-grok-conv-id` — is re-keyed on
+   * every single reply and never lands back on a warm prefix
+   * (NousResearch/hermes-agent#96811).
+   *
+   * Hermes deliberately will not infer the conversation from the id's shape,
+   * so it has to be declared. Pass a value that is stable for one
+   * conversation and distinct across conversations; omit it to keep the
+   * previous per-reply behaviour exactly. */
+  gateway_session_key?: string
 }
 
 export type AgentBridgeMessage =
@@ -526,6 +541,9 @@ export class AgentBridgeClient {
         : {}),
       // Local patch (reasoning-effort): per-session reasoning effort override.
       ...(options.reasoning_effort ? { reasoning_effort: options.reasoning_effort } : {}),
+      ...(options.gateway_session_key
+        ? { gateway_session_key: options.gateway_session_key }
+        : {}),
     })
   }
 

@@ -1325,6 +1325,43 @@ export class AgentClient implements GroupAgentExecutor {
         }
     }
 
+    /**
+     * The conversation this room member is currently in, declared to Hermes.
+     *
+     * `groupRuntimeSessionId` is per-reply by design — a server-issued
+     * continuation identity, never accepted from an Agent socket — so Hermes
+     * sees a brand-new conversation on every reply and re-keys every affinity
+     * hint it derives from that id: `prompt_cache_key` on both OpenAI-wire
+     * transports, OpenRouter's and Nous' sticky `session_id`, and xAI's
+     * `x-grok-conv-id` (NousResearch/hermes-agent#96811). Hermes deliberately
+     * will not recover the conversation from the id's shape, so the host has
+     * to declare it.
+     *
+     * `groupBridgeSessionId` is the value that is already stable for exactly
+     * one conversation: it carries the room, profile, agent name and runtime
+     * identity, plus the room-owned `sessionSeed` — which is what rotates when
+     * the room starts a new conversation, so a reset lands on a cold bucket
+     * without Hermes needing to observe one. The arguments match the room
+     * socket's own calls byte for byte, so both sides name the same
+     * conversation.
+     */
+    private groupDeclaredConversationKey(roomId: string): string | undefined {
+        try {
+            const seed = String(this.storage?.getRoom?.(roomId)?.sessionSeed || '0')
+            return groupBridgeSessionId(roomId, this.profile, this.name, seed, {
+                agent: this.agent,
+                provider: this.provider,
+                model: this.model,
+                apiMode: this.apiMode,
+                reasoningEffort: this.reasoningEffort,
+            })
+        } catch {
+            // Declaring the conversation is an optimization; a room we cannot
+            // read simply keeps the previous per-reply behaviour.
+            return undefined
+        }
+    }
+
     async replyToMention(
         roomId: string,
         msg: MentionMessage,
@@ -1432,6 +1469,10 @@ export class AgentClient implements GroupAgentExecutor {
             const flushedAssistantParts = new Set<string>()
             let lastChunk: GroupPrimaryAgentBridgeOutput | null = null
             const roomWorkspace = String(this.storage?.getRoom?.(roomId)?.workspace || '').trim()
+            // sessionId above names this reply; this names the conversation the
+            // reply belongs to, so Hermes keeps one affinity bucket across all
+            // of them (see groupDeclaredConversationKey).
+            const declaredConversationKey = this.groupDeclaredConversationKey(roomId)
             const started = await bridge.chat(
                 sessionId,
                 bridgeInput,
@@ -1444,6 +1485,9 @@ export class AgentClient implements GroupAgentExecutor {
                     ...(this.reasoningEffort ? { reasoning_effort: this.reasoningEffort } : {}),
                     source: 'api_server',
                     ...(roomWorkspace ? { workspace: roomWorkspace } : {}),
+                    ...(declaredConversationKey
+                        ? { gateway_session_key: declaredConversationKey }
+                        : {}),
                     // Used only if this operation creates the cached AgentSession.
                     background_delegation_enabled: this.backgroundDelegationEnabled,
                 },

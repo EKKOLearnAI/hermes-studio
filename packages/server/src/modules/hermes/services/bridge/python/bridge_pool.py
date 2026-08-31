@@ -384,6 +384,35 @@ class AgentPool:
             except Exception:
                 pass
 
+    @staticmethod
+    def _apply_declared_conversation(
+        session: AgentSession, gateway_session_key: str | None
+    ) -> None:
+        """Keep a cached session's declared conversation current.
+
+        The pool is keyed by ``session_id``, which names one runtime execution.
+        The declared conversation is a different identity and can rotate under a
+        reused id — group chat rotates it whenever the room's ``sessionSeed``
+        changes. Applied only while the session is idle, so a live turn's
+        affinity cannot move under it, and never cleared by a caller that simply
+        declares nothing.
+        """
+        key = str(gateway_session_key or "").strip()
+        if not key or session.running:
+            return
+        if str(session.config.get("gateway_session_key") or "") == key:
+            return
+        session.config["gateway_session_key"] = key
+        agent = getattr(session, "agent", None)
+        if agent is not None:
+            try:
+                agent._gateway_session_key = key
+            except Exception:
+                # A runtime that will not accept the attribute keeps the key it
+                # was built with; the declaration is an optimization, never a
+                # correctness requirement.
+                pass
+
     def get_or_create(
         self,
         session_id: str,
@@ -391,12 +420,14 @@ class AgentPool:
         model: str | None = None,
         provider: str | None = None,
         background_delegation_enabled: bool | None = None,
+        gateway_session_key: str | None = None,
     ) -> AgentSession:
         requested_model = str(model or "").strip()
         requested_provider = str(provider or "").strip()
         with self._lock:
             existing = self._sessions.get(session_id)
             if existing is not None:
+                self._apply_declared_conversation(existing, gateway_session_key)
                 # If profile changed, destroy old session and recreate
                 profile_changed = bool(profile and existing.config.get("profile") != profile)
                 runtime_changed = bool(
@@ -474,6 +505,15 @@ class AgentPool:
                     enabled_toolsets=_load_enabled_toolsets(),
                     platform=_bridge_platform(),
                     session_id=session_id,
+                    # The conversation this execution belongs to, when the
+                    # caller declares one. session_id is per-execution and group
+                    # chat mints a fresh one per reply, so without this every
+                    # conversation-affinity hint Hermes sends — prompt_cache_key
+                    # on both OpenAI-wire transports, the OpenRouter and Nous
+                    # sticky session_id, and xAI's x-grok-conv-id — is re-keyed
+                    # on every reply (NousResearch/hermes-agent#96811). None
+                    # keeps the previous per-execution behaviour exactly.
+                    gateway_session_key=str(gateway_session_key or "").strip() or None,
                     session_db=self._db.get_for_profile(profile),
                     ephemeral_system_prompt=prompt,
                     status_callback=self._status_callback(session_id),
@@ -515,6 +555,9 @@ class AgentPool:
                         # This is an Agent-session policy, not a per-turn flag.
                         # Callers select it when the cached AIAgent is created.
                         "background_delegation_enabled": background_delegation_enabled is not False,
+                        # The conversation this execution was declared to be
+                        # part of, so a later reuse can tell whether it moved.
+                        "gateway_session_key": str(gateway_session_key or "").strip(),
                     },
                 )
                 self._install_boundary_interrupt(session)
@@ -1649,6 +1692,7 @@ class AgentPool:
         source: str | None = None,
         reasoning_effort: str | None = None,
         background_delegation_enabled: bool | None = None,
+        gateway_session_key: str | None = None,
     ) -> RunRecord:
         session = self.get_or_create(
             session_id,
@@ -1656,6 +1700,7 @@ class AgentPool:
             model=model,
             provider=provider,
             background_delegation_enabled=background_delegation_enabled,
+            gateway_session_key=gateway_session_key,
         )
         # Install after agent construction so any runtime plugin initialization
         # has completed. Rechecking on every run also recovers from a forced
