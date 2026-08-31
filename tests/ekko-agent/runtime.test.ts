@@ -2166,10 +2166,43 @@ describe('ekko-agent runtime', () => {
     expect(prompt).toContain('use code_exec, including for one-line snippets')
     expect(prompt).toContain('Do not probe Node or Python with terminal_exec first')
     expect(prompt).toContain('Use terminal_exec for CLI commands')
-    expect(prompt).toContain('npx --dir')
+    expect(prompt).toContain('platform-appropriate package-manager forms')
     expect(prompt).toContain("workspace's .ekko-tmp directory")
     expect(prompt).toContain('After terminal_exec reports a [skill_validation] issue')
     expect(prompt).toContain('do not retry the operation through another tool or language runtime')
     expect(prompt).toContain('prefer a compatible installed or built-in alternative')
+  })
+
+  it('buildSystemPrompt injects Windows-native command rules on Windows', () => {
+    const prompt = buildSystemPrompt({
+      basePrompt: 'Base',
+      context: { platform: 'win32', arch: 'x64' },
+    })
+
+    expect(prompt).toContain('## Command Environment')
+    expect(prompt).toContain('Host platform: Windows (x64)')
+    expect(prompt).toContain('Do not use Unix-only commands or paths')
+    expect(prompt).toContain('command=cmd.exe')
+    expect(prompt).toContain('Windows .cmd and .bat launchers')
+    expect(prompt).toContain('Use where.exe')
+    expect(prompt).toContain('Do not use which')
+    expect(prompt).toContain('Do not invent drive letters or assume WSL is installed')
+  })
+
+  it('buildSystemPrompt injects macOS and Linux command rules independently', () => {
+    const macPrompt = buildSystemPrompt({
+      basePrompt: 'Base',
+      context: { platform: 'darwin', arch: 'arm64' },
+    })
+    const linuxPrompt = buildSystemPrompt({
+      basePrompt: 'Base',
+      context: { platform: 'linux', arch: 'x64' },
+    })
+
+    expect(macPrompt).toContain('Host platform: macOS (arm64)')
+    expect(macPrompt).toContain('BSD variants')
+    expect(macPrompt).toContain('Invoke sh or zsh explicitly')
+    expect(linuxPrompt).toContain('Host platform: Linux (x64)')
+    expect(linuxPrompt).toContain('Invoke sh or bash explicitly')
   })
 })

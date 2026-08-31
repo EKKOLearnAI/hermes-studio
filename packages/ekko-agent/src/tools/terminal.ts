@@ -12,36 +12,17 @@ export interface TerminalExecInput extends Record<string, unknown> {
 
 export interface TerminalExecToolOptions {
   timeoutMs?: number
+  platform?: NodeJS.Platform
 }
 
 export class TerminalExecTool implements AgentTool<TerminalExecInput> {
-  readonly definition = {
-    name: 'terminal_exec',
-    description: [
-      'Run a CLI command, project script, test, build, package manager, or system executable.',
-      'Prefer command as the executable and args as the argument array; shell string execution is not used.',
-      'Commands are not confined to the workspace: explicit absolute paths and package-manager forms such as npx --dir are supported.',
-      'Keep downloads, clones, extracted files, and generated intermediates under the current workspace (prefer .ekko-tmp) when workspace tools need to inspect them.',
-      'When the user asks to execute or evaluate Node.js, JavaScript, or Python source code, use code_exec instead, even for a one-line snippet.',
-      'Destructive, privileged, remote-shell, publishing, and other dangerous commands require runtime authorization before execution.',
-    ].join(' '),
-    parameters: {
-      type: 'object',
-      properties: {
-        command: { type: 'string', description: 'Executable command to run. Prefer a bare executable such as "node", "ls", or "/bin/sh".' },
-        args: { type: 'array', items: { type: 'string' }, description: 'Command arguments.' },
-        cwd: { type: 'string', description: 'Working directory. Relative paths resolve from the current workspace; explicit absolute system paths are supported.' },
-        timeoutMs: { type: 'number', description: 'Timeout in milliseconds.' },
-      },
-      required: ['command'],
-      additionalProperties: false,
-    },
-  }
+  readonly definition: AgentTool['definition']
 
   private readonly timeoutMs: number
 
   constructor(options: TerminalExecToolOptions = {}) {
     this.timeoutMs = positiveInteger(options.timeoutMs, 30_000)
+    this.definition = terminalExecDefinition(options.platform ?? process.platform)
   }
 
   async execute(input: TerminalExecInput, context: AgentToolContext = {}): Promise<AgentToolResult> {
@@ -122,6 +103,56 @@ export class TerminalExecTool implements AgentTool<TerminalExecInput> {
         })
       })
     })
+  }
+}
+
+function terminalExecDefinition(platform: NodeJS.Platform): AgentTool['definition'] {
+  const windows = platform === 'win32'
+  const platformGuidance = windows
+    ? [
+        'This runtime is Windows: generate Windows-native commands.',
+        'Do not use Unix-only commands such as sh, bash, ls, cat, grep, sed, awk, head, tail, which, or /bin/sh unless their availability was already established.',
+        'Run native executables directly. For cmd built-ins, compound syntax, and .cmd or .bat launchers, explicitly invoke cmd.exe; for PowerShell syntax, explicitly invoke powershell.exe or pwsh.exe.',
+      ]
+    : platform === 'darwin'
+      ? [
+          'This runtime is macOS: generate macOS-native commands and remember that system utilities use BSD rather than GNU semantics.',
+          'Run normal executables directly. Invoke sh or zsh explicitly only for shell syntax.',
+        ]
+      : [
+          `This runtime is ${platform === 'linux' ? 'Linux' : platform}: generate native commands for this platform.`,
+          'Run normal executables directly. Invoke sh or bash explicitly only for shell syntax.',
+        ]
+
+  return {
+    name: 'terminal_exec',
+    description: [
+      'Run a CLI command, project script, test, build, package manager, or system executable.',
+      'Prefer command as the executable and args as the argument array; shell string execution is not used.',
+      ...platformGuidance,
+      windows
+        ? 'Commands are not confined to the workspace: explicit absolute Windows paths are supported.'
+        : 'Commands are not confined to the workspace: explicit absolute paths and package-manager forms such as npx --dir are supported.',
+      'Keep downloads, clones, extracted files, and generated intermediates under the current workspace (prefer .ekko-tmp) when workspace tools need to inspect them.',
+      'When the user asks to execute or evaluate Node.js, JavaScript, or Python source code, use code_exec instead, even for a one-line snippet.',
+      'Destructive, privileged, remote-shell, publishing, and other dangerous commands require runtime authorization before execution.',
+    ].join(' '),
+    parameters: {
+      type: 'object',
+      properties: {
+        command: {
+          type: 'string',
+          description: windows
+            ? 'Executable command to run, such as git.exe, cmd.exe, or powershell.exe. Do not place a whole shell command line here.'
+            : 'Executable command to run. Prefer a bare executable such as git, ls, or /bin/sh.',
+        },
+        args: { type: 'array', items: { type: 'string' }, description: 'Command arguments.' },
+        cwd: { type: 'string', description: 'Working directory. Relative paths resolve from the current workspace; explicit absolute system paths are supported.' },
+        timeoutMs: { type: 'number', description: 'Timeout in milliseconds.' },
+      },
+      required: ['command'],
+      additionalProperties: false,
+    },
   }
 }
 

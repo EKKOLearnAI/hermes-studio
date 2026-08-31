@@ -13,6 +13,8 @@ export interface SystemPromptInput {
     profile?: string
     cwd?: string
     workspaceRoot?: string
+    platform?: NodeJS.Platform
+    arch?: string
   }
 }
 
@@ -38,7 +40,7 @@ Treat external commands, language packages, and other prerequisites named by a S
 - Request independent tool calls together in one response. The runtime executes tools marked as parallel-safe concurrently while preserving serial barriers for stateful or dependent work.
 - When the user asks to execute or evaluate Node.js, JavaScript, or Python source code, use code_exec, including for one-line snippets. Do not probe Node or Python with terminal_exec first; code_exec resolves its runtime.
 - Use terminal_exec for CLI commands, project scripts, tests, builds, package managers, and other executables.
-- terminal_exec may use explicit absolute system paths and package-manager forms such as npx --dir. This capability is not limited to workspace files.
+- terminal_exec may use explicit absolute system paths and platform-appropriate package-manager forms. Follow the Command Environment section below; this capability is not limited to workspace files.
 - By default, keep downloads, clones, archives, extracted repositories, and generated intermediates inside the current workspace. Prefer the workspace's .ekko-tmp directory for disposable files so workspace-scoped file and image tools can inspect them. Use a system or external path only when the user or task explicitly requires it.
 - Dangerous tool calls may pause for runtime authorization. If authorization is denied, do not retry the operation through another tool or language runtime unless the user explicitly changes that decision.
 - After terminal_exec reports a [skill_validation] issue, do not claim the Skill installation is complete. Call skill_view for each writable local Skill and repair it with skill_manage until its frontmatter passes validation. Do not mutate read-only external Skill directories.
@@ -57,6 +59,10 @@ export function buildSystemPrompt(input: SystemPromptInput = {}): string {
   sections.push(input.basePrompt?.trim() || DEFAULT_BASE_PROMPT)
   sections.push(EKKO_OUTPUT_FORMAT_GUIDELINES)
   sections.push(EKKO_TOOL_EXECUTION_GUIDELINES)
+  sections.push(commandEnvironmentGuidelines(
+    input.context?.platform ?? process.platform,
+    input.context?.arch ?? process.arch,
+  ))
   if (input.clarificationEnabled) sections.push(EKKO_CLARIFICATION_GUIDELINES)
 
   if (input.runtimeInstructions?.length) {
@@ -109,6 +115,42 @@ export function buildSystemPrompt(input: SystemPromptInput = {}): string {
   }
 
   return sections.filter(Boolean).join('\n\n')
+}
+
+function commandEnvironmentGuidelines(platform: NodeJS.Platform, arch: string): string {
+  if (platform === 'win32') {
+    return `## Command Environment
+Host platform: Windows (${arch}). Generate Windows-native commands.
+
+- terminal_exec launches the provided executable directly and does not add an implicit shell.
+- Do not use Unix-only commands or paths such as sh, bash, ls, cat, grep, sed, awk, head, tail, which, /bin/sh, or /tmp unless this run has already established that a Unix compatibility layer provides them.
+- Prefer the workspace file tools for file access instead of shell-specific cat or type commands.
+- Run ordinary executables directly with separate command and args values.
+- For cmd built-ins, pipelines, redirection, or compound command lines, explicitly use command=cmd.exe with args=["/d", "/s", "/c", "..."] only when necessary.
+- Windows .cmd and .bat launchers, including many package-manager shims, are command scripts; invoke them through cmd.exe rather than treating them as native executables.
+- For PowerShell syntax, explicitly use powershell.exe or pwsh.exe with -NoProfile and -Command. Do not send PowerShell syntax to cmd.exe.
+- Use where.exe to locate an executable, or Get-Command inside PowerShell. Do not use which.
+- Use Windows paths and quote path arguments with spaces. Do not invent drive letters or assume WSL is installed.`
+  }
+
+  if (platform === 'darwin') {
+    return `## Command Environment
+Host platform: macOS (${arch}). Generate macOS-native commands.
+
+- terminal_exec launches the provided executable directly and does not add an implicit shell.
+- Run ordinary executables directly with separate command and args values. Invoke sh or zsh explicitly only when pipelines, redirection, globbing, or compound shell syntax is necessary.
+- Do not use Windows-only commands, PowerShell syntax, drive-letter paths, or cmd.exe.
+- macOS command-line utilities are BSD variants; do not assume GNU-only flags are available.
+- Prefer the workspace file tools for file access instead of cat-based shell pipelines.`
+  }
+
+  return `## Command Environment
+Host platform: ${platform === 'linux' ? 'Linux' : platform} (${arch}). Generate commands native to this platform.
+
+- terminal_exec launches the provided executable directly and does not add an implicit shell.
+- Run ordinary executables directly with separate command and args values. Invoke sh or bash explicitly only when pipelines, redirection, globbing, or compound shell syntax is necessary.
+- Do not use Windows-only commands, PowerShell syntax, drive-letter paths, or cmd.exe unless this run has already established that they are available.
+- Prefer the workspace file tools for file access instead of cat-based shell pipelines.`
 }
 
 function section(title: string, content: string): string {

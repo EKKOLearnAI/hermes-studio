@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   AgentToolError,
+  DEFAULT_READ_FILE_MAX_BYTES,
   DelegateTaskTool,
   ReadFileTool,
   TerminalExecTool,
@@ -68,6 +69,71 @@ describe('ekko-agent tools', () => {
       ok: true,
       content: 'ship tools',
     })
+  })
+
+  it('bounds large file reads and supports continuing from the next byte offset', async () => {
+    const reader = new ReadFileTool()
+    const content = 'x'.repeat(DEFAULT_READ_FILE_MAX_BYTES + 25)
+    await writeFile(path.join(workspaceRoot, 'large.txt'), content)
+
+    const first = await reader.execute({
+      path: 'large.txt',
+      limit: DEFAULT_READ_FILE_MAX_BYTES * 2,
+    }, { workspaceRoot })
+
+    expect(first.content.startsWith('x'.repeat(DEFAULT_READ_FILE_MAX_BYTES))).toBe(true)
+    expect(first.content).toContain(`[read_file truncated: returned bytes 0-${DEFAULT_READ_FILE_MAX_BYTES - 1} of ${content.length}; call again with offset=${DEFAULT_READ_FILE_MAX_BYTES}]`)
+    expect(first.data).toMatchObject({
+      bytes: DEFAULT_READ_FILE_MAX_BYTES,
+      totalBytes: content.length,
+      offset: 0,
+      nextOffset: DEFAULT_READ_FILE_MAX_BYTES,
+      truncated: true,
+      limit: DEFAULT_READ_FILE_MAX_BYTES,
+    })
+
+    const second = await reader.execute({
+      path: 'large.txt',
+      offset: DEFAULT_READ_FILE_MAX_BYTES,
+    }, { workspaceRoot })
+    expect(second).toMatchObject({
+      ok: true,
+      content: 'x'.repeat(25),
+      data: {
+        bytes: 25,
+        totalBytes: content.length,
+        offset: DEFAULT_READ_FILE_MAX_BYTES,
+        nextOffset: content.length,
+        truncated: false,
+      },
+    })
+  })
+
+  it('does not split a UTF-8 code point at a read boundary', async () => {
+    const reader = new ReadFileTool()
+    await writeFile(path.join(workspaceRoot, 'unicode.txt'), 'aaaa😀z')
+
+    const first = await reader.execute({ path: 'unicode.txt', limit: 5 }, { workspaceRoot })
+    expect(first.content).toMatch(/^aaaa\n\n\[read_file truncated:/)
+    expect(first.content).not.toContain('�')
+    expect(first.data).toMatchObject({ bytes: 4, nextOffset: 4, truncated: true })
+
+    await expect(reader.execute({ path: 'unicode.txt', offset: 4 }, { workspaceRoot })).resolves.toMatchObject({
+      content: '😀z',
+      data: { bytes: 5, nextOffset: 9, truncated: false },
+    })
+  })
+
+  it('rejects invalid read ranges', async () => {
+    const reader = new ReadFileTool()
+    await writeFile(path.join(workspaceRoot, 'note.txt'), 'hello')
+
+    await expect(reader.execute({ path: 'note.txt', offset: -1 }, { workspaceRoot }))
+      .rejects.toMatchObject({ code: 'INVALID_TOOL_INPUT' })
+    await expect(reader.execute({ path: 'note.txt', limit: 0 }, { workspaceRoot }))
+      .rejects.toMatchObject({ code: 'INVALID_TOOL_INPUT' })
+    await expect(reader.execute({ path: 'note.txt', limit: 3 }, { workspaceRoot }))
+      .rejects.toMatchObject({ code: 'INVALID_TOOL_INPUT' })
   })
 
   it('blocks file paths outside workspaceRoot', async () => {
@@ -287,6 +353,27 @@ describe('ekko-agent tools', () => {
       ok: true,
       content: 'ok',
     })
+  })
+
+  it('describes Windows-native terminal commands without Unix defaults', () => {
+    const definition = new TerminalExecTool({ platform: 'win32' }).definition
+
+    expect(definition.description).toContain('This runtime is Windows')
+    expect(definition.description).toContain('Do not use Unix-only commands')
+    expect(definition.description).toContain('cmd.exe')
+    expect(definition.description).toContain('.cmd or .bat launchers')
+    expect(definition.description).toContain('powershell.exe')
+    expect(definition.description).not.toContain('npx --dir')
+    expect(definition.parameters.properties?.command?.description).toContain('git.exe')
+  })
+
+  it('describes macOS terminal semantics separately from Windows', () => {
+    const definition = new TerminalExecTool({ platform: 'darwin' }).definition
+
+    expect(definition.description).toContain('This runtime is macOS')
+    expect(definition.description).toContain('BSD rather than GNU')
+    expect(definition.description).toContain('sh or zsh')
+    expect(definition.description).not.toContain('generate Windows-native commands')
   })
 
   it('delegates foreground and background tasks through the runtime callback', async () => {

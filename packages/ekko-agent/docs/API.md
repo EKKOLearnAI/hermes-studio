@@ -2535,12 +2535,12 @@ export interface SystemPromptInput {
   skillDiscoveryEnabled?: boolean
   skillManagementEnabled?: boolean
   skillNames?: string[]
-  context?: { provider?: string model?: string profile?: string cwd?: string workspaceRoot?: string }
+  context?: { provider?: string model?: string profile?: string cwd?: string workspaceRoot?: string platform?: NodeJS.Platform arch?: string }
 }
 
 export const EKKO_OUTPUT_FORMAT_GUIDELINES = `## Image and File Output When returning an image, video, or file to the user, use Markdown with an existing local absolute path. - Unix/macOS/WSL image: \`![description](/absolute/path/image.png)\` - Windows image: \`![description](<C:/absolute/path/image.png>)\` - Unix/macOS/WSL file: \`[filename](/absolute/path/file.pdf)\` - Windows file: \`[filename](<C:/absolute/path/file.pdf>)\` - Use forward slashes for Windows paths. - Wrap paths containing spaces, non-ASCII characters, or special characters in angle brackets. - Do not use relative paths or \`file://\` URLs. - Verify that the referenced file exists before returning it.`
 
-export const EKKO_TOOL_EXECUTION_GUIDELINES = `## Tool Execution Treat external commands, language packages, and other prerequisites named by a Skill as requirements, not proof that they are installed. - Before relying on an external dependency whose availability has not already been established, perform a lightweight availability check. - Do not run the primary dependency-based approach merely to discover whether its dependency exists. - Request independent tool calls together in one response. The runtime executes tools marked as parallel-safe concurrently while preserving serial barriers for stateful or dependent work. - When the user asks to execute or evaluate Node.js, JavaScript, or Python source code, use code_exec, including for one-line snippets. Do not probe Node or Python with terminal_exec first; code_exec resolves its runtime. - Use terminal_exec for CLI commands, project scripts, tests, builds, package managers, and other executables. - terminal_exec may use explicit absolute system paths and package-manager forms such as npx --dir. This capability is not limited to workspace files. - By default, keep downloads, clones, archives, extracted repositories, and generated intermediates inside the current workspace. Prefer the workspace's .ekko-tmp directory for disposable files so workspace-scoped file and image tools can inspect them. Use a system or external path only when the user or task explicitly requires it. - Dangerous tool calls may pause for runtime authorization. If authorization is denied, do not retry the operation through another tool or language runtime unless the user explicitly changes that decision. - After terminal_exec reports a [skill_validation] issue, do not claim the Skill installation is complete. Call skill_view for each writable local Skill and repair it with skill_manage until its frontmatter passes validation. Do not mutate read-only external Skill directories. - If a dependency is unavailable, prefer a compatible installed or built-in alternative. Install it only when installation is necessary and appropriate for the user's task. - Verify created artifacts before returning them.`
+export const EKKO_TOOL_EXECUTION_GUIDELINES = `## Tool Execution Treat external commands, language packages, and other prerequisites named by a Skill as requirements, not proof that they are installed. - Before relying on an external dependency whose availability has not already been established, perform a lightweight availability check. - Do not run the primary dependency-based approach merely to discover whether its dependency exists. - Request independent tool calls together in one response. The runtime executes tools marked as parallel-safe concurrently while preserving serial barriers for stateful or dependent work. - When the user asks to execute or evaluate Node.js, JavaScript, or Python source code, use code_exec, including for one-line snippets. Do not probe Node or Python with terminal_exec first; code_exec resolves its runtime. - Use terminal_exec for CLI commands, project scripts, tests, builds, package managers, and other executables. - terminal_exec may use explicit absolute system paths and platform-appropriate package-manager forms. Follow the Command Environment section below; this capability is not limited to workspace files. - By default, keep downloads, clones, archives, extracted repositories, and generated intermediates inside the current workspace. Prefer the workspace's .ekko-tmp directory for disposable files so workspace-scoped file and image tools can inspect them. Use a system or external path only when the user or task explicitly requires it. - Dangerous tool calls may pause for runtime authorization. If authorization is denied, do not retry the operation through another tool or language runtime unless the user explicitly changes that decision. - After terminal_exec reports a [skill_validation] issue, do not claim the Skill installation is complete. Call skill_view for each writable local Skill and repair it with skill_manage until its frontmatter passes validation. Do not mutate read-only external Skill directories. - If a dependency is unavailable, prefer a compatible installed or built-in alternative. Install it only when installation is necessary and appropriate for the user's task. - Verify created artifacts before returning them.`
 
 export const EKKO_CLARIFICATION_GUIDELINES = `## User Clarification When missing user input materially blocks or changes the task, call the clarify tool and wait for the response. - Do not present a blocking clarification question as an ordinary assistant response. - Ask one concise question that collects the necessary information; provide choices only for a short fixed set of answers. - Do not call clarify when a safe, reasonable assumption lets you continue without materially changing the outcome.`
 
@@ -2983,9 +2983,13 @@ export function createDelegationTools(): AgentTool[]
 ### `src/tools/files.ts`
 
 ```ts
+export const DEFAULT_READ_FILE_MAX_BYTES = 50_000
+
 export interface ReadFileInput extends Record<string, unknown> {
   path: string
   encoding?: BufferEncoding
+  offset?: number
+  limit?: number
 }
 
 export interface WriteFileInput extends Record<string, unknown> {
@@ -2997,7 +3001,7 @@ export interface WriteFileInput extends Record<string, unknown> {
 
 export class ReadFileTool implements AgentTool<ReadFileInput> {
   readonly concurrency = 'parallel' as const
-  readonly definition = { name: 'read_file', description: 'Read a UTF-8 text file from the workspace.', parameters: { type: 'object', properties: { path: { type: 'string', description: 'File path relative to the current workspace.' }, encoding: { type: 'string', description: 'Text encoding. Defaults to utf8.' }, }, required: ['path'], additionalProperties: false, }, }
+  readonly definition = { name: 'read_file', description: `Read a text file from the workspace, reading at most ${DEFAULT_READ_FILE_MAX_BYTES} file bytes per call. Use offset to continue a truncated read.`, parameters: { type: 'object', properties: { path: { type: 'string', description: 'File path relative to the current workspace.' }, encoding: { type: 'string', description: 'Text encoding. Defaults to utf8.' }, offset: { type: 'number', description: 'Zero-based byte offset. Defaults to 0; use nextOffset from a truncated result to continue.' }, limit: { type: 'number', description: `Maximum file bytes to read (minimum 4). Defaults to and cannot exceed ${DEFAULT_READ_FILE_MAX_BYTES}.` }, }, required: ['path'], additionalProperties: false, }, }
   async execute(input: ReadFileInput, context: AgentToolContext = {}): Promise<AgentToolResult>
 }
 
@@ -3194,10 +3198,11 @@ export interface TerminalExecInput extends Record<string, unknown> {
 
 export interface TerminalExecToolOptions {
   timeoutMs?: number
+  platform?: NodeJS.Platform
 }
 
 export class TerminalExecTool implements AgentTool<TerminalExecInput> {
-  readonly definition = { name: 'terminal_exec', description: [ 'Run a CLI command, project script, test, build, package manager, or system executable.', 'Prefer command as the executable and args as the argument array; shell string execution is not used.', 'Commands are not confined to the workspace: explicit absolute paths and package-manager forms such as npx --dir are supported.', 'Keep downloads, clones, extracted files, and generated intermediates under the current workspace (prefer .ekko-tmp) when workspace tools need to inspect them.', 'When the user asks to execute or evaluate Node.js, JavaScript, or Python source code, use code_exec instead, even for a one-line snippet.', 'Destructive, privileged, remote-shell, publishing, and other dangerous commands require runtime authorization before execution.', ].join(' '), parameters: { type: 'object', properties: { command: { type: 'string', description: 'Executable command to run. Prefer a bare executable such as "node", "ls", or "/bin/sh".' }, args: { type: 'array', items: { type: 'string' }, description: 'Command arguments.' }, cwd: { type: 'string', description: 'Working directory. Relative paths resolve from the current workspace; explicit absolute system paths are supported.' }, timeoutMs: { type: 'number', description: 'Timeout in milliseconds.' }, }, required: ['command'], additionalProperties: false, }, }
+  readonly definition: AgentTool['definition']
   constructor(options: TerminalExecToolOptions = {})
   async execute(input: TerminalExecInput, context: AgentToolContext = {}): Promise<AgentToolResult>
 }
