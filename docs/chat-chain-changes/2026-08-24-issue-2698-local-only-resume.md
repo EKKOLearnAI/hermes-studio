@@ -8,5 +8,7 @@ impact: Newly created chats avoid user-visible resume failures before their firs
 Session switching and foreground visibility resync skip resume while a session is
 still client-only. If the run socket reconnects during that admission window, the
 client probes resume with capped backoff, suppressing transient `Session not found`
-failures until the original session ID is available. The first `run.started` event
-marks that ID as persisted, after which normal resume behavior is restored.
+failures until the original session ID is available. If the bounded admission window
+expires, Studio reports a reconnect timeout instead of leaking a resume probe error.
+The first `run.started` event marks that ID as persisted, after which normal resume
+behavior is restored.

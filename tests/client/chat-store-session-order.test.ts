@@ -196,14 +196,14 @@ describe('chat session ordering', () => {
     await store.sendMessage('first message')
     const runCall = vi.mocked(startRunViaSocket).mock.calls.at(-1)
     expect(runCall?.[0]).toEqual(expect.objectContaining({ session_id: newSession.id }))
-    const shouldResumeOnReconnect = runCall?.[5]?.shouldResumeOnReconnect
-    expect(shouldResumeOnReconnect?.()).toBe(false)
+    const isSessionPersisted = runCall?.[5]?.isSessionPersisted
+    expect(isSessionPersisted?.()).toBe(false)
 
     const onEvent = runCall?.[1]
     onEvent?.({ event: 'run.started', session_id: newSession.id, run_id: 'run-1' })
 
     expect(newSession.isLocalOnly).toBe(false)
-    expect(shouldResumeOnReconnect?.()).toBe(true)
+    expect(isSessionPersisted?.()).toBe(true)
 
     runCall?.[2]?.()
     vi.mocked(resumeSession).mockClear()
@@ -226,9 +226,9 @@ describe('chat session ordering', () => {
     await store.sendMessage('first message')
 
     const runCall = vi.mocked(startRunViaSocket).mock.calls.at(-1)
-    const shouldResumeOnReconnect = runCall?.[5]?.shouldResumeOnReconnect
+    const isSessionPersisted = runCall?.[5]?.isSessionPersisted
     expect(newSession.isLocalOnly).toBe(true)
-    expect(shouldResumeOnReconnect?.()).toBe(false)
+    expect(isSessionPersisted?.()).toBe(false)
 
     runCall?.[5]?.onReconnectResume?.({
       session_id: newSession.id,
@@ -238,7 +238,7 @@ describe('chat session ordering', () => {
     })
 
     expect(newSession.isLocalOnly).toBe(false)
-    expect(shouldResumeOnReconnect?.()).toBe(true)
+    expect(isSessionPersisted?.()).toBe(true)
   })
 
   it('does not let an in-flight session load replace a newly created chat', async () => {

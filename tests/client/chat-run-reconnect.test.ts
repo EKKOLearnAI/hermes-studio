@@ -154,7 +154,7 @@ describe('chat-run socket reconnect handling', () => {
       undefined,
       {
         onReconnectResume,
-        shouldResumeOnReconnect: () => persisted,
+        isSessionPersisted: () => persisted,
       },
     )
 
@@ -214,14 +214,15 @@ describe('chat-run socket reconnect handling', () => {
     const { startRunViaSocket } = await import('../../packages/client/src/api/studio/chat')
     const onEvent = vi.fn()
     const onDone = vi.fn()
+    const onError = vi.fn()
 
     startRunViaSocket(
       { session_id: 'flapping-session', input: 'hello', profile: 'default', source: 'cli' },
       onEvent,
       onDone,
-      vi.fn(),
+      onError,
       undefined,
-      { shouldResumeOnReconnect: () => false },
+      { isSessionPersisted: () => false },
     )
 
     const socket = socketState.sockets[0]
@@ -247,8 +248,12 @@ describe('chat-run socket reconnect handling', () => {
     }
     socket.__trigger('run.failed', terminalFailure)
 
-    expect(onEvent).toHaveBeenCalledWith(terminalFailure)
-    expect(onDone).toHaveBeenCalledOnce()
+    expect(onEvent).not.toHaveBeenCalled()
+    expect(onDone).not.toHaveBeenCalled()
+    expect(onError).toHaveBeenCalledOnce()
+    expect(onError.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
+      message: 'Chat reconnect timed out before the new session was persisted',
+    }))
     expect(socket.emit.mock.calls.filter(([event]: [string]) => event === 'resume')).toHaveLength(61)
   })
 

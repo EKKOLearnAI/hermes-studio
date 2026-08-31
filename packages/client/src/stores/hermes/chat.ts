@@ -4337,7 +4337,7 @@ export const useChatStore = defineStore('chat', () => {
         undefined,
         {
           onReconnectResume: applyReconnectResume,
-          shouldResumeOnReconnect: () => !isLocalOnlySession(sid),
+          isSessionPersisted: () => !isLocalOnlySession(sid),
           transport: runtimeTransport(),
         },
       )
