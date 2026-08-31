@@ -621,6 +621,27 @@ describe('AppRelayClient', () => {
       event: 'insert_queued_run',
     })))
 
+    const locationAck = vi.fn()
+    remote.__handlers.get('app.socket.event')({
+      id: 'relay-chat-1',
+      event: 'location.respond',
+      payload: {
+        session_id: 'session-1',
+        location_request_id: 'location-1',
+        status: 'denied',
+      },
+    }, locationAck)
+    expect(local.emit).toHaveBeenCalledWith('location.respond', {
+      session_id: 'session-1',
+      location_request_id: 'location-1',
+      status: 'denied',
+    })
+    await vi.waitFor(() => expect(locationAck).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'relay-chat-1',
+      ok: true,
+      event: 'location.respond',
+    })))
+
     local.__onAny('message.delta', { session_id: 'session-1', delta: 'hi' })
     expect(remote.emit).toHaveBeenCalledWith('app.socket.event', {
       id: 'relay-chat-1',

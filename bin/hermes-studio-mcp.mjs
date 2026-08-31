@@ -1264,6 +1264,30 @@ const tools = [
     inputSchema: inputSchema(),
   },
   {
+    name: 'hermes_studio_use_mobile_location',
+    toolset: 'use',
+    description: 'Request the user’s current mobile-device location once for the current direct chat. The App always asks the user to confirm before sharing WGS84 coordinates. Never use proactively, for background tracking, or from delegated/workflow tasks.',
+    inputSchema: inputSchema({
+        session_id: {
+          type: 'string',
+          description: 'Exact current Hermes Studio direct-chat session id supplied in the run context.',
+        },
+        purpose: {
+          type: 'string',
+          description: 'Short user-visible explanation of why the current location is needed.',
+        },
+        accuracy: {
+          type: 'string',
+          enum: ['coarse', 'precise'],
+          description: 'Requested accuracy. Defaults to coarse; use precise only when necessary for the user’s request.',
+        },
+        timeout_ms: {
+          type: 'number',
+          description: 'Maximum time to wait for the user and device, from 3000 to 60000 milliseconds.',
+        },
+      }, ['session_id', 'purpose']),
+  },
+  {
     name: 'hermes_studio_use_workflows_list',
     toolset: 'use',
     description: 'List Hermes Studio workflows for the selected or requested profile.',
@@ -1621,8 +1645,8 @@ const CATEGORY_TOOLSETS = {
   },
   use: {
     name: 'hermes_studio_use_toolset',
-    coverage: 'Explicit user-requested Studio chat/coding runs; session list/count/detail/messages/context/rename/delete; usage statistics; profiles and available models; provider add/delete; worker status; workflow CRUD and workflow run list/start/stop/rerun/delete.',
-    description: 'Discover and invoke high-level Hermes Studio operations without loading every Studio-use tool schema into the model context. Covers explicit user-requested chat or coding runs, session management and clean context, usage statistics, profiles/models/providers, worker status, workflow CRUD, and workflow run lifecycle. Never use chat/session operations as an internal delegation mechanism. Use action=list for the compact operation catalog, action=describe for one full input schema, then action=call with that exact tool name and arguments.',
+    coverage: 'Explicit user-requested Studio chat/coding runs; one-time confirmed mobile location; session list/count/detail/messages/context/rename/delete; usage statistics; profiles and available models; provider add/delete; worker status; workflow CRUD and workflow run list/start/stop/rerun/delete.',
+    description: 'Discover and invoke high-level Hermes Studio operations without loading every Studio-use tool schema into the model context. Covers explicit user-requested chat or coding runs, one-time confirmed mobile location, session management and clean context, usage statistics, profiles/models/providers, worker status, workflow CRUD, and workflow run lifecycle. Never use chat/session or mobile-location operations as an internal delegation mechanism. Use action=list for the compact category catalog, action=describe for one full tool schema, then action=call with that exact tool name and arguments.',
   },
 }
 
@@ -1903,6 +1927,11 @@ async function callTool(name, args = {}) {
       return jsonText(summarizeWorkerRuntime(
         await request('/api/studio/performance/runtime', withAuthArgs(args)),
       ))
+    case 'hermes_studio_use_mobile_location':
+      return jsonText(await request('/api/studio/mobile-location/request', withAuthArgs(args, {
+        method: 'POST',
+        body: pickDefined(args, ['session_id', 'purpose', 'accuracy', 'timeout_ms']),
+      })))
     case 'hermes_studio_use_workflows_list':
       return jsonText(await request('/api/studio/workflows', withAuthArgs(args, {
         query: pickDefined(args, ['profile']),

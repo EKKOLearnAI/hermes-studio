@@ -162,6 +162,15 @@ function isBridgeRunSource(source?: string): boolean {
   return source === 'cli' || source === 'global_agent' || source === 'workflow' || source === 'group_chat'
 }
 
+function mobileLocationRunInstruction(sessionId: string | undefined, source: string | undefined): string {
+  if (!sessionId || source === 'workflow' || source === 'group_chat') return ''
+  return [
+    `The current Hermes Studio chat session id is ${JSON.stringify(sessionId)}.`,
+    'Only when the user explicitly asks to use their current mobile-device location, use hermes_studio_use_toolset to describe and call hermes_studio_use_mobile_location with this exact session_id.',
+    'The App will show a one-time confirmation before sharing WGS84 coordinates. Never request location proactively, in a delegated subtask, in a workflow node, or for background tracking.',
+  ].join(' ')
+}
+
 type ChatRunBridgeReadiness =
   | { ok: true }
   | { ok: false; error: string; runtimeUnavailable?: true }
@@ -237,6 +246,90 @@ export interface ChatRunAndWaitResult {
 
 type ChatRunAutoApprovalChoice = 'once' | 'session' | 'always'
 
+type MobileLocationAccuracy = 'coarse' | 'precise'
+
+type MobileLocationValue = {
+  latitude: number
+  longitude: number
+  accuracyMeters: number
+  altitudeMeters?: number
+  speedMetersPerSecond?: number
+  coordinateSystem: 'wgs84'
+  timestamp: number
+}
+
+export type MobileLocationResponse =
+  | { status: 'success'; location: MobileLocationValue }
+  | { status: 'denied' }
+  | { status: 'error'; error: { code: string } }
+
+type PendingMobileLocationRequest = {
+  sessionId: string
+  profile: string
+  resolve: (response: MobileLocationResponse) => void
+  timer: NodeJS.Timeout
+}
+
+const MOBILE_LOCATION_MIN_TIMEOUT_MS = 3_000
+const MOBILE_LOCATION_MAX_TIMEOUT_MS = 60_000
+const MOBILE_LOCATION_DEVICE_TIMEOUT_MS = 30_000
+const MOBILE_LOCATION_PURPOSE_MAX_LENGTH = 240
+const MOBILE_LOCATION_ERROR_CODES = new Set([
+  'location_permission_denied',
+  'location_timeout',
+  'location_service_unavailable',
+  'location_invalid_result',
+  'location_failed',
+])
+
+function boundedMobileLocationTimeout(value: unknown): number {
+  const numeric = Math.round(Number(value))
+  if (!Number.isFinite(numeric)) return 35_000
+  return Math.max(MOBILE_LOCATION_MIN_TIMEOUT_MS, Math.min(MOBILE_LOCATION_MAX_TIMEOUT_MS, numeric))
+}
+
+function finiteLocationNumber(value: unknown): number | null {
+  const numeric = Number(value)
+  return Number.isFinite(numeric) ? numeric : null
+}
+
+function normalizeMobileLocationResponse(value: unknown): MobileLocationResponse | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const response = value as Record<string, any>
+  const status = String(response.status || '').trim()
+  if (status === 'denied') return { status: 'denied' }
+  if (status === 'error') {
+    const rawCode = String(response.error?.code || '').trim()
+    return {
+      status: 'error',
+      error: { code: MOBILE_LOCATION_ERROR_CODES.has(rawCode) ? rawCode : 'location_failed' },
+    }
+  }
+  if (status !== 'success' || !response.location || typeof response.location !== 'object') return null
+  const latitude = finiteLocationNumber(response.location.latitude)
+  const longitude = finiteLocationNumber(response.location.longitude)
+  if (
+    latitude == null
+    || longitude == null
+    || latitude < -90
+    || latitude > 90
+    || longitude < -180
+    || longitude > 180
+  ) return null
+  const location: MobileLocationValue = {
+    latitude,
+    longitude,
+    accuracyMeters: Math.max(0, finiteLocationNumber(response.location.accuracyMeters) || 0),
+    coordinateSystem: 'wgs84',
+    timestamp: Math.max(0, Math.round(finiteLocationNumber(response.location.timestamp) || Date.now())),
+  }
+  const altitude = finiteLocationNumber(response.location.altitudeMeters)
+  const speed = finiteLocationNumber(response.location.speedMetersPerSecond)
+  if (altitude != null) location.altitudeMeters = altitude
+  if (speed != null && speed >= 0) location.speedMetersPerSecond = speed
+  return { status: 'success', location }
+}
+
 export class ChatRunSocket {
   private nsp: ReturnType<Server['of']>
   private bridge = createPrimaryAgentBridge()
@@ -245,6 +338,7 @@ export class ChatRunSocket {
   private sessionMap = new Map<string, SessionState>()
   private bridgeResumePolls = new Set<string>()
   private readonly runWaiters = new Map<string, Set<(event: string, payload: any) => void>>()
+  private readonly pendingMobileLocations = new Map<string, PendingMobileLocationRequest>()
   private backgroundPollTimer?: NodeJS.Timeout
   private backgroundPollInFlight = false
   private backgroundRecoveryNeeded = true
@@ -268,6 +362,57 @@ export class ChatRunSocket {
       event: 'session.settings.updated',
       session_id: sessionId,
       ...settings,
+    })
+  }
+
+  requestMobileLocation(options: {
+    sessionId: string
+    profile: string
+    purpose?: string
+    accuracy?: MobileLocationAccuracy
+    timeoutMs?: number
+  }): Promise<MobileLocationResponse> {
+    const sessionId = String(options.sessionId || '').trim()
+    const profile = String(options.profile || '').trim() || 'default'
+    const session = getSession(sessionId)
+    if (!session) throw new Error('Session not found')
+    if ((String(session.profile || '').trim() || 'default') !== profile) {
+      throw new Error('Session is not available for this profile')
+    }
+    if (session.source === 'group_chat' || session.source === 'workflow') {
+      throw new Error('Mobile location is available only in direct chats')
+    }
+    for (const pending of this.pendingMobileLocations.values()) {
+      if (pending.sessionId === sessionId) throw new Error('A mobile location request is already pending')
+    }
+
+    const locationRequestId = randomUUID()
+    const timeoutMs = boundedMobileLocationTimeout(options.timeoutMs)
+    const purpose = String(options.purpose || '').trim().slice(0, MOBILE_LOCATION_PURPOSE_MAX_LENGTH)
+    const accuracy: MobileLocationAccuracy = options.accuracy === 'precise' ? 'precise' : 'coarse'
+
+    return new Promise<MobileLocationResponse>((resolve) => {
+      const timer = setTimeout(() => {
+        this.finishMobileLocationRequest(locationRequestId, {
+          status: 'error',
+          error: { code: 'location_timeout' },
+        })
+      }, timeoutMs)
+      timer.unref?.()
+      this.pendingMobileLocations.set(locationRequestId, {
+        sessionId,
+        profile,
+        resolve,
+        timer,
+      })
+      this.emitMobileLocationEvent(profile, sessionId, 'location.requested', {
+        event: 'location.requested',
+        location_request_id: locationRequestId,
+        purpose,
+        accuracy,
+        timeout_ms: Math.min(timeoutMs, MOBILE_LOCATION_DEVICE_TIMEOUT_MS),
+        max_age_ms: 0,
+      })
     })
   }
 
@@ -805,6 +950,48 @@ export class ChatRunSocket {
         })
       }
     })
+
+    socket.on('location.respond', (data: {
+      session_id?: string
+      location_request_id?: string
+      status?: string
+      location?: unknown
+      error?: unknown
+    }) => {
+      if (!data.session_id || !data.location_request_id) return
+      try {
+        requireSocketSessionAccess(data.session_id)
+      } catch (err) {
+        socket.emit('location.resolved', {
+          event: 'location.resolved',
+          session_id: data.session_id,
+          location_request_id: data.location_request_id,
+          resolved: false,
+          error: err instanceof Error ? err.message : String(err),
+        })
+        return
+      }
+      const pending = this.pendingMobileLocations.get(data.location_request_id)
+      if (!pending || pending.sessionId !== data.session_id) {
+        this.emitToSession(socket, data.session_id, 'location.resolved', {
+          event: 'location.resolved',
+          location_request_id: data.location_request_id,
+          resolved: false,
+          stale: true,
+          error: 'Location request is no longer pending.',
+        })
+        return
+      }
+      const response = normalizeMobileLocationResponse(data)
+      if (!response) {
+        this.finishMobileLocationRequest(data.location_request_id, {
+          status: 'error',
+          error: { code: 'location_invalid_result' },
+        })
+        return
+      }
+      this.finishMobileLocationRequest(data.location_request_id, response)
+    })
   }
 
   respondCodingAgentApproval(sessionId: string, approvalId: string, choice: string): boolean {
@@ -874,6 +1061,12 @@ export class ChatRunSocket {
     backgroundContinuationContext?: BackgroundContinuationContext,
   ) {
     const source = resolveRunSource(data.source, data.session_id)
+    const locationInstruction = mobileLocationRunInstruction(data.session_id, source)
+    if (locationInstruction) {
+      data.instructions = [String(data.instructions || '').trim(), locationInstruction]
+        .filter(Boolean)
+        .join('\n\n')
+    }
     if (data.session_id) {
       const state = getOrCreateSession(this.sessionMap, data.session_id)
       state.webhookAgent = webhookAgentForRun(data)
@@ -1961,6 +2154,13 @@ export class ChatRunSocket {
   async disposeSession(sessionId: string): Promise<void> {
     const sid = String(sessionId || '').trim()
     if (!sid) return
+    for (const [requestId, pending] of this.pendingMobileLocations.entries()) {
+      if (pending.sessionId !== sid) continue
+      this.finishMobileLocationRequest(requestId, {
+        status: 'error',
+        error: { code: 'location_failed' },
+      })
+    }
     codingAgentRunManager.stop(sid, { reportClosed: false })
     const state = this.sessionMap.get(sid)
     state?.abortController?.abort()
@@ -2120,6 +2320,52 @@ export class ChatRunSocket {
     }
   }
 
+  private finishMobileLocationRequest(
+    locationRequestId: string,
+    response: MobileLocationResponse,
+  ): boolean {
+    const pending = this.pendingMobileLocations.get(locationRequestId)
+    if (!pending) return false
+    this.pendingMobileLocations.delete(locationRequestId)
+    clearTimeout(pending.timer)
+    this.clearMobileLocationEventState(pending.sessionId, locationRequestId)
+    this.emitMobileLocationEvent(pending.profile, pending.sessionId, 'location.resolved', {
+      event: 'location.resolved',
+      location_request_id: locationRequestId,
+      status: response.status,
+      resolved: true,
+      ...(response.status === 'error' ? { error: response.error } : {}),
+    })
+    pending.resolve(response)
+    return true
+  }
+
+  private clearMobileLocationEventState(sessionId: string, locationRequestId: string): void {
+    const state = this.sessionMap.get(sessionId)
+    if (!state?.events.length) return
+    state.events = state.events.filter(({ event, data }) => {
+      if (event !== 'location.requested' && event !== 'location.resolved') return true
+      return data?.location_request_id !== locationRequestId
+    })
+  }
+
+  private emitMobileLocationEvent(
+    profile: string,
+    sessionId: string,
+    event: 'location.requested' | 'location.resolved',
+    payload: Record<string, unknown>,
+  ): void {
+    const tagged = { ...payload, session_id: sessionId }
+    const state = this.sessionMap.get(sessionId)
+    if (event === 'location.requested' && state) {
+      state.events = state.events.filter(({ event: current }) =>
+        current !== 'location.requested' && current !== 'location.resolved')
+      state.events.push({ event, data: tagged })
+    }
+    this.nsp.to(`session:${sessionId}`).emit(event, tagged)
+    this.emitPendingInteraction(profile, event, tagged)
+  }
+
   private emitToSession(socket: Socket, sessionId: string, event: string, payload: any) {
     const tagged = { ...payload, session_id: sessionId }
     const profile = this.resolvePetEventProfile(sessionId, tagged)
@@ -2148,7 +2394,8 @@ export class ChatRunSocket {
   private emitPendingInteraction(profile: string, event: string, payload: any) {
     this.emitSessionActivity(profile, event, payload)
     if (event !== 'approval.requested' && event !== 'approval.resolved'
-      && event !== 'clarify.requested' && event !== 'clarify.resolved') return
+      && event !== 'clarify.requested' && event !== 'clarify.resolved'
+      && event !== 'location.requested' && event !== 'location.resolved') return
     const sessionId = typeof payload?.session_id === 'string' ? payload.session_id : ''
     const source = sessionId
       ? this.sessionMap.get(sessionId)?.source || getSession(sessionId)?.source
@@ -2204,6 +2451,12 @@ export class ChatRunSocket {
     if (this.backgroundPollTimer) {
       clearInterval(this.backgroundPollTimer)
       this.backgroundPollTimer = undefined
+    }
+    for (const requestId of [...this.pendingMobileLocations.keys()]) {
+      this.finishMobileLocationRequest(requestId, {
+        status: 'error',
+        error: { code: 'location_failed' },
+      })
     }
     const releaseClaims: Array<Promise<unknown>> = []
     for (const [sessionId, state] of this.sessionMap.entries()) {

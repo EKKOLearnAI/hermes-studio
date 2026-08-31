@@ -2,6 +2,7 @@ import type { Context } from 'koa'
 import { randomUUID } from 'crypto'
 import { io, type Socket } from 'socket.io-client'
 import { config } from '../public/config'
+import { getChatRunServer } from '../public/chat-run'
 import { resolveModelExecutionIdentity } from '../contracts/runs/model-execution-identity'
 
 type ChatRunPayload = Record<string, unknown> & {
@@ -51,12 +52,45 @@ const CHAT_RUN_EVENTS = [
   'approval.resolved',
   'clarify.requested',
   'clarify.resolved',
+  'location.requested',
+  'location.resolved',
   'peer.user.message',
 ]
 
 const DEFAULT_TIMEOUT_MS = 300_000
 const MAX_TIMEOUT_MS = 1_800_000
 const MAX_RECORDED_EVENTS = 1000
+
+export async function requestMobileLocation(ctx: Context) {
+  const body = (ctx.request.body || {}) as Record<string, unknown>
+  const sessionId = String(body.session_id || '').trim()
+  if (!sessionId) {
+    ctx.status = 400
+    ctx.body = { ok: false, error: 'session_id is required' }
+    return
+  }
+  const server = getChatRunServer()
+  if (!server?.requestMobileLocation) {
+    ctx.status = 503
+    ctx.body = { ok: false, error: 'Chat run service is unavailable' }
+    return
+  }
+  const profile = String(ctx.state.profile?.name || 'default').trim() || 'default'
+  try {
+    const result = await server.requestMobileLocation({
+      sessionId,
+      profile,
+      purpose: body.purpose,
+      accuracy: body.accuracy,
+      timeoutMs: body.timeout_ms,
+    })
+    ctx.body = { ok: true, session_id: sessionId, ...result }
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err)
+    ctx.status = error === 'Session not found' ? 404 : 400
+    ctx.body = { ok: false, error }
+  }
+}
 
 function bearerToken(ctx: Context): string {
   const match = ctx.get('authorization').match(/^Bearer\s+(.+)$/i)
