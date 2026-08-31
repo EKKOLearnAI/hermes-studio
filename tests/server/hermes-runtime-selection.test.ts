@@ -28,6 +28,36 @@ function cli(path: string, version: string): string {
   return command
 }
 
+function failingCli(path: string): string {
+  mkdirSync(path, { recursive: true })
+  const command = join(path, 'hermes')
+  writeFileSync(command, '#!/bin/sh\nexit 1\n')
+  chmodSync(command, 0o755)
+  return command
+}
+
+function createUserCli(home: string, version: string): {
+  command: string
+  python: string
+  agentRoot: string
+  hermesHome: string
+} {
+  const hermesHome = join(home, '.hermes')
+  const agentRoot = join(hermesHome, 'hermes-agent')
+  const python = join(agentRoot, 'venv', 'bin', 'python3')
+  const agentCommand = join(agentRoot, 'hermes')
+  const command = join(home, '.local', 'bin', 'hermes')
+  mkdirSync(join(agentRoot, 'venv', 'bin'), { recursive: true })
+  mkdirSync(join(home, '.local', 'bin'), { recursive: true })
+  writeFileSync(join(agentRoot, 'run_agent.py'), '')
+  writeFileSync(agentCommand, '')
+  writeFileSync(python, `#!/bin/sh\nprintf 'Hermes Agent ${version}\\n'\n`)
+  writeFileSync(command, `#!/bin/sh\nexec "${python}" "${agentCommand}" "$@"\n`)
+  chmodSync(python, 0o755)
+  chmodSync(command, 0o755)
+  return { command, python, agentRoot, hermesHome }
+}
+
 function createManagedRuntime(root: string, version: string): string {
   const runtime = join(root, 'desktop-runtime', 'hermes', version, platformKey())
   const environmentBin = join(runtime, 'python', 'venv', 'bin')
@@ -62,28 +92,47 @@ describe.skipIf(process.platform === 'win32')('Hermes Runtime selection', () => 
     state.appHome = mkdtempSync(join(tmpdir(), 'hermes-selection-'))
     temporaryDirectories.push(state.appHome)
     const managedCli = createManagedRuntime(state.appHome, '0.21.0')
-    const userCli = cli(join(state.appHome, 'user-bin'), '0.20.4')
+    const userHome = join(state.appHome, 'user-home')
+    const userCli = createUserCli(userHome, '0.20.4')
     const env: NodeJS.ProcessEnv = {
       ...process.env,
+      HOME: userHome,
+      HERMES_HOME: userCli.hermesHome,
       HERMES_BIN: managedCli,
       HERMES_AGENT_BRIDGE_PYTHON: '/old/runtime/python',
-      PATH: [join(managedCli, '..'), join(userCli, '..'), '/usr/bin', '/bin'].join(delimiter),
+      HERMES_AGENT_CLI_PYTHON: '/old/runtime/python',
+      HERMES_AGENT_ROOT: '/old/runtime/root',
+      PATH: [join(managedCli, '..'), '/usr/bin', '/bin'].join(delimiter),
     }
 
     const { configurePreferredHermesRuntime } = await import('../../packages/server/src/modules/hermes/services/runtime/selection')
     const selected = await configurePreferredHermesRuntime(env)
 
-    expect(selected).toMatchObject({ source: 'user-cli', path: userCli, version: '0.20.4' })
-    expect(env.HERMES_BIN).toBe(userCli)
-    expect(env.HERMES_AGENT_BRIDGE_PYTHON).toBeUndefined()
+    expect(selected).toMatchObject({
+      source: 'user-cli',
+      path: userCli.command,
+      version: '0.20.4',
+      pythonPath: userCli.python,
+      agentRoot: userCli.agentRoot,
+    })
+    expect(env.HERMES_BIN).toBe(userCli.command)
+    expect(env.HERMES_AGENT_BRIDGE_PYTHON).toBe(userCli.python)
+    expect(env.HERMES_AGENT_CLI_PYTHON).toBe(userCli.python)
+    expect(env.HERMES_AGENT_ROOT).toBe(userCli.agentRoot)
+    expect(env.VIRTUAL_ENV).toBe(join(userCli.agentRoot, 'venv'))
+    expect(env.PATH?.split(delimiter)[0]).toBe(join(userHome, '.local', 'bin'))
   })
 
   it('uses the active managed Runtime when no user CLI exists', async () => {
     state.appHome = mkdtempSync(join(tmpdir(), 'hermes-selection-'))
     temporaryDirectories.push(state.appHome)
     const managedCli = createManagedRuntime(state.appHome, '0.21.0')
+    const userHome = join(state.appHome, 'empty-home')
+    mkdirSync(userHome)
     const env: NodeJS.ProcessEnv = {
       ...process.env,
+      HOME: userHome,
+      HERMES_HOME: join(userHome, '.hermes'),
       HERMES_BIN: managedCli,
       PATH: [join(managedCli, '..'), '/usr/bin', '/bin'].join(delimiter),
     }
@@ -93,5 +142,34 @@ describe.skipIf(process.platform === 'win32')('Hermes Runtime selection', () => 
 
     expect(selected).toMatchObject({ source: 'managed-runtime', path: managedCli, version: '0.21.0' })
     expect(env.HERMES_AGENT_BRIDGE_PYTHON).toBe(join(state.appHome, 'desktop-runtime', 'hermes', '0.21.0', platformKey(), 'python', 'venv', 'bin', 'python3'))
+  })
+
+  it('falls back to the active managed Runtime when a user CLI cannot report its version', async () => {
+    state.appHome = mkdtempSync(join(tmpdir(), 'hermes-selection-'))
+    temporaryDirectories.push(state.appHome)
+    const managedCli = createManagedRuntime(state.appHome, '0.21.0')
+    const userCli = failingCli(join(state.appHome, 'user-bin'))
+    const userHome = join(state.appHome, 'empty-home')
+    mkdirSync(userHome)
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      HOME: userHome,
+      HERMES_HOME: join(userHome, '.hermes'),
+      HERMES_BIN: managedCli,
+      HERMES_AGENT_BRIDGE_PYTHON: '/old/runtime/python',
+      HERMES_AGENT_CLI_PYTHON: '/old/runtime/python',
+      VIRTUAL_ENV: '/old/runtime',
+      PATH: [join(managedCli, '..'), join(userCli, '..'), '/usr/bin', '/bin'].join(delimiter),
+    }
+
+    const { configurePreferredHermesRuntime } = await import('../../packages/server/src/modules/hermes/services/runtime/selection')
+    const selected = await configurePreferredHermesRuntime(env)
+    const runtimeEnvironment = join(state.appHome, 'desktop-runtime', 'hermes', '0.21.0', platformKey(), 'python', 'venv')
+
+    expect(selected).toMatchObject({ source: 'managed-runtime', path: managedCli, version: '0.21.0' })
+    expect(env.HERMES_BIN).toBe(managedCli)
+    expect(env.HERMES_AGENT_BRIDGE_PYTHON).toBe(join(runtimeEnvironment, 'bin', 'python3'))
+    expect(env.HERMES_AGENT_CLI_PYTHON).toBe(join(runtimeEnvironment, 'bin', 'python3'))
+    expect(env.VIRTUAL_ENV).toBe(runtimeEnvironment)
   })
 })

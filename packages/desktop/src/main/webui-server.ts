@@ -225,6 +225,7 @@ function ensureNativeModules() {
 const COMMON_USER_BIN_DIRS = process.platform === 'win32'
   ? []
   : [
+      join(homedir(), '.local', 'bin'),
       '/opt/homebrew/bin',
       '/usr/local/bin',
       '/usr/bin',

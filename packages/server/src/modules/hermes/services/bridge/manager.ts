@@ -1,8 +1,9 @@
 import { execFileSync, spawn, type ChildProcess } from 'child_process'
-import { existsSync, readFileSync } from 'fs'
+import { existsSync } from 'fs'
 import { createConnection, createServer } from 'net'
-import { basename, dirname, isAbsolute, join, resolve } from 'path'
+import { isAbsolute, join, resolve } from 'path'
 import { logger } from '../../../studio/public/logging'
+import { resolveHermesInstallationEnvironment } from '../runtime/installation'
 import { detectHermesHome, getHermesBin } from '../runtime/path'
 import { AgentBridgeClient, DEFAULT_AGENT_BRIDGE_ENDPOINT } from './client'
 
@@ -166,72 +167,13 @@ function resolveExecutable(command: string): string | undefined {
 function agentRootFromHermesBin(): string | undefined {
   const hermesBin = resolveExecutable(getHermesBin())
   if (!hermesBin) return undefined
-
-  const binDir = dirname(hermesBin)
-  const rootCandidates = [
-    resolve(binDir, '..'),
-    resolve(binDir, '..', '..'),
-    resolve(binDir, '..', 'hermes-agent'),
-    resolve(binDir, '..', 'lib', 'hermes-agent'),
-    resolve(binDir, '..', '..', 'hermes-agent'),
-  ]
-  const root = rootCandidates.find(candidate => existsSync(join(candidate, 'run_agent.py')))
-  if (root) return root
-
-  try {
-    const first = readFileSync(hermesBin, 'utf-8').split(/\r?\n/, 1)[0]
-    const match = first.match(/^#!\s*(.+)$/)
-    const python = match?.[1]?.trim().split(/\s+/)[0]
-    if (python) {
-      const pyDir = dirname(python)
-      const shebangRootCandidates = [
-        resolve(pyDir, '..', '..'),
-        resolve(pyDir, '..', '..', 'hermes-agent'),
-        resolve(pyDir, '..', '..', 'lib', 'hermes-agent'),
-      ]
-      return shebangRootCandidates.find(candidate => existsSync(join(candidate, 'run_agent.py')))
-    }
-  } catch {}
-  return undefined
-}
-
-function isPythonExecutable(command: string): boolean {
-  return /^(?:python|pypy)(?:\d+(?:\.\d+)*)?(?:\.exe)?$/i.test(basename(command))
-}
-
-function pythonFromShebang(firstLine: string): string | undefined {
-  const match = firstLine.match(/^#!\s*(.+)$/)
-  const parts = match?.[1]?.trim().split(/\s+/).filter(Boolean) || []
-  if (parts.length === 0) return undefined
-
-  const interpreter = parts[0]
-  if (/^env(?:\.exe)?$/i.test(basename(interpreter))) {
-    const envCommand = parts.slice(1).find(part => !part.startsWith('-'))
-    return envCommand && isPythonExecutable(envCommand)
-      ? resolveExecutable(envCommand)
-      : undefined
-  }
-
-  return isPythonExecutable(interpreter)
-    ? resolveExecutable(interpreter)
-    : undefined
+  return resolveHermesInstallationEnvironment(hermesBin, detectHermesHome()).agentRoot
 }
 
 function hermesBinPython(): string | undefined {
   const hermesBin = resolveExecutable(getHermesBin())
   if (!hermesBin) return undefined
-  try {
-    const first = readFileSync(hermesBin, 'utf-8').split(/\r?\n/, 1)[0]
-    const shebangPython = pythonFromShebang(first)
-    if (shebangPython) return shebangPython
-  } catch {
-    // Binary launchers and unreadable wrappers can still live beside Python.
-  }
-
-  const binDir = dirname(hermesBin)
-  return firstExistingExecutable(process.platform === 'win32'
-    ? [join(binDir, 'python.exe'), join(binDir, 'python3.exe')]
-    : [join(binDir, 'python3'), join(binDir, 'python')])
+  return resolveHermesInstallationEnvironment(hermesBin, detectHermesHome()).python
 }
 
 function firstExistingExecutable(candidates: string[]): string | undefined {

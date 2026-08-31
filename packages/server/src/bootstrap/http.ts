@@ -64,7 +64,7 @@ import {
   restorePersistedPiProxyTargets,
 } from './coding-agents'
 import { isAuthorizedCodexProxyRequest } from '../modules/coding-agents/services/codex/proxy'
-import { configurePreferredHermesRuntime } from '../modules/hermes/services/runtime/selection'
+import { configurePreferredHermesRuntime, type HermesRuntimeSelection } from '../modules/hermes/services/runtime/selection'
 import { configureRuntimeInstallCompletedHandler, getRuntimeVersionStatus } from '../modules/hermes/services/runtime/version-manager'
 import { isHermesAgentAvailable, updateAgentStatus } from '../modules/studio/public/agent-status-registry'
 import { scheduleWebUiRestart } from '../modules/studio/public/web-ui-restart'
@@ -328,13 +328,13 @@ export async function bootstrap() {
     await ensureStartupDirectory(config.dataDir, 'development data')
   }
 
-  let hermesSelection = { source: 'none', version: '', path: '' }
+  let hermesSelection: HermesRuntimeSelection = { source: 'none', version: '', path: '' }
   try {
     hermesSelection = await configurePreferredHermesRuntime()
   } catch (error) {
     logger.warn(error, '[bootstrap] failed to inspect Hermes Runtime; continuing without a selected runtime')
   }
-  console.log(`[bootstrap] Hermes source=${hermesSelection.source} version=${hermesSelection.version || '-'} path=${hermesSelection.path || '-'}`)
+  console.log(`[bootstrap] Hermes source=${hermesSelection.source} version=${hermesSelection.version || '-'} path=${hermesSelection.path || '-'} python=${hermesSelection.pythonPath || '-'} root=${hermesSelection.agentRoot || '-'}`)
   updateAgentStatus('ekko-agent', { version: APP_VERSION })
   const inventoryResults = await Promise.allSettled([
     getRuntimeVersionStatus({ includeRemote: false }),

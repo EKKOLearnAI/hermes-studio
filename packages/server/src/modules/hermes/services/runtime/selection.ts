@@ -1,6 +1,8 @@
 import { existsSync } from 'fs'
+import { homedir } from 'os'
 import { delimiter, dirname, join } from 'path'
 import { discoverHermesCliInstallations, type HermesCliInstallation } from './discovery'
+import { resolveHermesInstallationEnvironment } from './installation'
 import { listInstalledRuntimeVersions, readActiveVersionManifest, type InstalledRuntimeVersion } from './version-manager'
 
 export interface HermesRuntimeSelection {
@@ -8,10 +10,14 @@ export interface HermesRuntimeSelection {
   path: string
   version: string
   managedRuntimeVersion?: string
+  pythonPath?: string
+  agentRoot?: string
 }
 
 function prependPath(env: NodeJS.ProcessEnv, entries: string[]): void {
-  const current = env.PATH || env.Path || ''
+  const pathKey = Object.keys(env).find(key => key.toLowerCase() === 'path')
+    || (process.platform === 'win32' ? 'Path' : 'PATH')
+  const current = env[pathKey] || ''
   const seen = new Set<string>()
   const merged = [...entries, ...current.split(delimiter)]
     .map(entry => entry.trim())
@@ -22,7 +28,7 @@ function prependPath(env: NodeJS.ProcessEnv, entries: string[]): void {
       seen.add(key)
       return true
     })
-  env.PATH = merged.join(delimiter)
+  env[pathKey] = merged.join(delimiter)
 }
 
 function clearManagedRuntimeEnvironment(env: NodeJS.ProcessEnv): void {
@@ -37,6 +43,21 @@ function clearManagedRuntimeEnvironment(env: NodeJS.ProcessEnv): void {
   ]) {
     delete env[name]
   }
+}
+
+function hermesHomeForEnvironment(env: NodeJS.ProcessEnv): string {
+  const configured = env.HERMES_HOME?.trim()
+  if (configured) return configured
+  const userHome = process.platform === 'win32'
+    ? env.USERPROFILE?.trim() || homedir()
+    : env.HOME?.trim() || homedir()
+  return join(userHome, '.hermes')
+}
+
+function addUserHermesBinDirectory(env: NodeJS.ProcessEnv): void {
+  if (process.platform === 'win32') return
+  const userHome = env.HOME?.trim() || homedir()
+  prependPath(env, [join(userHome, '.local', 'bin')])
 }
 
 function pythonEnvironmentRoot(runtimeDirectory: string): string {
@@ -71,13 +92,31 @@ function managedRuntimePaths(runtime: InstalledRuntimeVersion) {
 }
 
 function applyUserCli(env: NodeJS.ProcessEnv, installation: HermesCliInstallation): HermesRuntimeSelection {
+  const paths = resolveHermesInstallationEnvironment(
+    installation.path,
+    hermesHomeForEnvironment(env),
+    env,
+  )
   clearManagedRuntimeEnvironment(env)
   env.HERMES_BIN = installation.path
-  prependPath(env, [dirname(installation.path)])
+  if (paths.python) {
+    env.HERMES_AGENT_BRIDGE_PYTHON = paths.python
+    env.HERMES_AGENT_CLI_PYTHON = paths.python
+    env.UV_PYTHON = paths.python
+    if (process.platform !== 'win32') env.UV_SYSTEM_PYTHON = '1'
+  }
+  if (paths.agentRoot) env.HERMES_AGENT_ROOT = paths.agentRoot
+  if (paths.environmentRoot) {
+    env.VIRTUAL_ENV = paths.environmentRoot
+    env.UV_PROJECT_ENVIRONMENT = paths.environmentRoot
+  }
+  prependPath(env, [dirname(installation.path), paths.python ? dirname(paths.python) : ''])
   return {
     source: 'user-cli',
     path: installation.path,
     version: installation.version,
+    ...(paths.python ? { pythonPath: paths.python } : {}),
+    ...(paths.agentRoot ? { agentRoot: paths.agentRoot } : {}),
   }
 }
 
@@ -102,22 +141,30 @@ function applyManagedRuntime(env: NodeJS.ProcessEnv, runtime: InstalledRuntimeVe
     path: paths.hermes,
     version: runtime.manifestHermesRuntimeVersion || runtime.version,
     managedRuntimeVersion: runtime.version,
+    pythonPath: paths.python,
+    agentRoot: paths.pythonRoot,
   }
 }
 
 /**
  * Select the Hermes executable for this server process.
  *
- * A user-owned CLI always wins. Studio Runtime is only used when no user CLI
- * is visible, which keeps Web UI and Desktop selection behavior identical.
+ * A usable user-owned CLI always wins. A visible CLI that cannot report its
+ * version is not safe to run from this process environment, so fall back to
+ * Studio Runtime instead.
  */
 export async function configurePreferredHermesRuntime(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<HermesRuntimeSelection> {
+  addUserHermesBinDirectory(env)
   const active = readActiveVersionManifest()
   const installed = listInstalledRuntimeVersions(active)
   const installations = await discoverHermesCliInstallations(installed, env)
-  const userCli = installations.find(item => item.source === 'user-cli' && Boolean(item.path))
+  const userCli = installations.find(item =>
+    item.source === 'user-cli'
+    && Boolean(item.path)
+    && Boolean(item.version.trim()),
+  )
   if (userCli) return applyUserCli(env, userCli)
 
   const activeRuntime = installed.find(item => item.active)

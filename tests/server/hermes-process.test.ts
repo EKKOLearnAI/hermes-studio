@@ -28,6 +28,7 @@ afterEach(() => {
   spawnCalls.length = 0
   delete process.env.HERMES_AGENT_BRIDGE_PYTHON
   delete process.env.HERMES_AGENT_CLI_PYTHON
+  delete process.env.HERMES_BIN
   if (originalPlatform) Object.defineProperty(process, 'platform', originalPlatform)
   vi.resetModules()
 })
@@ -35,6 +36,7 @@ afterEach(() => {
 describe('Hermes process invocation', () => {
   it('bypasses the uv hermes.exe trampoline on Windows packaged installs', async () => {
     setPlatform('win32')
+    process.env.HERMES_BIN = 'C:\\Users\\me\\AppData\\Local\\Programs\\Hermes Studio\\resources\\python\\Scripts\\hermes.exe'
     process.env.HERMES_AGENT_CLI_PYTHON = 'C:\\Users\\me\\AppData\\Local\\Programs\\Hermes Studio\\resources\\python\\python.exe'
     const { execHermesWithBin } = await import('../../packages/server/src/modules/hermes/services/runtime/process')
 
@@ -124,6 +126,62 @@ describe('Hermes process invocation', () => {
     }
   })
 
+  it('does not probe a user Windows CLI through the selected Runtime Python', async () => {
+    setPlatform('win32')
+    const root = mkdtempSync(join(tmpdir(), 'hermes-process-'))
+    try {
+      const userCli = join(root, 'user', 'hermes.cmd')
+      const runtimeCli = join(root, 'runtime', 'Scripts', 'hermes.cmd')
+      const runtimePython = join(root, 'runtime', 'python.exe')
+      mkdirSync(join(root, 'user'), { recursive: true })
+      mkdirSync(join(root, 'runtime', 'Scripts'), { recursive: true })
+      writeFileSync(userCli, '@echo off\r\n')
+      writeFileSync(runtimeCli, '@echo off\r\n')
+      writeFileSync(runtimePython, '')
+      const env = {
+        ...process.env,
+        HERMES_BIN: runtimeCli,
+        HERMES_AGENT_CLI_PYTHON: runtimePython,
+      }
+      const { execHermesWithBin } = await import('../../packages/server/src/modules/hermes/services/runtime/process')
+
+      await execHermesWithBin(userCli, ['--version'], { env })
+
+      expect(execFileCalls[0]).toMatchObject({
+        command: process.env.comspec || 'cmd.exe',
+        args: expect.arrayContaining(['/d', '/s', '/c']),
+      })
+      expect(execFileCalls[0].command).not.toBe(runtimePython)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('resolves the Bridge Python and Agent Root for a Windows user CLI install', async () => {
+    setPlatform('win32')
+    const root = mkdtempSync(join(tmpdir(), 'hermes-process-'))
+    try {
+      const hermesHome = join(root, '.hermes')
+      const agentRoot = join(hermesHome, 'hermes-agent')
+      const python = join(agentRoot, 'venv', 'Scripts', 'python.exe')
+      const userCli = join(root, 'bin', 'hermes.cmd')
+      mkdirSync(join(agentRoot, 'venv', 'Scripts'), { recursive: true })
+      mkdirSync(join(root, 'bin'), { recursive: true })
+      writeFileSync(join(agentRoot, 'run_agent.py'), '')
+      writeFileSync(python, '')
+      writeFileSync(userCli, '@echo off\r\n')
+      const { resolveHermesInstallationEnvironment } = await import('../../packages/server/src/modules/hermes/services/runtime/installation')
+
+      expect(resolveHermesInstallationEnvironment(userCli, hermesHome)).toEqual({
+        python,
+        agentRoot,
+        environmentRoot: join(agentRoot, 'venv'),
+      })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it('keeps normal Hermes command execution unchanged on non-Windows platforms', async () => {
     setPlatform('darwin')
     const { execHermesWithBin } = await import('../../packages/server/src/modules/hermes/services/runtime/process')
@@ -138,6 +196,7 @@ describe('Hermes process invocation', () => {
 
   it('defaults spawned Windows Hermes processes to hidden windows', async () => {
     setPlatform('win32')
+    process.env.HERMES_BIN = 'C:\\Hermes Studio\\resources\\python\\Scripts\\hermes.exe'
     process.env.HERMES_AGENT_CLI_PYTHON = 'C:\\Hermes Studio\\resources\\python\\python.exe'
     const { spawnHermesWithBin } = await import('../../packages/server/src/modules/hermes/services/runtime/process')
 
