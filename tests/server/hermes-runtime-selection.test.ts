@@ -172,4 +172,30 @@ describe.skipIf(process.platform === 'win32')('Hermes Runtime selection', () => 
     expect(env.HERMES_AGENT_CLI_PYTHON).toBe(join(runtimeEnvironment, 'bin', 'python3'))
     expect(env.VIRTUAL_ENV).toBe(runtimeEnvironment)
   })
+
+  it('trusts a Desktop-locked selection without probing PATH again', async () => {
+    state.appHome = mkdtempSync(join(tmpdir(), 'hermes-selection-'))
+    temporaryDirectories.push(state.appHome)
+    const env: NodeJS.ProcessEnv = {
+      HERMES_DESKTOP: 'true',
+      HERMES_RUNTIME_SELECTION_LOCKED: 'true',
+      HERMES_RUNTIME_SOURCE: 'user-cli',
+      HERMES_RUNTIME_VERSION: '0.20.5',
+      HERMES_BIN: join(state.appHome, 'does-not-need-to-exist', 'hermes'),
+      HERMES_AGENT_CLI_PYTHON: join(state.appHome, 'does-not-need-to-exist', 'python3'),
+      HERMES_AGENT_ROOT: join(state.appHome, 'does-not-need-to-exist', 'agent'),
+      PATH: join(state.appHome, 'empty-path'),
+    }
+
+    const { configurePreferredHermesRuntime } = await import('../../packages/server/src/modules/hermes/services/runtime/selection')
+    const selected = await configurePreferredHermesRuntime(env)
+
+    expect(selected).toEqual({
+      source: 'user-cli',
+      path: env.HERMES_BIN,
+      version: '0.20.5',
+      pythonPath: env.HERMES_AGENT_CLI_PYTHON,
+      agentRoot: env.HERMES_AGENT_ROOT,
+    })
+  })
 })

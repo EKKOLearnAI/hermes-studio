@@ -8,6 +8,7 @@ import { config } from '../../../studio/public/config'
 import { getHermesAgentVersion, getHermesWebUiVersion } from '../../../studio/public/system-info'
 import { updateAgentStatus } from '../../../studio/public/agent-status-registry'
 import { discoverHermesCliInstallations, type HermesCliInstallation } from './discovery'
+import { detectHermesHome } from './path'
 import { cleanupRuntimePath, removeRuntimePath, renameRuntimePath } from './runtime-filesystem'
 
 const ACTIVE_VERSION_FILE = 'active-version.json'
@@ -83,6 +84,10 @@ export interface RuntimeVersionStatus {
     activeVersion: string
     agentVersion: string
     activeDirectory: string
+    pythonPath: string
+    agentRoot: string
+    source: 'user-cli' | 'managed-runtime' | 'none'
+    dataDirectory: string
     storageDirectory: string
     defaultStorageDirectory: string
     pendingStorageDirectory: string
@@ -426,6 +431,11 @@ export async function getRuntimeVersionStatus(
     discoverHermesCliInstallations(installedRuntimes),
   ])
   const webUiVersion = getHermesWebUiVersion()
+  const selectedInstallation = cliInstallations.find(item => item.selected)
+  const lockedSource = process.env.HERMES_RUNTIME_SOURCE?.trim()
+  const source = lockedSource === 'user-cli' || lockedSource === 'managed-runtime' || lockedSource === 'none'
+    ? lockedSource
+    : selectedInstallation?.source || 'none'
 
   const status: RuntimeVersionStatus = {
     active,
@@ -439,6 +449,12 @@ export async function getRuntimeVersionStatus(
       activeVersion: probeRuntime ? active?.hermesRuntimeVersion || '' : '',
       agentVersion,
       activeDirectory: probeRuntime ? active?.runtimeDirectory || '' : '',
+      pythonPath: process.env.HERMES_AGENT_CLI_PYTHON?.trim()
+        || process.env.HERMES_AGENT_BRIDGE_PYTHON?.trim()
+        || '',
+      agentRoot: process.env.HERMES_AGENT_ROOT?.trim() || '',
+      source,
+      dataDirectory: detectHermesHome(),
       storageDirectory: probeRuntime ? runtimeStorageRoot(active) : '',
       defaultStorageDirectory: probeRuntime ? defaultDesktopRuntimeRoot() : '',
       pendingStorageDirectory: probeRuntime ? active?.pendingRuntimeRootDirectory || '' : '',

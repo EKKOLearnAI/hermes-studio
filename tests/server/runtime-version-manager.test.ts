@@ -103,6 +103,10 @@ describe('runtime version manager storage migration', () => {
   })
 
   it('reports the installed Hermes Agent version separately from the Runtime package version', async () => {
+    process.env.HERMES_AGENT_CLI_PYTHON = join(state.appHome, 'selected-python', 'bin', 'python3')
+    process.env.HERMES_AGENT_ROOT = join(state.appHome, 'selected-agent-root')
+    process.env.HERMES_RUNTIME_SOURCE = 'user-cli'
+    process.env.HERMES_HOME = join(state.appHome, 'selected-data')
     const activeVersionPath = join(state.appHome, 'desktop-runtime', 'active-version.json')
     mkdirSync(join(state.appHome, 'desktop-runtime'), { recursive: true })
     writeFileSync(activeVersionPath, JSON.stringify({
@@ -125,6 +129,10 @@ describe('runtime version manager storage migration', () => {
 
     expect(status.hermes.activeVersion).toBe('0.19.1')
     expect(status.hermes.agentVersion).toBe('v2026.8.1')
+    expect(status.hermes.pythonPath).toBe(process.env.HERMES_AGENT_CLI_PYTHON)
+    expect(status.hermes.agentRoot).toBe(process.env.HERMES_AGENT_ROOT)
+    expect(status.hermes.source).toBe('user-cli')
+    expect(status.hermes.dataDirectory).toBe(process.env.HERMES_HOME)
     expect(status.hermes.remoteVersions).toEqual(['0.19.1', '0.20.4'])
     expect(status.webui.remoteVersions).toEqual([])
     expect(fetch).toHaveBeenCalledWith(

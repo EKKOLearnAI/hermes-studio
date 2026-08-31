@@ -18,4 +18,18 @@ describe('desktop Runtime bootstrap', () => {
       bootstrap.indexOf('if (needsRuntimeWork && explicitRuntimeRequest)'),
     )
   })
+
+  it('selects Hermes before constructing the Web UI Server environment', () => {
+    const source = readFileSync(resolve(process.cwd(), 'packages/desktop/src/main/webui-server.ts'), 'utf8')
+    const start = source.slice(
+      source.indexOf('export async function startWebUiServer'),
+      source.indexOf('async function launchWebUiServer'),
+    )
+
+    expect(start.indexOf('await resolveDesktopHermesSelection')).toBeGreaterThan(-1)
+    expect(start.indexOf('withDesktopHermesSelection')).toBeGreaterThan(
+      start.indexOf('await resolveDesktopHermesSelection'),
+    )
+    expect(start).not.toContain('HERMES_BIN: hermesBin()')
+  })
 })

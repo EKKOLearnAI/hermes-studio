@@ -50,6 +50,10 @@ function runtimeStatus() {
       activeVersion: '0.18.0',
       agentVersion: 'v0.19.1 (2026.7.30) · upstream 3f497e2b · local 470cf66b (+1 carried commit)',
       activeDirectory: '/state/desktop-runtime/hermes/0.18.0/mac-arm64',
+      pythonPath: '/state/desktop-runtime/hermes/0.18.0/mac-arm64/python/venv/bin/python3',
+      agentRoot: '/state/desktop-runtime/hermes/0.18.0/mac-arm64/python',
+      source: 'managed-runtime' as const,
+      dataDirectory: '/state/.hermes',
       storageDirectory: '/state/desktop-runtime',
       defaultStorageDirectory: '/state/desktop-runtime',
       pendingStorageDirectory: '',
@@ -104,6 +108,12 @@ describe('VersionManagementModal Runtime storage selector', () => {
 
     const runtimeDirectory = wrapper.get('[data-testid="active-runtime-directory"]')
     expect(runtimeDirectory.text()).toContain('/state/desktop-runtime/hermes/0.18.0/mac-arm64')
+
+    const pythonPath = wrapper.get('[data-testid="active-python-path"]')
+    expect(pythonPath.text()).toContain('/state/desktop-runtime/hermes/0.18.0/mac-arm64/python/venv/bin/python3')
+
+    const agentRoot = wrapper.get('[data-testid="active-agent-root"]')
+    expect(agentRoot.text()).toContain('/state/desktop-runtime/hermes/0.18.0/mac-arm64/python')
   })
 
   it('shows Runtime versions returned by the Studio version API', async () => {
@@ -117,6 +127,30 @@ describe('VersionManagementModal Runtime storage selector', () => {
 
     expect(wrapper.text()).toContain('0.20.4')
     expect(wrapper.text()).toContain('0.20.0')
+  })
+
+  it('shows selected user CLI paths in a read-only details drawer', async () => {
+    const status = runtimeStatus()
+    status.hermes.source = 'user-cli'
+    status.hermes.pythonPath = '/Users/test/.hermes/hermes-agent/venv/bin/python3'
+    status.hermes.agentRoot = '/Users/test/.hermes/hermes-agent'
+    status.hermes.dataDirectory = '/Users/test/.hermes'
+    api.fetchRuntimeVersionStatus.mockResolvedValue(status)
+    const wrapper = mount(VersionManagementModal, { props: { show: false } })
+
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="active-python-path"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="active-agent-root"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="cli-details"]').exists()).toBe(false)
+
+    await wrapper.get('[data-testid="view-cli-details"]').trigger('click')
+
+    const details = wrapper.get('[data-testid="cli-details"]')
+    expect(details.text()).toContain('/Users/test/.hermes/hermes-agent/venv/bin/python3')
+    expect(details.text()).toContain('/Users/test/.hermes/hermes-agent')
+    expect(details.text()).toContain('/Users/test/.hermes')
   })
 
   it('shows the Runtime fallback reason and hides Web UI version switching', async () => {

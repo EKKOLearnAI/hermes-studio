@@ -30,6 +30,14 @@ describe('Studio crash isolation wiring', () => {
     expect(versionCheck).toBeGreaterThan(recovery)
   })
 
+  it('reuses the Desktop-locked Hermes status during bootstrap', () => {
+    const bootstrap = readFileSync('packages/server/src/bootstrap/http.ts', 'utf8')
+
+    expect(bootstrap).toContain('readLockedDesktopHermesSelection()')
+    expect(bootstrap).toContain('recordLockedHermesSelection(hermesSelection)')
+    expect(bootstrap).toContain('...(!lockedDesktopSelection ? [getRuntimeVersionStatus({ includeRemote: false })] : [])')
+  })
+
   it('makes Desktop poll readiness and recover one unexpected server exit', () => {
     const server = readFileSync('packages/desktop/src/main/webui-server.ts', 'utf8')
     const desktop = readFileSync('packages/desktop/src/main/index.ts', 'utf8')

@@ -24,7 +24,7 @@ import {
   startWebUiServer,
   stopWebUiServer,
 } from './webui-server'
-import { bundledNode, desktopIcon, desktopMacTrayIcon, desktopRuntimeVersion, desktopWindowsTrayIcon, hermesBinExists, hermesBin, runtimeStorageRoot, webuiDir, webUiHome } from './paths'
+import { bundledNode, desktopIcon, desktopMacTrayIcon, desktopRuntimeVersion, desktopWindowsTrayIcon, runtimeStorageRoot, webuiDir, webUiHome } from './paths'
 import { checkForDesktopUpdates, initAutoUpdater } from './updater'
 import { t } from './desktop-i18n'
 import { resetDesktopDefaultLogin } from './desktop-login-reset'
@@ -955,11 +955,6 @@ async function bootstrap(source?: RuntimeDownloadSource) {
   } catch (err) {
     console.error('Failed to prepare Hermes runtime:', err)
     // Keep Studio available so Runtime recovery can happen from Agent Manager.
-  }
-
-  if (!hermesBinExists()) {
-    console.error(`hermes binary missing at ${hermesBin()}`)
-    console.error('Run: npm run prepare:runtime (to build a local Hermes runtime)')
   }
 
   try {

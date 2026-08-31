@@ -14,6 +14,38 @@ export interface HermesRuntimeSelection {
   agentRoot?: string
 }
 
+function desktopSelectionLocked(env: NodeJS.ProcessEnv): boolean {
+  return env.HERMES_DESKTOP?.trim().toLowerCase() === 'true'
+    && env.HERMES_RUNTIME_SELECTION_LOCKED?.trim().toLowerCase() === 'true'
+}
+
+export function readLockedDesktopHermesSelection(
+  env: NodeJS.ProcessEnv = process.env,
+): HermesRuntimeSelection | null {
+  if (!desktopSelectionLocked(env)) return null
+  const source = env.HERMES_RUNTIME_SOURCE?.trim()
+  if (source === 'none') return { source: 'none', path: '', version: '' }
+  if (source !== 'user-cli' && source !== 'managed-runtime') return null
+
+  const path = env.HERMES_BIN?.trim() || ''
+  const version = env.HERMES_RUNTIME_VERSION?.trim() || ''
+  if (!path || !version) return null
+  const pythonPath = env.HERMES_AGENT_CLI_PYTHON?.trim()
+    || env.HERMES_AGENT_BRIDGE_PYTHON?.trim()
+    || ''
+  const agentRoot = env.HERMES_AGENT_ROOT?.trim() || ''
+  const managedRuntimeVersion = env.HERMES_MANAGED_RUNTIME_VERSION?.trim()
+    || (source === 'managed-runtime' ? version : '')
+  return {
+    source,
+    path,
+    version,
+    ...(managedRuntimeVersion ? { managedRuntimeVersion } : {}),
+    ...(pythonPath ? { pythonPath } : {}),
+    ...(agentRoot ? { agentRoot } : {}),
+  }
+}
+
 function prependPath(env: NodeJS.ProcessEnv, entries: string[]): void {
   const pathKey = Object.keys(env).find(key => key.toLowerCase() === 'path')
     || (process.platform === 'win32' ? 'Path' : 'PATH')
@@ -156,6 +188,9 @@ function applyManagedRuntime(env: NodeJS.ProcessEnv, runtime: InstalledRuntimeVe
 export async function configurePreferredHermesRuntime(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<HermesRuntimeSelection> {
+  const lockedDesktopSelection = readLockedDesktopHermesSelection(env)
+  if (lockedDesktopSelection) return lockedDesktopSelection
+
   addUserHermesBinDirectory(env)
   const active = readActiveVersionManifest()
   const installed = listInstalledRuntimeVersions(active)

@@ -14,6 +14,7 @@ import {
   gitPathDirs,
   clearActiveWebUiDirectory,
   defaultWebuiDir,
+  desktopRuntimeDir,
   webuiServerEntryFor,
   webuiDir,
   hermesBin,
@@ -24,6 +25,10 @@ import {
   pythonDir,
   pythonEnvironmentDir,
 } from './paths'
+import {
+  resolveDesktopHermesSelection,
+  withDesktopHermesSelection,
+} from './hermes-environment-selection'
 
 const DEFAULT_PORT = 8748
 const DEFAULT_READY_TIMEOUT_MS = 120_000
@@ -370,10 +375,6 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
   mkdirSync(home, { recursive: true })
   mkdirSync(agentHome, { recursive: true })
 
-  // Tell agent-bridge to use the bundled Python directly. Otherwise the
-  // bridge auto-detects Python from HERMES_BIN's shebang — which on our
-  // setup is a #!/bin/sh wrapper, not a python interpreter, so detection
-  // resolves to /bin/sh and the bridge crashes (exit code 2) immediately.
   const isWin = process.platform === 'win32'
   const bundledPythonPath = bundledPython()
   const bundledPythonEnvironment = pythonEnvironmentDir()
@@ -386,44 +387,60 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
   const workerPortBase = await getFreeTcpPortInRange(20000, 59000)
   const loginShellPath = await getLoginShellPath()
   const nvmNodeBinPaths = getNvmNodeBinPaths()
-  const runtimePath = mergePathEntries(
-    dirname(hermesBin()),
-    bundledAgentBrowserBin,
-    bundledNodeBin,
-    bundledGitPath,
+  const userSearchPath = mergePathEntries(
     loginShellPath,
     nvmNodeBinPaths,
     process.env.PATH,
     process.env.Path,
     COMMON_USER_BIN_DIRS.join(delimiter),
   )
+  const hermesSelection = await resolveDesktopHermesSelection({
+    env: process.env,
+    searchPath: userSearchPath,
+    hermesHome: agentHome,
+    managedRuntime: {
+      directory: desktopRuntimeDir(),
+      path: hermesBin(),
+      pythonPath: bundledPythonPath,
+      agentRoot: pythonDir(),
+      environmentRoot: bundledPythonEnvironment,
+    },
+  })
+  const runtimePath = mergePathEntries(
+    hermesSelection.path ? dirname(hermesSelection.path) : '',
+    hermesSelection.pythonPath ? dirname(hermesSelection.pythonPath) : '',
+    bundledAgentBrowserBin,
+    bundledNodeBin,
+    bundledGitPath,
+    userSearchPath,
+  )
   const browserExecutableOverride = process.env.AGENT_BROWSER_EXECUTABLE_PATH?.trim()
   const gitBin = bundledGit()
+  const bundledNodePath = bundledNode()
+  const bundledBrowserHome = bundledAgentBrowserHome()
+  const bundledPlaywrightBrowsers = join(pythonDir(), 'ms-playwright')
+  console.log(
+    `[desktop] Hermes source=${hermesSelection.source} `
+    + `version=${hermesSelection.version || '-'} path=${hermesSelection.path || '-'}`,
+  )
 
   // Run via Electron's "run as Node" mode — Electron binary doubles as Node.
-  const env: NodeJS.ProcessEnv = {
+  const env = withDesktopHermesSelection({
     ...process.env,
     ELECTRON_RUN_AS_NODE: '1',
     NODE_ENV: 'production',
     HERMES_DESKTOP: 'true',
-    HERMES_BIN: hermesBin(),
-    // The bridge and its per-profile workers need working stdout/stderr for
-    // ready handshakes. Use python.exe on Windows and hide windows at the
-    // process creation layer instead of switching the bridge to pythonw.exe.
-    HERMES_AGENT_BRIDGE_PYTHON: bundledPythonPath,
-    HERMES_AGENT_CLI_PYTHON: bundledPythonPath,
-    HERMES_AGENT_ROOT: pythonDir(),
-    VIRTUAL_ENV: bundledPythonEnvironment,
-    UV_PROJECT_ENVIRONMENT: bundledPythonEnvironment,
-    // Keep uv pinned to the bundled interpreter when a terminal subprocess
-    // deliberately strips VIRTUAL_ENV to protect unrelated user projects.
-    UV_PYTHON: bundledPythonPath,
-    ...(isWin ? {} : { UV_SYSTEM_PYTHON: '1' }),
-    HERMES_AGENT_NODE: bundledNode(),
-    HERMES_AGENT_NODE_ROOT: isWin ? bundledNodeBin : dirname(bundledNodeBin),
-    AGENT_BROWSER_HOME: process.env.AGENT_BROWSER_HOME?.trim() || bundledAgentBrowserHome(),
+    ...(existsSync(bundledNodePath) ? {
+      HERMES_AGENT_NODE: bundledNodePath,
+      HERMES_AGENT_NODE_ROOT: isWin ? bundledNodeBin : dirname(bundledNodeBin),
+    } : {}),
+    ...(process.env.AGENT_BROWSER_HOME?.trim()
+      ? { AGENT_BROWSER_HOME: process.env.AGENT_BROWSER_HOME.trim() }
+      : existsSync(bundledBrowserHome) ? { AGENT_BROWSER_HOME: bundledBrowserHome } : {}),
     ...(browserExecutableOverride ? { AGENT_BROWSER_EXECUTABLE_PATH: browserExecutableOverride } : {}),
-    PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH || join(pythonDir(), 'ms-playwright'),
+    ...(process.env.PLAYWRIGHT_BROWSERS_PATH
+      ? { PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH }
+      : existsSync(bundledPlaywrightBrowsers) ? { PLAYWRIGHT_BROWSERS_PATH: bundledPlaywrightBrowsers } : {}),
     ...(gitBin ? { HERMES_AGENT_GIT: gitBin } : {}),
     // Force TCP loopback for the agent bridge. The default `ipc:///tmp/...`
     // unix socket is rejected on macOS in some EDR/sandbox setups (silent
@@ -457,9 +474,10 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
     HERMES_WEBUI_STATE_DIR: home,
     AUTH_TOKEN: token,
     PORT: String(port),
-    // Prepend bundled Python's bin to PATH so any incidental `python` resolution lands on ours
+    // The selected Hermes/Python pair is first. Bundled auxiliary tools remain
+    // available after selection without influencing which Hermes wins.
     PATH: runtimePath,
-  }
+  }, hermesSelection)
 
   const fallbackWebUiDir = defaultWebuiDir()
   try {
