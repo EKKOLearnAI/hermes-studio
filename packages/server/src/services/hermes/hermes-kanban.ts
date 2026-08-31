@@ -524,6 +524,8 @@ export async function createTask(
     maxRetries?: number
     goalMode?: boolean
     goalMaxTurns?: number
+    model?: string
+    provider?: string
   },
 ): Promise<KanbanTask> {
   const args = [...boardArgs(opts?.board), 'create', title, '--json']
@@ -538,6 +540,8 @@ export async function createTask(
   if (opts?.maxRetries !== undefined) args.push('--max-retries', String(opts.maxRetries))
   if (opts?.goalMode) args.push('--goal')
   if (opts?.goalMaxTurns !== undefined) args.push('--goal-max-turns', String(opts.goalMaxTurns))
+  if (opts?.model) args.push('--model', opts.model)
+  if (opts?.provider) args.push('--provider', opts.provider)
   for (const skill of opts?.skills || []) {
     if (skill.trim()) args.push('--skill', skill.trim())
   }

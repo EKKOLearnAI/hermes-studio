@@ -406,7 +406,13 @@ export async function create(ctx: Context) {
   const maxRetries = optionalPositiveInteger(payload.maxRetries, 'maxRetries', 100)
   const goalMode = optionalBoolean(payload.goalMode, 'goalMode')
   const goalMaxTurns = optionalPositiveInteger(payload.goalMaxTurns, 'goalMaxTurns', 100)
-  if (rejectBadRequest(ctx, title.error || body.error || assignee.error || priority.error || tenant.error || workspace.error || branch.error || triage.error || skills.error || maxRuntime.error || maxRetries.error || goalMode.error || goalMaxTurns.error)) return
+  const model = optionalString(payload.model, 'model')
+  const provider = optionalString(payload.provider, 'provider')
+  if (rejectBadRequest(ctx, title.error || body.error || assignee.error || priority.error || tenant.error || workspace.error || branch.error || triage.error || skills.error || maxRuntime.error || maxRetries.error || goalMode.error || goalMaxTurns.error || model.error || provider.error)) return
+  if (provider.value && !model.value) {
+    rejectBadRequest(ctx, 'provider requires model')
+    return
+  }
   const targetAssignee = assignee.value || requestedProfile(ctx) || undefined
   if (targetAssignee && denyProfileAccess(ctx, targetAssignee)) return
   const board = requestBoard(ctx)
@@ -426,6 +432,8 @@ export async function create(ctx: Context) {
       maxRetries: maxRetries.value,
       goalMode: goalMode.value,
       goalMaxTurns: goalMaxTurns.value,
+      model: model.value,
+      provider: provider.value,
     })
     ctx.body = { task }
   } catch (err: any) {

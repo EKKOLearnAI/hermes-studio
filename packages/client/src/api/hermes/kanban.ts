@@ -162,6 +162,8 @@ export interface KanbanCreateRequest {
   maxRetries?: number
   goalMode?: boolean
   goalMaxTurns?: number
+  model?: string
+  provider?: string
 }
 
 export interface KanbanBoardOptions {
