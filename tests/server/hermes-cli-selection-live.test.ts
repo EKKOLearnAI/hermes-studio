@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -7,8 +7,13 @@ const originalHermesBin = process.env.HERMES_BIN
 const temporaryDirectories: string[] = []
 
 function versionCli(root: string, name: string, version: string): string {
-  const command = join(root, name)
-  writeFileSync(command, `#!/bin/sh\nprintf 'Hermes Agent ${version}\\n'\n`)
+  const directory = join(root, name)
+  mkdirSync(directory, { recursive: true })
+  const python = join(directory, 'python3')
+  writeFileSync(python, `#!/bin/sh\nprintf '${version}\\n'\n`)
+  chmodSync(python, 0o755)
+  const command = join(directory, 'hermes')
+  writeFileSync(command, '#!/bin/sh\nexit 97\n')
   chmodSync(command, 0o755)
   return command
 }

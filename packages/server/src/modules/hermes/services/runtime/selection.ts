@@ -288,7 +288,7 @@ export async function configurePreferredHermesRuntime(
     if (!probe.version) {
       managedFailures.push({
         directory: runtime.directory,
-        reason: probe.error || 'hermes --version failed',
+        reason: probe.error || 'Hermes CLI import probe failed',
         version: runtime.version,
         platform: runtime.platform,
       })

@@ -10,6 +10,7 @@ import { isGatewayRunningForProfile } from '../gateway/autostart'
 import { startGatewayRunManaged } from '../gateway/runner'
 import { getActiveProfileDir, getActiveProfileName, getProfileDir, listProfileNamesFromDisk } from '../profiles/profile'
 import { parseProfileListRuntimeInfo, type ProfileListRuntimeInfo } from '../profiles/profile-list-parser'
+import { probeHermesCliVersion } from './discovery'
 import { execHermesWithBin, spawnHermesWithBin } from './process'
 
 const execFileAsync = promisify(execFile)
@@ -405,12 +406,8 @@ export interface LogFileInfo {
  * Get Hermes version
  */
 export async function getVersion(): Promise<string> {
-  try {
-    const { stdout } = await execHermesWithBin(resolveHermesBin(), ['--version'], { timeout: 5000, ...execOpts })
-    return stdout.trim()
-  } catch {
-    return ''
-  }
+  const probe = await probeHermesCliVersion(resolveHermesBin(), process.env)
+  return probe.version
 }
 
 /**

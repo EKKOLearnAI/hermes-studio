@@ -18,6 +18,7 @@ import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFile)
 const DEFAULT_PROBE_TIMEOUT_MS = 5_000
+const HERMES_VERSION_PROBE = "import importlib.util, hermes_cli; assert importlib.util.find_spec('hermes_cli.main'); print(hermes_cli.__version__)"
 
 export type DesktopHermesSelectionSource = 'user-cli' | 'managed-runtime' | 'none'
 
@@ -296,11 +297,11 @@ function probeFailureMessage(error: unknown, timeout: number): string {
       ? detail.stderr.toString('utf8').trim()
       : ''
   if (detail?.killed || detail?.code === 'ETIMEDOUT') {
-    return `hermes --version timed out after ${timeout}ms${stderr ? `: ${stderr}` : ''}`
+    return `Hermes CLI import probe timed out after ${timeout}ms${stderr ? `: ${stderr}` : ''}`
   }
   const code = detail?.code !== undefined ? ` (${String(detail.code)})` : ''
   const message = error instanceof Error ? error.message.replace(/^Error:\s*/, '').trim() : String(error)
-  return `hermes --version failed${code}: ${stderr || message || 'unknown error'}`
+  return `Hermes CLI import probe failed${code}: ${stderr || message || 'unknown error'}`
 }
 
 async function probeHermesVersion(
@@ -312,17 +313,13 @@ async function probeHermesVersion(
   if (!selection.pythonPath) return { ok: false, error: 'Python path is not configured' }
   if (!selection.agentRoot) return { ok: false, error: 'Agent Root is not configured' }
   if (!selection.environmentRoot) return { ok: false, error: 'Python environment root is not configured' }
-  const command = process.platform === 'win32' ? selection.pythonPath : selection.path
-  const args = process.platform === 'win32'
-    ? ['-m', 'hermes_cli.main', '--version']
-    : ['--version']
   const probeEnv = withDesktopHermesSelection(env, {
     ...selection,
     source,
     version: '',
   })
   try {
-    const { stdout } = await execFileAsync(command, args, {
+    const { stdout } = await execFileAsync(selection.pythonPath, ['-c', HERMES_VERSION_PROBE], {
       encoding: 'utf8',
       timeout,
       windowsHide: true,
@@ -331,7 +328,7 @@ async function probeHermesVersion(
     const version = normalizeVersion(String(stdout || ''))
     return version
       ? { ok: true, version }
-      : { ok: false, error: 'hermes --version returned an empty version' }
+      : { ok: false, error: 'Hermes CLI import probe returned an empty version' }
   } catch (error) {
     return { ok: false, error: probeFailureMessage(error, timeout) }
   }

@@ -20,18 +20,21 @@ function platformKey(): string {
   return `${osLabel}-${process.arch}`
 }
 
-function cli(path: string, version: string): string {
+function cli(path: string): string {
   mkdirSync(path, { recursive: true })
   const command = join(path, 'hermes')
-  writeFileSync(command, `#!/bin/sh\nprintf 'Hermes Agent ${version}\\n'\n`)
+  writeFileSync(command, '#!/bin/sh\nexit 97\n')
   chmodSync(command, 0o755)
   return command
 }
 
 function failingCli(path: string): string {
   mkdirSync(path, { recursive: true })
+  const python = join(path, 'python3')
+  writeFileSync(python, '#!/bin/sh\nexit 1\n')
+  chmodSync(python, 0o755)
   const command = join(path, 'hermes')
-  writeFileSync(command, '#!/bin/sh\nexit 1\n')
+  writeFileSync(command, '#!/bin/sh\nexit 97\n')
   chmodSync(command, 0o755)
   return command
 }
@@ -62,16 +65,15 @@ function createUserCli(home: string, version: string): {
 function createManagedRuntime(
   root: string,
   version: string,
-  options: { activate?: boolean; command?: string } = {},
+  options: { activate?: boolean; pythonCommand?: string } = {},
 ): string {
   const runtime = join(root, 'desktop-runtime', 'hermes', version, platformKey())
   const environmentBin = join(runtime, 'python', 'venv', 'bin')
-  const managedCli = cli(environmentBin, version)
-  if (options.command) {
-    writeFileSync(managedCli, options.command)
-    chmodSync(managedCli, 0o755)
-  }
-  writeFileSync(join(environmentBin, 'python3'), '#!/bin/sh\nexit 0\n')
+  const managedCli = cli(environmentBin)
+  writeFileSync(
+    join(environmentBin, 'python3'),
+    options.pythonCommand || `#!/bin/sh\nprintf '${version}\\n'\n`,
+  )
   chmodSync(join(environmentBin, 'python3'), 0o755)
   writeFileSync(join(runtime, 'python', 'run_agent.py'), '')
   writeFileSync(join(runtime, 'python', 'cli.py'), '')
@@ -224,10 +226,10 @@ describe.skipIf(process.platform === 'win32')('Hermes Runtime selection', () => 
     const attempts = join(state.appHome, 'attempts.log')
     const fallbackCli = createManagedRuntime(state.appHome, '0.20.6', {
       activate: false,
-      command: `#!/bin/sh\nprintf 'fallback\\n' >> "${attempts}"\ncase "$PATH" in *0.21.0*) exit 41;; esac\nprintf 'Hermes Agent 0.20.6\\n'\n`,
+      pythonCommand: `#!/bin/sh\nprintf 'fallback\\n' >> "${attempts}"\ncase "$PATH" in *0.21.0*) exit 41;; esac\nprintf '0.20.6\\n'\n`,
     })
     const failingCli = createManagedRuntime(state.appHome, '0.21.0', {
-      command: `#!/bin/sh\nprintf 'failing\\n' >> "${attempts}"\nexit 23\n`,
+      pythonCommand: `#!/bin/sh\nprintf 'failing\\n' >> "${attempts}"\nexit 23\n`,
     })
     const activeVersionPath = join(state.appHome, 'desktop-runtime', 'active-version.json')
     const active = JSON.parse(readFileSync(activeVersionPath, 'utf8'))
@@ -275,7 +277,7 @@ describe.skipIf(process.platform === 'win32')('Hermes Runtime selection', () => 
     state.appHome = mkdtempSync(join(tmpdir(), 'hermes-selection-'))
     temporaryDirectories.push(state.appHome)
     const failingCli = createManagedRuntime(state.appHome, '0.20.0', {
-      command: '#!/bin/sh\nexit 23\n',
+      pythonCommand: '#!/bin/sh\nexit 23\n',
     })
     const runtimeDirectory = join(state.appHome, 'desktop-runtime', 'hermes', '0.20.0', platformKey())
     const activeVersionPath = join(state.appHome, 'desktop-runtime', 'active-version.json')

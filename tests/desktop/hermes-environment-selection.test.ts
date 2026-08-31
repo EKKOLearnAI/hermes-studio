@@ -23,7 +23,9 @@ function userCli(root: string, version: string, succeeds = true) {
   const environmentRoot = join(agentRoot, 'venv')
   const python = executable(
     join(environmentRoot, 'bin', 'python3'),
-    `#!/bin/sh\nprintf 'Hermes Agent ${version}\\n'\n`,
+    succeeds
+      ? `#!/bin/sh\nprintf '${version}\\n'\n`
+      : '#!/bin/sh\nexit 1\n',
   )
   const agentCommand = join(agentRoot, 'hermes')
   mkdirSync(agentRoot, { recursive: true })
@@ -32,9 +34,7 @@ function userCli(root: string, version: string, succeeds = true) {
   writeFileSync(agentCommand, '')
   const command = executable(
     join(root, '.local', 'bin', 'hermes'),
-    succeeds
-      ? `#!/bin/sh\nexec "${python}" "${agentCommand}" "$@"\n`
-      : '#!/bin/sh\nexit 1\n',
+    `#!/bin/sh\nexec "${python}" "${agentCommand}" "$@"\n`,
   )
   return { command, python, agentRoot, environmentRoot, hermesHome }
 }
@@ -42,12 +42,15 @@ function userCli(root: string, version: string, succeeds = true) {
 function managedRuntime(
   root: string,
   version: string,
-  options: { name?: string; command?: string; probePath?: string } = {},
+  options: { name?: string; command?: string; pythonCommand?: string; probePath?: string } = {},
 ): DesktopManagedHermesRuntime {
   const directory = join(root, options.name || 'managed-runtime')
   const agentRoot = join(directory, 'python')
   const environmentRoot = join(agentRoot, 'venv')
-  const pythonPath = executable(join(environmentRoot, 'bin', 'python3'), '#!/bin/sh\nexit 0\n')
+  const pythonPath = executable(
+    join(environmentRoot, 'bin', 'python3'),
+    options.pythonCommand || `#!/bin/sh\nprintf '${version}\\n'\n`,
+  )
   const path = executable(
     join(environmentRoot, 'bin', 'hermes'),
     options.command || `#!/bin/sh\nprintf 'Hermes Agent ${version}\\n'\n`,
@@ -168,12 +171,12 @@ describe.skipIf(process.platform === 'win32')('desktop Hermes environment select
     const attempts = join(root, 'attempts.log')
     const first = managedRuntime(root, '0.21.0', {
       name: 'first-runtime',
-      command: `#!/bin/sh\nprintf 'first\\n' >> "${attempts}"\nexit 23\n`,
+      pythonCommand: `#!/bin/sh\nprintf 'first\\n' >> "${attempts}"\nexit 23\n`,
     })
     first.probePath = [dirname(first.path), '/usr/bin', '/bin'].join(delimiter)
     const fallback = managedRuntime(root, '0.20.6', {
       name: 'fallback-runtime',
-      command: `#!/bin/sh\nprintf 'fallback\\n' >> "${attempts}"\ncase "$PATH" in *first-runtime*) exit 41;; esac\nprintf 'Hermes Agent 0.20.6\\n'\n`,
+      pythonCommand: `#!/bin/sh\nprintf 'fallback\\n' >> "${attempts}"\ncase "$PATH" in *first-runtime*) exit 41;; esac\nprintf '0.20.6\\n'\n`,
     })
     fallback.probePath = [dirname(fallback.path), '/usr/bin', '/bin'].join(delimiter)
 
@@ -197,19 +200,19 @@ describe.skipIf(process.platform === 'win32')('desktop Hermes environment select
     expect(readFileSync(attempts, 'utf8').trim().split('\n')).toEqual(['first', 'fallback'])
   })
 
-  it('checks cli.py after hermes --version succeeds before falling back', async () => {
+  it('checks cli.py after the offline import probe succeeds before falling back', async () => {
     const root = mkdtempSync(join(tmpdir(), 'desktop-hermes-selection-'))
     temporaryDirectories.push(root)
     const attempts = join(root, 'agent-files-attempts.log')
     const incomplete = managedRuntime(root, '0.21.0', {
       name: 'missing-cli-runtime',
-      command: `#!/bin/sh\nprintf 'version-ok\\n' >> "${attempts}"\nprintf 'Hermes Agent 0.21.0\\n'\n`,
+      pythonCommand: `#!/bin/sh\nprintf 'version-ok\\n' >> "${attempts}"\nprintf '0.21.0\\n'\n`,
     })
     rmSync(join(incomplete.agentRoot, 'cli.py'))
     incomplete.probePath = [dirname(incomplete.path), '/usr/bin', '/bin'].join(delimiter)
     const fallback = managedRuntime(root, '0.20.6', {
       name: 'complete-runtime',
-      command: `#!/bin/sh\nprintf 'fallback\\n' >> "${attempts}"\nprintf 'Hermes Agent 0.20.6\\n'\n`,
+      pythonCommand: `#!/bin/sh\nprintf 'fallback\\n' >> "${attempts}"\nprintf '0.20.6\\n'\n`,
     })
     fallback.probePath = [dirname(fallback.path), '/usr/bin', '/bin'].join(delimiter)
 

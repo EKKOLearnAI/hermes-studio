@@ -9,8 +9,11 @@ const temporaryDirectories: string[] = []
 
 function createCli(directory: string, version: string): string {
   mkdirSync(directory, { recursive: true })
+  const python = join(directory, 'python3')
+  writeFileSync(python, `#!/bin/sh\nprintf '${version}\\n'\n`)
+  chmodSync(python, 0o755)
   const cli = join(directory, 'hermes')
-  writeFileSync(cli, `#!/bin/sh\nprintf 'Hermes Agent ${version}\\n'\n`)
+  writeFileSync(cli, '#!/bin/sh\nexit 97\n')
   chmodSync(cli, 0o755)
   return cli
 }
