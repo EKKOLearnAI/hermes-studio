@@ -434,7 +434,7 @@ export default {
     activeAgentRoot: '目前 Agent Root',
     viewCliDetails: '查看',
     cliDetailsTitle: 'Hermes CLI 詳情',
-    cliDataDirectory: '資料目錄',
+    activeDataDirectory: '目前資料目錄',
     cliUpdateDescription: 'Hermes Runtime 0.19.1 及以上版本支援透過以下指令單獨升級內建的 Hermes Agent；此指令不會升級 Hermes Studio 桌面端或 Web UI。執行前請先完全結束 Hermes Studio：',
     webUiTitle: 'Web UI',
     platform: '平台',

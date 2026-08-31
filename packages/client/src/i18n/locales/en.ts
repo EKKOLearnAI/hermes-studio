@@ -434,7 +434,7 @@ export default {
     activeAgentRoot: 'Current Agent Root',
     viewCliDetails: 'View',
     cliDetailsTitle: 'Hermes CLI details',
-    cliDataDirectory: 'Data directory',
+    activeDataDirectory: 'Current data directory',
     cliUpdateDescription: 'Hermes Runtime 0.19.1 and later can use the following command to update the bundled Hermes Agent only. It does not update the Hermes Studio desktop app or Web UI. Fully quit Hermes Studio before running:',
     webUiTitle: 'Web UI',
     platform: 'Platform',

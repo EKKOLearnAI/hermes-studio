@@ -446,7 +446,7 @@ export default {
     activeAgentRoot: 'Agent Root atual',
     viewCliDetails: 'Ver',
     cliDetailsTitle: 'Detalhes do Hermes CLI',
-    cliDataDirectory: 'Diretório de dados',
+    activeDataDirectory: 'Diretório de dados atual',
     cliUpdateDescription: 'No Hermes Runtime 0.19.1 e versões posteriores, o comando abaixo atualiza somente o Hermes Agent integrado. Ele não atualiza o aplicativo desktop Hermes Studio nem a Web UI. Feche completamente o Hermes Studio antes de executá-lo:',
     webUiTitle: 'Web UI',
     platform: 'Plataforma',

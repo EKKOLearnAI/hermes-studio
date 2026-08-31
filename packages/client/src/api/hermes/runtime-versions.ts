@@ -70,7 +70,7 @@ export interface RuntimeVersionStatus {
     activeDirectory: string
     pythonPath: string
     agentRoot: string
-    source: 'user-cli' | 'managed-runtime' | 'none'
+    source?: 'user-cli' | 'managed-runtime' | 'none'
     dataDirectory: string
     storageDirectory: string
     defaultStorageDirectory: string

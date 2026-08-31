@@ -356,7 +356,7 @@ export default {
     activeAgentRoot: 'Текущий Agent Root',
     viewCliDetails: 'Посмотреть',
     cliDetailsTitle: 'Сведения о Hermes CLI',
-    cliDataDirectory: 'Каталог данных',
+    activeDataDirectory: 'Текущий каталог данных',
     cliUpdateDescription: 'В Hermes Runtime версии 0.19.1 и новее следующая команда обновляет только встроенный Hermes Agent. Она не обновляет настольное приложение Hermes Studio или Web UI. Перед выполнением полностью закройте Hermes Studio:',
     webUiTitle: 'Web UI',
     platform: 'Платформа',

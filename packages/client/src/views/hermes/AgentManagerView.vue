@@ -13,7 +13,7 @@ import {
   type CodingAgentUpdateResult,
 } from '@/api/coding-agents'
 import { fetchAgentStatusSnapshot, type AgentStatusSnapshot } from '@/api/agent-status'
-import { fetchRuntimeVersionStatus } from '@/api/hermes/runtime-versions'
+import { fetchRuntimeVersionStatus, type RuntimeVersionStatus } from '@/api/hermes/runtime-versions'
 import VersionManagementModal from '@/components/layout/VersionManagementModal.vue'
 import { useAppStore } from '@/stores/hermes/app'
 import { useChatStore } from '@/stores/hermes/chat'
@@ -77,6 +77,9 @@ const agentStatusSnapshot = ref<AgentStatusSnapshot | null>(null)
 const loading = ref(false)
 const loadError = ref('')
 const runtimeManagerVisible = ref(false)
+const hermesCliDetailsVisible = ref(false)
+const hermesCliDetailsLoading = ref(false)
+const hermesRuntimeStatus = ref<RuntimeVersionStatus | null>(null)
 const aiHelpDrawerVisible = ref(false)
 const aiHelpPrompt = ref('')
 const installing = ref<Record<CodingAgentId, boolean>>({ 'claude-code': false, codex: false, pi: false })
@@ -239,6 +242,8 @@ async function refreshAll() {
   const errors = results
     .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
     .map(result => errorMessage(result.reason))
+  const runtimeResult = results[1]
+  if (runtimeResult?.status === 'fulfilled') hermesRuntimeStatus.value = runtimeResult.value
   try {
     await syncAgentStatus()
   } catch (error) {
@@ -246,6 +251,18 @@ async function refreshAll() {
   }
   if (errors.length) loadError.value = errors.join('\n')
   loading.value = false
+}
+
+async function openHermesCliDetails() {
+  hermesCliDetailsLoading.value = true
+  try {
+    hermesRuntimeStatus.value = await fetchRuntimeVersionStatus({ includeRemote: false })
+    hermesCliDetailsVisible.value = true
+  } catch (error) {
+    message.error(errorMessage(error))
+  } finally {
+    hermesCliDetailsLoading.value = false
+  }
 }
 
 async function handleInstall(id: CodingAgentId) {
@@ -396,6 +413,16 @@ onMounted(() => {
 
             <div class="agent-actions">
               <NButton
+                v-if="hermesDetected && hermesType === 'CLI'"
+                data-testid="view-hermes-cli-details"
+                secondary
+                size="small"
+                :loading="hermesCliDetailsLoading"
+                @click="openHermesCliDetails"
+              >
+                {{ t('runtimeVersions.viewCliDetails') }}
+              </NButton>
+              <NButton
                 v-if="!hermesDetected || hermesType === 'Runtime'"
                 type="primary"
                 secondary
@@ -501,6 +528,29 @@ onMounted(() => {
     <VersionManagementModal v-model:show="runtimeManagerVisible" />
 
     <NDrawer
+      v-model:show="hermesCliDetailsVisible"
+      placement="right"
+      width="min(620px, 100vw)"
+    >
+      <NDrawerContent :title="t('runtimeVersions.cliDetailsTitle')" closable>
+        <div data-testid="hermes-cli-details" class="hermes-cli-details">
+          <div class="hermes-cli-detail-row">
+            <strong>{{ t('runtimeVersions.activePythonPath') }}</strong>
+            <code>{{ hermesRuntimeStatus?.hermes.pythonPath || '-' }}</code>
+          </div>
+          <div class="hermes-cli-detail-row">
+            <strong>{{ t('runtimeVersions.activeAgentRoot') }}</strong>
+            <code>{{ hermesRuntimeStatus?.hermes.agentRoot || '-' }}</code>
+          </div>
+          <div class="hermes-cli-detail-row">
+            <strong>{{ t('runtimeVersions.activeDataDirectory') }}</strong>
+            <code>{{ hermesRuntimeStatus?.hermes.dataDirectory || '-' }}</code>
+          </div>
+        </div>
+      </NDrawerContent>
+    </NDrawer>
+
+    <NDrawer
       v-model:show="aiHelpDrawerVisible"
       class="agent-ai-help-drawer"
       placement="right"
@@ -528,6 +578,33 @@ onMounted(() => {
   flex-direction: column;
   overflow: hidden;
   background: $bg-main-surface;
+}
+
+.hermes-cli-details {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.hermes-cli-detail-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+
+  strong {
+    color: var(--text-color-2);
+    font-size: 12px;
+  }
+
+  code {
+    overflow-wrap: anywhere;
+    color: var(--text-color-1);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 12px;
+  }
 }
 
 :global(.agent-ai-help-dialog p) {

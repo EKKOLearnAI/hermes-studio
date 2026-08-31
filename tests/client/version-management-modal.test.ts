@@ -59,6 +59,7 @@ function runtimeStatus() {
       pendingStorageDirectory: '',
       migrationError: '',
       activationError: '',
+      cliInstallations: [],
       installed: [],
       remoteVersions: [],
     },
@@ -114,6 +115,9 @@ describe('VersionManagementModal Runtime storage selector', () => {
 
     const agentRoot = wrapper.get('[data-testid="active-agent-root"]')
     expect(agentRoot.text()).toContain('/state/desktop-runtime/hermes/0.18.0/mac-arm64/python')
+
+    const dataDirectory = wrapper.get('[data-testid="active-data-directory"]')
+    expect(dataDirectory.text()).toContain('/state/.hermes')
   })
 
   it('shows Runtime versions returned by the Studio version API', async () => {
@@ -131,7 +135,13 @@ describe('VersionManagementModal Runtime storage selector', () => {
 
   it('shows selected user CLI paths in a read-only details drawer', async () => {
     const status = runtimeStatus()
-    status.hermes.source = 'user-cli'
+    delete (status.hermes as { source?: string }).source
+    status.hermes.cliInstallations = [{
+      path: '/Users/test/.local/bin/hermes',
+      version: 'v0.20.6',
+      source: 'user-cli',
+      selected: true,
+    }]
     status.hermes.pythonPath = '/Users/test/.hermes/hermes-agent/venv/bin/python3'
     status.hermes.agentRoot = '/Users/test/.hermes/hermes-agent'
     status.hermes.dataDirectory = '/Users/test/.hermes'
@@ -143,6 +153,7 @@ describe('VersionManagementModal Runtime storage selector', () => {
 
     expect(wrapper.find('[data-testid="active-python-path"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="active-agent-root"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="active-data-directory"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="cli-details"]').exists()).toBe(false)
 
     await wrapper.get('[data-testid="view-cli-details"]').trigger('click')

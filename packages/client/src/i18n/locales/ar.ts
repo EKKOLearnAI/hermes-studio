@@ -434,7 +434,7 @@ export default {
     activeAgentRoot: 'Agent Root الحالي',
     viewCliDetails: 'عرض',
     cliDetailsTitle: 'تفاصيل Hermes CLI',
-    cliDataDirectory: 'مجلد البيانات',
+    activeDataDirectory: 'مجلد البيانات الحالي',
     cliUpdateDescription: 'في Hermes Runtime بالإصدار 0.19.1 والإصدارات الأحدث، يحدّث الأمر التالي Hermes Agent المضمّن فقط. ولا يحدّث تطبيق Hermes Studio لسطح المكتب أو Web UI. أغلق Hermes Studio بالكامل قبل تنفيذه:',
     webUiTitle: 'واجهة الويب',
     platform: 'المنصة',

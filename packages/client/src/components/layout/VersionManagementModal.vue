@@ -41,6 +41,12 @@ const isDefaultRuntimeDirectory = computed(() => {
   return !defaultDirectory || selectedDirectory === defaultDirectory
 })
 
+const currentHermesSource = computed(() =>
+  status.value?.hermes.source
+  || status.value?.hermes.cliInstallations?.find(item => item.selected)?.source
+  || 'none',
+)
+
 const currentPlatformRuntime = computed(() =>
   (status.value?.hermes.installed || []).filter(item => item.platform === status.value?.platform),
 )
@@ -314,7 +320,7 @@ async function removeRuntime(version: string) {
             </div>
             <div class="section-heading-actions">
               <NButton
-                v-if="status?.hermes.source === 'user-cli'"
+                v-if="currentHermesSource === 'user-cli'"
                 data-testid="view-cli-details"
                 size="small"
                 secondary
@@ -339,18 +345,25 @@ async function removeRuntime(version: string) {
               {{ t('runtimeVersions.activeRuntimeDirectory') }}: {{ status?.hermes.activeDirectory || '-' }}
             </span>
             <span
-              v-if="status?.hermes.source !== 'user-cli'"
+              v-if="currentHermesSource !== 'user-cli'"
               data-testid="active-python-path"
               :title="status?.hermes.pythonPath || ''"
             >
               {{ t('runtimeVersions.activePythonPath') }}: {{ status?.hermes.pythonPath || '-' }}
             </span>
             <span
-              v-if="status?.hermes.source !== 'user-cli'"
+              v-if="currentHermesSource !== 'user-cli'"
               data-testid="active-agent-root"
               :title="status?.hermes.agentRoot || ''"
             >
               {{ t('runtimeVersions.activeAgentRoot') }}: {{ status?.hermes.agentRoot || '-' }}
+            </span>
+            <span
+              v-if="currentHermesSource === 'managed-runtime'"
+              data-testid="active-data-directory"
+              :title="status?.hermes.dataDirectory || ''"
+            >
+              {{ t('runtimeVersions.activeDataDirectory') }}: {{ status?.hermes.dataDirectory || '-' }}
             </span>
           </div>
           <NAlert
@@ -521,7 +534,7 @@ async function removeRuntime(version: string) {
           <code :title="status?.hermes.agentRoot || ''">{{ status?.hermes.agentRoot || '-' }}</code>
         </div>
         <div class="cli-detail-row">
-          <strong>{{ t('runtimeVersions.cliDataDirectory') }}</strong>
+          <strong>{{ t('runtimeVersions.activeDataDirectory') }}</strong>
           <code :title="status?.hermes.dataDirectory || ''">{{ status?.hermes.dataDirectory || '-' }}</code>
         </div>
       </div>

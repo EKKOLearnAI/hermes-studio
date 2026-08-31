@@ -128,6 +128,10 @@ function runtimeStatus() {
       activeVersion: '0.21.0',
       agentVersion: 'v0.21.0 (2026.8.27) · upstream 3f497e2b · local 470cf66b (+1 carried commit)',
       activeDirectory: '/runtime/0.21.0',
+      pythonPath: '/runtime/0.21.0/python/venv/bin/python3',
+      agentRoot: '/runtime/0.21.0/python',
+      source: 'managed-runtime' as const,
+      dataDirectory: '/Users/test/.hermes',
       storageDirectory: '/runtime',
       defaultStorageDirectory: '/runtime',
       pendingStorageDirectory: '',
@@ -271,6 +275,13 @@ describe('Agent Manager page', () => {
       version: '0.20.4',
     }
     api.fetchAgentStatusSnapshot.mockResolvedValue(status)
+    const cliStatus = runtimeStatus()
+    cliStatus.hermes.source = 'user-cli'
+    cliStatus.hermes.pythonPath = '/Users/test/.hermes/hermes-agent/venv/bin/python'
+    cliStatus.hermes.agentRoot = '/Users/test/.hermes/hermes-agent'
+    cliStatus.hermes.dataDirectory = '/Users/test/.hermes'
+    cliStatus.hermes.cliInstallations[0].selected = true
+    api.fetchRuntimeVersionStatus.mockResolvedValue(cliStatus)
     const wrapper = mount(AgentManagerView, {
       props: { sidebarCollapsed: false },
       global: {
@@ -285,9 +296,18 @@ describe('Agent Manager page', () => {
     expect(hermesCard.text()).not.toContain('/Users/test/.local/bin/hermes')
     expect(hermesCard.get('[data-testid="hermes-source-type"]').text()).toBe('CLI')
     expect(hermesCard.findAll('button').map(button => button.text()))
-      .toEqual(['sidebar.settings'])
+      .toEqual(['runtimeVersions.viewCliDetails', 'sidebar.settings'])
     expect(api.fetchRuntimeVersionStatus).not.toHaveBeenCalled()
     expect(wrapper.getComponent({ name: 'VersionManagementModal' }).props('show')).toBe(false)
+
+    await hermesCard.get('[data-testid="view-hermes-cli-details"]').trigger('click')
+    await flushPromises()
+
+    expect(api.fetchRuntimeVersionStatus).toHaveBeenCalledWith({ includeRemote: false })
+    const details = wrapper.get('[data-testid="hermes-cli-details"]')
+    expect(details.text()).toContain('/Users/test/.hermes/hermes-agent/venv/bin/python')
+    expect(details.text()).toContain('/Users/test/.hermes/hermes-agent')
+    expect(details.text()).toContain('/Users/test/.hermes')
   })
 
   it('does not open Runtime management when cached Hermes status is unavailable', async () => {
