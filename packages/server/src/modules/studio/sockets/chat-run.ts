@@ -54,6 +54,7 @@ import { authenticateUserToken, isAuthEnabled, type AuthenticatedUser } from '..
 import { userCanAccessProfile } from '../repositories/users-store'
 import { observeRunChatPetEvent } from '../public/pet-events'
 import { observeChatRunWebhookEvent, type ChatRunWebhookAgent } from '../services/webhooks'
+import { getAgentStatusSnapshot } from '../public/agent-status-registry'
 
 type AgentBridgeBackgroundNotification = any
 type AgentBridgeBackgroundSession = any
@@ -161,9 +162,29 @@ function isBridgeRunSource(source?: string): boolean {
   return source === 'cli' || source === 'global_agent' || source === 'workflow' || source === 'group_chat'
 }
 
-export async function ensureBridgeReadyForChatRun(): Promise<{ ok: true } | { ok: false; error: string }> {
+type ChatRunBridgeReadiness =
+  | { ok: true }
+  | { ok: false; error: string; runtimeUnavailable?: true }
+
+function runtimeUnavailableForChatRun(): ChatRunBridgeReadiness | null {
+  if (process.env.HERMES_RUNTIME_SOURCE?.trim() !== 'none') return null
+  const status = getAgentStatusSnapshot().agents.find(agent => agent.id === 'hermes')
+  return {
+    ok: false,
+    error: status?.error.trim()
+      || 'Hermes Runtime is not installed or is incomplete. Open Runtime Manager to repair or download a Runtime.',
+    runtimeUnavailable: true,
+  }
+}
+
+export async function ensureBridgeReadyForChatRun(): Promise<ChatRunBridgeReadiness> {
+  const runtimeUnavailable = runtimeUnavailableForChatRun()
+  if (runtimeUnavailable) return runtimeUnavailable
+
   try {
-    const readiness = await getAgentBridgeManager().ensureReady({ timeoutMs: 1000, connectRetryMs: 0, recover: false })
+    const manager = getAgentBridgeManager()
+    await manager.start()
+    const readiness = await manager.ensureReady({ timeoutMs: 1000, connectRetryMs: 0, recover: false })
     if (readiness.reachable) {
       return { ok: true }
     }
@@ -893,7 +914,9 @@ export class ChatRunSocket {
           event: 'run.failed',
           session_id: data.session_id,
           queue_id: data.queue_id,
-          error: `Agent Bridge is not reachable: ${bridgeReady.error}`,
+          error: bridgeReady.runtimeUnavailable
+            ? `Hermes Runtime is unavailable: ${bridgeReady.error}`
+            : `Agent Bridge is not reachable: ${bridgeReady.error}`,
         }
         if (data.session_id) {
           observeChatRunWebhookEvent({

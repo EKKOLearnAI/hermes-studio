@@ -1,6 +1,6 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { delimiter, join } from 'node:path'
+import { delimiter, dirname, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   resolveDesktopHermesSelection,
@@ -28,6 +28,7 @@ function userCli(root: string, version: string, succeeds = true) {
   const agentCommand = join(agentRoot, 'hermes')
   mkdirSync(agentRoot, { recursive: true })
   writeFileSync(join(agentRoot, 'run_agent.py'), '')
+  writeFileSync(join(agentRoot, 'cli.py'), '')
   writeFileSync(agentCommand, '')
   const command = executable(
     join(root, '.local', 'bin', 'hermes'),
@@ -38,17 +39,30 @@ function userCli(root: string, version: string, succeeds = true) {
   return { command, python, agentRoot, environmentRoot, hermesHome }
 }
 
-function managedRuntime(root: string, version: string): DesktopManagedHermesRuntime {
-  const directory = join(root, 'managed-runtime')
+function managedRuntime(
+  root: string,
+  version: string,
+  options: { name?: string; command?: string; probePath?: string } = {},
+): DesktopManagedHermesRuntime {
+  const directory = join(root, options.name || 'managed-runtime')
   const agentRoot = join(directory, 'python')
   const environmentRoot = join(agentRoot, 'venv')
   const pythonPath = executable(join(environmentRoot, 'bin', 'python3'), '#!/bin/sh\nexit 0\n')
   const path = executable(
     join(environmentRoot, 'bin', 'hermes'),
-    `#!/bin/sh\nprintf 'Hermes Agent ${version}\\n'\n`,
+    options.command || `#!/bin/sh\nprintf 'Hermes Agent ${version}\\n'\n`,
   )
   writeFileSync(join(agentRoot, 'run_agent.py'), '')
-  return { directory, path, pythonPath, agentRoot, environmentRoot, managedRuntimeVersion: version }
+  writeFileSync(join(agentRoot, 'cli.py'), '')
+  return {
+    directory,
+    path,
+    pythonPath,
+    agentRoot,
+    environmentRoot,
+    managedRuntimeVersion: version,
+    ...(options.probePath ? { probePath: options.probePath } : {}),
+  }
 }
 
 afterEach(() => {
@@ -146,5 +160,74 @@ describe.skipIf(process.platform === 'win32')('desktop Hermes environment select
       HERMES_RUNTIME_VERSION: '',
     })
     expect(withDesktopHermesSelection({ HERMES_BIN: '/stale/hermes' }, selected).HERMES_BIN).toBeUndefined()
+  })
+
+  it('probes managed Runtimes sequentially with isolated PATH values and records the first failure', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'desktop-hermes-selection-'))
+    temporaryDirectories.push(root)
+    const attempts = join(root, 'attempts.log')
+    const first = managedRuntime(root, '0.21.0', {
+      name: 'first-runtime',
+      command: `#!/bin/sh\nprintf 'first\\n' >> "${attempts}"\nexit 23\n`,
+    })
+    first.probePath = [dirname(first.path), '/usr/bin', '/bin'].join(delimiter)
+    const fallback = managedRuntime(root, '0.20.6', {
+      name: 'fallback-runtime',
+      command: `#!/bin/sh\nprintf 'fallback\\n' >> "${attempts}"\ncase "$PATH" in *first-runtime*) exit 41;; esac\nprintf 'Hermes Agent 0.20.6\\n'\n`,
+    })
+    fallback.probePath = [dirname(fallback.path), '/usr/bin', '/bin'].join(delimiter)
+
+    const selected = await resolveDesktopHermesSelection({
+      env: { PATH: [first.path, fallback.path].map(dirname).join(delimiter) },
+      searchPath: '/usr/bin:/bin',
+      hermesHome: join(root, '.hermes'),
+      managedRuntimes: [first, fallback],
+    })
+
+    expect(selected).toMatchObject({
+      source: 'managed-runtime',
+      path: fallback.path,
+      version: '0.20.6',
+      managedRuntimeFailures: [{
+        directory: first.directory,
+        version: '0.21.0',
+        reason: expect.stringContaining('(23)'),
+      }],
+    })
+    expect(readFileSync(attempts, 'utf8').trim().split('\n')).toEqual(['first', 'fallback'])
+  })
+
+  it('checks cli.py after hermes --version succeeds before falling back', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'desktop-hermes-selection-'))
+    temporaryDirectories.push(root)
+    const attempts = join(root, 'agent-files-attempts.log')
+    const incomplete = managedRuntime(root, '0.21.0', {
+      name: 'missing-cli-runtime',
+      command: `#!/bin/sh\nprintf 'version-ok\\n' >> "${attempts}"\nprintf 'Hermes Agent 0.21.0\\n'\n`,
+    })
+    rmSync(join(incomplete.agentRoot, 'cli.py'))
+    incomplete.probePath = [dirname(incomplete.path), '/usr/bin', '/bin'].join(delimiter)
+    const fallback = managedRuntime(root, '0.20.6', {
+      name: 'complete-runtime',
+      command: `#!/bin/sh\nprintf 'fallback\\n' >> "${attempts}"\nprintf 'Hermes Agent 0.20.6\\n'\n`,
+    })
+    fallback.probePath = [dirname(fallback.path), '/usr/bin', '/bin'].join(delimiter)
+
+    const selected = await resolveDesktopHermesSelection({
+      env: { PATH: '/usr/bin:/bin' },
+      searchPath: '/usr/bin:/bin',
+      hermesHome: join(root, '.hermes'),
+      managedRuntimes: [incomplete, fallback],
+    })
+
+    expect(selected).toMatchObject({
+      source: 'managed-runtime',
+      path: fallback.path,
+      managedRuntimeFailures: [{
+        directory: incomplete.directory,
+        reason: expect.stringContaining('cli.py'),
+      }],
+    })
+    expect(readFileSync(attempts, 'utf8').trim().split('\n')).toEqual(['version-ok', 'fallback'])
   })
 })

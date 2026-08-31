@@ -9,6 +9,13 @@ export interface ActiveVersionManifest {
   pendingRuntimeRootDirectory?: string
   runtimeMigrationError?: string
   runtimeActivationError?: string
+  runtimeValidationFailures?: Array<{
+    version: string
+    platform: string
+    directory: string
+    reason: string
+    failedAt: string
+  }>
   webUiDirectory?: string
   platform?: string
   updatedAt?: string

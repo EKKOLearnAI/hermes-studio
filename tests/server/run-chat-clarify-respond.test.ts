@@ -17,7 +17,7 @@ vi.mock('../../packages/server/src/modules/ekko/services/clarifications', () => 
 
 vi.mock('../../packages/server/src/modules/studio/public/chat-agent-runtime', () => ({
   createPrimaryAgentBridge: vi.fn(() => bridgeMock),
-  getPrimaryAgentBridgeManager: vi.fn(() => ({ ensureReady: vi.fn() })),
+  getPrimaryAgentBridgeManager: vi.fn(() => ({ start: vi.fn(async () => {}), ensureReady: vi.fn() })),
   redactPrimaryAgentBridgeError: (error?: string) => error,
   chatCodingAgentRunManager: {
     resolveApproval: vi.fn(() => ({ handled: false, resolved: false })),

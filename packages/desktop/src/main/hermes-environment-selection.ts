@@ -29,6 +29,13 @@ export interface DesktopHermesSelection {
   agentRoot?: string
   environmentRoot?: string
   managedRuntimeVersion?: string
+  managedRuntimeFailures?: DesktopManagedHermesRuntimeFailure[]
+}
+
+export interface DesktopManagedHermesRuntimeFailure {
+  directory: string
+  version: string
+  reason: string
 }
 
 export interface DesktopManagedHermesRuntime {
@@ -38,6 +45,8 @@ export interface DesktopManagedHermesRuntime {
   agentRoot: string
   environmentRoot: string
   managedRuntimeVersion?: string
+  probePath?: string
+  validationError?: string
 }
 
 export interface DesktopHermesSelectionOptions {
@@ -45,6 +54,7 @@ export interface DesktopHermesSelectionOptions {
   searchPath: string
   hermesHome: string
   managedRuntime?: DesktopManagedHermesRuntime
+  managedRuntimes?: DesktopManagedHermesRuntime[]
   probeTimeoutMs?: number
 }
 
@@ -270,19 +280,45 @@ function normalizeVersion(raw: string): string {
     .trim() || ''
 }
 
+type HermesVersionProbeResult =
+  | { ok: true; version: string }
+  | { ok: false; error: string }
+
+function probeFailureMessage(error: unknown, timeout: number): string {
+  const detail = error as NodeJS.ErrnoException & {
+    killed?: boolean
+    signal?: NodeJS.Signals
+    stderr?: string | Buffer
+  }
+  const stderr = typeof detail?.stderr === 'string'
+    ? detail.stderr.trim()
+    : Buffer.isBuffer(detail?.stderr)
+      ? detail.stderr.toString('utf8').trim()
+      : ''
+  if (detail?.killed || detail?.code === 'ETIMEDOUT') {
+    return `hermes --version timed out after ${timeout}ms${stderr ? `: ${stderr}` : ''}`
+  }
+  const code = detail?.code !== undefined ? ` (${String(detail.code)})` : ''
+  const message = error instanceof Error ? error.message.replace(/^Error:\s*/, '').trim() : String(error)
+  return `hermes --version failed${code}: ${stderr || message || 'unknown error'}`
+}
+
 async function probeHermesVersion(
   selection: Omit<DesktopHermesSelection, 'version' | 'source'>,
   env: NodeJS.ProcessEnv,
   timeout: number,
-): Promise<string> {
-  if (!selection.pythonPath || !selection.agentRoot || !selection.environmentRoot) return ''
+  source: Exclude<DesktopHermesSelectionSource, 'none'>,
+): Promise<HermesVersionProbeResult> {
+  if (!selection.pythonPath) return { ok: false, error: 'Python path is not configured' }
+  if (!selection.agentRoot) return { ok: false, error: 'Agent Root is not configured' }
+  if (!selection.environmentRoot) return { ok: false, error: 'Python environment root is not configured' }
   const command = process.platform === 'win32' ? selection.pythonPath : selection.path
   const args = process.platform === 'win32'
     ? ['-m', 'hermes_cli.main', '--version']
     : ['--version']
   const probeEnv = withDesktopHermesSelection(env, {
     ...selection,
-    source: 'user-cli',
+    source,
     version: '',
   })
   try {
@@ -292,10 +328,26 @@ async function probeHermesVersion(
       windowsHide: true,
       env: probeEnv,
     })
-    return normalizeVersion(String(stdout || ''))
-  } catch {
-    return ''
+    const version = normalizeVersion(String(stdout || ''))
+    return version
+      ? { ok: true, version }
+      : { ok: false, error: 'hermes --version returned an empty version' }
+  } catch (error) {
+    return { ok: false, error: probeFailureMessage(error, timeout) }
   }
+}
+
+function managedRuntimePreflightError(runtime: DesktopManagedHermesRuntime): string {
+  if (runtime.validationError) return runtime.validationError
+  if (!existsSync(runtime.path)) return `Hermes executable is missing: ${runtime.path}`
+  if (!existsSync(runtime.pythonPath)) return `Python executable is missing: ${runtime.pythonPath}`
+  return ''
+}
+
+function missingManagedRuntimeAgentFiles(runtime: DesktopManagedHermesRuntime): string[] {
+  return ['run_agent.py', 'cli.py']
+    .map(name => join(runtime.agentRoot, name))
+    .filter(file => !existsSync(file))
 }
 
 function completeUserCliSelection(
@@ -321,46 +373,77 @@ export async function resolveDesktopHermesSelection(
     || (process.platform === 'win32' ? 'Path' : 'PATH')
   baseEnv[pathKey] = options.searchPath
   const explicitCommand = baseEnv.HERMES_BIN?.trim()
-  const managedRoot = options.managedRuntime?.directory || ''
+  const managedRuntimes = options.managedRuntimes?.length
+    ? options.managedRuntimes
+    : options.managedRuntime ? [options.managedRuntime] : []
+  const managedRoots = managedRuntimes.map(runtime => runtime.directory).filter(Boolean)
   const commands = [
     ...(explicitCommand && existsSync(explicitCommand) ? [explicitCommand] : []),
     ...findHermesCommands(options.searchPath, baseEnv),
   ]
   const userCommands = [...new Map(commands
-    .filter(command => !managedRoot || !isPathWithin(command, managedRoot))
+    .filter(command => !managedRoots.some(root => isPathWithin(command, root)))
     .map(command => [comparablePath(command), command])).values()]
   const timeout = options.probeTimeoutMs || DEFAULT_PROBE_TIMEOUT_MS
   const userCandidates = userCommands
     .map(command => completeUserCliSelection(command, options.hermesHome, baseEnv))
     .filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate))
-  const versions = await Promise.all(userCandidates.map(candidate =>
-    probeHermesVersion(candidate, baseEnv, timeout),
-  ))
-  const usableIndex = versions.findIndex(Boolean)
-  if (usableIndex >= 0) {
-    return {
-      ...userCandidates[usableIndex],
-      source: 'user-cli',
-      version: versions[usableIndex],
-    }
-  }
-
-  const managed = options.managedRuntime
-  if (managed
-    && existsSync(managed.path)
-    && existsSync(managed.pythonPath)
-    && existsSync(join(managed.agentRoot, 'run_agent.py'))) {
-    const version = await probeHermesVersion(managed, baseEnv, timeout)
-    if (version) {
+  for (const candidate of userCandidates) {
+    const probe = await probeHermesVersion(candidate, baseEnv, timeout, 'user-cli')
+    if (probe.ok) {
       return {
-        ...managed,
-        source: 'managed-runtime',
-        version,
+        ...candidate,
+        source: 'user-cli',
+        version: probe.version,
       }
     }
   }
 
-  return { source: 'none', path: '', version: '' }
+  const managedRuntimeFailures: DesktopManagedHermesRuntimeFailure[] = []
+  for (const managed of managedRuntimes) {
+    const preflightError = managedRuntimePreflightError(managed)
+    if (preflightError) {
+      managedRuntimeFailures.push({
+        directory: managed.directory,
+        version: managed.managedRuntimeVersion || '',
+        reason: preflightError,
+      })
+      continue
+    }
+
+    const managedEnv = { ...baseEnv }
+    if (managed.probePath) managedEnv[pathKey] = managed.probePath
+    const probe = await probeHermesVersion(managed, managedEnv, timeout, 'managed-runtime')
+    if (probe.ok) {
+      const missingAgentFiles = missingManagedRuntimeAgentFiles(managed)
+      if (missingAgentFiles.length > 0) {
+        managedRuntimeFailures.push({
+          directory: managed.directory,
+          version: managed.managedRuntimeVersion || '',
+          reason: `Runtime Agent files are missing: ${missingAgentFiles.join(', ')}`,
+        })
+        continue
+      }
+      return {
+        ...managed,
+        source: 'managed-runtime',
+        version: probe.version,
+        ...(managedRuntimeFailures.length > 0 ? { managedRuntimeFailures } : {}),
+      }
+    }
+    managedRuntimeFailures.push({
+      directory: managed.directory,
+      version: managed.managedRuntimeVersion || '',
+      reason: probe.error,
+    })
+  }
+
+  return {
+    source: 'none',
+    path: '',
+    version: '',
+    ...(managedRuntimeFailures.length > 0 ? { managedRuntimeFailures } : {}),
+  }
 }
 
 export function withDesktopHermesSelection(

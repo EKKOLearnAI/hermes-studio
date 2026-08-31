@@ -136,6 +136,33 @@ describe('VersionManagementModal Runtime storage selector', () => {
     expect(wrapper.text()).toContain('0.20.0')
   })
 
+  it('shows a failed Runtime as downloadable even when remote version lookup is unavailable', async () => {
+    const status = {
+      ...runtimeStatus(),
+      active: {
+        schema: 1,
+        runtimeValidationFailures: [{
+          version: '0.20.0',
+          platform: 'mac-arm64',
+          directory: '/state/desktop-runtime/hermes/0.20.0/mac-arm64',
+          reason: 'hermes --version timed out after 5000ms',
+          failedAt: new Date(0).toISOString(),
+        }],
+      },
+    }
+    api.fetchRuntimeVersionStatus.mockResolvedValue(status)
+    const wrapper = mount(VersionManagementModal, { props: { show: false } })
+
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('0.20.0')
+    expect(wrapper.text()).toContain('runtimeVersions.downloadGithub')
+    expect(wrapper.text()).toContain('runtimeVersions.downloadCf')
+    expect(wrapper.text()).not.toContain('runtimeVersions.installed')
+    expect(wrapper.text()).not.toContain('runtimeVersions.useVersion')
+  })
+
   it('shows selected user CLI paths in a read-only details drawer', async () => {
     const status = runtimeStatus()
     delete (status.hermes as { source?: string }).source

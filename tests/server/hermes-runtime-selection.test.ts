@@ -1,6 +1,6 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
-import { delimiter, join } from 'path'
+import { delimiter, dirname, join } from 'path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const state = vi.hoisted(() => ({ appHome: '' }))
@@ -50,6 +50,7 @@ function createUserCli(home: string, version: string): {
   mkdirSync(join(agentRoot, 'venv', 'bin'), { recursive: true })
   mkdirSync(join(home, '.local', 'bin'), { recursive: true })
   writeFileSync(join(agentRoot, 'run_agent.py'), '')
+  writeFileSync(join(agentRoot, 'cli.py'), '')
   writeFileSync(agentCommand, '')
   writeFileSync(python, `#!/bin/sh\nprintf 'Hermes Agent ${version}\\n'\n`)
   writeFileSync(command, `#!/bin/sh\nexec "${python}" "${agentCommand}" "$@"\n`)
@@ -58,12 +59,22 @@ function createUserCli(home: string, version: string): {
   return { command, python, agentRoot, hermesHome }
 }
 
-function createManagedRuntime(root: string, version: string): string {
+function createManagedRuntime(
+  root: string,
+  version: string,
+  options: { activate?: boolean; command?: string } = {},
+): string {
   const runtime = join(root, 'desktop-runtime', 'hermes', version, platformKey())
   const environmentBin = join(runtime, 'python', 'venv', 'bin')
   const managedCli = cli(environmentBin, version)
+  if (options.command) {
+    writeFileSync(managedCli, options.command)
+    chmodSync(managedCli, 0o755)
+  }
   writeFileSync(join(environmentBin, 'python3'), '#!/bin/sh\nexit 0\n')
   chmodSync(join(environmentBin, 'python3'), 0o755)
+  writeFileSync(join(runtime, 'python', 'run_agent.py'), '')
+  writeFileSync(join(runtime, 'python', 'cli.py'), '')
   mkdirSync(join(runtime, 'node', 'bin'), { recursive: true })
   writeFileSync(join(runtime, 'node', 'bin', 'node'), '')
   writeFileSync(join(runtime, 'runtime-manifest.json'), JSON.stringify({
@@ -71,12 +82,14 @@ function createManagedRuntime(root: string, version: string): string {
     platform: platformKey(),
     hermesAgentVersion: version,
   }))
-  writeFileSync(join(root, 'desktop-runtime', 'active-version.json'), JSON.stringify({
-    schema: 1,
-    hermesRuntimeVersion: version,
-    runtimeDirectory: runtime,
-    platform: platformKey(),
-  }))
+  if (options.activate !== false) {
+    writeFileSync(join(root, 'desktop-runtime', 'active-version.json'), JSON.stringify({
+      schema: 1,
+      hermesRuntimeVersion: version,
+      runtimeDirectory: runtime,
+      platform: platformKey(),
+    }))
+  }
   return managedCli
 }
 
@@ -96,6 +109,8 @@ describe.skipIf(process.platform === 'win32')('Hermes Runtime selection', () => 
     const userCli = createUserCli(userHome, '0.20.4')
     const env: NodeJS.ProcessEnv = {
       ...process.env,
+      HERMES_DESKTOP: undefined,
+      HERMES_RUNTIME_SELECTION_LOCKED: undefined,
       HOME: userHome,
       HERMES_HOME: userCli.hermesHome,
       HERMES_BIN: managedCli,
@@ -131,6 +146,8 @@ describe.skipIf(process.platform === 'win32')('Hermes Runtime selection', () => 
     mkdirSync(userHome)
     const env: NodeJS.ProcessEnv = {
       ...process.env,
+      HERMES_DESKTOP: undefined,
+      HERMES_RUNTIME_SELECTION_LOCKED: undefined,
       HOME: userHome,
       HERMES_HOME: join(userHome, '.hermes'),
       HERMES_BIN: managedCli,
@@ -153,6 +170,8 @@ describe.skipIf(process.platform === 'win32')('Hermes Runtime selection', () => 
     mkdirSync(userHome)
     const env: NodeJS.ProcessEnv = {
       ...process.env,
+      HERMES_DESKTOP: undefined,
+      HERMES_RUNTIME_SELECTION_LOCKED: undefined,
       HOME: userHome,
       HERMES_HOME: join(userHome, '.hermes'),
       HERMES_BIN: managedCli,
@@ -197,5 +216,99 @@ describe.skipIf(process.platform === 'win32')('Hermes Runtime selection', () => 
       pythonPath: env.HERMES_AGENT_CLI_PYTHON,
       agentRoot: env.HERMES_AGENT_ROOT,
     })
+  })
+
+  it('falls back one Runtime at a time, isolates its environment, and preserves Web UI activation', async () => {
+    state.appHome = mkdtempSync(join(tmpdir(), 'hermes-selection-'))
+    temporaryDirectories.push(state.appHome)
+    const attempts = join(state.appHome, 'attempts.log')
+    const fallbackCli = createManagedRuntime(state.appHome, '0.20.6', {
+      activate: false,
+      command: `#!/bin/sh\nprintf 'fallback\\n' >> "${attempts}"\ncase "$PATH" in *0.21.0*) exit 41;; esac\nprintf 'Hermes Agent 0.20.6\\n'\n`,
+    })
+    const failingCli = createManagedRuntime(state.appHome, '0.21.0', {
+      command: `#!/bin/sh\nprintf 'failing\\n' >> "${attempts}"\nexit 23\n`,
+    })
+    const activeVersionPath = join(state.appHome, 'desktop-runtime', 'active-version.json')
+    const active = JSON.parse(readFileSync(activeVersionPath, 'utf8'))
+    writeFileSync(activeVersionPath, JSON.stringify({
+      ...active,
+      webUiVersion: '0.7.12',
+      webUiDirectory: '/preserved/webui',
+    }))
+    const invalidRuntime = join(state.appHome, 'desktop-runtime', 'hermes', '0.21.0', platformKey())
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      HOME: join(state.appHome, 'empty-home'),
+      HERMES_HOME: join(state.appHome, 'empty-home', '.hermes'),
+      HERMES_DESKTOP: undefined,
+      HERMES_RUNTIME_SELECTION_LOCKED: undefined,
+      HERMES_BIN: failingCli,
+      AGENT_BROWSER_HOME: join(invalidRuntime, 'python', 'agent-browser'),
+      PATH: [dirname(failingCli), '/usr/bin', '/bin'].join(delimiter),
+    }
+    mkdirSync(env.HOME!)
+
+    const { configurePreferredHermesRuntime } = await import('../../packages/server/src/modules/hermes/services/runtime/selection')
+    const selected = await configurePreferredHermesRuntime(env)
+    const persisted = JSON.parse(readFileSync(activeVersionPath, 'utf8'))
+
+    expect(selected).toMatchObject({ source: 'managed-runtime', path: fallbackCli, version: '0.20.6' })
+    expect(readFileSync(attempts, 'utf8').trim().split('\n')).toEqual(['failing', 'fallback'])
+    expect(env.PATH).not.toContain('0.21.0')
+    expect(env.AGENT_BROWSER_HOME).toContain('0.20.6')
+    expect(persisted).toMatchObject({
+      runtimeDirectory: join(state.appHome, 'desktop-runtime', 'hermes', '0.20.6', platformKey()),
+      hermesRuntimeVersion: '0.20.6',
+      webUiVersion: '0.7.12',
+      webUiDirectory: '/preserved/webui',
+      runtimeActivationError: expect.stringContaining('(23)'),
+      runtimeValidationFailures: [expect.objectContaining({
+        version: '0.21.0',
+        directory: invalidRuntime,
+        reason: expect.stringContaining('(23)'),
+      })],
+    })
+  })
+
+  it('marks every failed Runtime unavailable so the version can be downloaded again', async () => {
+    state.appHome = mkdtempSync(join(tmpdir(), 'hermes-selection-'))
+    temporaryDirectories.push(state.appHome)
+    const failingCli = createManagedRuntime(state.appHome, '0.20.0', {
+      command: '#!/bin/sh\nexit 23\n',
+    })
+    const runtimeDirectory = join(state.appHome, 'desktop-runtime', 'hermes', '0.20.0', platformKey())
+    const activeVersionPath = join(state.appHome, 'desktop-runtime', 'active-version.json')
+    const active = JSON.parse(readFileSync(activeVersionPath, 'utf8'))
+    writeFileSync(activeVersionPath, JSON.stringify({ ...active, webUiVersion: '0.7.12' }))
+    const home = join(state.appHome, 'empty-home')
+    mkdirSync(home)
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      HOME: home,
+      HERMES_HOME: join(home, '.hermes'),
+      HERMES_DESKTOP: undefined,
+      HERMES_RUNTIME_SELECTION_LOCKED: undefined,
+      HERMES_BIN: failingCli,
+      PATH: [dirname(failingCli), '/usr/bin', '/bin'].join(delimiter),
+    }
+
+    const { configurePreferredHermesRuntime } = await import('../../packages/server/src/modules/hermes/services/runtime/selection')
+    const selected = await configurePreferredHermesRuntime(env)
+    const versionManager = await import('../../packages/server/src/modules/hermes/services/runtime/version-manager')
+    const persisted = JSON.parse(readFileSync(activeVersionPath, 'utf8'))
+
+    expect(selected).toEqual({ source: 'none', path: '', version: '' })
+    expect(versionManager.listInstalledRuntimeVersions()).toEqual([])
+    expect(persisted.runtimeDirectory).toBeUndefined()
+    expect(persisted.hermesRuntimeVersion).toBeUndefined()
+    expect(persisted.webUiVersion).toBe('0.7.12')
+    expect(persisted.runtimeValidationFailures).toEqual([
+      expect.objectContaining({
+        version: '0.20.0',
+        directory: runtimeDirectory,
+        reason: expect.stringContaining('(23)'),
+      }),
+    ])
   })
 })

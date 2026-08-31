@@ -34,6 +34,9 @@ function runtimePlatformKey(): string {
 }
 
 function createRuntime(root: string, version: string, options: { missingNode?: boolean } = {}): void {
+  mkdirSync(join(root, 'python'), { recursive: true })
+  writeFileSync(join(root, 'python', 'run_agent.py'), '')
+  writeFileSync(join(root, 'python', 'cli.py'), '')
   if (process.platform === 'win32') {
     mkdirSync(join(root, 'python', 'venv', 'Scripts'), { recursive: true })
     mkdirSync(join(root, 'git', 'cmd'), { recursive: true })
@@ -65,6 +68,15 @@ describe('runtime version manager storage migration', () => {
     vi.resetModules()
     process.env = { ...originalEnv }
     process.env.HERMES_DESKTOP = 'true'
+    delete process.env.HERMES_BIN
+    delete process.env.HERMES_RUNTIME_SELECTION_LOCKED
+    delete process.env.HERMES_RUNTIME_SOURCE
+    delete process.env.HERMES_RUNTIME_VERSION
+    delete process.env.HERMES_MANAGED_RUNTIME_VERSION
+    delete process.env.HERMES_AGENT_BRIDGE_PYTHON
+    delete process.env.HERMES_AGENT_CLI_PYTHON
+    delete process.env.HERMES_AGENT_ROOT
+    process.env.PATH = ''
     delete process.env.HERMES_DESKTOP_RUNTIME_DIR
     delete process.env.HERMES_WEB_UI_VERSION_MANIFEST_URL
     state.appHome = tempDir('hermes-runtime-version-home-')
@@ -354,6 +366,35 @@ describe('runtime version manager storage migration', () => {
 
     expect(active.runtimeDirectory).toBe(runtime)
     expect(active.runtimeActivationError).toBe('')
+  })
+
+  it('clears a Runtime validation failure when that version is activated after repair', async () => {
+    const platform = runtimePlatformKey()
+    const runtime = join(state.appHome, 'desktop-runtime', 'hermes', '0.20.0', platform)
+    const activeVersionPath = join(state.appHome, 'desktop-runtime', 'active-version.json')
+    createRuntime(runtime, '0.20.0')
+    mkdirSync(join(state.appHome, 'desktop-runtime'), { recursive: true })
+    writeFileSync(activeVersionPath, JSON.stringify({
+      schema: 1,
+      platform,
+      runtimeValidationFailures: [{
+        version: '0.20.0',
+        platform,
+        directory: runtime,
+        reason: 'previous validation failure',
+        failedAt: new Date(0).toISOString(),
+      }],
+    }))
+
+    const {
+      activateInstalledRuntimeVersion,
+      listInstalledRuntimeVersions,
+    } = await import('../../packages/server/src/modules/hermes/services/runtime/version-manager')
+
+    expect(listInstalledRuntimeVersions()).toEqual([])
+    const active = activateInstalledRuntimeVersion('0.20.0')
+    expect(active.runtimeValidationFailures).toEqual([])
+    expect(listInstalledRuntimeVersions(active).map(item => item.version)).toEqual(['0.20.0'])
   })
 
   it('accepts hermes.exe after a Windows CLI update replaces hermes.cmd', async () => {

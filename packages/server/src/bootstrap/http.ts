@@ -69,7 +69,11 @@ import {
   readLockedDesktopHermesSelection,
   type HermesRuntimeSelection,
 } from '../modules/hermes/services/runtime/selection'
-import { configureRuntimeInstallCompletedHandler, getRuntimeVersionStatus } from '../modules/hermes/services/runtime/version-manager'
+import {
+  configureRuntimeInstallCompletedHandler,
+  getRuntimeVersionStatus,
+  readActiveVersionManifest,
+} from '../modules/hermes/services/runtime/version-manager'
 import { isHermesAgentAvailable, updateAgentStatus } from '../modules/studio/public/agent-status-registry'
 import { scheduleWebUiRestart } from '../modules/studio/public/web-ui-restart'
 
@@ -326,6 +330,7 @@ function startLanDiscovery(): void {
 
 function recordLockedHermesSelection(selection: HermesRuntimeSelection): void {
   if (selection.source === 'none' || !selection.path) {
+    const activationError = readActiveVersionManifest()?.runtimeActivationError || ''
     updateAgentStatus('hermes', {
       name: 'Hermes',
       provider: 'Nous Research',
@@ -334,7 +339,7 @@ function recordLockedHermesSelection(selection: HermesRuntimeSelection): void {
       version: '',
       source: 'not-installed',
       path: '',
-      error: '',
+      error: activationError,
       installations: [],
     })
     return

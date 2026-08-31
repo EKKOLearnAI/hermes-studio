@@ -55,6 +55,9 @@ const currentPlatformRuntime = computed(() =>
 const runtimeVersions = computed(() => uniqueVersions([
   ...(status.value?.hermes.remoteVersions || []),
   ...currentPlatformRuntime.value.map(item => item.version),
+  ...(status.value?.active?.runtimeValidationFailures || [])
+    .filter(failure => failure.platform === status.value?.platform)
+    .map(failure => failure.version),
 ]))
 
 const runtimeJobs = computed(() => jobs.value.filter(job => job.kind === 'runtime'))

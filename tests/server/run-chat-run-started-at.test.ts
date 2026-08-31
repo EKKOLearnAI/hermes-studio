@@ -53,6 +53,7 @@ vi.mock('../../packages/server/src/modules/hermes/services/bridge/manager', () =
 vi.mock('../../packages/server/src/modules/studio/public/chat-agent-runtime', () => ({
   createPrimaryAgentBridge: vi.fn(() => bridgeMock),
   getPrimaryAgentBridgeManager: vi.fn(() => ({
+    start: vi.fn(async () => {}),
     ensureReady: ensureReadyMock,
     getRuntimeState: getRuntimeStateMock,
   })),

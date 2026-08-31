@@ -1,9 +1,19 @@
 import { existsSync } from 'fs'
 import { homedir } from 'os'
 import { delimiter, dirname, join } from 'path'
-import { discoverHermesCliInstallations, type HermesCliInstallation } from './discovery'
+import {
+  discoverHermesCliInstallations,
+  probeHermesCliVersion,
+  type HermesCliInstallation,
+} from './discovery'
 import { resolveHermesInstallationEnvironment } from './installation'
-import { listInstalledRuntimeVersions, readActiveVersionManifest, type InstalledRuntimeVersion } from './version-manager'
+import { isPathWithin } from './path'
+import {
+  listRuntimeVersionCandidates,
+  readActiveVersionManifest,
+  recordRuntimeSelectionResult,
+  type InstalledRuntimeVersion,
+} from './version-manager'
 
 export interface HermesRuntimeSelection {
   source: 'user-cli' | 'managed-runtime' | 'none'
@@ -65,9 +75,16 @@ function prependPath(env: NodeJS.ProcessEnv, entries: string[]): void {
 
 function clearManagedRuntimeEnvironment(env: NodeJS.ProcessEnv): void {
   for (const name of [
+    'HERMES_BIN',
     'HERMES_AGENT_BRIDGE_PYTHON',
     'HERMES_AGENT_CLI_PYTHON',
     'HERMES_AGENT_ROOT',
+    'HERMES_AGENT_NODE',
+    'HERMES_AGENT_NODE_ROOT',
+    'HERMES_AGENT_GIT',
+    'HERMES_RUNTIME_SOURCE',
+    'HERMES_RUNTIME_VERSION',
+    'HERMES_MANAGED_RUNTIME_VERSION',
     'VIRTUAL_ENV',
     'UV_PROJECT_ENVIRONMENT',
     'UV_PYTHON',
@@ -75,6 +92,31 @@ function clearManagedRuntimeEnvironment(env: NodeJS.ProcessEnv): void {
   ]) {
     delete env[name]
   }
+}
+
+function removeManagedRuntimePathEntries(
+  env: NodeJS.ProcessEnv,
+  runtimes: InstalledRuntimeVersion[],
+): void {
+  const pathKey = Object.keys(env).find(key => key.toLowerCase() === 'path')
+    || (process.platform === 'win32' ? 'Path' : 'PATH')
+  env[pathKey] = (env[pathKey] || '')
+    .split(delimiter)
+    .filter(entry => entry && !runtimes.some(runtime => isPathWithin(entry, runtime.directory)))
+    .join(delimiter)
+
+  for (const name of ['AGENT_BROWSER_HOME', 'PLAYWRIGHT_BROWSERS_PATH'] as const) {
+    const value = env[name]?.trim()
+    if (value && runtimes.some(runtime => isPathWithin(value, runtime.directory))) delete env[name]
+  }
+}
+
+function prepareRuntimeSelectionEnvironment(
+  env: NodeJS.ProcessEnv,
+  runtimes: InstalledRuntimeVersion[],
+): void {
+  clearManagedRuntimeEnvironment(env)
+  removeManagedRuntimePathEntries(env, runtimes)
 }
 
 function hermesHomeForEnvironment(env: NodeJS.ProcessEnv): string {
@@ -131,6 +173,8 @@ function applyUserCli(env: NodeJS.ProcessEnv, installation: HermesCliInstallatio
   )
   clearManagedRuntimeEnvironment(env)
   env.HERMES_BIN = installation.path
+  env.HERMES_RUNTIME_SOURCE = 'user-cli'
+  env.HERMES_RUNTIME_VERSION = installation.version
   if (paths.python) {
     env.HERMES_AGENT_BRIDGE_PYTHON = paths.python
     env.HERMES_AGENT_CLI_PYTHON = paths.python
@@ -154,7 +198,11 @@ function applyUserCli(env: NodeJS.ProcessEnv, installation: HermesCliInstallatio
 
 function applyManagedRuntime(env: NodeJS.ProcessEnv, runtime: InstalledRuntimeVersion): HermesRuntimeSelection {
   const paths = managedRuntimePaths(runtime)
+  clearManagedRuntimeEnvironment(env)
   env.HERMES_BIN = paths.hermes
+  env.HERMES_RUNTIME_SOURCE = 'managed-runtime'
+  env.HERMES_RUNTIME_VERSION = runtime.manifestHermesRuntimeVersion || runtime.version
+  env.HERMES_MANAGED_RUNTIME_VERSION = runtime.version
   env.HERMES_AGENT_BRIDGE_PYTHON = paths.python
   env.HERMES_AGENT_CLI_PYTHON = paths.python
   env.HERMES_AGENT_ROOT = paths.pythonRoot
@@ -193,20 +241,83 @@ export async function configurePreferredHermesRuntime(
 
   addUserHermesBinDirectory(env)
   const active = readActiveVersionManifest()
-  const installed = listInstalledRuntimeVersions(active)
-  const installations = await discoverHermesCliInstallations(installed, env)
+  const runtimeCandidates = listRuntimeVersionCandidates(active)
+  const installations = await discoverHermesCliInstallations(runtimeCandidates, env, { source: 'user-cli' })
   const userCli = installations.find(item =>
     item.source === 'user-cli'
     && Boolean(item.path)
     && Boolean(item.version.trim()),
   )
-  if (userCli) return applyUserCli(env, userCli)
+  if (userCli) {
+    prepareRuntimeSelectionEnvironment(env, runtimeCandidates)
+    return applyUserCli(env, userCli)
+  }
 
-  const activeRuntime = installed.find(item => item.active)
-    || installed.find(item => item.platform === `${process.platform === 'win32' ? 'win' : process.platform === 'darwin' ? 'mac' : process.platform}-${process.arch}`)
-  if (activeRuntime) return applyManagedRuntime(env, activeRuntime)
+  const currentPlatform = `${process.platform === 'win32' ? 'win' : process.platform === 'darwin' ? 'mac' : process.platform}-${process.arch}`
+  const managedFailures: Array<{
+    directory: string
+    reason: string
+    version: string
+    platform: string
+  }> = []
+  const cleanEnvironment = { ...env }
+  prepareRuntimeSelectionEnvironment(cleanEnvironment, runtimeCandidates)
+  for (const runtime of runtimeCandidates) {
+    if (runtime.platform !== currentPlatform) {
+      managedFailures.push({
+        directory: runtime.directory,
+        reason: `Runtime platform mismatch: expected ${currentPlatform}, received ${runtime.platform}`,
+        version: runtime.version,
+        platform: runtime.platform,
+      })
+      continue
+    }
+    if (runtime.validationError) {
+      managedFailures.push({
+        directory: runtime.directory,
+        reason: runtime.validationError,
+        version: runtime.version,
+        platform: runtime.platform,
+      })
+      continue
+    }
 
-  if (env.HERMES_BIN && !existsSync(env.HERMES_BIN)) delete env.HERMES_BIN
-  clearManagedRuntimeEnvironment(env)
+    const candidateEnv = { ...cleanEnvironment }
+    const candidateSelection = applyManagedRuntime(candidateEnv, runtime)
+    const probe = await probeHermesCliVersion(candidateSelection.path, candidateEnv)
+    if (!probe.version) {
+      managedFailures.push({
+        directory: runtime.directory,
+        reason: probe.error || 'hermes --version failed',
+        version: runtime.version,
+        platform: runtime.platform,
+      })
+      continue
+    }
+    const missingAgentFiles = ['run_agent.py', 'cli.py']
+      .map(name => join(runtime.directory, 'python', name))
+      .filter(file => !existsSync(file))
+    if (missingAgentFiles.length > 0) {
+      managedFailures.push({
+        directory: runtime.directory,
+        reason: `Runtime Agent files are missing: ${missingAgentFiles.join(', ')}`,
+        version: runtime.version,
+        platform: runtime.platform,
+      })
+      continue
+    }
+
+    prepareRuntimeSelectionEnvironment(env, runtimeCandidates)
+    const selected = applyManagedRuntime(env, runtime)
+    selected.version = probe.version
+    env.HERMES_RUNTIME_VERSION = probe.version
+    recordRuntimeSelectionResult(managedFailures, runtime)
+    return selected
+  }
+
+  recordRuntimeSelectionResult(managedFailures)
+  prepareRuntimeSelectionEnvironment(env, runtimeCandidates)
+  env.HERMES_RUNTIME_SOURCE = 'none'
+  env.HERMES_RUNTIME_VERSION = ''
   return { source: 'none', path: '', version: '' }
 }

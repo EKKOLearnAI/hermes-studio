@@ -4,6 +4,7 @@ const handleBridgeRunMock = vi.hoisted(() => vi.fn(async () => {}))
 const resumeBridgeRunMock = vi.hoisted(() => vi.fn(async () => {}))
 const handleCodingAgentRunMock = vi.hoisted(() => vi.fn(async () => {}))
 const loadSessionStateFromDbMock = vi.hoisted(() => vi.fn())
+const startBridgeMock = vi.hoisted(() => vi.fn())
 const ensureReadyMock = vi.hoisted(() => vi.fn())
 const getRuntimeStateMock = vi.hoisted(() => vi.fn())
 const userCanAccessProfileMock = vi.hoisted(() => vi.fn((_user: unknown, _profile: string) => true))
@@ -53,6 +54,7 @@ vi.mock('../../packages/server/src/modules/hermes/services/bridge/manager', () =
 vi.mock('../../packages/server/src/modules/studio/public/chat-agent-runtime', () => ({
   createPrimaryAgentBridge: vi.fn(() => bridgeMock),
   getPrimaryAgentBridgeManager: vi.fn(() => ({
+    start: startBridgeMock,
     ensureReady: ensureReadyMock,
     getRuntimeState: getRuntimeStateMock,
   })),
@@ -281,6 +283,8 @@ describe('ChatRunSocket global pending interactions', () => {
 describe('ensureBridgeReadyForChatRun', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    startBridgeMock.mockReset()
+    startBridgeMock.mockResolvedValue(undefined)
     ensureReadyMock.mockReset()
     getRuntimeStateMock.mockReset()
     bridgeMock.status.mockReset()
@@ -309,6 +313,7 @@ describe('ensureBridgeReadyForChatRun', () => {
     const { ensureBridgeReadyForChatRun } = await import('../../packages/server/src/modules/studio/sockets/chat-run')
 
     await expect(ensureBridgeReadyForChatRun()).resolves.toEqual({ ok: true })
+    expect(startBridgeMock).toHaveBeenCalledTimes(1)
     expect(ensureReadyMock).toHaveBeenCalledWith({ timeoutMs: 1000, connectRetryMs: 0, recover: false })
   })
 
@@ -351,11 +356,38 @@ describe('ensureBridgeReadyForChatRun', () => {
       error: 'bridge startup timed out',
     })
   })
+
+  it('returns the recorded Runtime failure without starting the bridge when Runtime is unavailable', async () => {
+    const previousSource = process.env.HERMES_RUNTIME_SOURCE
+    process.env.HERMES_RUNTIME_SOURCE = 'none'
+    const registry = await import('../../packages/server/src/modules/studio/public/agent-status-registry')
+    registry.updateAgentStatus('hermes', {
+      installed: false,
+      source: 'not-installed',
+      error: 'Runtime 0.21.0 is missing python/run_agent.py',
+    })
+    try {
+      const { ensureBridgeReadyForChatRun } = await import('../../packages/server/src/modules/studio/sockets/chat-run')
+      await expect(ensureBridgeReadyForChatRun()).resolves.toEqual({
+        ok: false,
+        error: 'Runtime 0.21.0 is missing python/run_agent.py',
+        runtimeUnavailable: true,
+      })
+      expect(startBridgeMock).not.toHaveBeenCalled()
+      expect(ensureReadyMock).not.toHaveBeenCalled()
+    } finally {
+      if (previousSource === undefined) delete process.env.HERMES_RUNTIME_SOURCE
+      else process.env.HERMES_RUNTIME_SOURCE = previousSource
+      registry.resetAgentStatusRegistryForTests()
+    }
+  })
 })
 
 describe('ChatRunSocket bridge readiness gating', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    startBridgeMock.mockReset()
+    startBridgeMock.mockResolvedValue(undefined)
     ensureReadyMock.mockReset()
     getRuntimeStateMock.mockReset()
     bridgeMock.status.mockReset()

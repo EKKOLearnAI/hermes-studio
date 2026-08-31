@@ -23,6 +23,11 @@ export interface HermesCliInstallation {
   source: 'managed-runtime' | 'user-cli'
   selected: boolean
   managedRuntimeVersion?: string
+  error?: string
+}
+
+export interface HermesCliDiscoveryOptions {
+  source?: 'all' | HermesCliInstallation['source']
 }
 
 function canonicalPath(path: string): string {
@@ -69,7 +74,21 @@ function normalizeVersion(raw: string): string {
     .trim() || ''
 }
 
-async function readHermesCliVersion(path: string, env: NodeJS.ProcessEnv): Promise<string> {
+function versionProbeError(error: unknown): string {
+  const detail = error as NodeJS.ErrnoException & { killed?: boolean; stderr?: string | Buffer }
+  const stderr = typeof detail?.stderr === 'string'
+    ? detail.stderr.trim()
+    : Buffer.isBuffer(detail?.stderr) ? detail.stderr.toString('utf8').trim() : ''
+  if (detail?.killed || detail?.code === 'ETIMEDOUT') return 'hermes --version timed out after 5000ms'
+  const code = detail?.code !== undefined ? ` (${String(detail.code)})` : ''
+  const message = error instanceof Error ? error.message.replace(/^Error:\s*/, '').trim() : String(error)
+  return `hermes --version failed${code}: ${stderr || message || 'unknown error'}`
+}
+
+export async function probeHermesCliVersion(
+  path: string,
+  env: NodeJS.ProcessEnv,
+): Promise<{ version: string; error: string }> {
   try {
     const result = await execHermesWithBin(path, ['--version'], {
       encoding: 'utf8',
@@ -77,9 +96,14 @@ async function readHermesCliVersion(path: string, env: NodeJS.ProcessEnv): Promi
       windowsHide: true,
       env,
     })
-    return normalizeVersion(result.stdout)
-  } catch {
-    if (process.platform !== 'win32' || !windowsCommandNeedsShell(path)) return ''
+    const version = normalizeVersion(result.stdout)
+    return version
+      ? { version, error: '' }
+      : { version: '', error: 'hermes --version returned an empty version' }
+  } catch (firstError) {
+    if (process.platform !== 'win32' || !windowsCommandNeedsShell(path)) {
+      return { version: '', error: versionProbeError(firstError) }
+    }
     try {
       const execution = windowsCmdShimExecution(path, ['--version'])
       const { stdout } = await execFileAsync(execution.command, execution.args, {
@@ -89,9 +113,12 @@ async function readHermesCliVersion(path: string, env: NodeJS.ProcessEnv): Promi
         windowsVerbatimArguments: execution.windowsVerbatimArguments,
         env,
       })
-      return normalizeVersion(String(stdout || ''))
-    } catch {
-      return ''
+      const version = normalizeVersion(String(stdout || ''))
+      return version
+        ? { version, error: '' }
+        : { version: '', error: 'hermes --version returned an empty version' }
+    } catch (fallbackError) {
+      return { version: '', error: versionProbeError(fallbackError) }
     }
   }
 }
@@ -105,6 +132,7 @@ async function readHermesCliVersion(path: string, env: NodeJS.ProcessEnv): Promi
 export async function discoverHermesCliInstallations(
   managedRuntimes: HermesManagedRuntimeLocation[],
   env: NodeJS.ProcessEnv = process.env,
+  options: HermesCliDiscoveryOptions = {},
 ): Promise<HermesCliInstallation[]> {
   const configuredBin = resolveHermesBin(env.HERMES_BIN)
   const commandPaths = await findHermesCommandPaths(env)
@@ -123,18 +151,24 @@ export async function discoverHermesCliInstallations(
     ? configuredPath
     : uniqueCandidates[0] ? comparablePath(uniqueCandidates[0]) : ''
 
-  return Promise.all(uniqueCandidates.map(async path => {
+  const installations: HermesCliInstallation[] = []
+  for (const path of uniqueCandidates) {
     const canonical = canonicalPath(path)
     const managedRuntime = managedRuntimes.find(runtime => {
       const runtimeDirectory = canonicalPath(runtime.directory)
       return isPathWithin(canonical, runtimeDirectory)
     })
-    return {
+    const source = managedRuntime ? 'managed-runtime' : 'user-cli'
+    if (options.source && options.source !== 'all' && options.source !== source) continue
+    const probe = await probeHermesCliVersion(path, env)
+    installations.push({
       path,
-      version: await readHermesCliVersion(path, env),
-      source: managedRuntime ? 'managed-runtime' : 'user-cli',
+      version: probe.version,
+      source,
       selected: comparablePath(path) === selectedPath,
       ...(managedRuntime ? { managedRuntimeVersion: managedRuntime.version } : {}),
-    }
-  }))
+      ...(probe.error ? { error: probe.error } : {}),
+    })
+  }
+  return installations
 }
