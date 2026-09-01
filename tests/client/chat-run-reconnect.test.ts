@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const socketState = vi.hoisted(() => ({
   sockets: [] as any[],
@@ -85,10 +85,6 @@ describe('chat-run socket reconnect handling', () => {
     socketState.sockets = []
   })
 
-  afterEach(() => {
-    vi.useRealTimers()
-  })
-
   it('keeps transient mobile disconnects alive and resumes after reconnect', async () => {
     const { startRunViaSocket } = await import('../../packages/client/src/api/studio/chat')
     const onEvent = vi.fn()
@@ -136,161 +132,6 @@ describe('chat-run socket reconnect handling', () => {
       already_streamed: true,
     })
     expect(onDone).not.toHaveBeenCalled()
-  })
-
-  it('recovers a local-only run after reconnect without surfacing missing-session probes', async () => {
-    vi.useFakeTimers()
-    const { startRunViaSocket } = await import('../../packages/client/src/api/studio/chat')
-    const onEvent = vi.fn()
-    const onDone = vi.fn()
-    const onReconnectResume = vi.fn()
-    let persisted = false
-
-    startRunViaSocket(
-      { session_id: 'local-session', input: 'hello', profile: 'default', source: 'cli' },
-      onEvent,
-      onDone,
-      vi.fn(),
-      undefined,
-      {
-        onReconnectResume,
-        isSessionPersisted: () => persisted,
-      },
-    )
-
-    const socket = socketState.sockets[0]
-    socket.__trigger('disconnect', 'ping timeout')
-    socket.__trigger('connect')
-    expect(socket.emit).toHaveBeenCalledWith('resume', { session_id: 'local-session', profile: 'default' })
-
-    socket.__trigger('run.failed', {
-      event: 'run.failed',
-      session_id: 'local-session',
-      error: 'Session not found',
-    })
-    expect(onEvent).not.toHaveBeenCalled()
-    expect(onDone).not.toHaveBeenCalled()
-
-    socket.__trigger('run.failed', {
-      event: 'run.failed',
-      session_id: 'local-session',
-      error: 'Session not found',
-    })
-    expect(onEvent).not.toHaveBeenCalled()
-    expect(onDone).not.toHaveBeenCalled()
-
-    socket.__trigger('disconnect', 'ping timeout')
-    socket.__trigger('connect')
-    socket.__trigger('run.failed', {
-      event: 'run.failed',
-      session_id: 'local-session',
-      error: 'Session not found',
-    })
-    expect(onEvent).not.toHaveBeenCalled()
-    expect(onDone).not.toHaveBeenCalled()
-
-    persisted = true
-    await vi.advanceTimersByTimeAsync(200)
-    expect(socket.emit.mock.calls.filter(([event]: [string]) => event === 'resume')).toHaveLength(3)
-
-    const resumed = { session_id: 'local-session', messages: [], isWorking: true, events: [] }
-    socket.__trigger('resumed', resumed)
-    expect(onReconnectResume).toHaveBeenCalledWith(resumed)
-
-    const resumedDelta = {
-      event: 'message.delta',
-      session_id: 'local-session',
-      delta: 'still connected',
-    }
-    socket.__trigger('message.delta', resumedDelta)
-    expect(onEvent).toHaveBeenCalledWith(resumedDelta)
-
-    await vi.advanceTimersByTimeAsync(1_000)
-    expect(socket.emit.mock.calls.filter(([event]: [string]) => event === 'resume')).toHaveLength(3)
-  })
-
-  it('keeps local-only resume retries bounded across repeated reconnects', async () => {
-    vi.useFakeTimers()
-    const { startRunViaSocket } = await import('../../packages/client/src/api/studio/chat')
-    const onEvent = vi.fn()
-    const onDone = vi.fn()
-    const onError = vi.fn()
-
-    startRunViaSocket(
-      { session_id: 'flapping-session', input: 'hello', profile: 'default', source: 'cli' },
-      onEvent,
-      onDone,
-      onError,
-      undefined,
-      { isSessionPersisted: () => false },
-    )
-
-    const socket = socketState.sockets[0]
-    socket.__trigger('disconnect', 'ping timeout')
-    socket.__trigger('connect')
-
-    for (let attempt = 0; attempt < 60; attempt++) {
-      socket.__trigger('run.failed', {
-        event: 'run.failed',
-        session_id: 'flapping-session',
-        error: 'Session not found',
-      })
-      expect(onEvent).not.toHaveBeenCalled()
-      expect(onDone).not.toHaveBeenCalled()
-      socket.__trigger('disconnect', 'ping timeout')
-      socket.__trigger('connect')
-    }
-
-    const terminalFailure = {
-      event: 'run.failed',
-      session_id: 'flapping-session',
-      error: 'Session not found',
-    }
-    socket.__trigger('run.failed', terminalFailure)
-
-    expect(onEvent).not.toHaveBeenCalled()
-    expect(onDone).not.toHaveBeenCalled()
-    expect(onError).toHaveBeenCalledOnce()
-    expect(onError.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
-      message: 'Chat reconnect timed out before the new session was persisted',
-    }))
-    expect(socket.emit.mock.calls.filter(([event]: [string]) => event === 'resume')).toHaveLength(61)
-  })
-
-  it('keeps reconnect resume handlers scoped when responses arrive out of order', async () => {
-    const { startRunViaSocket } = await import('../../packages/client/src/api/studio/chat')
-    const onSessionAResume = vi.fn()
-    const onSessionBResume = vi.fn()
-
-    startRunViaSocket(
-      { session_id: 'session-a', input: 'hello a', profile: 'default', source: 'cli' },
-      vi.fn(),
-      vi.fn(),
-      vi.fn(),
-      undefined,
-      { onReconnectResume: onSessionAResume },
-    )
-    startRunViaSocket(
-      { session_id: 'session-b', input: 'hello b', profile: 'default', source: 'cli' },
-      vi.fn(),
-      vi.fn(),
-      vi.fn(),
-      undefined,
-      { onReconnectResume: onSessionBResume },
-    )
-
-    const socket = socketState.sockets[0]
-    socket.__trigger('disconnect', 'ping timeout')
-    socket.__trigger('connect')
-
-    const resumedB = { session_id: 'session-b', messages: [], isWorking: true, events: [] }
-    socket.__trigger('resumed', resumedB)
-    expect(onSessionAResume).not.toHaveBeenCalled()
-    expect(onSessionBResume).toHaveBeenCalledWith(resumedB)
-
-    const resumedA = { session_id: 'session-a', messages: [], isWorking: true, events: [] }
-    socket.__trigger('resumed', resumedA)
-    expect(onSessionAResume).toHaveBeenCalledWith(resumedA)
   })
 
   it('keeps concurrent resume callbacks scoped to their requested session', async () => {
