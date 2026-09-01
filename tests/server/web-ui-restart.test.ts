@@ -3,6 +3,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const spawn = vi.hoisted(() => vi.fn())
 const existsSync = vi.hoisted(() => vi.fn(() => true))
 const utimesSync = vi.hoisted(() => vi.fn())
+const originalProcessSend = process.send
+
+function setProcessSend(send: typeof process.send): void {
+  Object.defineProperty(process, 'send', {
+    configurable: true,
+    value: send,
+    writable: true,
+  })
+}
 
 vi.mock('child_process', () => ({ spawn }))
 vi.mock('fs', () => ({ existsSync, utimesSync }))
@@ -27,6 +36,7 @@ describe('Web UI restart routing', () => {
   afterEach(() => {
     vi.useRealTimers()
     vi.unstubAllEnvs()
+    setProcessSend(originalProcessSend)
   })
 
   it('touches the nodemon restart trigger in development', () => {
@@ -43,10 +53,24 @@ describe('Web UI restart routing', () => {
     expect(spawn).not.toHaveBeenCalled()
   })
 
-  it('keeps Desktop restart ownership in the Electron shell', () => {
+  it('forwards Desktop restart requests to the Electron shell over IPC', () => {
     vi.stubEnv('HERMES_DESKTOP', 'true')
+    const send = vi.fn(() => true)
+    setProcessSend(send as unknown as typeof process.send)
 
-    expect(() => scheduleWebUiRestart()).toThrow('Desktop Runtime must restart through the desktop shell')
+    scheduleWebUiRestart()
+    scheduleWebUiRestart()
+
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(send).toHaveBeenCalledWith({ type: 'hermes-desktop:restart-app' })
+    expect(spawn).not.toHaveBeenCalled()
+  })
+
+  it('rejects Desktop restart requests when the parent IPC channel is unavailable', () => {
+    vi.stubEnv('HERMES_DESKTOP', 'true')
+    setProcessSend(undefined)
+
+    expect(() => scheduleWebUiRestart()).toThrow('Desktop restart IPC channel is unavailable')
     expect(spawn).not.toHaveBeenCalled()
   })
 

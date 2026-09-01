@@ -42,17 +42,31 @@ const DEFAULT_GRACEFUL_STOP_TIMEOUT_MS = 18_000
 const FORCE_KILL_COMMAND_TIMEOUT_MS = 5_000
 const AGENT_BRIDGE_STARTED_MARKER = '[bootstrap] agent bridge started'
 const AGENT_BRIDGE_FAILED_MARKER = '[bootstrap] agent bridge failed to start'
+const DESKTOP_RESTART_REQUEST = 'hermes-desktop:restart-app'
 const execFileAsync = promisify(execFile)
 
 let serverProc: ChildProcess | null = null
 let cachedToken: string | null = null
 let currentServerPort = DEFAULT_PORT
 let unexpectedExitHandler: ((details: { code: number | null; signal: NodeJS.Signals | null }) => void) | null = null
+let restartRequestHandler: (() => void) | null = null
 
 export function setWebUiUnexpectedExitHandler(
   handler: ((details: { code: number | null; signal: NodeJS.Signals | null }) => void) | null,
 ): void {
   unexpectedExitHandler = handler
+}
+
+export function setWebUiRestartRequestHandler(handler: (() => void) | null): void {
+  restartRequestHandler = handler
+}
+
+function isDesktopRestartRequest(message: unknown): boolean {
+  return Boolean(
+    message
+    && typeof message === 'object'
+    && (message as { type?: unknown }).type === DESKTOP_RESTART_REQUEST,
+  )
 }
 
 function posixDescendantPids(rootPid: number): number[] {
@@ -741,7 +755,7 @@ async function launchWebUiServer(webUiDirectory: string, entry: string, env: Nod
   serverProc = spawn(process.execPath, [entry], {
     cwd: webUiDirectory,
     env,
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
     windowsHide: true,
   })
 
@@ -767,6 +781,14 @@ async function launchWebUiServer(webUiDirectory: string, entry: string, env: Nod
     }
   })
   launchedProc.stderr?.on('error', () => { /* EPIPE: ignore */ })
+  launchedProc.on('message', message => {
+    if (serverProc !== launchedProc || !isDesktopRestartRequest(message)) return
+    if (!restartRequestHandler) {
+      console.warn('[desktop] Web UI requested an App restart before a handler was registered')
+      return
+    }
+    restartRequestHandler()
+  })
   launchedProc.on('exit', (code, signal) => {
     console.error(`[webui] server exited code=${code} signal=${signal}`)
     if (serverProc === launchedProc) serverProc = null

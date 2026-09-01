@@ -25,6 +25,20 @@ describe('Runtime install restart wiring', () => {
     expect(desktopMain).toContain("ipcMain.handle('hermes-desktop:restart-app'")
   })
 
+  it('routes authenticated App restart requests through the Desktop child IPC channel', () => {
+    const routes = readFileSync('packages/server/src/modules/hermes/routes/runtime-versions.ts', 'utf8')
+    const restart = readFileSync('packages/server/src/modules/studio/public/web-ui-restart.ts', 'utf8')
+    const desktopServer = readFileSync('packages/desktop/src/main/webui-server.ts', 'utf8')
+    const desktopMain = readFileSync('packages/desktop/src/main/index.ts', 'utf8')
+
+    expect(routes).toContain("post('/api/hermes/runtime-versions/restart-webui', requireSuperAdmin")
+    expect(restart).toContain("process.send({ type: DESKTOP_RESTART_REQUEST })")
+    expect(desktopServer).toContain("stdio: ['ignore', 'pipe', 'pipe', 'ipc']")
+    expect(desktopServer).toContain("launchedProc.on('message'")
+    expect(desktopMain).toContain('setWebUiRestartRequestHandler(() => {')
+    expect(desktopMain).toContain('scheduleAppRestart(250)')
+  })
+
   it('routes source-development restarts through a nodemon watched trigger', () => {
     const restart = readFileSync('packages/server/src/modules/studio/public/web-ui-restart.ts', 'utf8')
     const trigger = readFileSync('packages/server/src/modules/studio/public/dev-restart-trigger.ts', 'utf8')

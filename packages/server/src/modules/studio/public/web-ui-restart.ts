@@ -4,6 +4,7 @@ import { dirname, join, resolve } from 'path'
 import { config } from './config'
 
 let restartScheduled = false
+const DESKTOP_RESTART_REQUEST = 'hermes-desktop:restart-app'
 
 function isDesktopRuntime(): boolean {
   return String(process.env.HERMES_DESKTOP || '').trim().toLowerCase() === 'true'
@@ -30,10 +31,26 @@ function developmentRestartTriggerPath(): string {
   return trigger
 }
 
-/** Schedule a CLI-supervised standalone Web UI restart after the API response. */
+function requestDesktopAppRestart(): void {
+  if (typeof process.send !== 'function' || process.connected === false) {
+    throw new Error('Desktop restart IPC channel is unavailable')
+  }
+  restartScheduled = true
+  try {
+    process.send({ type: DESKTOP_RESTART_REQUEST })
+  } catch (err) {
+    restartScheduled = false
+    throw err
+  }
+}
+
+/** Schedule a host-owned restart after the API response. */
 export function scheduleWebUiRestart(): void {
-  if (isDesktopRuntime()) throw new Error('Desktop Runtime must restart through the desktop shell')
   if (restartScheduled) return
+  if (isDesktopRuntime()) {
+    requestDesktopAppRestart()
+    return
+  }
   if (process.env.NODE_ENV === 'development') {
     const trigger = developmentRestartTriggerPath()
     restartScheduled = true
