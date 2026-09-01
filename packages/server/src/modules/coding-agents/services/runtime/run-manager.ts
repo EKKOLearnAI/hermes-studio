@@ -23,6 +23,7 @@ import { killOwnedProcessTree } from '../../../studio/public/process-tree'
 import { attachPiJsonlReader } from '../pi/jsonl-parser'
 import { normalizePiThinkingLevel } from '../pi/thinking'
 import { compactCodexThread } from './codex-compact'
+import { updateManagedPromptFileSync } from '../prompt-file'
 
 const DEFAULT_IDLE_MS = 30 * 60 * 1000
 const TERMINAL_OUTPUT_FLUSH_MS = 120
@@ -84,6 +85,7 @@ export interface CodingAgentRunLaunch {
   shellCommand: string
   workspaceDir: string
   env?: NodeJS.ProcessEnv
+  promptFile?: string
   state?: SessionState
   sessionSource?: 'global_agent' | 'workflow' | 'group_chat'
   reasoningEffort?: string
@@ -1802,6 +1804,7 @@ export class CodingAgentRunManager {
           ? ['--resume', run.launch.agentNativeSessionId]
           : ['--session-id', run.launch.agentNativeSessionId])
       : []
+    if (run.launch.promptFile) updateManagedPromptFileSync(run.launch.promptFile, systemPrompt)
     const promptArgument = hasArg(run.launch.args, '--append-system-prompt-file')
       ? ''
       : normalizeCliPromptArgument(systemPrompt)
@@ -2340,7 +2343,10 @@ export class CodingAgentRunManager {
       },
     })
 
-    const promptArgument = run.launch.mode === 'scoped' ? '' : normalizeCliPromptArgument(systemPrompt)
+    if (run.launch.promptFile) updateManagedPromptFileSync(run.launch.promptFile, systemPrompt)
+    const promptArgument = run.launch.mode === 'scoped' || run.launch.promptFile
+      ? ''
+      : normalizeCliPromptArgument(systemPrompt)
     const commonArgs = [
       '--json',
       ...CODEX_REASONING_SUMMARY_ARGS,

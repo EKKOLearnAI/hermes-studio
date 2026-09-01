@@ -375,8 +375,11 @@ describe('coding agent resumed session config', () => {
       nativeResume: false,
       provider: 'global',
       model: '',
-      env: {},
+      env: {
+        CODEX_HOME: expect.stringContaining(join('coding-agent', 'model', 'default', 'global', 'codex', 'runs')),
+      },
       args: [],
+      promptFile: expect.stringContaining(join('AGENTS.md')),
     }))
     expect(updateSessionMock).toHaveBeenCalledWith('session-1', expect.objectContaining({
       agent_mode: 'global',

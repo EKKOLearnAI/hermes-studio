@@ -955,6 +955,62 @@ describe('coding agent Windows process launch', () => {
     ;(manager as any).sessionIndex.clear()
   })
 
+  it('keeps long global Codex prompts in the Studio-owned prompt file', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'hermes-global-codex-prompt-'))
+    const promptPath = join(tempDir, 'AGENTS.md')
+    writeFileSync(promptPath, [
+      'User global Codex instructions.',
+      '',
+      '<!-- BEGIN HERMES WEB UI PROMPT -->',
+      'old Studio prompt',
+      '<!-- END HERMES WEB UI PROMPT -->',
+      '',
+    ].join('\n'))
+
+    try {
+      const manager = new CodingAgentRunManager()
+      ;(manager as any).ensureDbSession = () => {}
+      ;(manager as any).addUserMessage = () => {}
+      ;(manager as any).emitToChat = () => {}
+      ;(manager as any).markChatRunCompleted = () => {}
+
+      manager.start({
+        agentSessionId: 'agent-session-global-codex-file',
+        agentId: 'codex',
+        mode: 'global',
+        profile: 'default',
+        provider: 'global',
+        model: '',
+        sessionId: 'chat-session-global-codex-file',
+        command: 'C:\\Users\\Administrator\\AppData\\Roaming\\npm\\codex.cmd',
+        args: [],
+        env: { CODEX_HOME: tempDir },
+        promptFile: promptPath,
+        shellCommand: 'codex',
+        workspaceDir: process.cwd(),
+        state: { messages: [], isWorking: false, events: [], queue: [] },
+      })
+
+      const longPrompt = `Hermes Windows prompt\n${'详细说明'.repeat(3000)}`
+      manager.send('chat-session-global-codex-file', 'check this', { systemPrompt: longPrompt })
+
+      const commandLine = testState.spawnCalls[0].args[3]
+      expect(commandLine).not.toContain('developer_instructions=')
+      expect(commandLine).not.toContain('详细说明')
+      expect(commandLine.length).toBeLessThan(8191)
+      expect(readFileSync(promptPath, 'utf8')).toContain('User global Codex instructions.')
+      expect(readFileSync(promptPath, 'utf8')).toContain(longPrompt)
+      expect(readFileSync(promptPath, 'utf8').match(/BEGIN HERMES WEB UI PROMPT/g)).toHaveLength(1)
+
+      const run = (manager as any).runs.get('agent-session-global-codex-file')
+      if (run?.idleTimer) clearTimeout(run.idleTimer)
+      ;(manager as any).runs.clear()
+      ;(manager as any).sessionIndex.clear()
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true })
+    }
+  })
+
   it('keeps scoped Claude prompts on file instead of adding a CLI prompt payload', () => {
     const manager = new CodingAgentRunManager()
     ;(manager as any).ensureDbSession = () => {}

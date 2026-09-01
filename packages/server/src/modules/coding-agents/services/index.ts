@@ -1,7 +1,7 @@
 import { execFile } from 'child_process'
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'crypto'
 import { existsSync, readdirSync, realpathSync } from 'fs'
-import { chmod, mkdir, open, readFile, rename, rm, stat, writeFile } from 'fs/promises'
+import { chmod, copyFile, lstat, mkdir, open, readFile, readdir, rename, rm, stat, symlink, writeFile } from 'fs/promises'
 import { homedir } from 'os'
 import { delimiter, dirname, join } from 'path'
 import { promisify } from 'util'
@@ -11,6 +11,7 @@ import { getCompatibleCustomProviders } from '../../studio/contracts/provider-co
 import { registerClaudeCodeProxyTarget } from './claude-code/proxy'
 import { registerCodexProxyTarget, restoreCodexProxyTarget } from './codex/proxy'
 import { compactCodexThread } from './runtime/codex-compact'
+import { hermesPromptDocument, writeManagedPromptFile } from './prompt-file'
 import type { ApiMode, CodingAgentImageInput } from '../protocol/types'
 import { PROVIDER_PRESETS } from '../../studio/contracts/providers'
 import { getModelContextLength, getModelRuntimeCapabilities } from '../../studio/public/provider-runtime'
@@ -67,8 +68,7 @@ const LEGACY_HERMES_MCP_COMMANDS = new Set([
   'hermes-studio-mcp',
 ])
 const HERMES_MCP_MANAGED_ENV_KEY = 'HERMES_WEB_UI_MANAGED_MCP'
-const HERMES_PROMPT_BLOCK_BEGIN = '<!-- BEGIN HERMES WEB UI PROMPT -->'
-const HERMES_PROMPT_BLOCK_END = '<!-- END HERMES WEB UI PROMPT -->'
+const GLOBAL_CODEX_SHADOW_LINK_DIRS = new Set(['memories', 'plugins', 'rules', 'skills', 'vendor_imports', 'visualizations'])
 
 let cachedCodexVersion: { version: string; checkedAt: number } | null = null
 
@@ -290,6 +290,7 @@ export interface CodingAgentLaunchResult {
   env: Record<string, string>
   shellCommand: string
   files: Array<{ key: string; path: string; absolutePath: string }>
+  promptFile?: string
   reasoningEffort?: string
 }
 
@@ -954,54 +955,63 @@ function expandHomePath(path: string): string {
   return path
 }
 
-function hermesPromptDocument(systemPrompt = getSystemPrompt()): string {
-  return [
-    HERMES_PROMPT_BLOCK_BEGIN,
-    systemPrompt.trim(),
-    HERMES_PROMPT_BLOCK_END,
-    '',
-  ].join('\n')
+function getGlobalCodexHome(): string {
+  return process.env.CODEX_HOME?.trim() || join(getGlobalConfigHome(), '.codex')
 }
 
-function upsertManagedMarkdownBlock(existing: string, block: string): string {
-  const normalizedBlock = block.endsWith('\n') ? block : `${block}\n`
-  const start = existing.indexOf(HERMES_PROMPT_BLOCK_BEGIN)
-  const end = existing.indexOf(HERMES_PROMPT_BLOCK_END)
-  if (start >= 0 && end >= start) {
-    const afterEnd = end + HERMES_PROMPT_BLOCK_END.length
-    const before = existing.slice(0, start).replace(/\s*$/, '')
-    const after = existing.slice(afterEnd).replace(/^\s*/, '')
-    return [before, normalizedBlock.trimEnd(), after].filter(Boolean).join('\n\n') + '\n'
-  }
-  const trimmedExisting = existing.replace(/\s*$/, '')
-  if (!trimmedExisting) return normalizedBlock
-  return `${trimmedExisting}\n\n${normalizedBlock}`
+function shouldCopyGlobalCodexFile(name: string): boolean {
+  if (name === 'AGENTS.md' || name === 'AGENTS.override.md') return false
+  if (name === 'history.jsonl' || name === 'session_index.jsonl' || name === 'transcription-history.jsonl') return false
+  if (name === 'codex-tui.log' || name.startsWith('.codex-global-state')) return false
+  if (name.endsWith('.sqlite') || name.endsWith('.sqlite-shm') || name.endsWith('.sqlite-wal')) return false
+  return true
 }
 
-async function writeManagedPromptFile(definition: CodingAgentConfigFileDefinition): Promise<{ key: string; path: string; absolutePath: string }> {
-  let existing = ''
+async function pathEntryExists(path: string): Promise<boolean> {
   try {
-    existing = await readFile(definition.absolutePath, 'utf-8')
+    await lstat(path)
+    return true
   } catch (err: any) {
-    if (err?.code !== 'ENOENT') throw err
-  }
-  const next = upsertManagedMarkdownBlock(existing, hermesPromptDocument())
-  if (next !== existing) {
-    await mkdir(dirname(definition.absolutePath), { recursive: true })
-    await writeFile(definition.absolutePath, next, 'utf-8')
-  }
-  return {
-    key: definition.key,
-    path: definition.path,
-    absolutePath: definition.absolutePath,
+    if (err?.code === 'ENOENT') return false
+    throw err
   }
 }
 
-async function ensureGlobalCodingAgentPromptFile(id: CodingAgentId): Promise<Array<{ key: string; path: string; absolutePath: string }>> {
-  if (id !== 'claude-code') return []
-  const definition = getLiveConfigFileDefinition(id, 'prompt')
-  if (!definition) return []
-  return [await writeManagedPromptFile(definition)]
+async function linkGlobalCodexDirectory(source: string, target: string): Promise<void> {
+  if (await pathEntryExists(target)) return
+  try {
+    await symlink(source, target, process.platform === 'win32' ? 'junction' : 'dir')
+  } catch (err: any) {
+    if (err?.code !== 'EEXIST' && err?.code !== 'EPERM' && err?.code !== 'ENOTSUP') throw err
+  }
+}
+
+async function activeGlobalCodexInstructions(sourceHome: string): Promise<string> {
+  const override = await safeReadFile(join(sourceHome, 'AGENTS.override.md')) || ''
+  if (override.trim()) return override
+  return await safeReadFile(join(sourceHome, 'AGENTS.md')) || ''
+}
+
+async function prepareGlobalCodexShadowHome(rootDir: string, systemPrompt: string): Promise<string> {
+  const sourceHome = getGlobalCodexHome()
+  await mkdir(rootDir, { recursive: true, mode: 0o700 })
+
+  if (sourceHome !== rootDir && existsSync(sourceHome)) {
+    const entries = await readdir(sourceHome, { withFileTypes: true })
+    for (const entry of entries) {
+      const source = join(sourceHome, entry.name)
+      const target = join(rootDir, entry.name)
+      if (entry.isFile() && shouldCopyGlobalCodexFile(entry.name)) {
+        await copyFile(source, target)
+      } else if (entry.isDirectory() && GLOBAL_CODEX_SHADOW_LINK_DIRS.has(entry.name)) {
+        await linkGlobalCodexDirectory(source, target)
+      }
+    }
+  }
+
+  const promptPath = join(rootDir, 'AGENTS.md')
+  await writeManagedPromptFile(promptPath, systemPrompt, await activeGlobalCodexInstructions(sourceHome))
+  return promptPath
 }
 
 function shellQuote(value: string): string {
@@ -2391,17 +2401,33 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
         reasoningEffort: String(input.reasoningEffort || '').trim(),
       }
     }
-    const files = await ensureGlobalCodingAgentPromptFile(tool.id)
-    const promptFile = files.find(file => file.key === 'prompt')?.absolutePath || ''
-    const args = tool.id === 'claude-code'
-      ? [
-          ...(promptFile ? ['--append-system-prompt-file', promptFile] : []),
-          ...claudeCodePermissionArgs(),
-        ]
-      : []
+    const rootDir = getScopedRuntimeConfigRoot(tool.id, scope, input)
+    const systemPrompt = String(input.groupSystemPrompt || '').trim() || getSystemPrompt()
+    await mkdir(rootDir, { recursive: true })
+
+    let promptFile = ''
+    let files: Array<{ key: string; path: string; absolutePath: string }> = []
+    let args: string[] = []
+    let env: Record<string, string> = {}
+
+    if (tool.id === 'claude-code') {
+      promptFile = join(rootDir, 'hermes-rules.md')
+      await writeManagedPromptFile(promptFile, systemPrompt, '')
+      files = [{ key: 'prompt', path: 'hermes-rules.md', absolutePath: promptFile }]
+      args = ['--append-system-prompt-file', promptFile, ...claudeCodePermissionArgs()]
+    } else if (tool.id === 'codex') {
+      promptFile = await prepareGlobalCodexShadowHome(rootDir, systemPrompt)
+      files = [{ key: 'agents', path: 'AGENTS.md', absolutePath: promptFile }]
+      env = { CODEX_HOME: rootDir }
+    } else {
+      promptFile = join(rootDir, 'APPEND_SYSTEM.md')
+      await writeManagedPromptFile(promptFile, systemPrompt, '')
+      files = [{ key: 'prompt', path: 'APPEND_SYSTEM.md', absolutePath: promptFile }]
+      args = ['--append-system-prompt', promptFile]
+    }
     const shellCommand = buildLaunchShellCommand({
       workspaceDir,
-      env: {},
+      env,
       command: tool.command,
       args,
     })
@@ -2411,13 +2437,14 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       profile: scope.profile,
       provider: scope.provider,
       model: '',
-      rootDir: workspaceDir,
+      rootDir,
       workspaceDir,
       command: tool.command,
       args,
-      env: {},
+      env,
       shellCommand,
       files,
+      promptFile,
     }
   }
 
@@ -2720,6 +2747,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     env,
     shellCommand,
     files,
+    promptFile: tool.id === 'claude-code' ? join(rootDir, 'hermes-rules.md') : undefined,
     reasoningEffort,
   }
 }
@@ -2800,6 +2828,7 @@ export async function startCodingAgentRun(
     shellCommand: launch.shellCommand,
     workspaceDir: launch.workspaceDir,
     env: runtimeEnv,
+    promptFile: launch.promptFile,
     state,
     reasoningEffort: launch.reasoningEffort,
     sessionSource: sessionSource === 'global_agent' || sessionSource === 'workflow' || sessionSource === 'group_chat'
