@@ -3035,6 +3035,8 @@ jobTriggered: 'Job ausgelost',
   },
 
   changelog: {
+    new_0_7_15_1: 'Die Hermes-Runtime-Versionserkennung prüft jetzt die ausgewählte lokale Umgebung direkt, ohne Netzwerk-Updateprüfungen auszulösen, sodass Start und Versionsverwaltung auch offline zuverlässig bleiben (#2822)',
+    new_0_7_15_2: 'Beim Aktivieren oder Installieren einer Runtime wird jetzt gefragt, ob sofort neu gestartet werden soll; „beim nächsten Start“ startet Desktop oder eigenständige Web UI nicht mehr automatisch neu (#2822)',
     new_0_7_14_1: 'Ekko begrenzt jetzt jeden Dateilesevorgang auf 50 KB mit Fortsetzung per Byte-Offset und erzeugt plattformeigene Terminalbefehle, sodass Windows keine Unix-spezifischen Befehle mehr erhält (#2812)',
     new_0_7_14_2: 'Desktop und die eigenständige Web UI prüfen jetzt jede Runtime nacheinander mit hermes --version, run_agent.py und cli.py; defekte Versionen werden als nicht verfügbar markiert, der Fallback setzt mit der nächsten Installation fort und die Versionsverwaltung ermöglicht ihren erneuten Download (#2815)',
     new_0_7_13_1: 'Die Installation und Bereinigung der Windows-Runtime wiederholt jetzt Dateivorgänge bei vorübergehenden Sperren durch Defender oder Indexdienste und verhindert so EACCES-, EBUSY-, ENOTEMPTY- und EPERM-Fehler beim Löschen oder Aktivieren heruntergeladener Versionen (#2801)',

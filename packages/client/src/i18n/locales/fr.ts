@@ -3035,6 +3035,8 @@ jobTriggered: 'Job declenche',
   },
 
   changelog: {
+    new_0_7_15_1: 'La détection de version de Hermes Runtime interroge désormais directement l’environnement local sélectionné sans lancer de recherche de mise à jour réseau, pour un démarrage et une gestion des versions fiables hors ligne (#2822)',
+    new_0_7_15_2: 'L’activation ou l’installation d’une Runtime demande désormais s’il faut redémarrer immédiatement ; choisir « au prochain démarrage » ne redémarre plus automatiquement l’application Desktop ni la Web UI autonome (#2822)',
     new_0_7_14_1: 'Ekko limite désormais chaque lecture de fichier à 50 Ko avec reprise par décalage d’octets et génère des commandes de terminal natives de la plateforme, afin que Windows ne reçoive plus de commandes réservées à Unix (#2812)',
     new_0_7_14_2: 'Desktop et la Web UI autonome valident désormais chaque Runtime séquentiellement avec hermes --version, run_agent.py et cli.py ; les versions endommagées sont marquées indisponibles, le repli passe à l’installation suivante et la gestion des versions permet de les retélécharger (#2815)',
     new_0_7_13_1: 'L’installation et le nettoyage du Runtime Windows réessaient désormais les opérations sur les fichiers temporairement verrouillés par Defender ou les indexeurs, évitant les erreurs EACCES, EBUSY, ENOTEMPTY et EPERM lors de la suppression ou de l’activation de versions téléchargées (#2801)',

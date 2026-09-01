@@ -3035,6 +3035,8 @@ jobTriggered: 'Job acionado',
   },
 
   changelog: {
+    new_0_7_15_1: 'A detecção da versão do Hermes Runtime agora consulta diretamente o ambiente local selecionado sem acionar verificações de atualização pela rede, mantendo a inicialização e o gerenciamento de versões confiáveis offline (#2822)',
+    new_0_7_15_2: 'Ativar ou instalar um Runtime agora pergunta se deve reiniciar imediatamente; escolher “na próxima inicialização” não reinicia mais automaticamente o Desktop nem a Web UI independente (#2822)',
     new_0_7_14_1: 'O Ekko agora limita cada leitura de arquivo a 50 KB com continuação por deslocamento de bytes e gera comandos de terminal nativos da plataforma, evitando enviar comandos exclusivos do Unix ao Windows (#2812)',
     new_0_7_14_2: 'O Desktop e a Web UI independente agora validam cada Runtime sequencialmente com hermes --version, run_agent.py e cli.py; versões danificadas são marcadas como indisponíveis, o fallback continua na próxima instalação e o gerenciamento de versões permite baixá-las novamente (#2815)',
     new_0_7_13_1: 'A instalação e a limpeza do Runtime no Windows agora repetem operações em arquivos temporariamente bloqueados pelo Defender ou por indexadores, evitando erros EACCES, EBUSY, ENOTEMPTY e EPERM ao remover ou ativar versões baixadas (#2801)',

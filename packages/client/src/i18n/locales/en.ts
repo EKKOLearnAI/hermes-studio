@@ -3472,6 +3472,8 @@ export default {
 
   // Changelog
   changelog: {
+    new_0_7_15_1: 'Hermes Runtime version detection now probes the selected local environment directly without triggering network update checks, keeping startup and Version Management reliable offline (#2822)',
+    new_0_7_15_2: 'Activating or installing a Runtime now asks whether to restart immediately; choosing “next launch” no longer restarts the desktop or standalone Web UI automatically (#2822)',
     new_0_7_14_1: 'Ekko now caps each file read at 50 KB with byte-offset continuation and generates platform-native terminal commands, so Windows no longer receives Unix-only commands (#2812)',
     new_0_7_14_2: 'Desktop and the standalone Web UI now validate each Runtime sequentially with hermes --version, run_agent.py, and cli.py; broken versions are marked unavailable, fallback continues to the next installed version, and Version Management lets users download them again (#2815)',
     new_0_7_13_1: 'Windows Runtime installation and cleanup now retry files temporarily locked by Defender or indexers, preventing EACCES, EBUSY, ENOTEMPTY, and EPERM failures when removing or activating downloaded versions (#2801)',

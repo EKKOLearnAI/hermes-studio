@@ -3520,6 +3520,8 @@ export default {
 
   // 更新日志
   changelog: {
+    new_0_7_15_1: 'Hermes Runtime 版本检测现在会直接探测选中的本地环境，不再触发网络更新检查，让离线启动和版本管理更加可靠（#2822）',
+    new_0_7_15_2: '启用或安装 Runtime 后现在会询问是否立即重启；选择“下次启动使用”不再自动重启桌面端或独立 Web UI（#2822）',
     new_0_7_14_1: 'Ekko 现在将单次文件读取限制为 50 KB，支持按字节偏移继续读取，并生成平台原生命令，避免向 Windows 发送仅适用于 Unix 的命令（#2812）',
     new_0_7_14_2: 'Desktop 和独立 Web UI 现在会依次通过 hermes --version、run_agent.py 和 cli.py 校验每个 Runtime；损坏版本会标记为不可用，fallback 继续尝试下一个已安装版本，版本管理也可重新下载（#2815）',
     new_0_7_13_1: 'Windows Runtime 安装和清理现在会重试被 Defender 或索引器暂时锁定的文件，避免在删除或启用已下载版本时因 EACCES、EBUSY、ENOTEMPTY 或 EPERM 失败 (#2801)',
