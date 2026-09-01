@@ -2,10 +2,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useChatStore } from '@/stores/hermes/chat'
-import { startRunViaSocket } from '@/api/studio/chat'
-import { archiveSession, fetchSessions } from '@/api/studio/sessions'
+import { resumeSession, startRunViaSocket } from '@/api/hermes/chat'
+import { archiveSession, fetchSessions } from '@/api/hermes/sessions'
 
-vi.mock('@/api/studio/sessions', () => ({
+vi.mock('@/api/hermes/sessions', () => ({
   archiveSession: vi.fn(),
   fetchSessions: vi.fn(),
   fetchSessionMessagesPage: vi.fn(),
@@ -15,7 +15,7 @@ vi.mock('@/api/studio/sessions', () => ({
   setSessionModel: vi.fn(),
 }))
 
-vi.mock('@/api/studio/chat', () => ({
+vi.mock('@/api/hermes/chat', () => ({
   startRunViaSocket: vi.fn(() => ({ abort: vi.fn() })),
   resumeSession: vi.fn((_sessionId: string, cb: (data: any) => void) => {
     cb({ session_id: _sessionId, isWorking: false, messages: [] })
@@ -37,7 +37,7 @@ vi.mock('@/api/client', () => ({
   hasApiKey: () => false,
 }))
 
-vi.mock('@/api/studio/download', () => ({
+vi.mock('@/api/hermes/download', () => ({
   getDownloadUrl: (_path: string, name: string) => `/download/${name}`,
 }))
 
@@ -165,7 +165,6 @@ describe('chat session ordering', () => {
   })
 
   it('does not resume a local-only chat before its first run persists the session', async () => {
-    const { resumeSession } = await import('@/api/studio/chat')
     vi.mocked(fetchSessions).mockResolvedValue([])
 
     const store = useChatStore()
@@ -196,14 +195,11 @@ describe('chat session ordering', () => {
     await store.sendMessage('first message')
     const runCall = vi.mocked(startRunViaSocket).mock.calls.at(-1)
     expect(runCall?.[0]).toEqual(expect.objectContaining({ session_id: newSession.id }))
-    const isSessionPersisted = runCall?.[5]?.isSessionPersisted
-    expect(isSessionPersisted?.()).toBe(false)
 
     const onEvent = runCall?.[1]
     onEvent?.({ event: 'run.started', session_id: newSession.id, run_id: 'run-1' })
 
     expect(newSession.isLocalOnly).toBe(false)
-    expect(isSessionPersisted?.()).toBe(true)
 
     runCall?.[2]?.()
     vi.mocked(resumeSession).mockClear()
@@ -216,29 +212,6 @@ describe('chat session ordering', () => {
       'default',
       'chat-run',
     )
-  })
-
-  it('marks a local-only chat persisted after a successful reconnect resume', async () => {
-    vi.mocked(fetchSessions).mockResolvedValue([])
-
-    const store = useChatStore()
-    const newSession = store.newChat()
-    await store.sendMessage('first message')
-
-    const runCall = vi.mocked(startRunViaSocket).mock.calls.at(-1)
-    const isSessionPersisted = runCall?.[5]?.isSessionPersisted
-    expect(newSession.isLocalOnly).toBe(true)
-    expect(isSessionPersisted?.()).toBe(false)
-
-    runCall?.[5]?.onReconnectResume?.({
-      session_id: newSession.id,
-      messages: [],
-      isWorking: true,
-      events: [],
-    })
-
-    expect(newSession.isLocalOnly).toBe(false)
-    expect(isSessionPersisted?.()).toBe(true)
   })
 
   it('does not let an in-flight session load replace a newly created chat', async () => {

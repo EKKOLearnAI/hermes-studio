@@ -1,11 +1,11 @@
 import { io, type Socket } from 'socket.io-client'
 import { getBaseUrlValue, getApiKey } from '../client'
 import type { ChatCodingAgentId } from '../coding-agents'
-import type { ProviderApiMode } from './provider-api-mode'
+import type { ProviderApiMode } from './system'
 
 export type ContentBlock =
   | { type: 'text'; text: string }
-  | { type: 'image'; name: string; path: string; media_type: string; context?: string; video_frame?: boolean }
+  | { type: 'image'; name: string; path: string; media_type: string; context?: string }
   | { type: 'file'; name: string; path: string; media_type?: string; context?: string }
 
 export interface ChatMessage {
@@ -42,8 +42,6 @@ export interface StartRunRequest {
   /** Per-session reasoning effort override.
    * Empty/undefined = use config.yaml default. */
   reasoning_effort?: string
-  /** Whether completion messages from this session should be pushed. */
-  push_enabled?: boolean
 }
 
 export interface StartRunResponse {
@@ -110,7 +108,6 @@ export interface RunEvent {
   provider?: string
   api_mode?: ProviderApiMode
   reasoning_effort?: string
-  push_enabled?: boolean
   status?: string
   summary?: string
   arguments?: unknown
@@ -133,12 +130,10 @@ export interface RunEvent {
   }>
   generation?: string
   queue_id?: string
-  runtime?: 'hermes' | 'ekko' | 'claude-code' | 'codex' | 'pi' | 'grok'
+  runtime?: 'hermes' | 'ekko' | 'claude-code' | 'codex' | 'pi'
   phase?: 'requesting' | 'waiting_for_tool_batch' | 'stopping_current_turn' | 'starting_queued_message' | 'cancelled'
   guarantee?: 'strict' | 'immediate'
   requested_at?: number
-  timeout_ms?: number
-  remaining_timeout_ms?: number
   reason?: string
   /** True when a terminal event intentionally stopped the previous run. */
   interrupted?: boolean
@@ -161,15 +156,12 @@ export interface RunEvent {
 export interface ResumeSessionPayload {
   session_id: string
   messages: any[]
-  workspaceRunChanges?: import('./sessions').WorkspaceRunChangeSummary[]
   messageTotal?: number
   messageLoadedCount?: number
   messagePageLimit?: number
   hasMoreBefore?: boolean
   isWorking: boolean
   isAborting?: boolean
-  /** Epoch ms the active run began; absent on servers that predate it. */
-  runStartedAt?: number
   events: Array<{ event: string; data: RunEvent }>
   inputTokens?: number
   outputTokens?: number
@@ -179,14 +171,13 @@ export interface ResumeSessionPayload {
   provider?: string
   api_mode?: ProviderApiMode | ''
   reasoning_effort?: string
-  push_enabled?: boolean
   queueLength?: number
   queueMessages?: RunEvent['queued_messages']
   queueInsertion?: {
     generation: string
     run_id?: string
     queue_id: string
-    runtime: 'hermes' | 'ekko' | 'claude-code' | 'codex' | 'pi' | 'grok'
+    runtime: 'hermes' | 'ekko' | 'claude-code' | 'codex' | 'pi'
     phase: 'requesting' | 'waiting_for_tool_batch' | 'stopping_current_turn' | 'starting_queued_message'
     guarantee: 'strict' | 'immediate'
     requested_at: number
