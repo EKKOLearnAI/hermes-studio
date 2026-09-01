@@ -435,6 +435,15 @@ export default {
     aiHelpDrawerTitle: 'Ekko · Diagnóstico de Agent',
     aiHelpGeneralPrompt: 'Use o Skill `hermes-studio-installation` e siga suas instruções de roteamento para escolher a referência adequada ao Agent e ao problema. Ajude-me a diagnosticar ou gerenciar a instalação, atualização ou remoção de Agents neste dispositivo. Verifique a origem real da instalação, todos os caminhos de executáveis resolvidos, o ambiente Node/npm e os prefixos aplicáveis do gerenciador de pacotes. Se faltar contexto, pergunte primeiro qual Agent e sintoma devo resolver. Preserve configurações, autenticação e conversas do usuário e peça confirmação antes de alterações destrutivas.',
     aiHelpPrompt: 'Use o Skill `hermes-studio-installation` e siga suas instruções de roteamento para escolher a referência adequada a este Agent e problema. Diagnostique esta falha da página Agents.\n\nAgent: {name}\nID do Agent: {id}\nOperação: {operation}\nExecutável: {command}\nPacote npm: {package}\nErro original:\n{error}\n\nVerifique a origem da instalação, todos os caminhos de executáveis resolvidos, o ambiente Node/npm e os prefixos aplicáveis do gerenciador de pacotes. Preserve configurações, autenticação e conversas do usuário. Explique primeiro a causa e peça confirmação antes de alterações destrutivas.',
+    legacyDataMigrationTitle: 'Dados antigos do Hermes encontrados',
+    legacyDataMigrationDescription: 'O Hermes Studio encontrou dados em um diretório antigo do Windows. Deseja migrá-los para o diretório atual?',
+    legacyDataMigrationSource: 'Diretório antigo',
+    legacyDataMigrationTarget: 'Diretório atual',
+    legacyDataMigrationWarning: 'O Studio será reiniciado após a confirmação e, antes de iniciar os serviços locais, substituirá arquivos com o mesmo nome pelas cópias antigas, preservando os arquivos exclusivos do diretório atual. Esta pergunta será exibida apenas uma vez.',
+    legacyDataMigrationPositive: 'Migrar dados antigos',
+    legacyDataMigrationNegative: 'Não migrar',
+    legacyDataMigrationSuccess: 'A migração foi agendada. O Hermes Studio será reiniciado e migrará os dados antes de iniciar os serviços locais.',
+    legacyDataMigrationFailed: 'Falha ao migrar os dados antigos do Hermes: {error}',
   },
 
   runtimeVersions: {

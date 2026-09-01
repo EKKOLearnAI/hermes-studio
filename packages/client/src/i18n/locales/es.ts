@@ -435,6 +435,15 @@ export default {
     aiHelpDrawerTitle: 'Ekko · Diagnóstico de Agent',
     aiHelpGeneralPrompt: 'Usa el Skill `hermes-studio-installation` y sigue sus instrucciones de enrutamiento para elegir la referencia adecuada según el Agent y el problema. Ayúdame a diagnosticar o gestionar la instalación, actualización o eliminación de Agents en este dispositivo. Comprueba el origen real de instalación, todas las rutas de ejecutables resueltas, el entorno Node/npm y los prefijos del gestor de paquetes aplicables. Si falta contexto, pregunta primero qué Agent y síntoma debo resolver. Conserva la configuración, autenticación y conversaciones del usuario y solicita confirmación antes de cualquier cambio destructivo.',
     aiHelpPrompt: 'Usa el Skill `hermes-studio-installation` y sigue sus instrucciones de enrutamiento para elegir la referencia adecuada para este Agent y problema. Diagnostica este fallo de la página Agents.\n\nAgent: {name}\nID del Agent: {id}\nOperación: {operation}\nEjecutable: {command}\nPaquete npm: {package}\nError original:\n{error}\n\nComprueba el origen de instalación, todas las rutas de ejecutables resueltas, el entorno Node/npm y los prefijos del gestor de paquetes aplicables. Conserva la configuración, autenticación y conversaciones del usuario. Explica primero la causa y solicita confirmación antes de cualquier cambio destructivo.',
+    legacyDataMigrationTitle: 'Se encontraron datos antiguos de Hermes',
+    legacyDataMigrationDescription: 'Hermes Studio encontró datos en un directorio antiguo de Windows. ¿Desea migrarlos al directorio actual?',
+    legacyDataMigrationSource: 'Directorio antiguo',
+    legacyDataMigrationTarget: 'Directorio actual',
+    legacyDataMigrationWarning: 'Studio se reiniciará tras la confirmación y, antes de iniciar los servicios locales, sobrescribirá los archivos coincidentes con las copias antiguas, conservando los archivos exclusivos del directorio actual. Esta pregunta solo se mostrará una vez.',
+    legacyDataMigrationPositive: 'Migrar datos antiguos',
+    legacyDataMigrationNegative: 'No migrar',
+    legacyDataMigrationSuccess: 'La migración está programada. Hermes Studio se reiniciará y migrará los datos antes de iniciar los servicios locales.',
+    legacyDataMigrationFailed: 'Error al migrar los datos antiguos de Hermes: {error}',
   },
 
   runtimeVersions: {

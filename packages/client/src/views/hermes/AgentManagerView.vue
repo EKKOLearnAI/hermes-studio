@@ -13,11 +13,16 @@ import {
   type CodingAgentUpdateResult,
 } from '@/api/coding-agents'
 import { fetchAgentStatusSnapshot, type AgentStatusSnapshot } from '@/api/agent-status'
+import {
+  decideLegacyWindowsDataMigration,
+  fetchLegacyWindowsDataMigrationStatus,
+} from '@/api/hermes/legacy-data-migration'
 import { fetchRuntimeVersionStatus, type RuntimeVersionStatus } from '@/api/hermes/runtime-versions'
 import HermesDataDirectoryHint from '@/components/hermes/HermesDataDirectoryHint.vue'
 import VersionManagementModal from '@/components/layout/VersionManagementModal.vue'
 import { useAppStore } from '@/stores/hermes/app'
 import { useChatStore } from '@/stores/hermes/chat'
+import { desktopBridge } from '@/utils/desktop-bridge'
 
 const AiHelpChatPanel = defineAsyncComponent(async () => (await import('@/components/hermes/chat/ChatPanel.vue')).default)
 
@@ -91,6 +96,7 @@ const hermesCliDetailsLoading = ref(false)
 const hermesRuntimeStatus = ref<RuntimeVersionStatus | null>(null)
 const aiHelpDrawerVisible = ref(false)
 const aiHelpPrompt = ref('')
+const legacyDataMigrationChecked = ref(false)
 const installing = ref<Record<CodingAgentId, boolean>>({ 'claude-code': false, codex: false, pi: false, grok: false })
 const deleting = ref<Record<CodingAgentId, boolean>>({ 'claude-code': false, codex: false, pi: false, grok: false })
 const checkingUpdate = ref<Record<CodingAgentId, boolean>>({ 'claude-code': false, codex: false, pi: false, grok: false })
@@ -275,6 +281,56 @@ async function openHermesCliDetails() {
   }
 }
 
+async function submitLegacyDataMigrationDecision(action: 'migrate' | 'decline'): Promise<boolean> {
+  try {
+    await decideLegacyWindowsDataMigration(action)
+    if (action === 'migrate') {
+      const bridge = desktopBridge()
+      if (!bridge?.restartApp) throw new Error('Desktop restart is unavailable')
+      message.success(t('agentManager.legacyDataMigrationSuccess'))
+      await bridge.restartApp()
+    }
+    return true
+  } catch (error) {
+    message.error(t('agentManager.legacyDataMigrationFailed', { error: errorMessage(error) }))
+    return false
+  }
+}
+
+async function maybePromptLegacyWindowsDataMigration() {
+  const bridge = desktopBridge()
+  if (legacyDataMigrationChecked.value || bridge?.isDesktop !== true || bridge.platform !== 'win32') return
+  legacyDataMigrationChecked.value = true
+
+  try {
+    const status = await fetchLegacyWindowsDataMigrationStatus()
+    if (!status.shouldPrompt) return
+
+    dialog.warning({
+      title: t('agentManager.legacyDataMigrationTitle'),
+      content: () => h('div', { class: 'legacy-data-migration-dialog' }, [
+        h('p', t('agentManager.legacyDataMigrationDescription')),
+        h('dl', [
+          h('dt', t('agentManager.legacyDataMigrationSource')),
+          h('dd', [h('code', status.sourceDirectory)]),
+          h('dt', t('agentManager.legacyDataMigrationTarget')),
+          h('dd', [h('code', status.targetDirectory)]),
+        ]),
+        h('p', { class: 'legacy-data-migration-warning' }, t('agentManager.legacyDataMigrationWarning')),
+      ]),
+      positiveText: t('agentManager.legacyDataMigrationPositive'),
+      negativeText: t('agentManager.legacyDataMigrationNegative'),
+      closable: false,
+      maskClosable: false,
+      closeOnEsc: false,
+      onPositiveClick: () => submitLegacyDataMigrationDecision('migrate'),
+      onNegativeClick: () => submitLegacyDataMigrationDecision('decline'),
+    })
+  } catch (error) {
+    console.warn('[agent-manager] failed to check legacy Windows Hermes data migration', error)
+  }
+}
+
 async function handleInstall(id: CodingAgentId) {
   installing.value[id] = true
   try {
@@ -327,6 +383,7 @@ onMounted(() => {
     void router.replace({ query })
   }
   void loadCachedStatus()
+  void maybePromptLegacyWindowsDataMigration()
 })
 </script>
 
@@ -620,6 +677,35 @@ onMounted(() => {
 
 :global(.agent-ai-help-dialog p) {
   margin: 0 0 12px;
+}
+
+:global(.legacy-data-migration-dialog p) {
+  margin: 0 0 12px;
+}
+
+:global(.legacy-data-migration-dialog dl) {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 8px 12px;
+  margin: 0 0 12px;
+}
+
+:global(.legacy-data-migration-dialog dt) {
+  color: var(--text-color-2);
+}
+
+:global(.legacy-data-migration-dialog dd) {
+  min-width: 0;
+  margin: 0;
+}
+
+:global(.legacy-data-migration-dialog code) {
+  overflow-wrap: anywhere;
+}
+
+:global(.legacy-data-migration-dialog .legacy-data-migration-warning) {
+  margin-bottom: 0;
+  color: var(--warning-color);
 }
 
 :global(.agent-ai-help-error) {

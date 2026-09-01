@@ -423,6 +423,15 @@ export default {
     aiHelpDrawerTitle: 'Ekko · Agent troubleshooting',
     aiHelpGeneralPrompt: 'Use the `hermes-studio-installation` Skill and follow its routing instructions to select the reference appropriate to the Agent and problem. Help me diagnose or manage Agent installation, updates, or removal on this device. Inspect the actual installation source, every resolved executable path, the Node/npm environment, and the applicable package-manager prefix. Ask which Agent and symptom I need help with if context is missing. Preserve user configuration, authentication, and conversation data, and ask for confirmation before making destructive changes.',
     aiHelpPrompt: 'Use the `hermes-studio-installation` Skill and follow its routing instructions to select the reference appropriate to this Agent and problem. Diagnose this Agents page failure.\n\nAgent: {name}\nAgent ID: {id}\nOperation: {operation}\nExecutable: {command}\nnpm package: {package}\nOriginal error:\n{error}\n\nInspect the installation source, every resolved executable path, Node/npm environment, and applicable package-manager prefix. Preserve user configuration, authentication, and conversation data. Explain the root cause and ask for confirmation before making destructive changes.',
+    legacyDataMigrationTitle: 'Legacy Hermes data found',
+    legacyDataMigrationDescription: 'Hermes Studio found data in a legacy Windows data directory. Would you like to migrate it to the current data directory?',
+    legacyDataMigrationSource: 'Legacy directory',
+    legacyDataMigrationTarget: 'Current directory',
+    legacyDataMigrationWarning: 'Studio will restart after confirmation and, before local services start, overwrite matching files with the legacy copies while preserving current-only files. This question is shown only once.',
+    legacyDataMigrationPositive: 'Migrate legacy data',
+    legacyDataMigrationNegative: 'Do not migrate',
+    legacyDataMigrationSuccess: 'Migration scheduled. Hermes Studio will restart and migrate the data before starting local services.',
+    legacyDataMigrationFailed: 'Legacy Hermes data migration failed: {error}',
   },
 
   runtimeVersions: {

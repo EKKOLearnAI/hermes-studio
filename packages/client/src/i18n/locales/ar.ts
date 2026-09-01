@@ -423,6 +423,15 @@ export default {
     aiHelpDrawerTitle: 'Ekko · استكشاف أخطاء Agent',
     aiHelpGeneralPrompt: 'استخدم Skill باسم `hermes-studio-installation` واتبع تعليمات التوجيه الخاصة به لاختيار المرجع المناسب للـ Agent والمشكلة. ساعدني في تشخيص أو إدارة تثبيت Agents أو تحديثها أو إزالتها على هذا الجهاز. افحص مصدر التثبيت الفعلي وكل مسارات الملفات التنفيذية التي تم حلها وبيئة Node/npm وبادئات مدير الحزم المناسبة. إذا كان السياق غير كافٍ، فاسأل أولاً عن Agent والعرض المطلوب حله. حافظ على إعدادات المستخدم وبيانات المصادقة والمحادثات واطلب التأكيد قبل أي تغييرات مدمرة.',
     aiHelpPrompt: 'استخدم Skill باسم `hermes-studio-installation` واتبع تعليمات التوجيه الخاصة به لاختيار المرجع المناسب لهذا الـ Agent والمشكلة. شخّص هذا الفشل في صفحة Agents.\n\nAgent: {name}\nمعرّف Agent: {id}\nالعملية: {operation}\nالأمر التنفيذي: {command}\nحزمة npm: {package}\nالخطأ الأصلي:\n{error}\n\nافحص مصدر التثبيت وكل مسارات الملفات التنفيذية التي تم حلها وبيئة Node/npm وبادئات مدير الحزم المناسبة. حافظ على إعدادات المستخدم وبيانات المصادقة والمحادثات. اشرح السبب الجذري أولاً واطلب التأكيد قبل أي تغييرات مدمرة.',
+    legacyDataMigrationTitle: 'تم العثور على بيانات Hermes قديمة',
+    legacyDataMigrationDescription: 'عثر Hermes Studio على بيانات في مجلد Windows قديم. هل تريد نقلها إلى مجلد البيانات الحالي؟',
+    legacyDataMigrationSource: 'المجلد القديم',
+    legacyDataMigrationTarget: 'المجلد الحالي',
+    legacyDataMigrationWarning: 'سيُعاد تشغيل Studio بعد التأكيد، وقبل بدء الخدمات المحلية ستُستبدل الملفات المتطابقة بالنسخ القديمة مع الاحتفاظ بالملفات الموجودة فقط في المجلد الحالي. سيظهر هذا السؤال مرة واحدة فقط.',
+    legacyDataMigrationPositive: 'نقل البيانات القديمة',
+    legacyDataMigrationNegative: 'عدم النقل',
+    legacyDataMigrationSuccess: 'تمت جدولة النقل. سيُعاد تشغيل Hermes Studio وينقل البيانات قبل بدء الخدمات المحلية.',
+    legacyDataMigrationFailed: 'فشل نقل بيانات Hermes القديمة: {error}',
   },
 
   runtimeVersions: {

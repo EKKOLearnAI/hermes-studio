@@ -435,6 +435,15 @@ export default {
     aiHelpDrawerTitle: 'Ekko · Agent トラブルシューティング',
     aiHelpGeneralPrompt: '`hermes-studio-installation` Skill のルーティング指示に従い、Agent と問題に適した reference を選択してください。このデバイスでの Agent のインストール、更新、削除に関する診断や管理を支援してください。実際のインストール元、解決されたすべての実行ファイルパス、Node/npm 環境、該当するパッケージマネージャーのプレフィックスを確認してください。コンテキストが不足している場合は、対象の Agent と症状を先に質問してください。ユーザー設定、認証情報、会話データは保持し、破壊的な変更の前には再度確認を求めてください。',
     aiHelpPrompt: '`hermes-studio-installation` Skill のルーティング指示に従い、この Agent と問題に適した reference を選択して、Agents ページでのこの失敗を診断してください。\n\nAgent: {name}\nAgent ID: {id}\n操作: {operation}\n実行コマンド: {command}\nnpm パッケージ: {package}\n元のエラー:\n{error}\n\nインストール元、解決されたすべての実行ファイルパス、Node/npm 環境、該当するパッケージマネージャーのプレフィックスを確認してください。ユーザー設定、認証情報、会話データは保持してください。最初に根本原因を説明し、破壊的な変更の前には再度確認を求めてください。',
+    legacyDataMigrationTitle: '以前の Hermes データが見つかりました',
+    legacyDataMigrationDescription: '以前の Windows データディレクトリに Hermes データが見つかりました。現在のデータディレクトリへ移行しますか？',
+    legacyDataMigrationSource: '以前のディレクトリ',
+    legacyDataMigrationTarget: '現在のディレクトリ',
+    legacyDataMigrationWarning: '確認後に Studio が再起動し、ローカルサービスの開始前に同名ファイルを以前のデータで上書きします。現在のディレクトリにのみあるファイルは保持されます。この確認は一度だけ表示されます。',
+    legacyDataMigrationPositive: '以前のデータを移行',
+    legacyDataMigrationNegative: '移行しない',
+    legacyDataMigrationSuccess: '移行を予約しました。Hermes Studio を再起動し、ローカルサービスの開始前にデータを移行します。',
+    legacyDataMigrationFailed: '以前の Hermes データの移行に失敗しました：{error}',
   },
 
   runtimeVersions: {

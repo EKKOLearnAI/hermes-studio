@@ -435,6 +435,15 @@ export default {
     aiHelpDrawerTitle: 'Ekko · Agent-Fehlerbehebung',
     aiHelpGeneralPrompt: 'Verwende den Skill `hermes-studio-installation` und folge seinen Routing-Anweisungen, um die passende Referenz für Agent und Problem auszuwählen. Hilf mir bei Installation, Updates oder Entfernung von Agents auf diesem Gerät. Prüfe die tatsächliche Installationsquelle, alle aufgelösten Programmpfade, die Node/npm-Umgebung und passende Paketmanager-Präfixe. Frage bei fehlendem Kontext zuerst nach Agent und Symptom. Erhalte Benutzerkonfiguration, Authentifizierung und Unterhaltungsdaten und frage vor destruktiven Änderungen erneut nach Bestätigung.',
     aiHelpPrompt: 'Verwende den Skill `hermes-studio-installation` und folge seinen Routing-Anweisungen, um die passende Referenz für diesen Agent und dieses Problem auszuwählen. Untersuche diesen Fehler auf der Agents-Seite.\n\nAgent: {name}\nAgent-ID: {id}\nVorgang: {operation}\nBefehl: {command}\nnpm-Paket: {package}\nUrsprünglicher Fehler:\n{error}\n\nPrüfe Installationsquelle, alle aufgelösten Programmpfade, die Node/npm-Umgebung und passende Paketmanager-Präfixe. Erhalte Benutzerkonfiguration, Authentifizierung und Unterhaltungsdaten. Erkläre zuerst die Ursache und frage vor destruktiven Änderungen erneut nach Bestätigung.',
+    legacyDataMigrationTitle: 'Alte Hermes-Daten gefunden',
+    legacyDataMigrationDescription: 'Hermes Studio hat Daten in einem früheren Windows-Datenordner gefunden. Möchten Sie diese in den aktuellen Datenordner migrieren?',
+    legacyDataMigrationSource: 'Alter Ordner',
+    legacyDataMigrationTarget: 'Aktueller Ordner',
+    legacyDataMigrationWarning: 'Studio wird nach der Bestätigung neu gestartet und ersetzt vor dem Start der lokalen Dienste gleichnamige Dateien durch die alten Versionen. Nur im aktuellen Ordner vorhandene Dateien bleiben erhalten. Diese Frage wird nur einmal angezeigt.',
+    legacyDataMigrationPositive: 'Alte Daten migrieren',
+    legacyDataMigrationNegative: 'Nicht migrieren',
+    legacyDataMigrationSuccess: 'Die Migration wurde vorgemerkt. Hermes Studio wird neu gestartet und migriert die Daten vor dem Start der lokalen Dienste.',
+    legacyDataMigrationFailed: 'Migration der alten Hermes-Daten fehlgeschlagen: {error}',
   },
 
   runtimeVersions: {

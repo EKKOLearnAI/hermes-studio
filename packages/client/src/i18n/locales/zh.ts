@@ -423,6 +423,15 @@ export default {
     aiHelpDrawerTitle: 'Ekko · Agent 管理排障',
     aiHelpGeneralPrompt: '请使用 `hermes-studio-installation` Skill，并遵循 Skill 自己的路由说明，根据 Agent 和问题类型选择合适的 reference。帮我排查或管理这台设备上的 Agent 安装、更新或删除问题。请检查实际安装来源、所有实际命中的可执行文件路径、Node/npm 环境和对应的包管理器前缀。如果上下文不足，请先询问我要处理的 Agent 和具体症状。不要删除用户配置、认证信息或会话数据，任何破坏性修改都必须再次征得用户确认。',
     aiHelpPrompt: '请使用 `hermes-studio-installation` Skill，并遵循 Skill 自己的路由说明，根据这次 Agent 和问题类型选择合适的 reference，排查这次 Agents 页面操作失败。\n\nAgent：{name}\nAgent ID：{id}\n操作类型：{operation}\n可执行命令：{command}\nnpm 包：{package}\n原始错误：\n{error}\n\n请检查安装来源、所有实际命中的可执行文件路径、Node/npm 环境和对应的包管理器前缀。不要删除用户配置、认证信息或会话数据。先说明根因，任何破坏性修改都必须再次征得用户确认。',
+    legacyDataMigrationTitle: '发现旧版 Hermes 数据',
+    legacyDataMigrationDescription: 'Hermes Studio 在旧版 Windows 数据目录中发现了数据。是否将其迁移到当前数据目录？',
+    legacyDataMigrationSource: '旧目录',
+    legacyDataMigrationTarget: '当前目录',
+    legacyDataMigrationWarning: '同意后 Studio 将自动重启，并在服务启动前用旧目录中的同名文件覆盖当前目录；当前目录独有的文件会保留。此询问只会显示一次。',
+    legacyDataMigrationPositive: '迁移旧数据',
+    legacyDataMigrationNegative: '不迁移',
+    legacyDataMigrationSuccess: '已记录迁移选择，Hermes Studio 将重启并在服务启动前迁移数据。',
+    legacyDataMigrationFailed: '旧版 Hermes 数据迁移失败：{error}',
   },
 
   runtimeVersions: {

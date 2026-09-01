@@ -44,6 +44,7 @@ import {
 import { BrowserManager } from './browser/browser-manager'
 import { BrowserBroker } from './browser/browser-broker'
 import type { BrowserBounds } from './browser/browser-types'
+import { migratePendingLegacyWindowsData } from './legacy-windows-data-migration'
 
 const PORT = Number(process.env.HERMES_DESKTOP_PORT) || 8748
 const START_HIDDEN = process.argv.includes('--hidden')
@@ -943,6 +944,12 @@ async function bootstrap(source?: RuntimeDownloadSource) {
   isBootstrapping = true
 
   try {
+    const legacyMigration = await migratePendingLegacyWindowsData()
+    if (legacyMigration.completed) {
+      console.log('[desktop] migrated legacy Windows Hermes data before starting local services')
+    } else if (legacyMigration.retryPending) {
+      console.warn(`[desktop] legacy Windows Hermes data migration will retry on the next launch: ${legacyMigration.error || 'unknown error'}`)
+    }
     await migratePendingRuntimeRoot(updateSplash)
     repairUpdatedDesktopRuntimeLaunchers()
     const selectedSource = source || envRuntimeDownloadSource()

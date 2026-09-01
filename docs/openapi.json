@@ -93,6 +93,10 @@
       "description": "Runtime and Web UI version management"
     },
     {
+      "name": "Data Migration",
+      "description": "One-time legacy Hermes data migration"
+    },
+    {
       "name": "Write Gate",
       "description": "Hermes Agent write approval review"
     },
@@ -5406,6 +5410,74 @@
             }
           }
         ]
+      }
+    },
+    "/api/hermes/data-migrations/windows-appdata": {
+      "get": {
+        "tags": [
+          "Data Migration"
+        ],
+        "summary": "Get windows-appdata",
+        "description": "GET /api/hermes/data-migrations/windows-appdata",
+        "operationId": "status",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Data Migration"
+        ],
+        "summary": "Create windows-appdata",
+        "description": "POST /api/hermes/data-migrations/windows-appdata",
+        "operationId": "decide",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "action": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "action"
+                ]
+              }
+            }
+          }
+        }
       }
     },
     "/api/hermes/jobs": {
