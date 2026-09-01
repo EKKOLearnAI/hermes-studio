@@ -227,7 +227,7 @@ const sessionEventHandlers = new Map<string, {
   onSubagentEvent?: (event: RunEvent) => void
   onRunStarted: (event: RunEvent) => void
   onRunCompleted: (event: RunEvent) => void
-  onRunFailed: (event: RunEvent) => void
+  onRunFailed: (event: RunEvent) => 'handled' | void
   onCompressionStarted: (event: RunEvent) => void
   onCompressionCompleted: (event: RunEvent) => void
   onAbortStarted: (event: RunEvent) => void
@@ -398,11 +398,10 @@ function globalRunFailedHandler(event: RunEvent): void {
   if (!sid) return
 
   const handlers = sessionEventHandlers.get(sid)
-  if (handlers?.onRunFailed) {
-    handlers.onRunFailed(event)
-  }
+  const failureDisposition = handlers?.onRunFailed(event)
 
-  // Auto-cleanup session handlers on failure (skip if more runs queued)
+  // Auto-cleanup session handlers on failure (skip if retrying or more runs queued)
+  if (failureDisposition === 'handled') return
   if ((event as any).queue_remaining > 0 || (event.background_pending || 0) > 0) return
   sessionEventHandlers.delete(sid)
 }
@@ -656,7 +655,7 @@ export function registerSessionHandlers(
     onSubagentEvent?: (event: RunEvent) => void
     onRunStarted: (event: RunEvent) => void
     onRunCompleted: (event: RunEvent) => void
-    onRunFailed: (event: RunEvent) => void
+    onRunFailed: (event: RunEvent) => 'handled' | void
     onCompressionStarted: (event: RunEvent) => void
     onCompressionCompleted: (event: RunEvent) => void
     onAbortStarted: (event: RunEvent) => void
@@ -925,6 +924,7 @@ export function startRunViaSocket(
   onStarted?: (runId: string) => void,
   options?: {
     onReconnectResume?: (data: ResumeSessionPayload) => void
+    isSessionPersisted?: () => boolean
     transport?: ChatRunTransport
   },
 ): { abort: () => void } {
@@ -949,6 +949,16 @@ export function startRunViaSocket(
   let sawTransientDisconnect = false
   let removeTerminalSocketListeners: () => void = () => {}
   let reconnectResumeHandler: ((data: ResumeSessionPayload) => void) | null = null
+  let reconnectResumeRetryTimer: ReturnType<typeof setTimeout> | null = null
+  let reconnectResumeRetryDelayMs = 100
+  let reconnectResumeRetryAttempts = 0
+  let waitingForLocalPersistence = false
+
+  const clearReconnectResumeRetry = () => {
+    if (reconnectResumeRetryTimer == null) return
+    clearTimeout(reconnectResumeRetryTimer)
+    reconnectResumeRetryTimer = null
+  }
 
   const clearReconnectResumeHandler = () => {
     if (!reconnectResumeHandler) return
@@ -958,15 +968,32 @@ export function startRunViaSocket(
 
   const emitReconnectResume = () => {
     clearReconnectResumeHandler()
-    if (options?.onReconnectResume) {
-      reconnectResumeHandler = (data: ResumeSessionPayload) => {
-        clearReconnectResumeHandler()
-        if (closed || data.session_id !== sid) return
-        options.onReconnectResume?.(data)
-      }
-      socket.on('resumed', reconnectResumeHandler)
+    reconnectResumeHandler = (data: ResumeSessionPayload) => {
+      if (closed || data.session_id !== sid) return
+      clearReconnectResumeHandler()
+      waitingForLocalPersistence = false
+      reconnectResumeRetryDelayMs = 100
+      reconnectResumeRetryAttempts = 0
+      clearReconnectResumeRetry()
+      options?.onReconnectResume?.(data)
     }
+    socket.on('resumed', reconnectResumeHandler)
     socket.emit('resume', { session_id: sid, ...(body.profile ? { profile: body.profile } : {}) })
+  }
+
+  const scheduleReconnectResumeRetry = () => {
+    if (closed || reconnectResumeRetryAttempts >= 60) return false
+    if (reconnectResumeRetryTimer != null) return true
+    reconnectResumeRetryAttempts++
+    const retryDelayMs = reconnectResumeRetryDelayMs
+    reconnectResumeRetryDelayMs = Math.min(reconnectResumeRetryDelayMs * 2, 1_000)
+    reconnectResumeRetryTimer = setTimeout(() => {
+      reconnectResumeRetryTimer = null
+      if (closed) return
+      waitingForLocalPersistence = options?.isSessionPersisted?.() === false
+      emitReconnectResume()
+    }, retryDelayMs)
+    return true
   }
 
   const handleSocketError = (err: Error) => {
@@ -995,12 +1022,15 @@ export function startRunViaSocket(
   const handleSocketReconnect = () => {
     if (closed || !sawTransientDisconnect) return
     sawTransientDisconnect = false
+    waitingForLocalPersistence = options?.isSessionPersisted?.() === false
+    clearReconnectResumeRetry()
     emitReconnectResume()
   }
   socket.on('connect', handleSocketReconnect)
 
   removeTerminalSocketListeners = () => {
     clearReconnectResumeHandler()
+    clearReconnectResumeRetry()
     removeSocketListener(socket, 'connect_error', handleSocketConnectError)
     removeSocketListener(socket, 'disconnect', handleSocketDisconnect)
     removeSocketListener(socket, 'connect', handleSocketReconnect)
@@ -1063,6 +1093,12 @@ export function startRunViaSocket(
     },
     onRunFailed: (evt: RunEvent) => {
       if (closed) return
+      if (waitingForLocalPersistence && evt.error === 'Session not found') {
+        clearReconnectResumeHandler()
+        if (scheduleReconnectResumeRetry()) return 'handled'
+        handleSocketError(new Error('Chat reconnect timed out before the new session was persisted'))
+        return 'handled'
+      }
       onEvent(evt)
       if ((evt as any).queue_remaining > 0) return
       if ((evt.background_pending || 0) > 0) {
