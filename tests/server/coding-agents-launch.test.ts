@@ -1924,6 +1924,8 @@ describe('coding agent launch preparation', () => {
     const chunks: string[] = []
     for await (const chunk of ctx.body) chunks.push(String(chunk))
     const sse = chunks.join('')
+    expect(sse).toMatch(/event: response\.created[\s\S]*"created_at":\d+/)
+    expect(sse).toContain('"sequence_number":0')
     expect(sse).toContain('event: response.output_item.added')
     expect(sse).toContain('event: response.content_part.added')
     expect(sse).toContain('"delta":"p"')

@@ -19,6 +19,7 @@ import {
 } from '../../protocol/adapters/responses'
 import {
   anthropicMessagesSseToResponsesEvents,
+  normalizeResponsesSseEvents,
   openAiChatSseToResponsesEvents,
   openAiResponsesSseToResponsesEvents,
   type CanonicalResponsesEvent,
@@ -181,7 +182,7 @@ function responseEventForCodexClient(target: CodexProxyTarget, event: CanonicalR
 
 function observableResponsesEvents(target: CodexProxyTarget, events: AsyncIterable<CanonicalResponsesEvent>): AsyncIterable<CanonicalResponsesEvent> {
   async function* observe() {
-    for await (const event of events) {
+    for await (const event of normalizeResponsesSseEvents(events)) {
       codingAgentRunManager.handleProxyUsageEvent(target.agentSessionId, event)
       const clientEvent = responseEventForCodexClient(target, event)
       codingAgentRunManager.handleResponseEvent(target.agentSessionId, clientEvent)

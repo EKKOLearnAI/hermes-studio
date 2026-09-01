@@ -12,6 +12,52 @@ export interface CanonicalResponsesEvent {
   data: Record<string, unknown>
 }
 
+/**
+ * Fill wire fields required by strict Responses API clients such as Grok Build.
+ * Some upstream OpenAI-compatible providers omit these fields, while clients
+ * based on the typed Responses schema reject the entire SSE frame without them.
+ */
+export async function* normalizeResponsesSseEvents(
+  events: AsyncIterable<CanonicalResponsesEvent>,
+): AsyncGenerator<CanonicalResponsesEvent> {
+  let nextSequenceNumber = 0
+  const createdAtByResponseId = new Map<string, number>()
+
+  for await (const event of events) {
+    const currentSequenceNumber = Number(event.data.sequence_number)
+    const sequenceNumber = Number.isSafeInteger(currentSequenceNumber) && currentSequenceNumber >= 0
+      ? currentSequenceNumber
+      : nextSequenceNumber
+    nextSequenceNumber = Math.max(nextSequenceNumber, sequenceNumber + 1)
+
+    const response = event.data.response
+    if (!response || typeof response !== 'object' || Array.isArray(response)) {
+      yield {
+        ...event,
+        data: { ...event.data, sequence_number: sequenceNumber },
+      }
+      continue
+    }
+
+    const responseRecord = response as Record<string, unknown>
+    const responseId = String(responseRecord.id || '')
+    const currentCreatedAt = Number(responseRecord.created_at)
+    const createdAt = Number.isSafeInteger(currentCreatedAt) && currentCreatedAt >= 0
+      ? currentCreatedAt
+      : createdAtByResponseId.get(responseId) ?? Math.floor(Date.now() / 1000)
+    if (responseId) createdAtByResponseId.set(responseId, createdAt)
+
+    yield {
+      ...event,
+      data: {
+        ...event.data,
+        sequence_number: sequenceNumber,
+        response: { ...responseRecord, created_at: createdAt },
+      },
+    }
+  }
+}
+
 function safeJsonParse(value: string): any {
   try {
     return JSON.parse(value)

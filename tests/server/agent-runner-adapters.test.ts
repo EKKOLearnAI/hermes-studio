@@ -22,6 +22,7 @@ import {
 } from '../../packages/server/src/modules/coding-agents/protocol/adapters/anthropic-stream'
 import {
   anthropicMessagesSseToResponsesEvents,
+  normalizeResponsesSseEvents,
   openAiChatSseToResponsesEvents,
   openAiResponsesSseToResponsesEvents,
   type CanonicalResponsesEvent,
@@ -1028,6 +1029,18 @@ describe('agent runner Responses stream adapters', () => {
         data: { type: 'response.output_text.delta', delta: 'hi' },
       },
     ])
+  })
+
+  it('fills fields required by strict Responses stream clients', async () => {
+    const events = await collectEvents(normalizeResponsesSseEvents(openAiResponsesSseToResponsesEvents(encodedChunks([
+      'event: response.created\ndata: {"response":{"id":"resp_strict","object":"response","status":"in_progress","model":"test-model","output":[]}}\n\n',
+      'data: {"type":"response.output_text.delta","delta":"hi"}\n\n',
+      'data: {"type":"response.completed","response":{"id":"resp_strict","object":"response","status":"completed","model":"test-model","output":[]}}\n\n',
+    ]))))
+
+    expect(events.map(event => event.data.sequence_number)).toEqual([0, 1, 2])
+    expect((events[0].data.response as any).created_at).toEqual(expect.any(Number))
+    expect((events[2].data.response as any).created_at).toBe((events[0].data.response as any).created_at)
   })
 })
 
