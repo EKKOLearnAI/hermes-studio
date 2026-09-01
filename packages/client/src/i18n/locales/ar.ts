@@ -474,6 +474,11 @@ export default {
     downloadTasks: 'مهام التنزيل',
     downloadStarted: 'بدأ التنزيل',
     activateSuccess: 'تم حفظ اختيار الإصدار. أعد تشغيل Hermes Studio لاستخدامه.',
+    restartPromptTitle: 'Runtime جاهز',
+    restartPromptContent: 'تم تثبيت Hermes Runtime {version}. هل تريد إعادة التشغيل الآن لاستخدامه؟',
+    restartLater: 'لاحقًا',
+    restartNow: 'إعادة التشغيل الآن',
+    restartFailed: 'فشلت إعادة التشغيل',
     jobStatus: {
       queued: 'في الانتظار',
       running: 'قيد التشغيل',

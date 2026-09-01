@@ -75,6 +75,10 @@ vi.mock('@/components/layout/GlobalPendingActions.vue', () => ({
   default: { name: 'GlobalPendingActions', template: '<div class="global-pending-actions-test" />' },
 }))
 
+vi.mock('@/components/layout/RuntimeRestartPrompt.vue', () => ({
+  default: { name: 'RuntimeRestartPrompt', template: '<div class="runtime-restart-prompt-test" />' },
+}))
+
 vi.mock('@/components/hermes/chat/SessionSearchModal.vue', () => ({
   default: { name: 'SessionSearchModal', template: '<div />' },
 }))
@@ -136,6 +140,7 @@ describe('App web pet mounting', () => {
     await flushPromises()
 
     expect(wrapper.findComponent({ name: 'GlobalPendingActions' }).exists()).toBe(true)
+    expect(wrapper.findComponent({ name: 'RuntimeRestartPrompt' }).exists()).toBe(true)
   })
 
   it('mounts the web pet in the browser web app', async () => {

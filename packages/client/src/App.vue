@@ -60,6 +60,10 @@ const GlobalPendingActions = defineAsyncComponent(
   async () =>
     (await import("@/components/layout/GlobalPendingActions.vue")).default,
 );
+const RuntimeRestartPrompt = defineAsyncComponent(
+  async () =>
+    (await import("@/components/layout/RuntimeRestartPrompt.vue")).default,
+);
 
 const {
   isDark,
@@ -312,6 +316,9 @@ useKeyboard();
             v-if="!isDesktopPetRoute && !isStandaloneChatPage"
           />
           <GlobalPendingActions
+            v-if="!isLoginPage && !isDesktopPetRoute && !isStandaloneChatPage"
+          />
+          <RuntimeRestartPrompt
             v-if="!isLoginPage && !isDesktopPetRoute && !isStandaloneChatPage"
           />
         </NNotificationProvider>

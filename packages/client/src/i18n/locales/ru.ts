@@ -396,6 +396,11 @@ export default {
     downloadTasks: 'Задачи загрузки',
     downloadStarted: 'Загрузка начата',
     activateSuccess: 'Выбор версии сохранен. Перезапустите Hermes Studio, чтобы применить его.',
+    restartPromptTitle: 'Runtime готов',
+    restartPromptContent: 'Hermes Runtime {version} установлен. Перезапустить сейчас, чтобы использовать его?',
+    restartLater: 'Позже',
+    restartNow: 'Перезапустить сейчас',
+    restartFailed: 'Не удалось перезапустить',
     jobStatus: {
       queued: 'В очереди',
       running: 'Выполняется',

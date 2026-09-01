@@ -47,12 +47,7 @@ const execFileAsync = promisify(execFile)
 let serverProc: ChildProcess | null = null
 let cachedToken: string | null = null
 let currentServerPort = DEFAULT_PORT
-let runtimeRestartHandler: (() => void) | null = null
 let unexpectedExitHandler: ((details: { code: number | null; signal: NodeJS.Signals | null }) => void) | null = null
-
-export function setWebUiRuntimeRestartHandler(handler: (() => void) | null): void {
-  runtimeRestartHandler = handler
-}
 
 export function setWebUiUnexpectedExitHandler(
   handler: ((details: { code: number | null; signal: NodeJS.Signals | null }) => void) | null,
@@ -775,10 +770,6 @@ async function launchWebUiServer(webUiDirectory: string, entry: string, env: Nod
   launchedProc.on('exit', (code, signal) => {
     console.error(`[webui] server exited code=${code} signal=${signal}`)
     if (serverProc === launchedProc) serverProc = null
-    if (code === 75) {
-      runtimeRestartHandler?.()
-      return
-    }
     if (startupReady && code !== 0 && app.isReady()) {
       unexpectedExitHandler?.({ code, signal })
     }

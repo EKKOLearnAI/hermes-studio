@@ -486,6 +486,11 @@ export default {
     downloadTasks: 'ダウンロードタスク',
     downloadStarted: 'ダウンロードを開始しました',
     activateSuccess: 'バージョン選択を保存しました。Hermes Studio を再起動すると反映されます。',
+    restartPromptTitle: 'Runtime の準備が完了しました',
+    restartPromptContent: 'Hermes Runtime {version} がインストールされました。今すぐ再起動して使用しますか？',
+    restartLater: '後で',
+    restartNow: '今すぐ再起動',
+    restartFailed: '再起動に失敗しました',
     jobStatus: {
       queued: '待機中',
       running: '実行中',

@@ -168,6 +168,7 @@ async function mockGroupChatApi(page: Page, offlinePresence = false) {
 
     if (pathname === '/health') return json({ status: 'ok' })
     if (pathname === '/api/auth/status') return json({ hasPasswordLogin: false, username: null })
+    if (pathname === '/api/hermes/runtime-versions/jobs' && request.method() === 'GET') return json({ jobs: [] })
     if (pathname === '/api/agents/status' && request.method() === 'GET') {
       return json({
         revision: 1,

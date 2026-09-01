@@ -152,6 +152,7 @@ async function mockHistoryApi(page: Page, sessions = historySessions, groupRooms
 
     if (pathname === '/health') return json({ status: 'ok' })
     if (pathname === '/api/auth/status') return json({ hasPasswordLogin: false, username: null })
+    if (pathname === '/api/hermes/runtime-versions/jobs' && request.method() === 'GET') return json({ jobs: [] })
     if (pathname === '/api/hermes/available-models') return json({ default: 'test-model', default_provider: 'test-provider', groups: [TEST_MODEL_GROUP], allProviders: [TEST_MODEL_GROUP], model_aliases: {}, model_visibility: {} })
     if (pathname === '/api/hermes/profiles') return json({ profiles: [{ name: 'default', active: true, model: 'test-model', gateway: 'test' }] })
     if (pathname === '/api/studio/group-chat/rooms') {

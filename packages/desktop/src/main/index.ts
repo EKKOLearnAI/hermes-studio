@@ -19,7 +19,6 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   getToken,
-  setWebUiRuntimeRestartHandler,
   setWebUiUnexpectedExitHandler,
   startWebUiServer,
   stopWebUiServer,
@@ -1252,10 +1251,6 @@ ipcMain.handle('hermes-desktop:retry-bootstrap', async (_event, source?: Runtime
 })
 
 function runDesktopApp() {
-  setWebUiRuntimeRestartHandler(() => {
-    app.relaunch()
-    quitApp()
-  })
   setWebUiUnexpectedExitHandler(details => {
     void recoverUnexpectedWebUiExit(details)
   })

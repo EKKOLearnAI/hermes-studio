@@ -38,6 +38,7 @@ vi.mock('naive-ui', () => ({
 }))
 
 import VersionManagementModal from '@/components/layout/VersionManagementModal.vue'
+import { useRuntimeRestartPrompt } from '@/composables/useRuntimeRestartPrompt'
 
 function runtimeStatus() {
   return {
@@ -75,6 +76,7 @@ function runtimeStatus() {
 
 describe('VersionManagementModal Runtime storage selector', () => {
   beforeEach(() => {
+    useRuntimeRestartPrompt().clearRuntimeRestart()
     for (const mock of Object.values(api)) mock.mockReset()
     selectRuntimeDirectory.mockReset()
     message.success.mockReset()
@@ -253,7 +255,7 @@ describe('VersionManagementModal Runtime storage selector', () => {
     expect(message.success).toHaveBeenCalledWith('runtimeVersions.runtimeDirectorySaved')
   })
 
-  it('restarts standalone Web UI after selecting an installed Runtime', async () => {
+  it('requests global restart confirmation after selecting an installed Runtime', async () => {
     const status = runtimeStatus()
     status.hermes.remoteVersions = ['0.20.4']
     status.hermes.installed = [{
@@ -274,7 +276,8 @@ describe('VersionManagementModal Runtime storage selector', () => {
     await flushPromises()
 
     expect(api.activateRuntimeVersion).toHaveBeenCalledWith('0.20.4')
-    expect(api.restartWebUiAfterRuntimeChange).toHaveBeenCalledTimes(1)
+    expect(api.restartWebUiAfterRuntimeChange).not.toHaveBeenCalled()
+    expect(useRuntimeRestartPrompt().pendingRuntimeRestart.value?.version).toBe('0.20.4')
     wrapper.unmount()
   })
 })

@@ -70,12 +70,10 @@ import {
   type HermesRuntimeSelection,
 } from '../modules/hermes/services/runtime/selection'
 import {
-  configureRuntimeInstallCompletedHandler,
   getRuntimeVersionStatus,
   readActiveVersionManifest,
 } from '../modules/hermes/services/runtime/version-manager'
 import { isHermesAgentAvailable, updateAgentStatus } from '../modules/studio/public/agent-status-registry'
-import { scheduleWebUiRestart } from '../modules/studio/public/web-ui-restart'
 
 // Injected by esbuild at build time; fallback to reading package.json in dev mode
 declare const __APP_VERSION__: string
@@ -398,16 +396,6 @@ export async function bootstrap() {
   }
   const hermesAgentAvailable = isHermesAgentAvailable()
   console.log(`[bootstrap] Hermes Agent inventory status=${hermesAgentAvailable ? 'available' : 'not-installed'}`)
-  configureRuntimeInstallCompletedHandler(() => {
-    if (isDesktopRuntime()) {
-      setTimeout(() => {
-        void getShutdownHandler()('runtime-installed', 75)
-      }, 250).unref?.()
-      return
-    }
-    scheduleWebUiRestart()
-  })
-
   await initLoginLimiter()
   if (skillInjectionDisabled()) {
     console.log('[bootstrap] bundled skill injection disabled by HERMES_WEB_UI_DISABLE_SKILL_INJECTION')

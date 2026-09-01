@@ -274,6 +274,11 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
       return
     }
 
+    if (pathname === '/api/hermes/runtime-versions/jobs' && request.method() === 'GET') {
+      await route.fulfill(jsonResponse({ jobs: [] }))
+      return
+    }
+
     if (pathname === '/api/auth/status') {
       await route.fulfill(jsonResponse({ hasPasswordLogin: true, username: 'playwright' }))
       return

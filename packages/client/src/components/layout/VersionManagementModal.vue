@@ -8,7 +8,6 @@ import {
   downloadRuntimeVersion,
   fetchRuntimeVersionStatus,
   fetchVersionDownloadJobs,
-  restartWebUiAfterRuntimeChange,
   selectRuntimeRoot,
   type InstalledRuntimeVersion,
   type RuntimeVersionStatus,
@@ -18,6 +17,7 @@ import {
   type VersionDownloadSource,
 } from '@/api/hermes/runtime-versions'
 import HermesDataDirectoryHint from '@/components/hermes/HermesDataDirectoryHint.vue'
+import { useRuntimeRestartPrompt } from '@/composables/useRuntimeRestartPrompt'
 import { desktopBridge } from '@/utils/desktop-bridge'
 
 const props = defineProps<{ show: boolean }>()
@@ -25,6 +25,7 @@ const emit = defineEmits<{ (event: 'update:show', value: boolean): void }>()
 
 const { t } = useI18n()
 const message = useMessage()
+const { requestRuntimeRestart } = useRuntimeRestartPrompt()
 
 const status = ref<RuntimeVersionStatus | null>(null)
 const jobs = ref<VersionDownloadJob[]>([])
@@ -33,7 +34,6 @@ const actionLoading = ref<Record<string, boolean>>({})
 const loadError = ref('')
 const cliDetailsShow = ref(false)
 let pollTimer: ReturnType<typeof setInterval> | null = null
-let restartWaitTimer: ReturnType<typeof setInterval> | null = null
 
 const canSelectRuntimeDirectory = computed(() => typeof desktopBridge()?.selectRuntimeDirectory === 'function')
 const isDefaultRuntimeDirectory = computed(() => {
@@ -73,7 +73,6 @@ watch(() => props.show, show => {
 
 onBeforeUnmount(() => {
   stopPolling()
-  if (restartWaitTimer) clearInterval(restartWaitTimer)
 })
 
 function updateShow(show: boolean) {
@@ -120,40 +119,6 @@ async function refreshJobs() {
   } catch {
     stopPolling()
   }
-}
-
-async function restartRuntimeHost() {
-  const bridge = desktopBridge()
-  if (bridge?.isDesktop === true) {
-    if (!bridge.restartApp) throw new Error('Desktop restart is unavailable')
-    await bridge.restartApp()
-    return
-  }
-  await restartWebUiAfterRuntimeChange()
-  waitForWebUiRestart()
-}
-
-function waitForWebUiRestart() {
-  let attempts = 0
-  let sawUnavailable = false
-  restartWaitTimer = setInterval(async () => {
-    attempts += 1
-    try {
-      const response = await fetch('/health', { cache: 'no-store' })
-      if (response.ok && (sawUnavailable || attempts >= 15)) {
-        if (restartWaitTimer) clearInterval(restartWaitTimer)
-        restartWaitTimer = null
-        window.location.reload()
-      }
-    } catch {
-      sawUnavailable = true
-    }
-    if (attempts >= 60) {
-      if (restartWaitTimer) clearInterval(restartWaitTimer)
-      restartWaitTimer = null
-      window.location.reload()
-    }
-  }, 1000)
 }
 
 function startPolling() {
@@ -259,7 +224,7 @@ async function useRuntime(version: string) {
   await runAction(`activate-runtime-${version}`, async () => {
     await activateRuntimeVersion(version)
     message.success(t('runtimeVersions.activateSuccess'))
-    await restartRuntimeHost()
+    requestRuntimeRestart(version)
   })
 }
 

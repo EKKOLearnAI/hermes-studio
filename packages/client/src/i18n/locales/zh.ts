@@ -474,6 +474,11 @@ export default {
     downloadTasks: '下载任务',
     downloadStarted: '已开始下载',
     activateSuccess: '版本选择已保存，重启 Hermes Studio 后生效。',
+    restartPromptTitle: 'Runtime 已就绪',
+    restartPromptContent: 'Hermes Runtime {version} 已安装完成，是否立即重启并使用该版本？',
+    restartLater: '稍后',
+    restartNow: '立即重启',
+    restartFailed: '重启失败',
     jobStatus: {
       queued: '排队中',
       running: '下载中',

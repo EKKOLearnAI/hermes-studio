@@ -148,13 +148,6 @@ interface DownloadProgress {
 }
 
 type DownloadProgressHandler = (progress: DownloadProgress) => void
-type RuntimeInstallCompletedHandler = (runtime: InstalledRuntimeVersion) => void | Promise<void>
-
-let runtimeInstallCompletedHandler: RuntimeInstallCompletedHandler | null = null
-
-export function configureRuntimeInstallCompletedHandler(handler: RuntimeInstallCompletedHandler | null): void {
-  runtimeInstallCompletedHandler = handler
-}
 
 function runtimePlatformKey(platformName = process.platform, archName = process.arch): string {
   const osLabel = platformName === 'win32' ? 'win' : platformName === 'darwin' ? 'mac' : platformName
@@ -961,9 +954,6 @@ function createDownloadJob(
         job.percent = 100
         job.result = result
         job.updatedAt = new Date().toISOString()
-        if (kind === 'runtime' && runtimeInstallCompletedHandler) {
-          void Promise.resolve(runtimeInstallCompletedHandler(result as InstalledRuntimeVersion)).catch(() => undefined)
-        }
       })
       .catch(err => {
         job.status = 'failed'

@@ -486,6 +486,11 @@ export default {
     downloadTasks: 'Tareas de descarga',
     downloadStarted: 'Descarga iniciada',
     activateSuccess: 'Selección de versión guardada. Reinicia Hermes Studio para usarla.',
+    restartPromptTitle: 'Runtime listo',
+    restartPromptContent: 'Hermes Runtime {version} se ha instalado. ¿Reiniciar ahora para usarlo?',
+    restartLater: 'Más tarde',
+    restartNow: 'Reiniciar ahora',
+    restartFailed: 'Error al reiniciar',
     jobStatus: {
       queued: 'En cola',
       running: 'En ejecución',

@@ -486,6 +486,11 @@ export default {
     downloadTasks: '다운로드 작업',
     downloadStarted: '다운로드를 시작했습니다',
     activateSuccess: '버전 선택이 저장되었습니다. Hermes Studio를 다시 시작하면 적용됩니다.',
+    restartPromptTitle: 'Runtime 준비 완료',
+    restartPromptContent: 'Hermes Runtime {version} 설치가 완료되었습니다. 지금 다시 시작하여 사용하시겠습니까?',
+    restartLater: '나중에',
+    restartNow: '지금 다시 시작',
+    restartFailed: '다시 시작 실패',
     jobStatus: {
       queued: '대기 중',
       running: '실행 중',

@@ -474,6 +474,11 @@ export default {
     downloadTasks: 'Download tasks',
     downloadStarted: 'Download started',
     activateSuccess: 'Version selection saved. Restart Hermes Studio to use it.',
+    restartPromptTitle: 'Runtime ready',
+    restartPromptContent: 'Hermes Runtime {version} has been installed. Restart now to use it?',
+    restartLater: 'Later',
+    restartNow: 'Restart now',
+    restartFailed: 'Restart failed',
     jobStatus: {
       queued: 'Queued',
       running: 'Running',
