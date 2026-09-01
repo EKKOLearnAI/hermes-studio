@@ -24,6 +24,8 @@ const COPIED_GLOBAL_DIRS = new Set([
   'workflows',
 ])
 const MANAGED_MCP_MARKER = 'HERMES_WEB_UI_MANAGED_MCP'
+const SCOPED_IDENTITY_BEGIN = '<!-- BEGIN HERMES STUDIO GROK SCOPED IDENTITY -->'
+const SCOPED_IDENTITY_END = '<!-- END HERMES STUDIO GROK SCOPED IDENTITY -->'
 
 export interface GrokRuntimeFiles {
   promptFile: string
@@ -147,8 +149,27 @@ function tomlString(value: string): string {
   return JSON.stringify(value)
 }
 
+function promptIdentityValue(value: string): string {
+  return String(value || '').replace(/[\r\n]+/g, ' ').trim()
+}
+
+export function scopedGrokIdentityPrompt(provider: string, model: string): string {
+  const providerId = promptIdentityValue(provider)
+  const modelId = promptIdentityValue(model)
+  return [
+    SCOPED_IDENTITY_BEGIN,
+    '## Runtime model identity',
+    '',
+    'You are running inside Grok Build as the coding-agent harness. Grok Build is the shell, not necessarily the upstream language model.',
+    `The selected upstream provider is \`${providerId}\` and the exact model ID is \`${modelId}\`.`,
+    `When asked which model you are, answer with \`${modelId}\` and, when useful, provider \`${providerId}\`. Do not answer only "Grok" unless that is the selected model ID.`,
+    SCOPED_IDENTITY_END,
+  ].join('\n')
+}
+
 export async function prepareScopedGrokRuntime(input: {
   rootDir: string
+  provider: string
   model: string
   displayName: string
   proxyBaseUrl: string
@@ -180,7 +201,13 @@ export async function prepareScopedGrokRuntime(input: {
     '',
   ].join('\n')
   await writeFile(configPath, config, 'utf-8')
-  await writeManagedPromptFile(promptFile, input.systemPrompt, input.userInstructions)
+  await writeManagedPromptFile(
+    promptFile,
+    input.systemPrompt,
+    [scopedGrokIdentityPrompt(input.provider, input.model), input.userInstructions.trim()]
+      .filter(Boolean)
+      .join('\n\n'),
+  )
   return {
     promptFile,
     files: [

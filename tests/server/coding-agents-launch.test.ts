@@ -1300,6 +1300,10 @@ describe('coding agent launch preparation', () => {
     expect(config).toContain(`/api/codex-proxy/`)
     expect(config).toContain('[mcp_servers.hermes-studio-api]')
     expect(config).not.toContain('sk-upstream-secret')
+
+    const prompt = readFileSync(join(result.rootDir, 'AGENTS.md'), 'utf-8')
+    expect(prompt).toContain('selected upstream provider is `deepseek`')
+    expect(prompt).toContain('exact model ID is `deepseek-v4-pro`')
   })
 
   it('points Codex Chat Completions providers at the local Responses proxy', async () => {

@@ -2750,6 +2750,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     const baseConfigRoot = getScopedConfigRoot(tool.id, scope)
     const prepared = await prepareScopedGrokRuntime({
       rootDir,
+      provider,
       model,
       displayName: displayNameForModel(model),
       proxyBaseUrl: proxyTarget?.baseUrl || baseUrl,

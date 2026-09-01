@@ -11,6 +11,7 @@ import {
 import { applyGrokStreamEvent } from '../../../../packages/server/src/modules/coding-agents/services/grok/event-adapter'
 import { parseGrokStreamingJsonLine } from '../../../../packages/server/src/modules/coding-agents/services/grok/streaming-json'
 import { buildGrokTurnArgs } from '../../../../packages/server/src/modules/coding-agents/services/grok/turn-process'
+import { updateManagedPromptFileSync } from '../../../../packages/server/src/modules/coding-agents/services/prompt-file'
 
 const roots: string[] = []
 
@@ -59,6 +60,7 @@ describe('Grok runtime isolation', () => {
     const rootDir = makeRoot()
     await prepareScopedGrokRuntime({
       rootDir,
+      provider: 'custom-provider',
       model: 'custom-model',
       displayName: 'Custom Model',
       proxyBaseUrl: 'http://127.0.0.1:8647/api/coding-agents/codex-proxy/test/v1',
@@ -75,6 +77,17 @@ describe('Grok runtime isolation', () => {
     expect(config).toContain('api_backend = "responses"')
     expect(config).toContain('env_key = "HERMES_STUDIO_GROK_API_KEY"')
     expect(config).not.toContain('api_key =')
+
+    const promptPath = join(rootDir, 'AGENTS.md')
+    const prompt = readFileSync(promptPath, 'utf-8')
+    expect(prompt).toContain('Grok Build is the shell, not necessarily the upstream language model.')
+    expect(prompt).toContain('selected upstream provider is `custom-provider`')
+    expect(prompt).toContain('exact model ID is `custom-model`')
+
+    updateManagedPromptFileSync(promptPath, 'Updated workflow instructions.')
+    const updatedPrompt = readFileSync(promptPath, 'utf-8')
+    expect(updatedPrompt).toContain('exact model ID is `custom-model`')
+    expect(updatedPrompt).toContain('Updated workflow instructions.')
   })
 
   it('removes only Studio-managed MCP blocks', () => {
