@@ -503,6 +503,44 @@ describe('coding agent launch preparation', () => {
     expect(readFileSync(join(globalCodexHome, 'AGENTS.md'), 'utf8')).toBe('User global Codex instructions.\n')
   })
 
+  it('launches Grok from an isolated shadow home without changing the user config', async () => {
+    const home = makeHome()
+    const globalGrokHome = join(home, 'global-home', '.grok')
+    const rootDir = join(home, 'coding-agent', 'model', 'default', 'global', 'grok')
+    mkdirSync(globalGrokHome, { recursive: true })
+    writeFileSync(join(globalGrokHome, 'config.toml'), '[models]\ndefault = "grok-4"\n')
+    writeFileSync(join(globalGrokHome, 'auth.json'), '{"token":"user-token"}\n')
+    writeFileSync(join(globalGrokHome, 'AGENTS.md'), 'User global Grok instructions.\n')
+
+    const result = await prepareCodingAgentLaunch('grok', {
+      mode: 'global',
+      profile: 'default',
+    })
+
+    expect(result).toMatchObject({
+      agentId: 'grok',
+      mode: 'global',
+      profile: 'default',
+      provider: 'global',
+      model: '',
+      rootDir,
+      workspaceDir: join(home, 'coding-agent', 'workspace', 'default', 'global'),
+      command: 'grok',
+      args: ['--always-approve', '--no-auto-update'],
+      env: { GROK_HOME: rootDir },
+      promptFile: join(rootDir, 'AGENTS.md'),
+    })
+    expect(result.files).toEqual(expect.arrayContaining([
+      { key: 'config', path: 'config.toml', absolutePath: join(rootDir, 'config.toml') },
+      { key: 'agents', path: 'AGENTS.md', absolutePath: join(rootDir, 'AGENTS.md') },
+    ]))
+    expect(readFileSync(join(rootDir, 'config.toml'), 'utf8')).toContain('[mcp_servers.hermes-studio-api]')
+    expect(readFileSync(join(rootDir, 'auth.json'), 'utf8')).toBe('{"token":"user-token"}\n')
+    expect(readFileSync(join(rootDir, 'AGENTS.md'), 'utf8')).toContain('User global Grok instructions.')
+    expect(readFileSync(join(globalGrokHome, 'config.toml'), 'utf8')).toBe('[models]\ndefault = "grok-4"\n')
+    expect(readFileSync(join(globalGrokHome, 'AGENTS.md'), 'utf8')).toBe('User global Grok instructions.\n')
+  })
+
   it('launches interactive Pi with its global config when requested', async () => {
     const home = makeHome()
 
@@ -1228,6 +1266,40 @@ describe('coding agent launch preparation', () => {
     expect(catalog.models[0].supported_reasoning_levels).toEqual(expect.arrayContaining([
       expect.objectContaining({ effort: 'max' }),
     ]))
+  })
+
+  it('runs scoped Grok through the local proxy without writing the upstream secret to disk', async () => {
+    const home = makeHome()
+
+    const result = await prepareCodingAgentLaunch('grok', {
+      profile: 'default',
+      provider: 'deepseek',
+      model: 'deepseek-v4-pro',
+      baseUrl: 'https://api.deepseek.com',
+      apiKey: 'sk-upstream-secret',
+      apiMode: 'chat_completions',
+      reasoningEffort: 'high',
+    })
+
+    expect(result.rootDir).toBe(join(home, 'coding-agent', 'model', 'default', 'deepseek', 'grok'))
+    expect(result.args).toEqual([
+      '--model', 'hermes-studio',
+      '--always-approve',
+      '--no-auto-update',
+      '--reasoning-effort', 'high',
+    ])
+    expect(result.env.GROK_HOME).toBe(result.rootDir)
+    expect(result.env.HERMES_STUDIO_GROK_API_KEY).toMatch(/^hwui_/)
+    expect(result.env.HERMES_STUDIO_GROK_API_KEY).not.toBe('sk-upstream-secret')
+
+    const config = readFileSync(join(result.rootDir, 'config.toml'), 'utf-8')
+    expect(config).toContain('[model.hermes-studio]')
+    expect(config).toContain('model = "deepseek-v4-pro"')
+    expect(config).toContain('api_backend = "responses"')
+    expect(config).toContain('env_key = "HERMES_STUDIO_GROK_API_KEY"')
+    expect(config).toContain(`/api/codex-proxy/`)
+    expect(config).toContain('[mcp_servers.hermes-studio-api]')
+    expect(config).not.toContain('sk-upstream-secret')
   })
 
   it('points Codex Chat Completions providers at the local Responses proxy', async () => {

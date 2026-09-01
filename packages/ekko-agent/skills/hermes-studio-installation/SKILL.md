@@ -1,6 +1,6 @@
 ---
 name: hermes-studio-installation
-description: Install, detect, validate, update, remove, recover, or migrate Hermes Studio, its managed Hermes Runtime, or the Claude Code, Codex, and Pi coding-agent CLIs. Use for installation status, version checks, Runtime downloads and storage moves, PATH problems, or upgrade failures; do not use for model, Provider, credential, MCP, memory, or Skill configuration.
+description: Install, detect, validate, update, remove, recover, or migrate Hermes Studio, its managed Hermes Runtime, or the Claude Code, Codex, Pi, and Grok coding-agent CLIs. Use for installation status, version checks, Runtime downloads and storage moves, PATH problems, or upgrade failures; do not use for model, Provider, credential, MCP, memory, or Skill configuration.
 metadata:
   keywords:
     - hermes studio installation
@@ -8,6 +8,7 @@ metadata:
     - claude code installation
     - codex installation
     - pi installation
+    - grok installation
 ---
 
 # Hermes Studio installation
@@ -26,7 +27,7 @@ Handle installation and Runtime lifecycle work for Hermes Studio and every Agent
 
 - Read [references/studio.md](references/studio.md) for installing, verifying, or upgrading the Desktop, npm, Docker, or source form of Hermes Studio.
 - Read [references/hermes-runtime.md](references/hermes-runtime.md) for Hermes CLI detection, managed Runtime downloads, validation, activation, upgrades, recovery, or storage migration.
-- Read [references/coding-agents.md](references/coding-agents.md) for Claude Code, Codex, or Pi installation, update checks, removal, PATH diagnosis, and success criteria.
+- Read [references/coding-agents.md](references/coding-agents.md) for Claude Code, Codex, Pi, or Grok installation, update checks, removal, PATH diagnosis, and success criteria.
 
 Read more than one reference only when the request crosses those boundaries.
 

@@ -130,7 +130,7 @@ describe('GroupMessageList scroll behavior', () => {
     expect(wrapper.getComponent({ name: 'VirtualMessageList' }).props('virtualized')).toBe(false)
   })
 
-  it('shows all four agent avatars in the group-chat empty state', () => {
+  it('shows every coding agent avatar in the group-chat empty state', () => {
     const wrapper = mount(GroupMessageList)
     const avatars = wrapper.findAll('.empty-agent-avatar img')
 
@@ -139,6 +139,8 @@ describe('GroupMessageList scroll behavior', () => {
       'Ekko',
       'Codex',
       'Claude',
+      'Pi',
+      'Grok',
     ])
     expect(wrapper.get('.empty-state p').text()).toBe('groupChat.emptyState')
     expect(wrapper.text()).not.toContain('chat.emptyState')

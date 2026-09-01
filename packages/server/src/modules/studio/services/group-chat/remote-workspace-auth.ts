@@ -6,7 +6,7 @@ const MAX_REMOTE_WORKSPACE_REQUESTS_PER_RUN = 200
 
 export type RemoteWorkspaceGrantAgentSnapshot = {
   name: string
-  agent: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi'
+  agent: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi' | 'grok'
   agentMode: 'scoped' | 'global'
   profile: string
   provider: string

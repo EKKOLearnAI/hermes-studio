@@ -12774,6 +12774,9 @@
                   "agent": {
                     "type": "string"
                   },
+                  "agentMode": {
+                    "type": "string"
+                  },
                   "apiMode": {
                     "type": "string"
                   },

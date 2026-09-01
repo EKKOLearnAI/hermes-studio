@@ -2601,7 +2601,7 @@ export default {
     cacheHitRate: 'キャッシュヒット率',
     modelBreakdown: 'モデル別内訳',
     agentBreakdown: 'Agent 別内訳',
-    agents: { hermes: 'Hermes Agent', claudeCode: 'Claude', codex: 'Codex', pi: 'Pi', ekkoAgent: 'Ekko', unknown: '不明' },
+    agents: { hermes: 'Hermes Agent', claudeCode: 'Claude', codex: 'Codex', pi: 'Pi', grok: 'Grok', ekkoAgent: 'Ekko', unknown: '不明' },
     dailyTrend: '日別使用量',
     date: '日付',
     tokens: 'トークン',

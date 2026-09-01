@@ -18,6 +18,8 @@ import { getModelContextLength, getModelRuntimeCapabilities } from '../../studio
 import { getSystemPrompt } from '../../studio/public/runs/prompt'
 import { codingAgentRunManager } from './runtime/run-manager'
 import { PI_EXTENDED_THINKING_LEVEL_MAP, piModelSupportsThinking } from './pi/thinking'
+import { GROK_API_KEY_ENV, GROK_CODING_AGENT_DEFINITION, GROK_PROVIDER_ID } from './grok/definition'
+import { prepareGlobalGrokRuntime, prepareScopedGrokRuntime } from './grok/config'
 import { getSession, updateSession, type HermesSessionRow } from '../../studio/public/sessions'
 import type { SessionState } from '../../studio/contracts/runs/session'
 import { normalizeWindowsCommandPath, windowsCmdShimExecution, windowsCommandNeedsShell, type WindowsCommandExecution } from '../../studio/public/windows-command'
@@ -327,6 +329,7 @@ const TOOL_DEFINITIONS: CodingAgentDefinition[] = [
     command: 'pi',
     packageName: '@earendil-works/pi-coding-agent',
   },
+  GROK_CODING_AGENT_DEFINITION,
 ]
 
 const CONFIG_FILE_DEFINITIONS: Record<CodingAgentId, Array<Omit<CodingAgentConfigFileDefinition, 'absolutePath'> & { scopedPath: string }>> = {
@@ -345,6 +348,11 @@ const CONFIG_FILE_DEFINITIONS: Record<CodingAgentId, Array<Omit<CodingAgentConfi
     { key: 'settings', path: '~/.pi/agent/settings.json', scopedPath: 'settings.json', language: 'json' },
     { key: 'agents', path: '~/.pi/agent/AGENTS.md', scopedPath: 'AGENTS.md', language: 'markdown' },
     { key: 'mcp', path: '~/.pi/agent/mcp.json', scopedPath: 'mcp.json', language: 'json' },
+  ],
+  grok: [
+    { key: 'auth', path: '~/.grok/auth.json', scopedPath: 'auth.json', language: 'json' },
+    { key: 'config', path: '~/.grok/config.toml', scopedPath: 'config.toml', language: 'ini' },
+    { key: 'agents', path: '~/.grok/AGENTS.md', scopedPath: 'AGENTS.md', language: 'markdown' },
   ],
 }
 
@@ -782,9 +790,10 @@ function storedCodingAgentMode(session: HermesSessionRow | null): 'scoped' | 'gl
   return session?.provider === 'global' ? 'global' : 'scoped'
 }
 
-function persistedAgentId(id: string): 'claude' | 'codex' | 'pi' {
+function persistedAgentId(id: string): 'claude' | 'codex' | 'pi' | 'grok' {
   if (id === 'codex') return 'codex'
   if (id === 'pi') return 'pi'
+  if (id === 'grok') return 'grok'
   return 'claude'
 }
 
@@ -2419,6 +2428,17 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       promptFile = await prepareGlobalCodexShadowHome(rootDir, systemPrompt)
       files = [{ key: 'agents', path: 'AGENTS.md', absolutePath: promptFile }]
       env = { CODEX_HOME: rootDir }
+    } else if (tool.id === 'grok') {
+      const prepared = await prepareGlobalGrokRuntime({
+        sourceHome: process.env.GROK_HOME?.trim() || join(getGlobalConfigHome(), '.grok'),
+        rootDir,
+        systemPrompt,
+        managedMcpToml: codexMcpConfigToml(scope.profile),
+      })
+      promptFile = prepared.promptFile
+      files = prepared.files
+      env = { GROK_HOME: rootDir }
+      args = ['--always-approve', '--no-auto-update']
     } else {
       promptFile = join(rootDir, 'APPEND_SYSTEM.md')
       await writeManagedPromptFile(promptFile, systemPrompt, '')
@@ -2629,7 +2649,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       '--model', model,
       ...(reasoningEffort ? ['-c', `model_reasoning_effort=${JSON.stringify(reasoningEffort)}`] : []),
     ]
-  } else {
+  } else if (tool.id === 'pi') {
     if (!existsSync(getPiMcpAdapterEntry())) {
       const err = new Error(`Pi MCP Adapter ${PI_MCP_ADAPTER_VERSION} is not installed. Reinstall Pi from Coding Agents.`)
       ;(err as any).status = 400
@@ -2711,6 +2731,50 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
         ? [input.approveProjectConfig === true ? '--approve' : '--no-approve']
         : []),
     ]
+  } else {
+    const proxyTarget = baseUrl && apiKey
+      ? registerCodexProxyTarget({
+          profile: scope.profile,
+          provider,
+          model,
+          baseUrl,
+          apiKey,
+          apiMode,
+          reasoningEffort,
+          agentId: tool.id,
+          agentSessionId: isolatedInput.agentSessionId,
+          chatSessionId: isolatedInput.sessionId,
+        })
+      : null
+    const capabilities = getModelRuntimeCapabilities({ profile: scope.profile, provider, model })
+    const baseConfigRoot = getScopedConfigRoot(tool.id, scope)
+    const prepared = await prepareScopedGrokRuntime({
+      rootDir,
+      model,
+      displayName: displayNameForModel(model),
+      proxyBaseUrl: proxyTarget?.baseUrl || baseUrl,
+      contextWindow: capabilities.contextWindow,
+      outputLimit: capabilities.outputLimit,
+      reasoningEffort,
+      systemPrompt: scopedSystemPrompt,
+      userInstructions: await safeReadFile(join(baseConfigRoot, 'AGENTS.md')) || '',
+      managedMcpToml: codexMcpConfigToml(
+        scope.profile,
+        await safeReadFile(getLiveConfigFileDefinition(tool.id, 'config')?.absolutePath || ''),
+        await safeReadFile(join(baseConfigRoot, 'config.toml')),
+      ),
+    })
+    files.push(...prepared.files)
+    env = {
+      GROK_HOME: rootDir,
+      [GROK_API_KEY_ENV]: proxyTarget?.token || apiKey,
+    }
+    args = [
+      '--model', GROK_PROVIDER_ID,
+      '--always-approve',
+      '--no-auto-update',
+      ...(reasoningEffort ? ['--reasoning-effort', reasoningEffort] : []),
+    ]
   }
 
   let shellCommand = buildLaunchShellCommand({
@@ -2747,7 +2811,11 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     env,
     shellCommand,
     files,
-    promptFile: tool.id === 'claude-code' ? join(rootDir, 'hermes-rules.md') : undefined,
+    promptFile: tool.id === 'claude-code'
+      ? join(rootDir, 'hermes-rules.md')
+      : tool.id === 'grok'
+        ? join(rootDir, 'AGENTS.md')
+        : undefined,
     reasoningEffort,
   }
 }
@@ -2792,7 +2860,7 @@ export async function startCodingAgentRun(
       ))
     : false
   const existingNativeSessionId = canResumeNativeSession ? existingSession?.agent_native_session_id || '' : ''
-  const agentNativeSessionId = resolvedInput.agentNativeSessionId || existingNativeSessionId || (id === 'claude-code' || id === 'pi' ? randomUUID() : '')
+  const agentNativeSessionId = resolvedInput.agentNativeSessionId || existingNativeSessionId || (id === 'claude-code' || id === 'pi' || id === 'grok' ? randomUUID() : '')
   const launch = await prepareCodingAgentLaunch(id, {
     ...resolvedInput,
     sessionId,

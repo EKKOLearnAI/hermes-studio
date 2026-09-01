@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
@@ -80,6 +80,73 @@ afterEach(() => {
 })
 
 describe('coding agent Windows process launch', () => {
+  it('keeps Grok prompts out of Windows command arguments and settles after process close', () => {
+    const grokHome = mkdtempSync(join(tmpdir(), 'hermes-grok-windows-'))
+    const originalDatabaseUrl = process.env.DATABASE_URL
+    process.env.DATABASE_URL = 'studio-secret-that-must-not-leak'
+    try {
+      const manager = new CodingAgentRunManager()
+      const emitCompletion = vi.fn()
+      ;(manager as any).handleClaudePrintResponseEvent = vi.fn()
+      ;(manager as any).recordGrokNativeSessionId = vi.fn()
+      ;(manager as any).completeClaudePrintTurn = vi.fn((run: any, usage: unknown) => {
+        run.printCompleted = true
+        run.pendingChatCompletionEvent = 'run.completed'
+        run.pendingChatCompletionPayload = { usage }
+      })
+      ;(manager as any).emitAndMarkPrintChatRunCompletedAfterUsage = emitCompletion
+      const userPrompt = '请检查 C:\\项目 & echo %PATH% | whoami'
+      const run: any = {
+        id: 'agent-session-grok-windows',
+        launch: {
+          agentSessionId: 'agent-session-grok-windows',
+          agentNativeSessionId: '11111111-1111-4111-8111-111111111111',
+          agentId: 'grok',
+          mode: 'scoped',
+          profile: 'default',
+          provider: 'global',
+          model: '',
+          sessionId: 'chat-session-grok-windows',
+          command: 'C:\\Tools\\grok.cmd',
+          args: ['--always-approve', '--no-auto-update'],
+          shellCommand: 'grok',
+          workspaceDir: process.cwd(),
+          env: { GROK_HOME: grokHome },
+        },
+        state: { messages: [], isWorking: false, events: [], queue: [] },
+        lastActiveAt: Date.now(),
+        startedAt: Date.now(),
+        exited: false,
+        nativeResumeReady: false,
+      }
+
+      ;(manager as any).startGrokPrintTurn(run, userPrompt)
+
+      const promptPath = join(grokHome, readdirSync(grokHome).find(name => name.startsWith('turn-prompt-')) || '')
+      expect(readFileSync(promptPath, 'utf-8')).toBe(`${userPrompt}\n`)
+      expect(JSON.stringify(testState.spawnCalls[0]?.args)).not.toContain(userPrompt)
+      expect(JSON.stringify(testState.spawnCalls[0]?.args)).toContain('--prompt-file')
+      expect(JSON.stringify(testState.spawnCalls[0]?.args)).toContain('--session-id')
+      expect(testState.spawnCalls[0]?.options.env.DATABASE_URL).toBeUndefined()
+
+      const child = testState.spawnCalls[0]?.child
+      child.stdout.emit('data', Buffer.from('{"type":"end","sessionId":"11111111-1111-4111-8111-111111111111","usage":{"input_tokens":3}}\n'))
+      expect(run.printCompleted).toBe(true)
+      child.emit('close', 0)
+
+      expect(emitCompletion).toHaveBeenCalledWith(
+        run,
+        'run.completed',
+        { usage: { input_tokens: 3 } },
+      )
+      expect(existsSync(promptPath)).toBe(false)
+    } finally {
+      if (originalDatabaseUrl === undefined) delete process.env.DATABASE_URL
+      else process.env.DATABASE_URL = originalDatabaseUrl
+      rmSync(grokHome, { recursive: true, force: true })
+    }
+  })
+
   it('does not inherit unrelated Studio secrets into coding-agent children', () => {
     expect(isolatedCodingAgentChildEnv(
       { PI_CODING_AGENT_DIR: 'C:\\Pi' },

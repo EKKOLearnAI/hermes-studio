@@ -49,13 +49,13 @@ export type { WorkflowCreateInput, WorkflowRecord, WorkflowUpdateInput }
 
 export type WorkflowRuntimeState = 'idle' | 'queued' | 'running' | 'pending_approval' | 'completed' | 'skipped' | 'failed' | 'approval_rejected' | 'canceled'
 export type WorkflowRunType = 'workflow'
-export type WorkflowNodeAgent = 'hermes' | 'ekko-agent' | 'claude-code' | 'codex' | 'pi'
+export type WorkflowNodeAgent = 'hermes' | 'ekko-agent' | 'claude-code' | 'codex' | 'pi' | 'grok'
 
 export interface WorkflowNodeRunTarget {
   type: WorkflowRunType
   source: 'workflow'
-  agent: 'hermes' | 'ekko-agent' | 'claude' | 'codex' | 'pi'
-  codingAgentId?: 'ekko-agent' | 'claude-code' | 'codex' | 'pi'
+  agent: 'hermes' | 'ekko-agent' | 'claude' | 'codex' | 'pi' | 'grok'
+  codingAgentId?: 'ekko-agent' | 'claude-code' | 'codex' | 'pi' | 'grok'
 }
 
 export interface WorkflowRuntimeStatus {
@@ -265,6 +265,14 @@ export function resolveWorkflowNodeRunTarget(agent?: string | null): WorkflowNod
       codingAgentId: 'pi',
     }
   }
+  if (agent === 'grok') {
+    return {
+      type: 'workflow',
+      source: 'workflow',
+      agent: 'grok',
+      codingAgentId: 'grok',
+    }
+  }
   if (agent === 'hermes') {
     return {
       type: 'workflow',
@@ -298,11 +306,11 @@ export function normalizeWorkflowNode(raw: unknown): WorkflowNodeSnapshot | null
     join = orchestration.join
   }
   const agent = typeof data.agent === 'string' && data.agent.trim() ? data.agent.trim() : 'hermes'
-  if (agent !== 'hermes' && agent !== 'ekko-agent' && agent !== 'claude-code' && agent !== 'codex' && agent !== 'pi') {
+  if (agent !== 'hermes' && agent !== 'ekko-agent' && agent !== 'claude-code' && agent !== 'codex' && agent !== 'pi' && agent !== 'grok') {
     throw new Error(`workflow node ${id} has unsupported agent runtime`)
   }
   const agentMode = data.agentMode === 'global' ? 'global' : 'scoped'
-  if (agentMode === 'global' && agent !== 'claude-code' && agent !== 'codex' && agent !== 'pi') {
+  if (agentMode === 'global' && agent !== 'claude-code' && agent !== 'codex' && agent !== 'pi' && agent !== 'grok') {
     throw new Error(`workflow node ${id} cannot use global mode with this agent runtime`)
   }
   const provider = typeof data.provider === 'string' ? data.provider.trim() : ''
@@ -923,7 +931,7 @@ function workflowOutputConditionContext(output: string, edges: WorkflowEdgeSnaps
 
 function isWorkflowCodingAgentSession(session?: { source?: string | null; agent?: string | null; agent_session_id?: string | null } | null): boolean {
   const agent = String(session?.agent || '').trim()
-  return agent === 'ekko-agent' || agent === 'claude' || agent === 'codex' || agent === 'pi' || Boolean(session?.agent_session_id)
+  return agent === 'ekko-agent' || agent === 'claude' || agent === 'codex' || agent === 'pi' || agent === 'grok' || Boolean(session?.agent_session_id)
 }
 
 async function deleteHermesSessionIfPresent(sessionId: string, profile: string): Promise<void> {

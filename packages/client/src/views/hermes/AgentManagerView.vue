@@ -63,6 +63,14 @@ const codingAgents: CodingAgentCard[] = [
     command: 'pi',
     packageName: '@earendil-works/pi-coding-agent',
   },
+  {
+    id: 'grok',
+    name: 'Grok',
+    provider: 'xAI',
+    logo: '/coding-agents/grok.svg',
+    command: 'grok',
+    packageName: '@xai-official/grok',
+  },
 ]
 
 const { t } = useI18n()
@@ -83,13 +91,14 @@ const hermesCliDetailsLoading = ref(false)
 const hermesRuntimeStatus = ref<RuntimeVersionStatus | null>(null)
 const aiHelpDrawerVisible = ref(false)
 const aiHelpPrompt = ref('')
-const installing = ref<Record<CodingAgentId, boolean>>({ 'claude-code': false, codex: false, pi: false })
-const deleting = ref<Record<CodingAgentId, boolean>>({ 'claude-code': false, codex: false, pi: false })
-const checkingUpdate = ref<Record<CodingAgentId, boolean>>({ 'claude-code': false, codex: false, pi: false })
+const installing = ref<Record<CodingAgentId, boolean>>({ 'claude-code': false, codex: false, pi: false, grok: false })
+const deleting = ref<Record<CodingAgentId, boolean>>({ 'claude-code': false, codex: false, pi: false, grok: false })
+const checkingUpdate = ref<Record<CodingAgentId, boolean>>({ 'claude-code': false, codex: false, pi: false, grok: false })
 const updateInfo = ref<Record<CodingAgentId, CodingAgentUpdateResult | null>>({
   'claude-code': null,
   codex: null,
   pi: null,
+  grok: null,
 })
 
 const hermesStatus = computed(() => agentStatusSnapshot.value?.agents.find(agent => agent.id === 'hermes'))

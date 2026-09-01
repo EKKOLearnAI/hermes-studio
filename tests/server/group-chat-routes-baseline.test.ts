@@ -45,7 +45,7 @@ describe('group chat REST route baseline', () => {
       source: 'user-cli',
       path: '/usr/local/bin/hermes',
     })
-    for (const id of ['claude-code', 'codex', 'pi'] as const) {
+    for (const id of ['claude-code', 'codex', 'pi', 'grok'] as const) {
       updateAgentStatus(id, { installed: true, source: 'user-cli', path: `/usr/local/bin/${id}` })
     }
     storage = {
@@ -1300,7 +1300,7 @@ describe('group chat REST route baseline', () => {
     })
     expect(unsupported.status).toBe(400)
     await expect(unsupported.json()).resolves.toEqual({
-      error: 'Global mode is only available for Claude, Codex, and Pi',
+      error: 'Global mode is only available for Claude, Codex, Pi, and Grok',
     })
   })
 

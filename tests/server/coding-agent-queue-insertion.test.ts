@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
 import { CodingAgentRunManager } from '../../packages/server/src/modules/coding-agents/services/runtime/run-manager'
 
-function managedRun(agentId: 'claude-code' | 'codex' | 'pi' = 'codex') {
+function managedRun(agentId: 'claude-code' | 'codex' | 'pi' | 'grok' = 'codex') {
   const runMarker = 'coding-agent-turn-1'
   return {
     id: 'agent-session-1',
@@ -49,7 +49,7 @@ function managedRun(agentId: 'claude-code' | 'codex' | 'pi' = 'codex') {
 }
 
 describe('coding-agent immediate queue insertion', () => {
-  it.each(['claude-code', 'codex', 'pi'] as const)(
+  it.each(['claude-code', 'codex', 'pi', 'grok'] as const)(
     'terminalizes and releases an active %s one-shot run',
     async (agentId) => {
       const manager = new CodingAgentRunManager()

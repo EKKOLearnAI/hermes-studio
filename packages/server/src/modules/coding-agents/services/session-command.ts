@@ -231,7 +231,9 @@ export async function handleCodingAgentSessionCommand(
       ? 'Codex'
       : compactAgentId === 'pi'
         ? 'Pi'
-        : 'Claude Code'
+        : compactAgentId === 'grok'
+          ? 'Grok'
+          : 'Claude Code'
     emitCommand({
       action: 'compact',
       terminal: false,
@@ -286,8 +288,8 @@ async function restartCodingAgentRunForCompact(
   afterTokens?: number | null
 }> {
   const row = getSession(sessionId)
-  if (!row || (row.agent !== 'codex' && row.agent !== 'claude')) {
-    throw new Error('Coding agent session not found or is not a Codex/Claude Code session')
+  if (!row || (row.agent !== 'codex' && row.agent !== 'claude' && row.agent !== 'grok')) {
+    throw new Error('Coding agent session not found or does not support native compaction')
   }
   if (row.agent === 'codex') {
     if (String(args || '').trim()) {
@@ -295,7 +297,7 @@ async function restartCodingAgentRunForCompact(
     }
     return compactStoredCodingAgentSession(sessionId, profile)
   }
-  const agentId = 'claude-code'
+  const agentId = row.agent === 'grok' ? 'grok' : 'claude-code'
   await startCodingAgentRun(agentId, {
     sessionId,
     profile,

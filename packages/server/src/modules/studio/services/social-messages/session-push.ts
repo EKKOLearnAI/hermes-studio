@@ -23,7 +23,7 @@ import { listTelegramRecipients } from './telegram-runtime'
 import { listWeixinRecipients } from './weixin-runtime'
 
 export type SessionPushEvent = 'run.completed' | 'approval.requested' | 'clarify.requested'
-export type SessionPushAgent = 'bridge' | 'ekko' | 'claude-code' | 'codex' | 'pi'
+export type SessionPushAgent = 'bridge' | 'ekko' | 'claude-code' | 'codex' | 'pi' | 'grok'
 
 interface SessionPushDependencies {
   readSession: (sessionId: string) => HermesSessionRow | null

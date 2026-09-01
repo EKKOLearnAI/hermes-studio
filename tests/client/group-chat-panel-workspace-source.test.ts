@@ -2,13 +2,15 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 describe('GroupChatPanel workspace save handling', () => {
-  it('offers Pi in ordinary and paired group chat and filters it as the Pi provider target', () => {
+  it('offers Pi and Grok in ordinary and paired group chat and filters each provider target', () => {
     const panel = readFileSync('packages/client/src/components/hermes/group-chat/GroupChatPanel.vue', 'utf8')
     const linkView = readFileSync('packages/client/src/views/hermes/GroupChatLinkView.vue', 'utf8')
 
     for (const source of [panel, linkView]) {
       expect(source).toContain("{ label: 'Pi', value: 'pi' }")
       expect(source).toMatch(/selectedAgentType\.value === 'pi'[\s\S]*?\\? 'pi'/)
+      expect(source).toContain("{ label: 'Grok', value: 'grok' }")
+      expect(source).toContain("selectedAgentType.value === 'grok'")
     }
   })
 
@@ -538,7 +540,7 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(source).toContain('normalizeCodingAgentApiMode(')
     expect(source).toContain("v-if=\"selectedAgentType !== 'hermes' && !usesGlobalAgentMode\"")
     for (const modelSource of [source, linkView]) {
-      expect(modelSource).toContain("const supportsGlobalAgentMode = computed(() => ['claude', 'codex', 'pi'].includes(selectedAgentType.value))")
+      expect(modelSource).toContain("const supportsGlobalAgentMode = computed(() => ['claude', 'codex', 'pi', 'grok'].includes(selectedAgentType.value))")
       expect(modelSource).toContain("v-if=\"!usesGlobalAgentMode\"")
     }
     expect(source).toContain('@update:value="handleAgentModeChange"')

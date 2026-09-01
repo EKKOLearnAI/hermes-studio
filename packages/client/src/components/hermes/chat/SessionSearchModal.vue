@@ -134,12 +134,14 @@ async function openItem(item: SearchItem) {
 
   await ensureChatSessionsLoaded()
   if (!chatStore.sessions.some(session => session.id === item.id) && typeof chatStore.addOrUpdateSession === 'function') {
-    const isCodingAgentSession = item.source === 'coding_agent' || item.agent === 'claude' || item.agent === 'codex' || item.agent === 'pi'
+    const isCodingAgentSession = item.source === 'coding_agent' || item.agent === 'claude' || item.agent === 'codex' || item.agent === 'pi' || item.agent === 'grok'
     const codingAgentId: Session['codingAgentId'] = item.agent === 'codex'
       ? 'codex'
       : item.agent === 'pi'
         ? 'pi'
-        : item.agent === 'claude'
+      : item.agent === 'grok'
+        ? 'grok'
+      : item.agent === 'claude'
           ? 'claude-code'
           : undefined
     chatStore.addOrUpdateSession({

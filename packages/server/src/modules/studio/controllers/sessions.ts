@@ -212,6 +212,7 @@ function isCodingAgentSession(session?: { source?: string | null; agent?: string
     session?.agent === 'claude' ||
     session?.agent === 'codex' ||
     session?.agent === 'pi' ||
+    session?.agent === 'grok' ||
     Boolean(session?.agent_session_id)
 }
 

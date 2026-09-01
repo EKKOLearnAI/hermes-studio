@@ -3316,7 +3316,7 @@ export default {
     cacheHitRate: 'معدل إصابة الذاكرة المؤقتة',
     modelBreakdown: 'التوزيع حسب النموذج',
     agentBreakdown: 'التوزيع حسب الوكيل',
-    agents: { hermes: 'Hermes Agent', claudeCode: 'Claude', codex: 'Codex', pi: 'Pi', ekkoAgent: 'Ekko', unknown: 'غير معروف' },
+    agents: { hermes: 'Hermes Agent', claudeCode: 'Claude', codex: 'Codex', pi: 'Pi', grok: 'Grok', ekkoAgent: 'Ekko', unknown: 'غير معروف' },
     dailyTrend: 'الاستخدام اليومي',
     date: 'التاريخ',
     tokens: 'التوكنات',

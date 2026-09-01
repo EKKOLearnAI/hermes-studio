@@ -106,7 +106,7 @@ const claude = {
   rawVersion: '2.0.0',
 }
 
-const missing = (id: 'codex' | 'pi', name: string, packageName: string) => ({
+const missing = (id: 'codex' | 'pi' | 'grok', name: string, packageName: string) => ({
   id,
   name,
   provider: name,
@@ -177,6 +177,7 @@ function agentStatusSnapshot() {
       { id: 'claude-code', installed: true, source: 'user-cli', path: '/usr/local/bin/claude', version: '2.0.0' },
       { id: 'codex', installed: false, source: 'not-installed', path: '', version: '' },
       { id: 'pi', installed: false, source: 'not-installed', path: '', version: '' },
+      { id: 'grok', installed: false, source: 'not-installed', path: '', version: '' },
     ],
   }
 }
@@ -199,6 +200,7 @@ describe('Agent Manager page', () => {
         claude,
         missing('codex', 'Codex', '@openai/codex'),
         missing('pi', 'Pi', '@earendil-works/pi-coding-agent'),
+        missing('grok', 'Grok', '@xai-official/grok'),
       ],
     })
     api.fetchRuntimeVersionStatus.mockResolvedValue(runtimeStatus())
@@ -262,7 +264,7 @@ describe('Agent Manager page', () => {
     expect(wrapper.get('[data-testid="agent-card-codex"]').text()).toContain('agentManager.codingAgentDescription')
     expect(wrapper.get('[data-testid="agent-card-codex"]').text()).toContain('codingAgents.installNow')
     expect(wrapper.get('.coding-agent-grid').findAll('.agent-card').map(card => card.attributes('data-testid')))
-      .toEqual(['agent-card-ekko', 'agent-card-hermes', 'agent-card-claude-code', 'agent-card-codex', 'agent-card-pi'])
+      .toEqual(['agent-card-ekko', 'agent-card-hermes', 'agent-card-claude-code', 'agent-card-codex', 'agent-card-pi', 'agent-card-grok'])
   })
 
   it('detects the CLI before offering Runtime management in the desktop shell', async () => {
@@ -435,7 +437,7 @@ describe('Agent Manager page', () => {
       success: false,
       message: 'npm install failed',
       tool: missing('codex', 'Codex', '@openai/codex'),
-      tools: [claude, missing('codex', 'Codex', '@openai/codex'), missing('pi', 'Pi', '@earendil-works/pi-coding-agent')],
+      tools: [claude, missing('codex', 'Codex', '@openai/codex'), missing('pi', 'Pi', '@earendil-works/pi-coding-agent'), missing('grok', 'Grok', '@xai-official/grok')],
     })
     const wrapper = mountPage()
     await flushPromises()
@@ -474,7 +476,7 @@ describe('Agent Manager page', () => {
       success: false,
       message: 'Delete completed but the command is still available',
       tool: claude,
-      tools: [claude, missing('codex', 'Codex', '@openai/codex'), missing('pi', 'Pi', '@earendil-works/pi-coding-agent')],
+      tools: [claude, missing('codex', 'Codex', '@openai/codex'), missing('pi', 'Pi', '@earendil-works/pi-coding-agent'), missing('grok', 'Grok', '@xai-official/grok')],
     })
     const wrapper = mountPage()
     await flushPromises()

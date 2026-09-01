@@ -31,6 +31,8 @@ const emptyStateAgents = [
     { name: 'Ekko', src: '/coding-agents/ekko-agent.png' },
     { name: 'Codex', src: '/coding-agents/codex-openai.png' },
     { name: 'Claude', src: '/coding-agents/claude-code.svg' },
+    { name: 'Pi', src: '/coding-agents/pi.svg' },
+    { name: 'Grok', src: '/coding-agents/grok.svg' },
 ]
 const displayMessages = computed(() => groupAgentRunMessages(store.sortedMessages.filter(msg =>
     msg.role !== 'tool' ||

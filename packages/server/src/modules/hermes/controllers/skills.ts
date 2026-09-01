@@ -30,17 +30,19 @@ function requestSkillsDir(ctx: any): string {
   return join(requestProfileDir(ctx), 'skills')
 }
 
-type SkillTarget = 'hermes' | 'claude' | 'codex' | 'pi'
+type SkillTarget = 'hermes' | 'claude' | 'codex' | 'pi' | 'grok'
 
 function requestSkillTarget(ctx: any): SkillTarget {
   const target = String(ctx.query?.target || 'hermes').trim().toLowerCase()
-  return target === 'claude' || target === 'codex' || target === 'pi' ? target : 'hermes'
+  return target === 'claude' || target === 'codex' || target === 'pi' || target === 'grok' ? target : 'hermes'
 }
 
 function globalSkillsDir(target: Exclude<SkillTarget, 'hermes'>): string {
   return target === 'claude'
     ? join(homedir(), '.claude', 'skills')
-    : join(homedir(), '.agents', 'skills')
+    : target === 'grok'
+      ? join(homedir(), '.grok', 'skills')
+      : join(homedir(), '.agents', 'skills')
 }
 
 function codexSystemSkillsDir(): string {

@@ -24,6 +24,8 @@ import { attachPiJsonlReader } from '../pi/jsonl-parser'
 import { normalizePiThinkingLevel } from '../pi/thinking'
 import { compactCodexThread } from './codex-compact'
 import { updateManagedPromptFileSync } from '../prompt-file'
+import { startGrokTurnProcess } from '../grok/turn-process'
+import { applyGrokStreamEvent } from '../grok/event-adapter'
 
 const DEFAULT_IDLE_MS = 30 * 60 * 1000
 const TERMINAL_OUTPUT_FLUSH_MS = 120
@@ -300,18 +302,20 @@ function truncateCodingAgentToolOutputEvent(event: CanonicalResponsesEvent): Can
 }
 
 function isPrintAgent(agentId: string): boolean {
-  return agentId === 'claude-code' || agentId === 'codex' || agentId === 'pi'
+  return agentId === 'claude-code' || agentId === 'codex' || agentId === 'pi' || agentId === 'grok'
 }
 
-function persistedCodingAgent(agentId: string): 'claude' | 'codex' | 'pi' {
+function persistedCodingAgent(agentId: string): 'claude' | 'codex' | 'pi' | 'grok' {
   if (agentId === 'codex') return 'codex'
   if (agentId === 'pi') return 'pi'
+  if (agentId === 'grok') return 'grok'
   return 'claude'
 }
 
-function usageCodingAgent(agentId: string): 'claude_code' | 'codex' | 'pi' {
+function usageCodingAgent(agentId: string): 'claude_code' | 'codex' | 'pi' | 'grok' {
   if (agentId === 'codex') return 'codex'
   if (agentId === 'pi') return 'pi'
+  if (agentId === 'grok') return 'grok'
   return 'claude_code'
 }
 
@@ -323,6 +327,16 @@ function hasManagedHermesMcpConfig(run: ManagedCodingAgentRun): boolean {
     try {
       const config = readFileSync(join(piHome, 'mcp.json'), 'utf-8')
       return config.includes('"hermes-studio-api"') && config.includes('"hermes-studio-use"')
+    } catch {
+      return false
+    }
+  }
+  if (run.launch.agentId === 'grok') {
+    const grokHome = String(run.launch.env?.GROK_HOME || '').trim()
+    if (!grokHome) return false
+    try {
+      const config = readFileSync(join(grokHome, 'config.toml'), 'utf-8')
+      return config.includes('[mcp_servers.hermes-studio-api]') && config.includes('[mcp_servers.hermes-studio-use]')
     } catch {
       return false
     }
@@ -685,7 +699,13 @@ export class CodingAgentRunManager {
           throw err
         }
       }
-      const agentName = launch.agentId === 'codex' ? 'Codex' : launch.agentId === 'pi' ? 'Pi' : 'Claude Code'
+      const agentName = launch.agentId === 'codex'
+        ? 'Codex'
+        : launch.agentId === 'pi'
+          ? 'Pi'
+          : launch.agentId === 'grok'
+            ? 'Grok'
+            : 'Claude Code'
       this.emitTerminalStatus(run, `${agentName} chat runner ready.`)
       logger.info({
         runId: run.id,
@@ -779,6 +799,10 @@ export class CodingAgentRunManager {
       this.startCodexExecTurn(run, text, systemPrompt, images)
       return { runId: run.id, messageId }
     }
+    if (run.launch.agentId === 'grok') {
+      this.startGrokPrintTurn(run, text, systemPrompt, images)
+      return { runId: run.id, messageId }
+    }
     if (run.launch.agentId === 'pi') {
       try {
         this.startPiRpcTurn(run, text, systemPrompt, images)
@@ -848,6 +872,11 @@ export class CodingAgentRunManager {
         },
         workspaceDir: run.launch.workspaceDir,
       }, nativeSessionId)
+    }
+    if (run.launch.agentId === 'grok') {
+      if (!nativeSessionId) throw new Error('Grok session has no native session to compact')
+      this.startGrokPrintTurn(run, `/compact${args ? ` ${args}` : ''}`, '', [])
+      return { started: true }
     }
     throw new Error(`Native /compact is not supported for ${run.launch.agentId}`)
   }
@@ -2307,6 +2336,118 @@ export class CodingAgentRunManager {
         },
       },
     })
+  }
+
+  private startGrokPrintTurn(
+    run: ManagedCodingAgentRun,
+    input: string,
+    systemPrompt = '',
+    images: CodingAgentImageInput[] = [],
+  ) {
+    if (childIsRunning(run.currentChild)) throw new Error('Grok is still processing the previous input')
+
+    const responseId = `resp_${Date.now()}`
+    run.printResponseId = responseId
+    run.printMessageId = `msg_${responseId}`
+    run.printTextStarted = false
+    run.printText = ''
+    run.printCompleted = false
+    run.responseStartEmitted = false
+    run.terminalEventHandled = false
+    run.codexToolBlocks = new Map()
+    run.codexPendingUsage = undefined
+    run.codexPendingError = undefined
+    run.currentChildStderr = ''
+    run.runMarker = undefined
+    run.memoryExportStarted = false
+
+    this.handleClaudePrintResponseEvent(run, {
+      type: 'response.created',
+      data: {
+        type: 'response.created',
+        response: { id: responseId, object: 'response', status: 'in_progress', model: run.launch.model, output: [] },
+      },
+    })
+    if (run.launch.promptFile) updateManagedPromptFileSync(run.launch.promptFile, systemPrompt)
+
+    const rootDir = String(run.launch.env?.GROK_HOME || '').trim()
+    if (!rootDir) throw new Error('Grok runtime home is missing')
+    const child = startGrokTurnProcess({
+      command: run.launch.command,
+      baseArgs: run.launch.args,
+      rootDir,
+      workspaceDir: existsSync(run.launch.workspaceDir) ? run.launch.workspaceDir : homedir(),
+      env: run.launch.mode === 'global'
+        ? { ...process.env, ...(run.launch.env || {}) }
+        : isolatedCodingAgentChildEnv(run.launch.env),
+      nativeSessionId: String(run.launch.agentNativeSessionId || ''),
+      resume: run.nativeResumeReady === true,
+      input,
+      images,
+      onEvent: (event) => {
+        this.touch(run)
+        applyGrokStreamEvent(event, {
+          text: value => this.appendCodexText(run, value),
+          thought: value => this.appendCodexReasoning(run, value),
+          toolStarted: value => this.handleCodexItemStarted(run, {
+            type: 'mcp_tool_call',
+            id: value.id,
+            tool: value.name,
+            arguments: value.input,
+          }),
+          toolCompleted: value => this.handleCodexItemCompleted(run, {
+            type: 'mcp_tool_call',
+            id: value.id,
+            output: value.output,
+            ...(value.failed ? { error: { message: this.codexToolOutput({ output: value.output }) } } : {}),
+          }),
+          usage: value => { run.codexPendingUsage = value },
+          session: sessionId => this.recordGrokNativeSessionId(run, sessionId),
+          complete: usage => {
+            if (!run.printCompleted) this.completeClaudePrintTurn(run, usage || run.codexPendingUsage)
+          },
+          error: (message, usage) => {
+            run.codexPendingUsage = usage || run.codexPendingUsage
+            this.failCodexExecTurn(run, message)
+          },
+          status: message => this.emitTerminalStatus(run, message),
+        })
+      },
+      onStderr: (chunk) => {
+        this.touch(run)
+        const text = appendChildStderr(run, chunk)
+        if (text) logger.debug({ runId: run.id, sessionId: run.launch.sessionId, text }, '[coding-agent-run] grok stderr')
+      },
+      onError: (err) => {
+        run.currentChild = undefined
+        logger.warn({ err, runId: run.id, sessionId: run.launch.sessionId }, '[coding-agent-run] grok failed to start')
+        if (!run.printCompleted) this.failCodexExecTurn(run, childProcessErrorMessage(err))
+      },
+      onClose: (code) => {
+        run.currentChild = undefined
+        logger.info({ runId: run.id, sessionId: run.launch.sessionId, code }, '[coding-agent-run] grok exited')
+        if (run.stoppedByUser) return
+        if (run.pendingChatCompletionEvent) {
+          void this.emitAndMarkPrintChatRunCompletedAfterUsage(run, run.pendingChatCompletionEvent, run.pendingChatCompletionPayload)
+          return
+        }
+        if (run.printCompleted) return
+        if (code === 0) this.completeClaudePrintTurn(run, run.codexPendingUsage)
+        else this.failCodexExecTurn(run, run.codexPendingError || exitErrorMessage('Grok', code, run.currentChildStderr))
+      },
+    })
+    run.currentChild = child
+  }
+
+  private recordGrokNativeSessionId(run: ManagedCodingAgentRun, nativeSessionId: string) {
+    if (!nativeSessionId) return
+    run.launch.agentNativeSessionId = nativeSessionId
+    run.nativeResumeReady = true
+    try {
+      updateSession(run.launch.sessionId, { agent_native_session_id: nativeSessionId })
+    } catch (err) {
+      logger.warn({ err, runId: run.id, sessionId: run.launch.sessionId }, '[coding-agent-run] failed to persist Grok native session id')
+    }
   }
 
   private startCodexExecTurn(

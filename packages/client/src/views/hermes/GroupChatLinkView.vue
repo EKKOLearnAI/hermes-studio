@@ -103,6 +103,7 @@ const groupAgentTypeDefinitions: Array<{ label: string; value: GroupAgentType }>
   { label: 'Claude', value: 'claude' },
   { label: 'Codex', value: 'codex' },
   { label: 'Pi', value: 'pi' },
+  { label: 'Grok', value: 'grok' },
 ]
 const groupAgentTypeOptions = computed(() => groupAgentTypeDefinitions.map((option) => {
   const disabled = !isAgentStatusAvailable(agentStatusSnapshot.value, option.value)
@@ -131,7 +132,9 @@ function getAgentModelGroups(profile: string) {
           ? 'claude-code'
           : selectedAgentType.value === 'pi'
             ? 'pi'
-            : 'codex'
+            : selectedAgentType.value === 'grok'
+              ? 'grok'
+              : 'codex'
       return canScopedCodingAgentUseProvider(codingAgentId, group.provider)
     })
 }
@@ -178,7 +181,7 @@ const agentReasoningEffortOptions = computed(() => [
   { label: t('chat.reasoningEffort.options.xhigh'), value: 'xhigh' },
   { label: t('chat.reasoningEffort.options.max'), value: 'max' },
 ])
-const supportsGlobalAgentMode = computed(() => ['claude', 'codex', 'pi'].includes(selectedAgentType.value))
+const supportsGlobalAgentMode = computed(() => ['claude', 'codex', 'pi', 'grok'].includes(selectedAgentType.value))
 const usesGlobalAgentMode = computed(() => supportsGlobalAgentMode.value && selectedAgentMode.value === 'global')
 const agentModeOptions = computed(() => [
   { label: t('codingAgents.launchModeGlobal'), value: 'global' },
@@ -284,7 +287,7 @@ function handleAgentTypeChange(agent: GroupAgentType): void {
   }
   error.value = ''
   selectedAgentType.value = agent
-  if (!['claude', 'codex', 'pi'].includes(agent)) selectedAgentMode.value = 'scoped'
+  if (!['claude', 'codex', 'pi', 'grok'].includes(agent)) selectedAgentMode.value = 'scoped'
   syncAgentModelSelection(selectedProfile.value)
 }
 

@@ -155,6 +155,7 @@ const agentDisplayName = computed(() => {
     claude: 'Claude',
     'claude-code': 'Claude',
     codex: 'Codex',
+    grok: 'Grok',
     'ekko-agent': 'Ekko',
   }[agent] || agent
 })

@@ -228,7 +228,7 @@ interface RoomAgent {
     id: string
     roomId: string
     agentId: string
-    agent: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi'
+    agent: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi' | 'grok'
     agentMode: 'scoped' | 'global'
     profile: string
     provider: string
@@ -257,7 +257,7 @@ interface GroupAgentActivity {
 }
 
 interface RoomAgentMetadata {
-    agent?: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi'
+    agent?: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi' | 'grok'
     agentMode?: 'scoped' | 'global'
     provider?: string
     model?: string

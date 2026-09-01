@@ -298,7 +298,7 @@ const canInsertQueuedMessages = computed(() => {
   if (agent === "ekko-agent") {
     return session.source === "coding_agent" || session.source === "global_agent";
   }
-  if (agent === "codex" || agent === "pi" || agent === "claude" || agent === "claude-code") return true;
+  if (agent === "codex" || agent === "pi" || agent === "grok" || agent === "claude" || agent === "claude-code") return true;
   return !session.source || session.source === "cli" || session.source === "global_agent";
 });
 const visibleApproval = computed(() => chatStore.activePendingApproval);

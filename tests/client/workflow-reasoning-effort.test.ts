@@ -29,16 +29,16 @@ describe('workflow reasoning effort authoring contract', () => {
       expect(text, locale).toMatch(/max:\s*['"]/)
     }
   })
-  it('supports global CLI mode only for Claude, Codex, and Pi workflow nodes', () => {
+  it('supports global CLI mode for Claude, Codex, Pi, and Grok workflow nodes', () => {
     const types = read('packages/client/src/components/hermes/workflow/types.ts')
     const node = read('packages/client/src/components/hermes/workflow/WorkflowAgentNode.vue')
     const view = read('packages/client/src/views/hermes/WorkflowView.vue')
     expect(types).toMatch(/agentMode:\s*'scoped' \| 'global'/)
-    expect(node).toContain("['claude-code', 'codex', 'pi'].includes(props.data.agent)")
+    expect(node).toContain("['claude-code', 'codex', 'pi', 'grok'].includes(props.data.agent)")
     expect(node).toContain("updateField('agentMode'")
     expect(node).toContain('v-if="usesScopedModel"')
     expect(view).toContain('agentMode: node.data.agentMode')
-    expect(view).toContain("!['claude-code', 'codex', 'pi'].includes(nextAgent) ? { agentMode: 'scoped' as const } : {}")
+    expect(view).toContain("!['claude-code', 'codex', 'pi', 'grok'].includes(nextAgent) ? { agentMode: 'scoped' as const } : {}")
   })
   it('keeps Workflow nodes aligned with upstream defaults instead of exposing execution-policy controls', () => {
     const types = read('packages/client/src/components/hermes/workflow/types.ts')

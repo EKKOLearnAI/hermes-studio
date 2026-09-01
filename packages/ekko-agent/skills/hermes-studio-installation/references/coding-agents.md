@@ -1,10 +1,10 @@
-# Claude Code, Codex, and Pi installation
+# Claude Code, Codex, Pi, and Grok installation
 
 Use the Studio Agents page for cross-platform installation. It detects the same executable that chat launches, handles npm prefixes, installs Pi's required adapter, refreshes status, and reports the resolved path.
 
 ## Prerequisites
 
-All three coding agents require Node.js and npm. Hermes Studio itself requires Node.js 23 or newer for npm/source installations.
+All four coding agents require Node.js and npm. Hermes Studio itself requires Node.js 23 or newer for npm/source installations.
 
 Before installing, inspect:
 
@@ -25,6 +25,7 @@ Studio installs these global npm packages:
 | Claude Code | `claude` | `@anthropic-ai/claude-code` |
 | Codex | `codex` | `@openai/codex` |
 | Pi | `pi` | Studio-pinned `@earendil-works/pi-coding-agent` |
+| Grok | `grok` | `@xai-official/grok` |
 
 At this Studio revision, Pi is pinned to `0.84.1`. Its installation is incomplete without Studio's separately pinned `pi-mcp-adapter` `2.24.0`, installed below:
 
@@ -38,6 +39,7 @@ The Agents page install action effectively performs the following. The Pi adapte
 npm install -g @anthropic-ai/claude-code
 npm install -g @openai/codex
 npm install -g @earendil-works/pi-coding-agent@0.84.1
+npm install -g @xai-official/grok
 studio_home="${HERMES_WEB_UI_HOME:-$HOME/.hermes-web-ui}"
 npm install --prefix "$studio_home/coding-agent/pi-mcp-adapter" --save-exact pi-mcp-adapter@2.24.0
 ```
@@ -52,9 +54,10 @@ Studio calls each executable with `--version` using an 8-second timeout. Validat
 claude --version
 codex --version
 pi --version
+grok --version
 ```
 
-On macOS/Linux inspect executable resolution with `command -v claude`, `command -v codex`, or `command -v pi`; on Windows use `where`.
+On macOS/Linux inspect executable resolution with `command -v claude`, `command -v codex`, `command -v pi`, or `command -v grok`; on Windows use `where`.
 
 Installation is successful only when:
 
@@ -73,6 +76,7 @@ The Agents page **Check update** action behaves as follows:
 - Claude Code: compares the detected version with `npm view @anthropic-ai/claude-code version`.
 - Codex: compares the detected version with `npm view @openai/codex version`.
 - Pi: compares the detected version with Studio's pinned Pi version; it does not chase npm latest independently.
+- Grok: compares the detected version with `npm view @xai-official/grok version`.
 
 When an update is available, the update action reruns the same install operation. Revalidate the executable path and version afterward. For Pi, revalidate the adapter too.
 
