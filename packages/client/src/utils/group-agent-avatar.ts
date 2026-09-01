@@ -54,6 +54,7 @@ export function groupMessageAgent(message: ChatMessage, agents: RoomAgent[]): Ro
         roomId: message.roomId,
         agentId: message.senderId,
         agent: agentType,
+        agentMode: 'scoped',
         profile: message.senderAgentProfile || '',
         provider: message.senderAgentProvider || '',
         model: message.senderAgentModel || '',

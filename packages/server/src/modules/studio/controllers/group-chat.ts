@@ -105,6 +105,7 @@ function contentPreview(content: unknown): string {
 type AgentInput = {
     presetId?: string
     agent?: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi'
+    agentMode?: 'scoped' | 'global'
     profile: string
     provider?: string
     model?: string
@@ -133,6 +134,7 @@ type RoomSummaryInput = {
 const GROUP_AGENT_REASONING_EFFORTS = new Set(['', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
 const GROUP_AGENT_TYPES = new Set(['hermes', 'ekko', 'codex', 'claude', 'pi'])
 const GROUP_AGENT_API_MODES = new Set(['chat_completions', 'codex_responses', 'anthropic_messages'])
+const GLOBAL_MODE_GROUP_AGENTS = new Set(['codex', 'claude', 'pi'])
 const GROUP_AGENT_AVATAR_MAX_LENGTH = 1_500_000
 
 function normalizeRoomAgentAvatar(value: unknown): string {
@@ -198,6 +200,7 @@ async function createRoomAgentRuntimeClient(server: GroupChatServer, agentId: st
     return server.agentClients.createAgent({
         agentId,
         agent: agent || 'hermes',
+        agentMode: input.agentMode === 'global' ? 'global' : 'scoped',
         profile,
         provider: String(input.provider || '').trim(),
         model: String(input.model || '').trim(),
@@ -301,23 +304,39 @@ async function connectAndPersistRoomAgent(server: GroupChatServer, roomId: strin
     if (!GROUP_AGENT_TYPES.has(agent || '')) {
         throw new Error('Invalid agent')
     }
+    if (input.agentMode !== undefined && input.agentMode !== 'scoped' && input.agentMode !== 'global') {
+        throw new Error('Invalid agentMode')
+    }
     const profile = input.profile.trim()
-    const provider = String(input.provider || '').trim()
-    const model = String(input.model || '').trim()
-    const apiMode = agent === 'hermes' ? '' : String(input.apiMode || '').trim()
-    const reasoningEffort = String(input.reasoningEffort || '').trim()
+    const agentMode = input.agentMode === 'global' ? 'global' : 'scoped'
+    if (agentMode === 'global' && !GLOBAL_MODE_GROUP_AGENTS.has(agent || '')) {
+        throw new Error('Global mode is only available for Claude, Codex, and Pi')
+    }
+    const provider = agentMode === 'global' ? '' : String(input.provider || '').trim()
+    const model = agentMode === 'global' ? '' : String(input.model || '').trim()
+    const apiMode = agent === 'hermes' || agentMode === 'global' ? '' : String(input.apiMode || '').trim()
+    const reasoningEffort = agentMode === 'global' ? '' : String(input.reasoningEffort || '').trim()
     const name = input.name || profile
     const description = input.description || ''
     const avatar = normalizeRoomAgentAvatar(input.avatar)
     const invited = input.invited ? 1 : 0
     const storage = server.getStorage()
     storage.assertParticipantNameAvailable?.(roomId, name)
-    const client = await createRoomAgentRuntimeClient(server, agentId, input)
+    const client = await createRoomAgentRuntimeClient(server, agentId, {
+        ...input,
+        agent,
+        agentMode,
+        provider,
+        model,
+        apiMode,
+        reasoningEffort,
+    })
 
     let persisted: any
     try {
         persisted = storage.addRoomAgent(roomId, agentId, profile, name, description, invited, {
             agent: agent || 'hermes',
+            agentMode,
             provider,
             model,
             apiMode,
@@ -348,6 +367,7 @@ export async function createRoom(ctx: any) {
         agents?: {
             presetId?: string
             agent?: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi'
+            agentMode?: 'scoped' | 'global'
             profile: string
             provider?: string
             model?: string
@@ -418,6 +438,19 @@ export async function createRoom(ctx: any) {
         ctx.body = { code: err?.code, error: err?.message || 'Invalid agent', agent: err?.agent }
         return
     }
+    const invalidAgentMode = resolvedAgents.find(agent => (
+        (agent.agentMode !== undefined && agent.agentMode !== 'scoped' && agent.agentMode !== 'global')
+        || (agent.agentMode === 'global' && !GLOBAL_MODE_GROUP_AGENTS.has(agent.agent || 'hermes'))
+    ))
+    if (invalidAgentMode) {
+        ctx.status = 400
+        ctx.body = {
+            error: invalidAgentMode.agentMode === 'global'
+                ? 'Global mode is only available for Claude, Codex, and Pi'
+                : 'Invalid agentMode',
+        }
+        return
+    }
     const reservedAgent = resolvedAgents.find(a => isReservedMentionName(a.name || a.profile))
     if (reservedAgent) {
         ctx.status = 400
@@ -465,6 +498,7 @@ export async function createRoom(ctx: any) {
         try {
             const agent = await connectAndPersistRoomAgent(chatServer, roomId, {
                 agent: a.agent,
+                agentMode: a.agentMode,
                 profile: a.profile,
                 provider: a.provider,
                 model: a.model,
@@ -535,6 +569,7 @@ export async function cloneRoom(ctx: any) {
         try {
             const agent = await connectAndPersistRoomAgent(chatServer, roomId, {
                 agent: sourceAgent.agent,
+                agentMode: sourceAgent.agentMode,
                 profile: sourceAgent.profile,
                 provider: sourceAgent.provider,
                 model: sourceAgent.model,
@@ -698,8 +733,9 @@ export async function addRoomAgent(ctx: any) {
         ctx.body = { code: err?.code, error: err?.message || 'Agent preset is unavailable' }
         return
     }
-    const { agent, profile, provider, model, apiMode, reasoningEffort, name, description, avatar, invited } = body as {
+    const { agent, agentMode, profile, provider, model, apiMode, reasoningEffort, name, description, avatar, invited } = body as {
         agent?: string
+        agentMode?: string
         profile?: string
         provider?: string
         model?: string
@@ -712,12 +748,15 @@ export async function addRoomAgent(ctx: any) {
     }
     const normalizedProfile = typeof profile === 'string' ? profile.trim() : ''
     const normalizedAgent = typeof agent === 'string' ? agent.trim() : 'hermes'
-    const normalizedProvider = typeof provider === 'string' ? provider.trim() : ''
-    const normalizedModel = typeof model === 'string' ? model.trim() : ''
-    const normalizedApiMode = normalizedAgent === 'hermes'
+    const normalizedAgentMode = agentMode === 'global' ? 'global' : 'scoped'
+    const normalizedProvider = normalizedAgentMode === 'global' ? '' : typeof provider === 'string' ? provider.trim() : ''
+    const normalizedModel = normalizedAgentMode === 'global' ? '' : typeof model === 'string' ? model.trim() : ''
+    const normalizedApiMode = normalizedAgent === 'hermes' || normalizedAgentMode === 'global'
         ? ''
         : typeof apiMode === 'string' ? apiMode.trim() : ''
-    const normalizedReasoningEffort = typeof reasoningEffort === 'string' ? reasoningEffort.trim() : ''
+    const normalizedReasoningEffort = normalizedAgentMode === 'global'
+        ? ''
+        : typeof reasoningEffort === 'string' ? reasoningEffort.trim() : ''
     let normalizedAvatar = ''
     try {
         normalizedAvatar = normalizeRoomAgentAvatar(avatar)
@@ -736,12 +775,22 @@ export async function addRoomAgent(ctx: any) {
         ctx.body = { error: 'Invalid agent' }
         return
     }
+    if (agentMode !== undefined && agentMode !== 'scoped' && agentMode !== 'global') {
+        ctx.status = 400
+        ctx.body = { error: 'Invalid agentMode' }
+        return
+    }
+    if (normalizedAgentMode === 'global' && !GLOBAL_MODE_GROUP_AGENTS.has(normalizedAgent)) {
+        ctx.status = 400
+        ctx.body = { error: 'Global mode is only available for Claude, Codex, and Pi' }
+        return
+    }
     if (Boolean(normalizedProvider) !== Boolean(normalizedModel)) {
         ctx.status = 400
         ctx.body = { error: 'provider and model must be provided together' }
         return
     }
-    if (normalizedAgent !== 'hermes' && !GROUP_AGENT_API_MODES.has(normalizedApiMode)) {
+    if (normalizedAgent !== 'hermes' && normalizedAgentMode !== 'global' && !GROUP_AGENT_API_MODES.has(normalizedApiMode)) {
         ctx.status = 400
         ctx.body = { error: 'Invalid apiMode' }
         return
@@ -772,6 +821,7 @@ export async function addRoomAgent(ctx: any) {
     try {
         const agent = await connectAndPersistRoomAgent(chatServer, ctx.params.roomId, {
             agent: normalizedAgent as AgentInput['agent'],
+            agentMode: normalizedAgentMode,
             profile: normalizedProfile,
             provider: normalizedProvider,
             model: normalizedModel,
@@ -801,8 +851,9 @@ export async function updateRoomAgent(ctx: any) {
         return
     }
 
-    const { agent, profile, provider, model, apiMode, reasoningEffort, name, description, avatar } = ctx.request.body as {
+    const { agent, agentMode, profile, provider, model, apiMode, reasoningEffort, name, description, avatar } = ctx.request.body as {
         agent?: string
+        agentMode?: string
         profile?: string
         provider?: string
         model?: string
@@ -814,12 +865,15 @@ export async function updateRoomAgent(ctx: any) {
     }
     const normalizedProfile = typeof profile === 'string' ? profile.trim() : ''
     const normalizedAgent = typeof agent === 'string' ? agent.trim() : 'hermes'
-    const normalizedProvider = typeof provider === 'string' ? provider.trim() : ''
-    const normalizedModel = typeof model === 'string' ? model.trim() : ''
-    const normalizedApiMode = normalizedAgent === 'hermes'
+    const normalizedAgentMode = agentMode === 'global' ? 'global' : 'scoped'
+    const normalizedProvider = normalizedAgentMode === 'global' ? '' : typeof provider === 'string' ? provider.trim() : ''
+    const normalizedModel = normalizedAgentMode === 'global' ? '' : typeof model === 'string' ? model.trim() : ''
+    const normalizedApiMode = normalizedAgent === 'hermes' || normalizedAgentMode === 'global'
         ? ''
         : typeof apiMode === 'string' ? apiMode.trim() : ''
-    const normalizedReasoningEffort = typeof reasoningEffort === 'string' ? reasoningEffort.trim() : ''
+    const normalizedReasoningEffort = normalizedAgentMode === 'global'
+        ? ''
+        : typeof reasoningEffort === 'string' ? reasoningEffort.trim() : ''
     const normalizedName = typeof name === 'string' ? name.trim() : ''
     const normalizedDescription = typeof description === 'string' ? description.trim() : ''
     let normalizedAvatar = ''
@@ -840,12 +894,22 @@ export async function updateRoomAgent(ctx: any) {
         ctx.body = { error: 'Invalid agent' }
         return
     }
+    if (agentMode !== undefined && agentMode !== 'scoped' && agentMode !== 'global') {
+        ctx.status = 400
+        ctx.body = { error: 'Invalid agentMode' }
+        return
+    }
+    if (normalizedAgentMode === 'global' && !GLOBAL_MODE_GROUP_AGENTS.has(normalizedAgent)) {
+        ctx.status = 400
+        ctx.body = { error: 'Global mode is only available for Claude, Codex, and Pi' }
+        return
+    }
     if (Boolean(normalizedProvider) !== Boolean(normalizedModel)) {
         ctx.status = 400
         ctx.body = { error: 'provider and model must be provided together' }
         return
     }
-    if (normalizedAgent !== 'hermes' && !GROUP_AGENT_API_MODES.has(normalizedApiMode)) {
+    if (normalizedAgent !== 'hermes' && normalizedAgentMode !== 'global' && !GROUP_AGENT_API_MODES.has(normalizedApiMode)) {
         ctx.status = 400
         ctx.body = { error: 'Invalid apiMode' }
         return
@@ -893,6 +957,7 @@ export async function updateRoomAgent(ctx: any) {
 
     const nextInput: AgentInput = {
         agent: normalizedAgent as AgentInput['agent'],
+        agentMode: normalizedAgentMode,
         profile: normalizedProfile,
         provider: normalizedProvider,
         model: normalizedModel,
@@ -936,6 +1001,7 @@ export async function updateRoomAgent(ctx: any) {
             nextInput.description || '',
             {
                 agent: nextInput.agent,
+                agentMode: nextInput.agentMode,
                 provider: nextInput.provider,
                 model: nextInput.model,
                 apiMode: nextInput.apiMode,

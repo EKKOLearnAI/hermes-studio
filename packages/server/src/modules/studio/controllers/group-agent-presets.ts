@@ -41,6 +41,7 @@ export async function resolveGroupAgentPresetForApplication(user: any, presetId:
   assertAgentAvailable(preset.agent)
   return {
     agent: preset.agent,
+    agentMode: preset.agentMode,
     profile: preset.profile,
     provider: preset.provider,
     model: preset.model,

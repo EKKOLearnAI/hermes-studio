@@ -59,6 +59,14 @@ describe('workflow import capabilities', () => {
     ], groups)).toThrow('unavailable')
   })
 
+  it('does not require profile provider/model capabilities for supported global CLI nodes', () => {
+    expect(() => assertWorkflowImportCapabilities([
+      node({ agent: 'codex', agentMode: 'global' }),
+      node({ agent: 'claude-code', agentMode: 'global' }),
+      node({ agent: 'pi', agentMode: 'global' }),
+    ], [])).not.toThrow()
+  })
+
   it.each(['openai-codex', 'copilot', 'xai-oauth', 'qwen-oauth', 'nous', 'claude-oauth', 'minimax-oauth'])(
     'rejects scoped Coding Agent targets backed by auth provider %s',
     (provider) => {

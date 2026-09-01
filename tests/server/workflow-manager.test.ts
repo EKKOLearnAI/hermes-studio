@@ -186,6 +186,10 @@ describe('workflow manager', () => {
     expect(normalizeWorkflowNode({ id: 'claude', type: 'agent', data: { agent: 'claude-code' } })?.data.agent).toBe('claude-code')
     expect(normalizeWorkflowNode({ id: 'codex', type: 'agent', data: { agent: 'codex' } })?.data.agent).toBe('codex')
     expect(normalizeWorkflowNode({ id: 'pi', type: 'agent', data: { agent: 'pi' } })?.data.agent).toBe('pi')
+    expect(normalizeWorkflowNode({ id: 'legacy-mode', type: 'agent', data: { agent: 'codex' } })?.data.agentMode).toBe('scoped')
+    expect(normalizeWorkflowNode({ id: 'global-mode', type: 'agent', data: { agent: 'codex', agentMode: 'global' } })?.data.agentMode).toBe('global')
+    expect(() => normalizeWorkflowNode({ id: 'bad-global', type: 'agent', data: { agent: 'ekko-agent', agentMode: 'global' } }))
+      .toThrow('workflow node bad-global cannot use global mode')
   })
 
   it('normalizes workflow node join mode and rejects malformed explicit values', async () => {
@@ -360,6 +364,54 @@ describe('workflow manager', () => {
         coding_agent_id: agent, apiMode: 'chat_completions', reasoning_effort: 'high',
       }), expect.any(Object))
       expect(chatRunMock.runAndWait.mock.calls[0]?.[0]).not.toHaveProperty('background_delegation_enabled')
+    } finally { await manager.delete(workflow.id) }
+  })
+
+  it('runs global Codex workflow nodes without injecting scoped model configuration', async () => {
+    const { initAllStores } = await import('../../packages/server/src/modules/studio/infrastructure/database/init')
+    const { getDb } = await import('../../packages/server/src/modules/studio/infrastructure/database/index')
+    const { WorkflowManager } = await import('../../packages/server/src/modules/studio/services/workflow/manager')
+    initAllStores()
+    chatRunMock.runAndWait.mockReset().mockResolvedValue({ ok: true, output: 'done' })
+    const manager = new WorkflowManager()
+    const workflow = manager.create({
+      name: `Global Codex execution ${Date.now()}`,
+      profile: 'default',
+      nodes: [{ id: 'agent', type: 'agent', data: {
+        title: 'Global Codex', agent: 'codex', agentMode: 'global',
+        provider: 'must-not-leak', model: 'must-not-leak', apiMode: 'chat_completions',
+        reasoningEffort: 'high', input: 'work',
+      } }],
+      edges: [],
+    })
+    try {
+      const result = await manager.runNow(workflow.id)
+      const runInput = chatRunMock.runAndWait.mock.calls[0]?.[0]
+      expect(runInput).toMatchObject({
+        coding_agent_id: 'codex',
+        agent_id: 'codex',
+        mode: 'global',
+        profile: 'default',
+        one_shot_model: true,
+      })
+      expect(runInput).not.toHaveProperty('provider')
+      expect(runInput).not.toHaveProperty('model')
+      expect(runInput).not.toHaveProperty('apiMode')
+      expect(runInput).not.toHaveProperty('reasoning_effort')
+      expect(result.nodeSessions[0]).toMatchObject({
+        agent: 'codex',
+        agent_mode: 'global',
+        status: 'completed',
+      })
+      expect(getDb()!.prepare(`SELECT source, agent, agent_mode, provider, model, api_mode FROM sessions WHERE id = ?`)
+        .get(result.nodeSessions[0]!.session_id)).toEqual({
+          source: 'workflow',
+          agent: 'codex',
+          agent_mode: 'global',
+          provider: 'global',
+          model: '',
+          api_mode: '',
+        })
     } finally { await manager.delete(workflow.id) }
   })
 

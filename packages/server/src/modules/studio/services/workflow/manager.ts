@@ -110,6 +110,7 @@ export interface WorkflowNodeSnapshot {
   data: {
     title: string
     agent: string
+    agentMode: 'scoped' | 'global'
     provider: string
     model: string
     apiMode: string
@@ -300,6 +301,10 @@ export function normalizeWorkflowNode(raw: unknown): WorkflowNodeSnapshot | null
   if (agent !== 'hermes' && agent !== 'ekko-agent' && agent !== 'claude-code' && agent !== 'codex' && agent !== 'pi') {
     throw new Error(`workflow node ${id} has unsupported agent runtime`)
   }
+  const agentMode = data.agentMode === 'global' ? 'global' : 'scoped'
+  if (agentMode === 'global' && agent !== 'claude-code' && agent !== 'codex' && agent !== 'pi') {
+    throw new Error(`workflow node ${id} cannot use global mode with this agent runtime`)
+  }
   const provider = typeof data.provider === 'string' ? data.provider.trim() : ''
   const model = typeof data.model === 'string' ? data.model.trim() : ''
   const apiMode = typeof data.apiMode === 'string' ? data.apiMode.trim() : ''
@@ -329,6 +334,7 @@ export function normalizeWorkflowNode(raw: unknown): WorkflowNodeSnapshot | null
     data: {
       title: typeof data.title === 'string' && data.title.trim() ? data.title.trim() : id,
       agent,
+      agentMode,
       provider,
       model,
       apiMode,
@@ -1327,15 +1333,16 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
     target: WorkflowNodeRunTarget
   }): void {
     if (getSession(args.sessionId)) return
+    const isGlobalCodingAgent = args.node.data.agent !== 'hermes' && args.node.data.agentMode === 'global'
     createSession({
       id: args.sessionId,
       profile: args.profile,
       source: 'workflow',
       agent: args.target.agent,
-      agent_mode: args.node.data.agent === 'hermes' ? '' : 'scoped',
-      model: args.node.data.model,
-      provider: args.node.data.provider,
-      ...(args.node.data.agent === 'hermes' ? {} : { api_mode: args.node.data.apiMode }),
+      agent_mode: args.node.data.agent === 'hermes' ? '' : args.node.data.agentMode,
+      model: isGlobalCodingAgent ? '' : args.node.data.model,
+      provider: isGlobalCodingAgent ? 'global' : args.node.data.provider,
+      ...(args.node.data.agent === 'hermes' || isGlobalCodingAgent ? {} : { api_mode: args.node.data.apiMode }),
       title: args.node.data.title,
       workspace: args.workspace || undefined,
     })
@@ -1484,7 +1491,7 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
         iteration_path: path,
         consumed_edge_evaluation_ids: consumedIncoming.flatMap(edge => evidenceForEdge(edge)?.id ? [evidenceForEdge(edge)!.id] : []),
         session_id: sessionId, profile, agent: target.agent,
-        agent_mode: node.data.agent === 'hermes' ? '' : 'scoped', status: 'running',
+        agent_mode: node.data.agent === 'hermes' ? '' : node.data.agentMode, status: 'running',
         sequence: historySequence++, remaining_timeout_ms_at_start: remainingTimeoutMs ?? null,
         started_at: nodeStartedAt,
       })
@@ -1494,15 +1501,21 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
         const runResult = await runWorkflowAndWait({
           session_id: sessionId, source: 'workflow', session_source: 'workflow', input: assembledInput,
           workflow_id: workflowId, workflow_node_id: node.id,
-          profile, workspace: workspace, model: node.data.model || undefined,
-          provider: node.data.provider || undefined, mode: node.data.agent === 'hermes' ? undefined : 'scoped',
+          profile, workspace: workspace,
+          ...(node.data.agentMode === 'global' ? {} : {
+            model: node.data.model || undefined,
+            provider: node.data.provider || undefined,
+          }),
+          mode: node.data.agent === 'hermes' ? undefined : node.data.agentMode,
           coding_agent_id: target.codingAgentId, agent_id: target.codingAgentId,
           ...((node.data.agent === 'hermes' || node.data.agent === 'ekko-agent')
             ? { background_delegation_enabled: false }
             : {}),
-          ...(node.data.agent === 'hermes' ? {} : { apiMode: node.data.apiMode || undefined }),
+          ...(node.data.agent === 'hermes' || node.data.agentMode === 'global' ? {} : { apiMode: node.data.apiMode || undefined }),
           one_shot_model: true,
-          ...(node.data.reasoningEffort !== 'default' ? { reasoning_effort: node.data.reasoningEffort } : {}),
+          ...(node.data.agentMode !== 'global' && node.data.reasoningEffort !== 'default'
+            ? { reasoning_effort: node.data.reasoningEffort }
+            : {}),
         }, { profile, user: args.user, timeoutMs: remainingTimeoutMs, approvalChoice: 'once' })
         if (isCanceled()) throw new Error(getWorkflowRun(run.id)?.error || 'Workflow run canceled')
         if (!runResult.ok) {
@@ -1991,7 +2004,7 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
             session_id: nodeSessionId,
             profile,
             agent: target.agent,
-            agent_mode: node.data.agent === 'hermes' ? '' : 'scoped',
+            agent_mode: node.data.agent === 'hermes' ? '' : node.data.agentMode,
             status: 'running',
             sequence: historySequence++,
             remaining_timeout_ms_at_start: remainingTimeoutMs ?? null,
@@ -2007,17 +2020,21 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
             input: assembledInput,
             profile,
             workspace: workspace,
-            model: node.data.model || undefined,
-            provider: node.data.provider || undefined,
-            mode: node.data.agent === 'hermes' ? undefined : 'scoped',
+            ...(node.data.agentMode === 'global' ? {} : {
+              model: node.data.model || undefined,
+              provider: node.data.provider || undefined,
+            }),
+            mode: node.data.agent === 'hermes' ? undefined : node.data.agentMode,
             coding_agent_id: target.codingAgentId,
             agent_id: target.codingAgentId,
             ...((node.data.agent === 'hermes' || node.data.agent === 'ekko-agent')
               ? { background_delegation_enabled: false }
               : {}),
-            ...(node.data.agent === 'hermes' ? {} : { apiMode: node.data.apiMode || undefined }),
+            ...(node.data.agent === 'hermes' || node.data.agentMode === 'global' ? {} : { apiMode: node.data.apiMode || undefined }),
             one_shot_model: true,
-            ...(node.data.reasoningEffort !== 'default' ? { reasoning_effort: node.data.reasoningEffort } : {}),
+            ...(node.data.agentMode !== 'global' && node.data.reasoningEffort !== 'default'
+              ? { reasoning_effort: node.data.reasoningEffort }
+              : {}),
           }, {
             profile,
             user: args.user,

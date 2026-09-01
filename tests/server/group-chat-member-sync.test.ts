@@ -489,7 +489,7 @@ describe('Group Chat member/agent identity sync', () => {
       'Worker',
       '',
       0,
-      { agent: 'hermes', provider: '', model: '', apiMode: '', reasoningEffort: '' },
+      { agent: 'hermes', agentMode: 'scoped', provider: '', model: '', apiMode: '', reasoningEffort: '' },
     )
     expect(removeRoomAgent).toHaveBeenCalledWith('room-1', 'row-1')
     expect(chatServer.agentClients.removeAgentFromRoom).toHaveBeenCalledWith('room-1', 'agent-stable-1')

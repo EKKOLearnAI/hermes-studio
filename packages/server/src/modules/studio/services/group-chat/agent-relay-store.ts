@@ -6,6 +6,7 @@ export const GROUP_AGENT_PAIRING_TICKET_TTL_MS = 2 * 60_000
 
 export type RemoteGroupAgentDescriptor = {
   agent: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi'
+  agentMode: 'scoped' | 'global'
   profile: string
   provider: string
   model: string
@@ -19,6 +20,7 @@ export type RemoteGroupAgentDescriptor = {
 const REMOTE_AGENT_TYPES = new Set<RemoteGroupAgentDescriptor['agent']>(['hermes', 'ekko', 'codex', 'claude', 'pi'])
 const REMOTE_AGENT_API_MODES = new Set(['', 'chat_completions', 'codex_responses', 'anthropic_messages'])
 const REMOTE_AGENT_REASONING_EFFORTS = new Set(['', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
+const REMOTE_GLOBAL_MODE_AGENTS = new Set<RemoteGroupAgentDescriptor['agent']>(['codex', 'claude', 'pi'])
 const PAIRING_AUDIT_RETENTION_MS = 7 * 24 * 60 * 60_000
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
@@ -33,10 +35,14 @@ export function normalizeRemoteGroupAgentDescriptor(value: unknown): RemoteGroup
   const input = value as Record<string, unknown>
   const agent = String(input.agent || 'hermes').trim() as RemoteGroupAgentDescriptor['agent']
   if (!REMOTE_AGENT_TYPES.has(agent)) throw new Error('Invalid remote Agent type')
+  const agentMode = input.agentMode === 'global' ? 'global' : 'scoped'
+  if (agentMode === 'global' && !REMOTE_GLOBAL_MODE_AGENTS.has(agent)) {
+    throw new Error('Remote Agent global mode is only available for Claude, Codex, and Pi')
+  }
   const profile = boundedText(input.profile, 120, 'profile', true)
   const name = boundedText(input.name || profile, 120, 'name', true)
-  const apiMode = agent === 'hermes' ? '' : boundedText(input.apiMode, 64, 'API mode')
-  const reasoningEffort = boundedText(input.reasoningEffort, 32, 'reasoning effort')
+  const apiMode = agent === 'hermes' || agentMode === 'global' ? '' : boundedText(input.apiMode, 64, 'API mode')
+  const reasoningEffort = agentMode === 'global' ? '' : boundedText(input.reasoningEffort, 32, 'reasoning effort')
   if (!REMOTE_AGENT_API_MODES.has(apiMode)) throw new Error('Invalid remote Agent API mode')
   if (!REMOTE_AGENT_REASONING_EFFORTS.has(reasoningEffort)) throw new Error('Invalid remote Agent reasoning effort')
   const avatar = boundedText(input.avatar, 1_500_000, 'avatar')
@@ -56,9 +62,10 @@ export function normalizeRemoteGroupAgentDescriptor(value: unknown): RemoteGroup
   }
   return {
     agent,
+    agentMode,
     profile,
-    provider: boundedText(input.provider, 240, 'provider'),
-    model: boundedText(input.model, 500, 'model'),
+    provider: agentMode === 'global' ? '' : boundedText(input.provider, 240, 'provider'),
+    model: agentMode === 'global' ? '' : boundedText(input.model, 500, 'model'),
     apiMode,
     reasoningEffort,
     name,
@@ -123,6 +130,7 @@ type PairingRow = Omit<GroupAgentPairingRequest, 'agent'> & {
 
 const DRAFT_AGENT: RemoteGroupAgentDescriptor = {
   agent: 'hermes',
+  agentMode: 'scoped',
   profile: '',
   provider: '',
   model: '',

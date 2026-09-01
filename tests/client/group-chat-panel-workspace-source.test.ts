@@ -524,10 +524,11 @@ describe('GroupChatPanel workspace save handling', () => {
     expect(source).toContain("const selectedAgentModel = ref('')")
     expect(source).toContain("const selectedAgentApiMode = ref<CodingAgentApiMode>('codex_responses')")
     expect(source).toContain("const selectedAgentReasoningEffort = ref('')")
-    expect(source).toContain('provider: selectedAgentProvider.value')
-    expect(source).toContain('model: selectedAgentModel.value')
-    expect(source).toContain("apiMode: selectedAgentType.value === 'hermes' ? undefined : selectedAgentApiMode.value")
-    expect(source).toContain('reasoningEffort: selectedAgentReasoningEffort.value')
+    expect(source).toContain("agentMode: usesGlobalAgentMode.value ? 'global' : 'scoped'")
+    expect(source).toContain("provider: usesGlobalAgentMode.value ? '' : selectedAgentProvider.value")
+    expect(source).toContain("model: usesGlobalAgentMode.value ? '' : selectedAgentModel.value")
+    expect(source).toContain("apiMode: selectedAgentType.value === 'hermes' || usesGlobalAgentMode.value ? undefined : selectedAgentApiMode.value")
+    expect(source).toContain("reasoningEffort: usesGlobalAgentMode.value ? '' : selectedAgentReasoningEffort.value")
     for (const modelSource of [source, linkView]) {
       expect(modelSource).toContain('function handleAgentModelChange(model: string)')
       expect(modelSource).toContain("selectedAgentReasoningEffort.value = ''")
@@ -535,7 +536,14 @@ describe('GroupChatPanel workspace save handling', () => {
     }
     expect(source).toContain('inferCodingAgentApiMode(')
     expect(source).toContain('normalizeCodingAgentApiMode(')
-    expect(source).toContain("v-if=\"selectedAgentType !== 'hermes'\"")
+    expect(source).toContain("v-if=\"selectedAgentType !== 'hermes' && !usesGlobalAgentMode\"")
+    for (const modelSource of [source, linkView]) {
+      expect(modelSource).toContain("const supportsGlobalAgentMode = computed(() => ['claude', 'codex', 'pi'].includes(selectedAgentType.value))")
+      expect(modelSource).toContain("v-if=\"!usesGlobalAgentMode\"")
+    }
+    expect(source).toContain('@update:value="handleAgentModeChange"')
+    expect(source).toContain('selectedAgentPresetId.value = null')
+    expect(linkView).toContain('v-model:value="selectedAgentMode"')
     expect(source).toContain('agent: selectedAgentType.value')
     expect(source).toContain("{ label: 'Hermes', value: 'hermes' }")
     expect(source).toContain("{ label: 'Claude', value: 'claude' }")

@@ -19,13 +19,14 @@ type CapabilityGroup = {
 }
 
 const ALLOWED_FIELDS = new Set([
-  'agent', 'profile', 'provider', 'model', 'apiMode', 'reasoningEffort',
+  'agent', 'agentMode', 'profile', 'provider', 'model', 'apiMode', 'reasoningEffort',
   'name', 'description', 'avatar',
 ])
 const AGENTS = new Set<GroupAgentPresetAgent>(['hermes', 'ekko', 'codex', 'claude', 'pi'])
 const API_MODES = new Set(['chat_completions', 'codex_responses', 'anthropic_messages'])
 const REASONING_EFFORTS = new Set(['', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
 const AVATAR_MAX_LENGTH = 1_500_000
+const GLOBAL_MODE_AGENTS = new Set<GroupAgentPresetAgent>(['codex', 'claude', 'pi'])
 
 function requiredText(value: unknown, field: string, max = 200): string {
   const normalized = typeof value === 'string' ? value.trim() : ''
@@ -74,15 +75,20 @@ export function normalizeGroupAgentPresetInput(input: unknown): Omit<GroupAgentP
   }
   const agent = requiredText(record.agent || 'hermes', 'agent', 20) as GroupAgentPresetAgent
   if (!AGENTS.has(agent)) throw Object.assign(new Error('Invalid agent'), { status: 400 })
-  const apiMode = agent === 'hermes' ? '' : requiredText(record.apiMode, 'apiMode', 40)
+  const agentMode = record.agentMode === 'global' ? 'global' : 'scoped'
+  if (agentMode === 'global' && !GLOBAL_MODE_AGENTS.has(agent)) {
+    throw Object.assign(new Error('Global mode is only available for Claude, Codex, and Pi'), { status: 400 })
+  }
+  const apiMode = agent === 'hermes' || agentMode === 'global' ? '' : requiredText(record.apiMode, 'apiMode', 40)
   if (apiMode && !API_MODES.has(apiMode)) throw Object.assign(new Error('Invalid apiMode'), { status: 400 })
-  const reasoningEffort = optionalText(record.reasoningEffort, 'reasoningEffort', 20)
+  const reasoningEffort = agentMode === 'global' ? '' : optionalText(record.reasoningEffort, 'reasoningEffort', 20)
   if (!REASONING_EFFORTS.has(reasoningEffort)) throw Object.assign(new Error('Invalid reasoningEffort'), { status: 400 })
   return {
     agent,
+    agentMode,
     profile: requiredText(record.profile, 'profile'),
-    provider: requiredText(record.provider, 'provider'),
-    model: requiredText(record.model, 'model'),
+    provider: agentMode === 'global' ? '' : requiredText(record.provider, 'provider'),
+    model: agentMode === 'global' ? '' : requiredText(record.model, 'model'),
     apiMode,
     reasoningEffort,
     name: requiredText(record.name, 'name', 120),
@@ -92,9 +98,10 @@ export function normalizeGroupAgentPresetInput(input: unknown): Omit<GroupAgentP
 }
 
 export function validateGroupAgentPresetCapability(
-  preset: Pick<GroupAgentPresetDefinition, 'provider' | 'model'>,
+  preset: Pick<GroupAgentPresetDefinition, 'agentMode' | 'provider' | 'model'>,
   groups: CapabilityGroup[],
 ): void {
+  if (preset.agentMode === 'global') return
   const group = groups.find(item => item.provider === preset.provider)
   if (
     !group

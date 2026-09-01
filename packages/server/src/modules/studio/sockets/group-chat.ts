@@ -229,6 +229,7 @@ interface RoomAgent {
     roomId: string
     agentId: string
     agent: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi'
+    agentMode: 'scoped' | 'global'
     profile: string
     provider: string
     model: string
@@ -257,6 +258,7 @@ interface GroupAgentActivity {
 
 interface RoomAgentMetadata {
     agent?: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi'
+    agentMode?: 'scoped' | 'global'
     provider?: string
     model?: string
     apiMode?: string
@@ -372,6 +374,7 @@ const ROOM_AGENT_SELECT_COLUMNS = [
     'roomId',
     'agentId',
     'agent',
+    'agentMode',
     'profile',
     'provider',
     'model',
@@ -2531,10 +2534,11 @@ class ChatStorage {
         this.assertParticipantNameAvailable(roomId, name)
         const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
         const agent = metadata.agent || 'hermes'
-        const provider = String(metadata.provider || '').trim()
-        const model = String(metadata.model || '').trim()
-        const apiMode = agent === 'hermes' ? '' : String(metadata.apiMode || '').trim()
-        const reasoningEffort = String(metadata.reasoningEffort || '').trim()
+        const agentMode = metadata.agentMode === 'global' ? 'global' : 'scoped'
+        const provider = agentMode === 'global' ? '' : String(metadata.provider || '').trim()
+        const model = agentMode === 'global' ? '' : String(metadata.model || '').trim()
+        const apiMode = agent === 'hermes' || agentMode === 'global' ? '' : String(metadata.apiMode || '').trim()
+        const reasoningEffort = agentMode === 'global' ? '' : String(metadata.reasoningEffort || '').trim()
         const avatar = String(metadata.avatar || '').trim()
         const executorType = metadata.executorType === 'remote' ? 'remote' : 'server'
         const ownerMemberId = String(metadata.ownerMemberId || '').trim()
@@ -2542,17 +2546,17 @@ class ChatStorage {
         const remoteOrigin = String(metadata.remoteOrigin || '').trim()
         this.db()?.prepare(
             `INSERT INTO gc_room_agents (
-                id, roomId, agentId, agent, profile, provider, model, apiMode,
+                id, roomId, agentId, agent, agentMode, profile, provider, model, apiMode,
                 reasoningEffort, name, description, avatar, invited,
                 executorType, ownerMemberId, connectorId, remoteOrigin
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         ).run(
-            id, roomId, agentId, agent, profile, provider, model, apiMode,
+            id, roomId, agentId, agent, agentMode, profile, provider, model, apiMode,
             reasoningEffort, name, description, avatar, invited,
             executorType, ownerMemberId, connectorId, remoteOrigin,
         )
         return {
-            id, roomId, agentId, agent, profile, provider, model, apiMode,
+            id, roomId, agentId, agent, agentMode, profile, provider, model, apiMode,
             reasoningEffort, name, description, avatar, invited,
             executorType, ownerMemberId, connectorId, remoteOrigin,
         }
@@ -2581,6 +2585,7 @@ class ChatStorage {
             id: String(target.id || ''),
             agentId: String(target.agentId || ''),
             agent: String(target.agent || ''),
+            agentMode: String(target.agentMode || 'scoped'),
             profile: String(target.profile || ''),
             provider: String(target.provider || ''),
             model: String(target.model || ''),
@@ -2607,16 +2612,17 @@ class ChatStorage {
         if (!existing) return null
         this.assertParticipantNameAvailable(roomId, name, { excludeAgentRef: existing.id })
         const agent = metadata.agent || 'hermes'
-        const provider = String(metadata.provider || '').trim()
-        const model = String(metadata.model || '').trim()
-        const apiMode = agent === 'hermes' ? '' : String(metadata.apiMode || '').trim()
-        const reasoningEffort = String(metadata.reasoningEffort || '').trim()
+        const agentMode = metadata.agentMode === 'global' ? 'global' : 'scoped'
+        const provider = agentMode === 'global' ? '' : String(metadata.provider || '').trim()
+        const model = agentMode === 'global' ? '' : String(metadata.model || '').trim()
+        const apiMode = agent === 'hermes' || agentMode === 'global' ? '' : String(metadata.apiMode || '').trim()
+        const reasoningEffort = agentMode === 'global' ? '' : String(metadata.reasoningEffort || '').trim()
         const avatar = String(metadata.avatar || '').trim()
         this.db()?.prepare(
             `UPDATE gc_room_agents
-             SET agent = ?, profile = ?, provider = ?, model = ?, apiMode = ?, reasoningEffort = ?, name = ?, description = ?, avatar = ?
+             SET agent = ?, agentMode = ?, profile = ?, provider = ?, model = ?, apiMode = ?, reasoningEffort = ?, name = ?, description = ?, avatar = ?
              WHERE roomId = ? AND removedAt = 0 AND (id = ? OR agentId = ?)`
-        ).run(agent, profile, provider, model, apiMode, reasoningEffort, name, description, avatar, roomId, agentRef, agentRef)
+        ).run(agent, agentMode, profile, provider, model, apiMode, reasoningEffort, name, description, avatar, roomId, agentRef, agentRef)
         return this.getRoomAgent(roomId, agentRef)
     }
 
@@ -3703,6 +3709,7 @@ export class GroupChatServer {
             for (const agent of this.storage.getRoomAgents(roomId) || []) {
                 ids.add(groupBridgeSessionId(roomId, agent.profile, agent.name, String(room?.sessionSeed || '0'), {
                     agent: agent.agent,
+                    agentMode: agent.agentMode,
                     provider: agent.provider,
                     model: agent.model,
                     apiMode: agent.apiMode,
@@ -3813,6 +3820,7 @@ export class GroupChatServer {
                     const client = await this.agentClients.createAgent({
                         agentId: agent.agentId,
                         agent: agent.agent,
+                        agentMode: agent.agentMode,
                         profile: agent.profile,
                         provider: agent.provider,
                         model: agent.model,
@@ -4166,6 +4174,7 @@ export class GroupChatServer {
         if (!room || !roomAgent) return false
         const expected = groupBridgeSessionId(roomId, roomAgent.profile, roomAgent.name, String(room.sessionSeed || '0'), {
             agent: roomAgent.agent,
+            agentMode: roomAgent.agentMode,
             provider: roomAgent.provider,
             model: roomAgent.model,
             apiMode: roomAgent.apiMode,

@@ -30,6 +30,12 @@ const statusTip = computed(() => (
     : ''
 ))
 const isCodingAgent = computed(() => props.data.agent !== 'hermes')
+const supportsGlobalMode = computed(() => ['claude-code', 'codex', 'pi'].includes(props.data.agent))
+const usesScopedModel = computed(() => !supportsGlobalMode.value || props.data.agentMode !== 'global')
+const agentModeOptions = computed(() => [
+  { label: t('codingAgents.launchModeGlobal'), value: 'global' },
+  { label: t('codingAgents.launchModeScoped'), value: 'scoped' },
+])
 const selectableModelGroups = computed(() => (
   isCodingAgent.value
     ? props.data.modelGroups.filter(group => canScopedCodingAgentUseProvider(
@@ -181,7 +187,17 @@ async function uploadImages(files: File[]) {
         :placeholder="t('workflow.node.agent')"
         @update:value="value => updateField('agent', value as string)"
       />
+      <NSelect
+        v-if="supportsGlobalMode"
+        :value="data.agentMode"
+        :options="agentModeOptions"
+        size="small"
+        :disabled="data.readonly"
+        :placeholder="t('codingAgents.launchModeScope')"
+        @update:value="value => updateField('agentMode', value as 'scoped' | 'global')"
+      />
       <WorkflowModelSelector
+        v-if="usesScopedModel"
         :provider="data.provider"
         :model="data.model"
         :groups="selectableModelGroups"
@@ -189,7 +205,7 @@ async function uploadImages(files: File[]) {
         @select="handleModelSelect"
       />
       <NSelect
-        v-if="isCodingAgent"
+        v-if="isCodingAgent && usesScopedModel"
         :value="data.apiMode"
         :options="apiModeOptions"
         size="small"
@@ -198,6 +214,7 @@ async function uploadImages(files: File[]) {
         @update:value="value => updateField('apiMode', value as CodingAgentApiMode)"
       />
       <NSelect
+        v-if="usesScopedModel"
         :value="data.reasoningEffort"
         :options="reasoningEffortOptions"
         size="small"

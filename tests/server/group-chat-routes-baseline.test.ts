@@ -952,6 +952,7 @@ describe('group chat REST route baseline', () => {
       0,
       {
         agent: 'codex',
+        agentMode: 'scoped',
         provider: 'openai',
         model: 'gpt-test',
         apiMode: 'codex_responses',
@@ -1225,6 +1226,7 @@ describe('group chat REST route baseline', () => {
       'Reviews changes',
       {
         agent: 'codex',
+        agentMode: 'scoped',
         provider: 'openai',
         model: 'new-model',
         apiMode: 'codex_responses',
@@ -1238,6 +1240,68 @@ describe('group chat REST route baseline', () => {
       name: 'Reviewer',
     })
     expect(broadcastRoomAgents).toHaveBeenCalledWith('room-1')
+  })
+
+  it('uses global CLI configuration for supported room agents without persisting scoped overrides', async () => {
+    storage.rooms.set('room-global', { id: 'room-global', name: 'Global Room', inviteCode: 'GLOBAL1' })
+
+    const res = await fetch(`${baseUrl}/api/studio/group-chat/rooms/room-global/agents`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        agent: 'codex',
+        agentMode: 'global',
+        profile: 'research',
+        provider: 'must-not-persist',
+        model: 'must-not-persist',
+        apiMode: 'chat_completions',
+        reasoningEffort: 'high',
+        name: 'Global Codex',
+      }),
+    })
+
+    expect(res.status).toBe(200)
+    await expect(res.json()).resolves.toMatchObject({
+      agent: expect.objectContaining({
+        agent: 'codex',
+        agentMode: 'global',
+        provider: '',
+        model: '',
+        apiMode: '',
+        reasoningEffort: '',
+      }),
+    })
+    expect(agentClients.createAgent).toHaveBeenCalledWith(expect.objectContaining({
+      agent: 'codex',
+      agentMode: 'global',
+      provider: '',
+      model: '',
+      apiMode: '',
+      reasoningEffort: '',
+    }))
+    expect(storage.addRoomAgent.mock.calls.at(-1)?.[6]).toMatchObject({
+      agent: 'codex',
+      agentMode: 'global',
+      provider: '',
+      model: '',
+      apiMode: '',
+      reasoningEffort: '',
+    })
+
+    const unsupported = await fetch(`${baseUrl}/api/studio/group-chat/rooms/room-global/agents`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        agent: 'ekko',
+        agentMode: 'global',
+        profile: 'research',
+        name: 'Global Ekko',
+      }),
+    })
+    expect(unsupported.status).toBe(400)
+    await expect(unsupported.json()).resolves.toEqual({
+      error: 'Global mode is only available for Claude, Codex, and Pi',
+    })
   })
 
   it('rejects a concurrent update for the same room agent before runtime and persistence can interleave', async () => {

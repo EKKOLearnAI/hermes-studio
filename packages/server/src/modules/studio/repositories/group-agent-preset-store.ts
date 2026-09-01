@@ -9,6 +9,7 @@ export interface GroupAgentPresetRecord {
   id: string
   ownerUserId: number
   agent: GroupAgentPresetAgent
+  agentMode: 'scoped' | 'global'
   profile: string
   provider: string
   model: string
@@ -21,7 +22,9 @@ export interface GroupAgentPresetRecord {
   updatedAt: number
 }
 
-export type GroupAgentPresetDefinition = Omit<GroupAgentPresetRecord, 'id' | 'createdAt' | 'updatedAt'>
+export type GroupAgentPresetDefinition = Omit<GroupAgentPresetRecord, 'id' | 'createdAt' | 'updatedAt' | 'agentMode'> & {
+  agentMode?: 'scoped' | 'global'
+}
 
 function rethrowGroupAgentPresetWriteError(error: any): never {
   const message = String(error?.message || '')
@@ -43,6 +46,7 @@ function row(value: any): GroupAgentPresetRecord {
     id: String(value.id),
     ownerUserId: Number(value.ownerUserId),
     agent: String(value.agent || 'hermes') as GroupAgentPresetAgent,
+    agentMode: value.agentMode === 'global' ? 'global' : 'scoped',
     profile: String(value.profile),
     provider: String(value.provider),
     model: String(value.model),
@@ -79,6 +83,7 @@ export function createGroupAgentPreset(input: GroupAgentPresetDefinition): Group
   const now = Date.now()
   const value: GroupAgentPresetRecord = {
     ...input,
+    agentMode: input.agentMode === 'global' ? 'global' : 'scoped',
     id: randomUUID(),
     createdAt: now,
     updatedAt: now,
@@ -86,10 +91,10 @@ export function createGroupAgentPreset(input: GroupAgentPresetDefinition): Group
   try {
     db.prepare(
       `INSERT INTO ${GC_AGENT_PRESETS_TABLE}
-        (id, ownerUserId, agent, profile, provider, model, apiMode, reasoningEffort, name, description, avatar, createdAt, updatedAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (id, ownerUserId, agent, agentMode, profile, provider, model, apiMode, reasoningEffort, name, description, avatar, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
-      value.id, value.ownerUserId, value.agent, value.profile, value.provider, value.model,
+      value.id, value.ownerUserId, value.agent, value.agentMode, value.profile, value.provider, value.model,
       value.apiMode, value.reasoningEffort, value.name, value.description, value.avatar,
       value.createdAt, value.updatedAt,
     )
@@ -110,11 +115,11 @@ export function updateGroupAgentPreset(
   try {
     db.prepare(
       `UPDATE ${GC_AGENT_PRESETS_TABLE}
-       SET agent = ?, profile = ?, provider = ?, model = ?, apiMode = ?, reasoningEffort = ?,
+       SET agent = ?, agentMode = ?, profile = ?, provider = ?, model = ?, apiMode = ?, reasoningEffort = ?,
            name = ?, description = ?, avatar = ?, updatedAt = ?
        WHERE id = ? AND ownerUserId = ?`,
     ).run(
-      input.agent, input.profile, input.provider, input.model, input.apiMode,
+      input.agent, input.agentMode === 'global' ? 'global' : 'scoped', input.profile, input.provider, input.model, input.apiMode,
       input.reasoningEffort, input.name, input.description, input.avatar, updatedAt,
       id, ownerUserId,
     )

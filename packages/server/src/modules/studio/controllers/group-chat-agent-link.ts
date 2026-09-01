@@ -282,6 +282,7 @@ export async function localAgents(ctx: Context): Promise<void> {
     protocolVersion: GROUP_AGENT_RELAY_PROTOCOL_VERSION,
     agents: listProfileNamesFromDisk().map(profile => ({
       agent: 'hermes',
+      agentMode: 'scoped',
       profile,
       provider: '',
       model: '',

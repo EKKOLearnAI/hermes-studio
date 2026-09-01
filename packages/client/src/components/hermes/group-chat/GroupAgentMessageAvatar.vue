@@ -74,11 +74,15 @@ function runtimeValue(value: string): string {
                     <span>{{ t('workflow.profile') }}</span>
                     <strong :title="runtimeValue(agent.profile)">{{ runtimeValue(agent.profile) }}</strong>
                 </div>
-                <div class="message-agent-runtime-row">
+                <div v-if="agent.agentMode === 'global'" class="message-agent-runtime-row">
+                    <span>{{ t('codingAgents.launchModeScope') }}</span>
+                    <strong>{{ t('codingAgents.launchModeGlobal') }}</strong>
+                </div>
+                <div v-if="agent.agentMode !== 'global'" class="message-agent-runtime-row">
                     <span>{{ t('profiles.provider') }}</span>
                     <strong :title="runtimeValue(agent.provider)">{{ runtimeValue(agent.provider) }}</strong>
                 </div>
-                <div class="message-agent-runtime-row">
+                <div v-if="agent.agentMode !== 'global'" class="message-agent-runtime-row">
                     <span>{{ t('profiles.model') }}</span>
                     <strong :title="runtimeValue(agent.model)">{{ runtimeValue(agent.model) }}</strong>
                 </div>

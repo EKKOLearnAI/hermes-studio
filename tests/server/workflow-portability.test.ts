@@ -33,6 +33,28 @@ describe('workflow portability', () => {
     expect(JSON.stringify(exported)).not.toContain('custom:test')
   })
 
+  it('preserves global CLI mode while stripping scoped runtime bindings', () => {
+    const exported = exportWorkflowDefinition({
+      id: 'wf-global', name: 'Portable global CLI', profile: 'private', workspace: '/private/path',
+      nodes: [{ id: 'n', type: 'agent', position: { x: 0, y: 0 }, data: {
+        title: 'Global Codex', agent: 'codex', agentMode: 'global',
+        provider: 'must-not-export', model: 'must-not-export', apiMode: 'chat_completions',
+        reasoningEffort: 'high', input: 'work',
+      } }], edges: [], viewport: null,
+    } as any)
+    expect(exported.definition.nodes[0].data).toEqual({
+      title: 'Global Codex',
+      agent: 'codex',
+      agentMode: 'global',
+      input: 'work',
+    })
+    expect(JSON.stringify(exported)).not.toContain('must-not-export')
+
+    const preview = previewWorkflowImport(JSON.stringify(exported), options('global-owner', 'default'))
+    const imported = confirmWorkflowImport(preview.token, options('global-owner', 'default'))
+    expect(imported.nodes[0].data).toMatchObject({ agent: 'codex', agentMode: 'global', input: 'work' })
+  })
+
   it('sanitizes source-environment bindings from legacy v1 documents before import', () => {
     const legacy = {
       format: 'hermes-studio.workflow', version: 1, definition: {

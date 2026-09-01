@@ -354,6 +354,7 @@ function sameRemoteAgent(
 class RelayGroupAgentExecutor implements GroupAgentExecutor {
   readonly agentId: string
   agent: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi'
+  agentMode: 'scoped' | 'global'
   profile: string
   provider: string
   model: string
@@ -386,6 +387,7 @@ class RelayGroupAgentExecutor implements GroupAgentExecutor {
   ) {
     this.agentId = String(agent.agentId)
     this.agent = agent.agent || 'hermes'
+    this.agentMode = agent.agentMode === 'global' ? 'global' : 'scoped'
     this.profile = String(agent.profile || 'default')
     this.provider = String(agent.provider || '')
     this.model = String(agent.model || '')
@@ -415,6 +417,7 @@ class RelayGroupAgentExecutor implements GroupAgentExecutor {
 
   updateConfiguration(agent: any): void {
     this.agent = agent.agent || 'hermes'
+    this.agentMode = agent.agentMode === 'global' ? 'global' : 'scoped'
     this.profile = String(agent.profile || 'default')
     this.provider = String(agent.provider || '')
     this.model = String(agent.model || '')
@@ -474,6 +477,7 @@ class RelayGroupAgentExecutor implements GroupAgentExecutor {
           agentSnapshot: {
             name: this.name,
             agent: this.agent,
+            agentMode: this.agentMode,
             profile: this.profile,
             provider: this.provider,
             model: this.model,
@@ -1233,6 +1237,7 @@ export class GroupAgentRelayServer {
           1,
           {
             agent: descriptor.agent,
+            agentMode: descriptor.agentMode,
             provider: descriptor.provider,
             model: descriptor.model,
             apiMode: descriptor.apiMode,
@@ -1253,6 +1258,7 @@ export class GroupAgentRelayServer {
       proxy = new AgentClient({
         agentId: roomAgent.agentId,
         agent: roomAgent.agent,
+        agentMode: roomAgent.agentMode,
         profile: roomAgent.profile,
         provider: roomAgent.provider,
         model: roomAgent.model,
@@ -1334,6 +1340,7 @@ export class GroupAgentRelayServer {
         agent: {
           agentId: roomAgent.agentId,
           agent: roomAgent.agent,
+          agentMode: roomAgent.agentMode,
           profile: roomAgent.profile,
           provider: roomAgent.provider,
           model: roomAgent.model,
@@ -1379,6 +1386,7 @@ export class GroupAgentRelayServer {
               descriptor.description,
               {
                 agent: descriptor.agent,
+                agentMode: descriptor.agentMode,
                 provider: descriptor.provider,
                 model: descriptor.model,
                 apiMode: descriptor.apiMode,
@@ -1998,13 +2006,14 @@ export class GroupAgentOutboundRelayManager {
     const targetOrigin = normalizeOrigin(input.targetOrigin)
     const ticket = String(input.pairingTicket || '').trim()
     if (!ticket) throw new Error('pairingTicket is required')
+    const agent = normalizeRemoteGroupAgentDescriptor(input.agent)
     const key = `pairing:${ticket.slice(0, 12)}`
     const connection = new OutboundRelayConnection(this, key, {
       cloudOrigin,
       targetOrigin,
       connectorId: '',
       credential: '',
-      agent: input.agent,
+      agent,
     }, ticket)
     this.connections.get(key)?.close()
     this.connections.set(key, connection)
