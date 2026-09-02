@@ -26,6 +26,10 @@ const LEGACY_PROFILE_DIRECTORIES = new Set(['knowledge', 'memories', 'preference
 const LEGACY_ROOT_FILES = new Set([...LEGACY_PROFILE_FILES, 'active_profile'])
 const LEGACY_SHARED_FILES = new Set(['nous_auth.json'])
 const VERIFIED_CONFIGURATION_FILES = new Set([...LEGACY_ROOT_FILES, ...LEGACY_SHARED_FILES])
+const STATE_DATABASE_FILES = ['state.db', 'state.db-wal', 'state.db-shm', 'state.db-journal'] as const
+const STATE_DATABASE_STAGING = '.studio-windows-appdata-state-db-staging'
+const STATE_DATABASE_BACKUP = '.studio-windows-appdata-state-db-backup'
+const STATE_DATABASE_TRANSACTION = 'transaction.json'
 
 type MigrationAction = 'migrate' | 'decline'
 type MigrationState = 'completed' | 'failed' | 'pending'
@@ -187,6 +191,148 @@ interface CopySummary {
   skippedSymlinks: string[]
 }
 
+interface StateDatabaseTransaction {
+  schema: 1
+  phase: 'staged' | 'activating'
+  sourceDirectory: string
+  targetDirectory: string
+  sourceFiles: string[]
+  originalFiles: string[]
+}
+
+function isStateDatabaseTransaction(value: unknown): value is StateDatabaseTransaction {
+  if (!value || typeof value !== 'object') return false
+  const transaction = value as Partial<StateDatabaseTransaction>
+  return transaction.schema === 1
+    && (transaction.phase === 'staged' || transaction.phase === 'activating')
+    && typeof transaction.sourceDirectory === 'string'
+    && typeof transaction.targetDirectory === 'string'
+    && Array.isArray(transaction.sourceFiles)
+    && transaction.sourceFiles.every(name => STATE_DATABASE_FILES.includes(name as typeof STATE_DATABASE_FILES[number]))
+    && Array.isArray(transaction.originalFiles)
+    && transaction.originalFiles.every(name => STATE_DATABASE_FILES.includes(name as typeof STATE_DATABASE_FILES[number]))
+}
+
+async function isFile(path: string): Promise<boolean> {
+  try {
+    return (await lstat(path)).isFile()
+  } catch {
+    return false
+  }
+}
+
+async function readStateDatabaseTransaction(directory: string): Promise<StateDatabaseTransaction | null> {
+  try {
+    const value = JSON.parse(await readFile(join(directory, STATE_DATABASE_TRANSACTION), 'utf8')) as unknown
+    return isStateDatabaseTransaction(value) ? value : null
+  } catch {
+    return null
+  }
+}
+
+async function writeStateDatabaseTransaction(
+  directory: string,
+  transaction: StateDatabaseTransaction,
+): Promise<void> {
+  await mkdir(directory, { recursive: true })
+  await writeFile(join(directory, STATE_DATABASE_TRANSACTION), `${JSON.stringify(transaction, null, 2)}\n`, 'utf8')
+}
+
+async function recoverStateDatabaseTransaction(targetDirectory: string, fs: MigrationFileSystem): Promise<void> {
+  const staging = join(targetDirectory, STATE_DATABASE_STAGING)
+  const backup = join(targetDirectory, STATE_DATABASE_BACKUP)
+  const stagingExists = await isDirectory(staging)
+  const backupExists = await isDirectory(backup)
+  if (!stagingExists && !backupExists) return
+
+  const transaction = await readStateDatabaseTransaction(backup)
+    || await readStateDatabaseTransaction(staging)
+  if (!transaction || !sameWindowsPath(transaction.targetDirectory, targetDirectory)) {
+    throw new Error(`Refusing to recover unrecognized Hermes state database migration in: ${targetDirectory}`)
+  }
+
+  if (transaction.phase === 'activating') {
+    for (const name of STATE_DATABASE_FILES) {
+      await rm(join(targetDirectory, name), { force: true })
+    }
+    for (const name of transaction.originalFiles) {
+      const backupFile = join(backup, name)
+      if (await isFile(backupFile)) await fs.copyFilePath(backupFile, join(targetDirectory, name))
+    }
+  }
+
+  await rm(staging, { recursive: true, force: true })
+  await rm(backup, { recursive: true, force: true })
+}
+
+async function copyStateDatabase(
+  sourceDirectory: string,
+  targetDirectory: string,
+  fs: MigrationFileSystem,
+  summary: CopySummary,
+): Promise<void> {
+  if (!(await isFile(join(sourceDirectory, 'state.db')))) return
+  await mkdir(targetDirectory, { recursive: true })
+  await recoverStateDatabaseTransaction(targetDirectory, fs)
+
+  const sourceFiles: string[] = []
+  const originalFiles: string[] = []
+  for (const name of STATE_DATABASE_FILES) {
+    if (await isFile(join(sourceDirectory, name))) sourceFiles.push(name)
+    if (await isFile(join(targetDirectory, name))) originalFiles.push(name)
+  }
+
+  const staging = join(targetDirectory, STATE_DATABASE_STAGING)
+  const backup = join(targetDirectory, STATE_DATABASE_BACKUP)
+  const staged: StateDatabaseTransaction = {
+    schema: 1,
+    phase: 'staged',
+    sourceDirectory,
+    targetDirectory,
+    sourceFiles,
+    originalFiles,
+  }
+
+  await writeStateDatabaseTransaction(staging, staged)
+  await writeStateDatabaseTransaction(backup, staged)
+  try {
+    for (const name of sourceFiles) {
+      await fs.copyFilePath(join(sourceDirectory, name), join(staging, name))
+    }
+    for (const name of originalFiles) {
+      await fs.copyFilePath(join(targetDirectory, name), join(backup, name))
+    }
+
+    const activating: StateDatabaseTransaction = { ...staged, phase: 'activating' }
+    await writeStateDatabaseTransaction(staging, activating)
+    await writeStateDatabaseTransaction(backup, activating)
+
+    for (const name of STATE_DATABASE_FILES) {
+      if (!sourceFiles.includes(name)) await rm(join(targetDirectory, name), { force: true })
+    }
+    for (const name of sourceFiles) {
+      await fs.copyFilePath(join(staging, name), join(targetDirectory, name))
+      const [sourceStat, targetStat] = await Promise.all([
+        stat(join(sourceDirectory, name)),
+        stat(join(targetDirectory, name)),
+      ])
+      if (sourceStat.size !== targetStat.size) {
+        throw new Error(`Legacy Windows Hermes state database verification failed: ${join(targetDirectory, name)}`)
+      }
+      summary.copiedFiles.push({
+        source: join(sourceDirectory, name),
+        target: join(targetDirectory, name),
+      })
+    }
+  } catch (error) {
+    await recoverStateDatabaseTransaction(targetDirectory, fs).catch(() => undefined)
+    throw error
+  }
+
+  await rm(staging, { recursive: true, force: true })
+  await rm(backup, { recursive: true, force: true })
+}
+
 async function copyEntry(
   source: string,
   target: string,
@@ -243,6 +389,7 @@ async function copySelectedProfileData(
     if (!LEGACY_PROFILE_FILES.has(entry) && !LEGACY_PROFILE_DIRECTORIES.has(entry)) continue
     await copyEntry(join(source, entry), join(target, entry), sourceRoot, fs, summary)
   }
+  await copyStateDatabase(source, target, fs, summary)
 }
 
 async function copySelectedFiles(
@@ -272,6 +419,7 @@ async function copyLegacyUserData(
     if (!LEGACY_ROOT_FILES.has(entry) && !LEGACY_PROFILE_DIRECTORIES.has(entry)) continue
     await copyEntry(join(source, entry), join(target, entry), source, fs, summary)
   }
+  await copyStateDatabase(source, target, fs, summary)
 
   const profilesSource = join(source, 'profiles')
   if (await isDirectory(profilesSource)) {

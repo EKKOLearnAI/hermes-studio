@@ -17,6 +17,7 @@ const MIGRATABLE_DATA_FILES = new Set([
   'auth.json',
   'channel_directory.json',
   'config.yaml',
+  'state.db',
   'system_prompt.md',
   'todo.json',
 ])

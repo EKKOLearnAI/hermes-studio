@@ -85,7 +85,7 @@ describe('legacy Windows Hermes data migration', () => {
     const state = await fixture()
     await mkdir(join(state.localLegacy, 'hermes-agent', 'node_modules'), { recursive: true })
     await mkdir(state.roamingLegacy, { recursive: true })
-    await writeFile(join(state.roamingLegacy, 'auth.json'), '{"provider":"legacy"}\n')
+    await writeFile(join(state.roamingLegacy, 'state.db'), 'legacy database\n')
 
     const status = await getLegacyWindowsDataMigrationStatus(state.options)
     expect(status).toMatchObject({ shouldPrompt: true, sourceDirectory: state.roamingLegacy })
