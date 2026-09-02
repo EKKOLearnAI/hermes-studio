@@ -240,13 +240,14 @@ class McpProxyTool implements AgentTool {
       ].join(' '),
       parameters: {
         type: 'object',
-        oneOf: tools.map(tool => ({
+        anyOf: tools.map(tool => ({
           type: 'object',
           title: String(tool.name),
           description: String(tool.description || `Call ${String(tool.name)}.`),
           properties: {
             tool: {
-              const: String(tool.name),
+              type: 'string',
+              enum: [String(tool.name)],
               description: 'Exact remote MCP tool name.',
             },
             arguments: isRecord(tool.inputSchema)

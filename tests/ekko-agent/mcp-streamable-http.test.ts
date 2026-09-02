@@ -166,10 +166,13 @@ describe('Ekko Streamable HTTP MCP', () => {
     expect(tools[0].definition).toMatchObject({
       name: 'mcp__lazycat-shared-folder',
       parameters: {
-        oneOf: [
+        anyOf: [
           {
             properties: {
-              tool: { const: 'shared_folder.list_shared_with_me' },
+              tool: {
+                type: 'string',
+                enum: ['shared_folder.list_shared_with_me'],
+              },
               arguments: {
                 properties: { limit: { type: 'number' } },
               },
@@ -177,7 +180,10 @@ describe('Ekko Streamable HTTP MCP', () => {
           },
           {
             properties: {
-              tool: { const: 'shared_folder.leave' },
+              tool: {
+                type: 'string',
+                enum: ['shared_folder.leave'],
+              },
               arguments: {
                 properties: { id: { type: 'string' } },
                 required: ['id'],
