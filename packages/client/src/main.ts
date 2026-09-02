@@ -4,6 +4,7 @@ import router from './router'
 import { i18nReady } from './i18n'
 import App from './App.vue'
 import './styles/global.scss'
+import { loadServerTtsSettings } from '@/composables/useVoiceSettings'
 import { desktopBridge } from '@/utils/desktop-bridge'
 
 // Apply theme classes before mount to prevent FOUC (Flash of Unstyled Content)
@@ -62,6 +63,7 @@ async function mountApp(): Promise<void> {
   app.use(createPinia())
   app.use(i18n)
   app.use(router)
+  await loadServerTtsSettings().catch(() => undefined)
   await router.isReady().catch(() => undefined)
   app.mount('#app')
 }

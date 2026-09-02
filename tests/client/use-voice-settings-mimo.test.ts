@@ -2,12 +2,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
 
+const { fetchTtsSettingsMock } = vi.hoisted(() => ({
+  fetchTtsSettingsMock: vi.fn(),
+}))
+
+vi.mock('@/api/studio/tts-settings', () => ({
+  fetchTtsSettings: fetchTtsSettingsMock,
+}))
+
 const STORAGE_KEY = 'hermes-tts-settings-v2'
 
 describe('useVoiceSettings MiMo settings', () => {
   beforeEach(() => {
     vi.resetModules()
     localStorage.clear()
+    fetchTtsSettingsMock.mockReset()
   })
 
   it('defaults MiMo auth and voice clone settings', async () => {
@@ -18,6 +27,23 @@ describe('useVoiceSettings MiMo settings', () => {
     expect(settings.mimoVoiceCloneDataUri.value).toBe('')
     expect(settings.mimoVoiceCloneFileName.value).toBe('')
     expect(settings.mimoVoiceCloneFormat.value).toBe('wav')
+  })
+
+  it('hydrates the active TTS provider from the server for a fresh browser profile', async () => {
+    fetchTtsSettingsMock.mockResolvedValue({ providers: [], activeProvider: 'openai' })
+
+    const { loadServerTtsSettings, useVoiceSettings } = await import('../../packages/client/src/composables/useVoiceSettings')
+    const settings = useVoiceSettings()
+
+    expect(settings.provider.value).toBe('webspeech')
+
+    await loadServerTtsSettings()
+    await nextTick()
+
+    expect(settings.provider.value).toBe('openai')
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}')).toMatchObject({
+      provider: 'openai',
+    })
   })
 
   it('persists MiMo auth mode and voice clone fields', async () => {

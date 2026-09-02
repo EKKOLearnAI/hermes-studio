@@ -1,4 +1,5 @@
 import { ref, watch } from 'vue'
+import { fetchTtsSettings, type FetchTtsSettingsResponse } from '@/api/studio/tts-settings'
 import { DOUBAO_TTS_2_RESOURCE_ID, DOUBAO_TTS_DEFAULT_VOICE } from '@/constants/doubaoTtsVoices'
 
 export type TtsProvider =
@@ -144,6 +145,34 @@ function load(): VoiceSettingsData {
 // Run migration once on import
 migrateOldKeys()
 
+let serverSettingsLoaded = false
+let serverSettingsPromise: Promise<void> | null = null
+
+function applyServerTtsSettings(response: FetchTtsSettingsResponse) {
+  if (response.activeProvider) {
+    provider.value = response.activeProvider
+  }
+}
+
+export async function loadServerTtsSettings(force = false): Promise<void> {
+  if (serverSettingsLoaded && !force) return
+  if (serverSettingsPromise && !force) return serverSettingsPromise
+
+  const promise = fetchTtsSettings()
+    .then(response => {
+      applyServerTtsSettings(response)
+      serverSettingsLoaded = true
+    })
+    .finally(() => {
+      if (serverSettingsPromise === promise) {
+        serverSettingsPromise = null
+      }
+    })
+
+  serverSettingsPromise = promise
+  return promise
+}
+
 // ── Reactive state ──
 const provider = ref<TtsProvider>(load().provider)
 
@@ -258,6 +287,8 @@ export function useVoiceSettings() {
     doubaoModel,
     doubaoVoice,
     doubaoStylePrompt,
+
+    loadServerTtsSettings,
 
     setProvider(v: TtsProvider) { provider.value = v },
     setWebSpeechVoice(v: string) { webspeechVoice.value = v },
