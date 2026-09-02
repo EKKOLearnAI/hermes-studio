@@ -46,6 +46,7 @@ const PI_MCP_ADAPTER_VERSION = '2.24.0'
 const PI_MCP_ADAPTER_PACKAGE = `pi-mcp-adapter@${PI_MCP_ADAPTER_VERSION}`
 const PI_CODING_AGENT_VERSION = '0.84.1'
 const PI_CODING_AGENT_PACKAGE = `@earendil-works/pi-coding-agent@${PI_CODING_AGENT_VERSION}`
+const GROK_NPM_REGISTRY = 'https://registry.npmjs.org'
 const PI_PROVIDER_ID = 'hermes-studio'
 const PI_PROXY_TARGET_FILE = 'proxy-target.json'
 const PI_DYNAMIC_PROMPT_FILE = 'dynamic-system-prompt.md'
@@ -2005,6 +2006,12 @@ export function getCodingAgentDefinition(id: string): CodingAgentDefinition | nu
   return TOOL_DEFINITIONS.find(tool => tool.id === id) || null
 }
 
+export function withCodingAgentRegistry(id: CodingAgentId, args: string[]): string[] {
+  return id === 'grok'
+    ? [...args, `--registry=${GROK_NPM_REGISTRY}`]
+    : [...args]
+}
+
 export function getCodingAgentConfigFileDefinitions(id: string): CodingAgentConfigFileDefinition[] {
   const tool = getCodingAgentDefinition(id)
   if (!tool) return []
@@ -2150,7 +2157,10 @@ export async function checkUpdateAgent(id: string): Promise<CodingAgentUpdateRes
       return { success: true, tool: status, latestVersion, updateAvailable }
     }
     const env = await commandEnv()
-    const { stdout } = await runNpm(['view', tool.packageName, 'version'], { timeout: 15_000, env })
+    const { stdout } = await runNpm(
+      withCodingAgentRegistry(tool.id, ['view', tool.packageName, 'version']),
+      { timeout: 15_000, env },
+    )
     const latestVersion = stdout.trim()
     const status = await getCodingAgentStatus(tool)
     const updateAvailable = !!latestVersion && status.installed && !versionGte(status.version, latestVersion)
@@ -2177,7 +2187,10 @@ export async function installCodingAgent(id: string): Promise<CodingAgentMutatio
   installingTools.add(tool.id)
   try {
     const env = await commandEnv()
-    await runNpm(['install', '-g', tool.id === 'pi' ? PI_CODING_AGENT_PACKAGE : tool.packageName], {
+    await runNpm(withCodingAgentRegistry(
+      tool.id,
+      ['install', '-g', tool.id === 'pi' ? PI_CODING_AGENT_PACKAGE : tool.packageName],
+    ), {
       timeout: 10 * 60 * 1000,
       env,
     })

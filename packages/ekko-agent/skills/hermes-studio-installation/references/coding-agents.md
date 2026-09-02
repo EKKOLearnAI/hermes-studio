@@ -39,7 +39,7 @@ The Agents page install action effectively performs the following. The Pi adapte
 npm install -g @anthropic-ai/claude-code
 npm install -g @openai/codex
 npm install -g @earendil-works/pi-coding-agent@0.84.1
-npm install -g @xai-official/grok
+npm install -g @xai-official/grok --registry=https://registry.npmjs.org
 studio_home="${HERMES_WEB_UI_HOME:-$HOME/.hermes-web-ui}"
 npm install --prefix "$studio_home/coding-agent/pi-mcp-adapter" --save-exact pi-mcp-adapter@2.24.0
 ```
@@ -76,7 +76,12 @@ The Agents page **Check update** action behaves as follows:
 - Claude Code: compares the detected version with `npm view @anthropic-ai/claude-code version`.
 - Codex: compares the detected version with `npm view @openai/codex version`.
 - Pi: compares the detected version with Studio's pinned Pi version; it does not chase npm latest independently.
-- Grok: compares the detected version with `npm view @xai-official/grok version`.
+- Grok: compares the detected version with `npm view @xai-official/grok version --registry=https://registry.npmjs.org`.
+
+Studio uses the official npm Registry only for Grok installation and update
+checks. This avoids stale third-party mirror metadata selecting a
+platform-incompatible historical release. It does not modify the user's npm
+configuration or the registry used for other coding Agents.
 
 When an update is available, the update action reruns the same install operation. Revalidate the executable path and version afterward. For Pi, revalidate the adapter too.
 
