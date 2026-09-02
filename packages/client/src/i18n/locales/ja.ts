@@ -3044,7 +3044,7 @@ export default {
 
   changelog: {
     new_0_7_16_1: 'Desktop は内蔵 Web UI からの Runtime 再起動要求を Electron 経由で処理し、重複防止付きのクリーンな再起動を行うようになりました。スタンドアロン Web UI の再起動動作も維持されます (#2827)',
-    new_0_7_16_2: 'ワークフローとグループチャットで Claude Code、Codex、Pi Agent を scoped または global モードで起動できるようになりました。global モードは Studio 管理のプロンプトと実行環境を分離し、ユーザー設定を保持します (#2828)',
+    new_0_7_16_2: 'ワークフローとグループチャットで Claude、Codex、Pi Agent を scoped または global モードで起動できるようになりました。global モードは Studio 管理のプロンプトと実行環境を分離し、ユーザー設定を保持します (#2828)',
     new_0_7_16_3: 'Grok CLI が正式な Coding Agent として追加され、scoped プロキシモデル、分離された global モード、ネイティブなセッション再開、使用量追跡、Skills、ワークフロー、グループチャットに対応しました (#2832)',
     new_0_7_16_4: 'Windows の Agent Manager で、AppData にある旧 Hermes の設定、認証、メモリ、Skills、データベースを %USERPROFILE%\\.hermes へ一度だけ移行できるようになり、元データも保持されます (#2834)',
     new_0_7_16_5: 'Windows の旧データ移行は、検証とロールバック付きでユーザーデータとデータベースのサイドカーだけをコピーし、置換可能な Runtime、セッション、ログを除外してファイルロックによる失敗を防ぐようになりました (#2836)',

@@ -3045,7 +3045,7 @@ jobTriggered: 'Job ausgelost',
 
   changelog: {
     new_0_7_16_1: 'Desktop verarbeitet Runtime-Neustartanforderungen der gebündelten Web UI jetzt über Electron und führt mit Schutz vor doppelten Anfragen einen sauberen Neustart aus; Neustarts der eigenständigen Web UI funktionieren weiterhin (#2827)',
-    new_0_7_16_2: 'Workflows und Gruppenchats können Claude Code-, Codex- und Pi-Agents jetzt im Scoped- oder Global-Modus starten; der Global-Modus isoliert von Studio verwaltete Prompts und Laufzeitumgebungen und bewahrt Benutzerkonfigurationen (#2828)',
+    new_0_7_16_2: 'Workflows und Gruppenchats können Claude-, Codex- und Pi-Agents jetzt im Scoped- oder Global-Modus starten; der Global-Modus isoliert von Studio verwaltete Prompts und Laufzeitumgebungen und bewahrt Benutzerkonfigurationen (#2828)',
     new_0_7_16_3: 'Die Grok CLI ist jetzt ein vollwertiger Coding Agent mit Scoped-Proxy-Modellen, isoliertem Global-Modus, nativer Sitzungsfortsetzung, Nutzungsdaten, Skills sowie Unterstützung für Workflows und Gruppenchats (#2832)',
     new_0_7_16_4: 'Unter Windows bietet der Agent Manager einmalig an, ältere Hermes-Konfigurationen, Anmeldedaten, Erinnerungen, Skills und Datenbanken aus AppData nach %USERPROFILE%\\.hermes zu migrieren; die Originaldaten bleiben erhalten (#2834)',
     new_0_7_16_5: 'Die Migration älterer Windows-Daten kopiert jetzt nur Benutzerdaten und Datenbank-Sidecars, prüft das Ergebnis und bietet Rollback; ersetzbare Runtimes, Sitzungen und Protokolle werden ausgeschlossen, um Fehler durch gesperrte Dateien zu vermeiden (#2836)',

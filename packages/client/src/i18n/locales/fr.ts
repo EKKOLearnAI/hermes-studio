@@ -3045,7 +3045,7 @@ jobTriggered: 'Job declenche',
 
   changelog: {
     new_0_7_16_1: 'Desktop traite désormais via Electron les demandes de redémarrage du Runtime émises par la Web UI intégrée, avec une relance propre et une protection contre les doublons, tout en conservant le redémarrage de la Web UI autonome (#2827)',
-    new_0_7_16_2: 'Les workflows et chats de groupe peuvent désormais lancer les Agents Claude Code, Codex et Pi en mode scoped ou global ; le mode global isole les prompts et environnements gérés par Studio tout en préservant la configuration utilisateur (#2828)',
+    new_0_7_16_2: 'Les workflows et chats de groupe peuvent désormais lancer les Agents Claude, Codex et Pi en mode scoped ou global ; le mode global isole les prompts et environnements gérés par Studio tout en préservant la configuration utilisateur (#2828)',
     new_0_7_16_3: 'Grok CLI est désormais un Coding Agent de premier plan avec modèles proxy scoped, mode global isolé, reprise native des sessions, suivi de l’usage, Skills, workflows et chats de groupe (#2832)',
     new_0_7_16_4: 'Sous Windows, Agent Manager propose une migration unique des anciennes configurations, authentifications, mémoires, Skills et bases de données Hermes depuis AppData vers %USERPROFILE%\\.hermes, sans supprimer les données d’origine (#2834)',
     new_0_7_16_5: 'La migration des anciennes données Windows copie désormais uniquement les données utilisateur et fichiers annexes des bases avec validation et retour arrière, en excluant les Runtimes, sessions et journaux remplaçables afin d’éviter les échecs dus aux fichiers verrouillés (#2836)',

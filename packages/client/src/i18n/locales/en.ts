@@ -3482,7 +3482,7 @@ export default {
   // Changelog
   changelog: {
     new_0_7_16_1: 'Desktop now handles Runtime restart requests from its bundled Web UI through Electron, using a clean relaunch with duplicate protection while standalone Web UI restarts continue to work (#2827)',
-    new_0_7_16_2: 'Workflows and group chats can now launch Claude Code, Codex, and Pi Agents in scoped or global mode; global runs keep Studio-managed prompts and environments isolated while preserving user configuration (#2828)',
+    new_0_7_16_2: 'Workflows and group chats can now launch Claude, Codex, and Pi Agents in scoped or global mode; global runs keep Studio-managed prompts and environments isolated while preserving user configuration (#2828)',
     new_0_7_16_3: 'Grok CLI is now a first-class Coding Agent with scoped proxy models, isolated global mode, native session resume, usage tracking, Skills, workflows, and group chat support (#2832)',
     new_0_7_16_4: 'On Windows, Agent Manager now offers a one-time migration of legacy Hermes configuration, authentication, memory, Skills, and databases from AppData to %USERPROFILE%\\.hermes while preserving the original data (#2834)',
     new_0_7_16_5: 'Windows legacy data migration now copies only user data and database sidecars with validation and rollback, excluding replaceable Runtimes, sessions, and logs to avoid locked-file failures (#2836)',

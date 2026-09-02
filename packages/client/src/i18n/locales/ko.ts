@@ -3044,7 +3044,7 @@ export default {
 
   changelog: {
     new_0_7_16_1: 'Desktop이 이제 내장 Web UI의 Runtime 재시작 요청을 Electron을 통해 처리하고 중복 방지 기능이 있는 깨끗한 재시작을 수행하며, 독립형 Web UI의 재시작 동작도 유지합니다 (#2827)',
-    new_0_7_16_2: '워크플로와 그룹 채팅에서 Claude Code, Codex, Pi Agent를 scoped 또는 global 모드로 실행할 수 있습니다. global 모드는 Studio가 관리하는 프롬프트와 실행 환경을 격리하면서 사용자 설정을 보존합니다 (#2828)',
+    new_0_7_16_2: '워크플로와 그룹 채팅에서 Claude, Codex, Pi Agent를 scoped 또는 global 모드로 실행할 수 있습니다. global 모드는 Studio가 관리하는 프롬프트와 실행 환경을 격리하면서 사용자 설정을 보존합니다 (#2828)',
     new_0_7_16_3: 'Grok CLI가 정식 Coding Agent로 추가되어 scoped 프록시 모델, 격리된 global 모드, 기본 세션 재개, 사용량 추적, Skills, 워크플로 및 그룹 채팅을 지원합니다 (#2832)',
     new_0_7_16_4: 'Windows Agent Manager에서 AppData의 기존 Hermes 설정, 인증, 메모리, Skills 및 데이터베이스를 %USERPROFILE%\\.hermes로 한 번만 마이그레이션할 수 있으며 원본 데이터는 그대로 보존됩니다 (#2834)',
     new_0_7_16_5: 'Windows 기존 데이터 마이그레이션은 검증과 롤백을 적용해 사용자 데이터와 데이터베이스 사이드카만 복사하고, 교체 가능한 Runtime, 세션 및 로그를 제외하여 잠긴 파일로 인한 실패를 방지합니다 (#2836)',

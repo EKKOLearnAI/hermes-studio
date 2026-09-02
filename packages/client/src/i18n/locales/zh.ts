@@ -3530,7 +3530,7 @@ export default {
   // 更新日志
   changelog: {
     new_0_7_16_1: '桌面端现在会通过 Electron 处理内置 Web UI 发起的 Runtime 重启请求，使用带重复请求保护的干净重启，同时保留独立 Web UI 的重启行为（#2827）',
-    new_0_7_16_2: '工作流和群聊现在可用 scoped 或 global 模式启动 Claude Code、Codex 和 Pi Agent；global 模式会隔离 Studio 管理的提示词和运行环境，同时保留用户配置（#2828）',
+    new_0_7_16_2: '工作流和群聊现在可用 scoped 或 global 模式启动 Claude、Codex 和 Pi Agent；global 模式会隔离 Studio 管理的提示词和运行环境，同时保留用户配置（#2828）',
     new_0_7_16_3: 'Grok CLI 现作为一等 Coding Agent 集成，支持 scoped 代理模型、隔离 global 模式、原生会话续接、用量统计、Skills、工作流和群聊（#2832）',
     new_0_7_16_4: 'Windows Agent 管理器现在会一次性提示将旧 AppData 中的 Hermes 配置、认证、记忆、Skills 和数据库迁移到 %USERPROFILE%\\.hermes，并保留原始数据（#2834）',
     new_0_7_16_5: 'Windows 旧数据迁移现在只复制用户数据和数据库 sidecar，通过校验和回滚保护结果，并排除可替换的 Runtime、会话和日志，避免锁文件导致迁移失败（#2836）',
