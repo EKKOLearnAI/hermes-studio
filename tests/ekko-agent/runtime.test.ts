@@ -416,7 +416,7 @@ describe('ekko-agent runtime', () => {
     tools.register(echoTool)
     const client = modelClient((_request, call) => call === 1
       ? {
-          content: '',
+          content: '继续检查:',
           toolCalls: [{ id: 'call_1', name: 'echo', arguments: { text: 'from-tool' } }],
           finishReason: 'tool_calls',
         }
@@ -429,7 +429,7 @@ describe('ekko-agent runtime', () => {
     expect(result.messages).toMatchObject([
       { role: 'system' },
       { role: 'user', content: 'use echo' },
-      { role: 'assistant', toolCalls: [{ id: 'call_1', name: 'echo' }] },
+      { role: 'assistant', content: '继续检查。', toolCalls: [{ id: 'call_1', name: 'echo' }] },
       { role: 'tool', toolCallId: 'call_1', name: 'echo', content: 'from-tool' },
       { role: 'assistant', content: 'tool said from-tool' },
     ])
@@ -2206,6 +2206,8 @@ describe('ekko-agent runtime', () => {
     expect(prompt).toContain('prerequisites named by a Skill as requirements, not proof that they are installed')
     expect(prompt).toContain('perform a lightweight availability check')
     expect(prompt).toContain('Request independent tool calls together in one response')
+    expect(prompt).toContain('complete standalone sentence')
+    expect(prompt).toContain('Do not end tool-call preambles with ":" or "："')
     expect(prompt).toContain('use code_exec, including for one-line snippets')
     expect(prompt).toContain('Do not probe Node or Python with terminal_exec first')
     expect(prompt).toContain('Use terminal_exec for CLI commands')

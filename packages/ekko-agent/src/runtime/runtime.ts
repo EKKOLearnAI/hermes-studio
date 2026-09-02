@@ -528,7 +528,7 @@ export class AgentRuntime {
         )
         if (activeBoundaryRun?.pending) return completeBoundaryInterrupt(step - 1)
         const response = modelResult.response
-        const assistantMessage = modelResponseToAgentMessage(response)
+        const assistantMessage = normalizeToolCallPreamble(modelResponseToAgentMessage(response))
         const toolCalls = assistantMessage.toolCalls ?? []
         const blockedByRecovery = toolCalls.length === 0 && this.currentRecoveryDirective()?.active === true
         if (activeBoundaryRun && toolCalls.length > 0) {
@@ -1689,6 +1689,17 @@ function removeHistoricalSkillViews(
 
 function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw abortError()
+}
+
+function normalizeToolCallPreamble(message: AgentOutputMessage): AgentOutputMessage {
+  if (!message.toolCalls?.length || !/[:：]\s*$/.test(message.content)) return message
+  const trailingWhitespace = message.content.match(/\s*$/)?.[0] || ''
+  const body = message.content.slice(0, message.content.length - trailingWhitespace.length)
+  const punctuation = /[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]/u.test(body) ? '。' : '.'
+  return {
+    ...message,
+    content: `${body.slice(0, -1)}${punctuation}${trailingWhitespace}`,
+  }
 }
 
 function enterBoundaryModelPhase(
