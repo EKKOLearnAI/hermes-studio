@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { mkdir } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -10,7 +10,10 @@ import {
 } from '../../../../packages/server/src/modules/coding-agents/services/grok/config'
 import { applyGrokStreamEvent } from '../../../../packages/server/src/modules/coding-agents/services/grok/event-adapter'
 import { parseGrokStreamingJsonLine } from '../../../../packages/server/src/modules/coding-agents/services/grok/streaming-json'
-import { buildGrokTurnArgs } from '../../../../packages/server/src/modules/coding-agents/services/grok/turn-process'
+import {
+  buildGrokTurnArgs,
+  grokSessionExists,
+} from '../../../../packages/server/src/modules/coding-agents/services/grok/turn-process'
 import { updateManagedPromptFileSync } from '../../../../packages/server/src/modules/coding-agents/services/prompt-file'
 
 const roots: string[] = []
@@ -118,6 +121,16 @@ describe('Grok streaming JSON adaptation', () => {
     ])
     expect(resumedTurn).toContain('--resume')
     expect(resumedTurn).not.toContain('--session-id')
+  })
+
+  it('detects persisted sessions after a failed first turn', () => {
+    const root = makeRoot()
+    const workspace = join(root, 'workspace with spaces')
+    const sessionId = '9bf2543c-3b57-43de-b5f6-838c2f73a554'
+    mkdirSync(join(root, 'sessions', encodeURIComponent(workspace), sessionId), { recursive: true })
+
+    expect(grokSessionExists(root, workspace, sessionId)).toBe(true)
+    expect(grokSessionExists(root, workspace, '11111111-1111-4111-8111-111111111111')).toBe(false)
   })
 
   it('parses the documented event stream and maps terminal tool updates', () => {

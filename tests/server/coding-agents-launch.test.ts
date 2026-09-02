@@ -8,6 +8,7 @@ import {
   codexProxyModels,
   codexProxyResponses,
   isAuthorizedCodexProxyRequest,
+  normalizeGrokResponsesRequest,
   registerCodexProxyTarget,
 } from '../../packages/server/src/modules/coding-agents/services/codex/proxy'
 import {
@@ -68,6 +69,25 @@ function makeProxyContext(routeKey: string, token: string, body: any): any {
 }
 
 describe('coding agent launch preparation', () => {
+  it('maps Grok system input messages to Responses developer messages', () => {
+    const body = {
+      instructions: 'Keep top-level instructions.',
+      input: [
+        { role: 'system', content: [{ type: 'input_text', text: 'Grok project rules' }] },
+        { role: 'user', content: [{ type: 'input_text', text: 'Hello' }] },
+      ],
+    }
+
+    expect(normalizeGrokResponsesRequest(body)).toEqual({
+      ...body,
+      input: [
+        { role: 'developer', content: [{ type: 'input_text', text: 'Grok project rules' }] },
+        body.input[1],
+      ],
+    })
+    expect(body.input[0].role).toBe('system')
+  })
+
   it('gates Codex tool_search feature flags by CLI version', () => {
     expect(codexToolSearchConfig('0.127.0')).toEqual({ toolSearch: false, alwaysDefer: false })
     expect(codexToolSearchConfig('0.128.0')).toEqual({ toolSearch: true, alwaysDefer: true })
@@ -2087,6 +2107,39 @@ describe('coding agent launch preparation', () => {
       reasoning: { effort: 'high', summary: 'auto' },
     })
     expect(sse).toContain('"usage":{"input_tokens":11,"output_tokens":2,"total_tokens":13}')
+  })
+
+  it('maps Grok system messages before forwarding native Responses requests', async () => {
+    const target = registerCodexProxyTarget({
+      profile: 'default',
+      provider: 'openai-api',
+      model: 'grok-test',
+      baseUrl: 'https://api.openai.com/v1',
+      apiKey: 'sk-upstream',
+      apiMode: 'codex_responses',
+      agentId: 'grok',
+    })
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      id: 'resp_grok',
+      status: 'completed',
+      output: [],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await codexProxyResponses(makeProxyContext(target.routeKey, target.token, {
+      input: [
+        { role: 'system', content: [{ type: 'input_text', text: 'Project rules' }] },
+        { role: 'user', content: [{ type: 'input_text', text: 'Hello' }] },
+      ],
+    }))
+
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
+      model: 'grok-test',
+      input: [
+        { role: 'developer', content: [{ type: 'input_text', text: 'Project rules' }] },
+        { role: 'user', content: [{ type: 'input_text', text: 'Hello' }] },
+      ],
+    })
   })
 
   it('exposes Codex proxy models with route-token authentication', async () => {

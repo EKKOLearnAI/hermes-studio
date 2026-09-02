@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
@@ -143,6 +143,49 @@ describe('coding agent Windows process launch', () => {
     } finally {
       if (originalDatabaseUrl === undefined) delete process.env.DATABASE_URL
       else process.env.DATABASE_URL = originalDatabaseUrl
+      rmSync(grokHome, { recursive: true, force: true })
+    }
+  })
+
+  it('resumes a Grok session that persisted before an error event ended the first turn', () => {
+    const grokHome = mkdtempSync(join(tmpdir(), 'hermes-grok-resume-'))
+    try {
+      const manager = new CodingAgentRunManager()
+      ;(manager as any).handleClaudePrintResponseEvent = vi.fn()
+      const sessionId = '11111111-1111-4111-8111-111111111111'
+      const workspaceDir = process.cwd()
+      mkdirSync(join(grokHome, 'sessions', encodeURIComponent(workspaceDir), sessionId), { recursive: true })
+      const run: any = {
+        id: 'agent-session-grok-resume',
+        launch: {
+          agentSessionId: 'agent-session-grok-resume',
+          agentNativeSessionId: sessionId,
+          agentId: 'grok',
+          mode: 'scoped',
+          profile: 'default',
+          provider: 'custom',
+          model: 'test-model',
+          sessionId: 'chat-session-grok-resume',
+          command: 'C:\\Tools\\grok.cmd',
+          args: ['--always-approve'],
+          shellCommand: 'grok',
+          workspaceDir,
+          env: { GROK_HOME: grokHome },
+        },
+        state: { messages: [], isWorking: false, events: [], queue: [] },
+        lastActiveAt: Date.now(),
+        startedAt: Date.now(),
+        exited: false,
+        nativeResumeReady: false,
+      }
+
+      ;(manager as any).startGrokPrintTurn(run, 'retry')
+
+      const commandLine = JSON.stringify(testState.spawnCalls[0]?.args)
+      expect(commandLine).toContain('--resume')
+      expect(commandLine).not.toContain('--session-id')
+      expect(run.nativeResumeReady).toBe(true)
+    } finally {
       rmSync(grokHome, { recursive: true, force: true })
     }
   })

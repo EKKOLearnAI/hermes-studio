@@ -24,7 +24,7 @@ import { attachPiJsonlReader } from '../pi/jsonl-parser'
 import { normalizePiThinkingLevel } from '../pi/thinking'
 import { compactCodexThread } from './codex-compact'
 import { updateManagedPromptFileSync } from '../prompt-file'
-import { startGrokTurnProcess } from '../grok/turn-process'
+import { grokSessionExists, startGrokTurnProcess } from '../grok/turn-process'
 import { applyGrokStreamEvent } from '../grok/event-adapter'
 
 const DEFAULT_IDLE_MS = 30 * 60 * 1000
@@ -2372,15 +2372,20 @@ export class CodingAgentRunManager {
 
     const rootDir = String(run.launch.env?.GROK_HOME || '').trim()
     if (!rootDir) throw new Error('Grok runtime home is missing')
+    const workspaceDir = existsSync(run.launch.workspaceDir) ? run.launch.workspaceDir : homedir()
+    const nativeSessionId = String(run.launch.agentNativeSessionId || '')
+    if (!run.nativeResumeReady && grokSessionExists(rootDir, workspaceDir, nativeSessionId)) {
+      run.nativeResumeReady = true
+    }
     const child = startGrokTurnProcess({
       command: run.launch.command,
       baseArgs: run.launch.args,
       rootDir,
-      workspaceDir: existsSync(run.launch.workspaceDir) ? run.launch.workspaceDir : homedir(),
+      workspaceDir,
       env: run.launch.mode === 'global'
         ? { ...process.env, ...(run.launch.env || {}) }
         : isolatedCodingAgentChildEnv(run.launch.env),
-      nativeSessionId: String(run.launch.agentNativeSessionId || ''),
+      nativeSessionId,
       resume: run.nativeResumeReady === true,
       input,
       images,

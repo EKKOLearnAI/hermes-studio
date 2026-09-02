@@ -111,6 +111,26 @@ function anthropicMessagesUrl(target: CodexProxyTarget): string {
   return resolveAnthropicMessagesUrl(target.baseUrl)
 }
 
+export function normalizeGrokResponsesRequest(body: any): any {
+  if (!body || typeof body !== 'object' || !Array.isArray(body.input)) return body
+  let changed = false
+  const input = body.input.map((item: any) => {
+    if (!item || typeof item !== 'object' || item.role !== 'system') return item
+    changed = true
+    return { ...item, role: 'developer' }
+  })
+  return changed ? { ...body, input } : body
+}
+
+function nativeResponsesBody(target: CodexProxyTarget, body: any, stream?: boolean): any {
+  const normalized = target.agentId === 'grok' ? normalizeGrokResponsesRequest(body) : body
+  return truncateResponsesToolOutputs({
+    ...normalized,
+    model: target.model,
+    ...(stream === undefined ? {} : { stream }),
+  })
+}
+
 async function callOpenAiChat(target: CodexProxyTarget, body: any): Promise<any> {
   if (target.apiMode !== 'chat_completions') {
     const err = new Error(`Codex proxy only supports chat_completions targets, got ${target.apiMode}`)
@@ -149,7 +169,7 @@ async function callOpenAiResponses(target: CodexProxyTarget, body: any): Promise
     ;(err as any).status = 501
     throw err
   }
-  const responsesBody = truncateResponsesToolOutputs({ ...body, model: target.model })
+  const responsesBody = nativeResponsesBody(target, body)
   return agentRunGateway.completeJson({
     url: resolveResponsesUrl(target.baseUrl),
     apiKey: target.apiKey,
@@ -241,7 +261,7 @@ async function openAiResponsesSseStream(target: CodexProxyTarget, body: any): Pr
     throw err
   }
 
-  const responsesBody = truncateResponsesToolOutputs({ ...body, model: target.model, stream: true })
+  const responsesBody = nativeResponsesBody(target, body, true)
   const stream = await agentRunGateway.streamBytes({
     url: resolveResponsesUrl(target.baseUrl),
     apiKey: target.apiKey,

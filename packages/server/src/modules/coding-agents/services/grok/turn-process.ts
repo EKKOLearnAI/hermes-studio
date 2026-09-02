@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto'
-import { readFileSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { spawn, type ChildProcess } from 'child_process'
 import type { CodingAgentImageInput } from '../../protocol/types'
@@ -80,6 +80,23 @@ export function buildGrokTurnArgs(
     '--output-format', 'streaming-json',
     '--prompt-file', promptPath,
   ]
+}
+
+export function grokSessionExists(rootDir: string, workspaceDir: string, nativeSessionId: string): boolean {
+  const sessionId = String(nativeSessionId || '').trim()
+  if (!sessionId) return false
+  const sessionsRoot = join(rootDir, 'sessions')
+  const directPath = join(sessionsRoot, encodeURIComponent(workspaceDir), sessionId)
+  if (existsSync(directPath)) return true
+
+  // Grok replaces very long encoded workspace names with a slug plus hash.
+  // Check each workspace bucket so failed first turns can still be resumed.
+  try {
+    return readdirSync(sessionsRoot, { withFileTypes: true })
+      .some(entry => entry.isDirectory() && existsSync(join(sessionsRoot, entry.name, sessionId)))
+  } catch {
+    return false
+  }
 }
 
 export function startGrokTurnProcess(input: GrokTurnProcessInput): ChildProcess {
