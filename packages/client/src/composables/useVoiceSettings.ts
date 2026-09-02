@@ -1,5 +1,6 @@
 import { ref, watch } from 'vue'
 import { fetchTtsSettings, type FetchTtsSettingsResponse } from '@/api/studio/tts-settings'
+import { getActiveProfileName, getStoredUserId, hasApiKey } from '@/api/client'
 import { DOUBAO_TTS_2_RESOURCE_ID, DOUBAO_TTS_DEFAULT_VOICE } from '@/constants/doubaoTtsVoices'
 
 export type TtsProvider =
@@ -145,8 +146,17 @@ function load(): VoiceSettingsData {
 // Run migration once on import
 migrateOldKeys()
 
-let serverSettingsLoaded = false
+let serverSettingsLoadedContext: string | null = null
 let serverSettingsPromise: Promise<void> | null = null
+let serverSettingsPromiseContext: string | null = null
+let serverSettingsGeneration = 0
+
+function serverSettingsContext(): string | null {
+  if (!hasApiKey()) return null
+  const user = getStoredUserId() ?? 'authenticated'
+  const profile = getActiveProfileName()?.trim() || 'default'
+  return `${user}:${profile}`
+}
 
 function applyServerTtsSettings(response: FetchTtsSettingsResponse) {
   if (response.activeProvider) {
@@ -155,21 +165,29 @@ function applyServerTtsSettings(response: FetchTtsSettingsResponse) {
 }
 
 export async function loadServerTtsSettings(force = false): Promise<void> {
-  if (serverSettingsLoaded && !force) return
-  if (serverSettingsPromise && !force) return serverSettingsPromise
+  const context = serverSettingsContext()
+  if (!context) return
+  if (serverSettingsLoadedContext === context && !force) return
+  if (serverSettingsPromise && serverSettingsPromiseContext === context && !force) {
+    return serverSettingsPromise
+  }
 
+  const generation = ++serverSettingsGeneration
   const promise = fetchTtsSettings()
     .then(response => {
+      if (generation !== serverSettingsGeneration || serverSettingsContext() !== context) return
       applyServerTtsSettings(response)
-      serverSettingsLoaded = true
+      serverSettingsLoadedContext = context
     })
     .finally(() => {
       if (serverSettingsPromise === promise) {
         serverSettingsPromise = null
+        serverSettingsPromiseContext = null
       }
     })
 
   serverSettingsPromise = promise
+  serverSettingsPromiseContext = context
   return promise
 }
 

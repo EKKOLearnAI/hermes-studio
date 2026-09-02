@@ -79,6 +79,7 @@ interface MockHermesApiOptions {
   socialMessageFeishuRecipients?: Record<string, unknown>
   socialMessageTelegramRecipients?: Record<string, unknown>
   socialMessageWeixinRecipients?: Record<string, unknown>
+  ttsActiveProviders?: Partial<Record<'default' | 'research', string>>
 }
 
 export const TEST_MODEL_GROUP = {
@@ -360,6 +361,15 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
         return
       }
       await route.fulfill(jsonResponse({ error: 'Method not allowed' }, 405))
+      return
+    }
+
+    if (pathname === '/api/studio/tts/settings' && request.method() === 'GET') {
+      const profile = request.headers()['x-hermes-profile'] === 'research' ? 'research' : 'default'
+      await route.fulfill(jsonResponse({
+        settings: [],
+        activeProvider: options.ttsActiveProviders?.[profile] || 'edge',
+      }))
       return
     }
 

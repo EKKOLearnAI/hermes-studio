@@ -17,6 +17,10 @@ const appStoreMock = vi.hoisted(() => ({
   startHealthPolling: vi.fn(),
   stopHealthPolling: vi.fn(),
 }))
+const profilesStoreMock = vi.hoisted(() => ({
+  activeProfileName: 'default' as string | null,
+}))
+const watchServerTtsSettingsHydrationMock = vi.hoisted(() => vi.fn())
 
 vi.mock('vue-router', async (importOriginal) => {
   const actual = await importOriginal<typeof import('vue-router')>()
@@ -49,6 +53,14 @@ vi.mock('@/composables/useKeyboard', () => ({
 
 vi.mock('@/stores/hermes/app', () => ({
   useAppStore: () => appStoreMock,
+}))
+
+vi.mock('@/stores/hermes/profiles', () => ({
+  useProfilesStore: () => profilesStoreMock,
+}))
+
+vi.mock('@/composables/useTtsSettingsHydration', () => ({
+  watchServerTtsSettingsHydration: watchServerTtsSettingsHydrationMock,
 }))
 
 vi.mock('@/styles/theme', () => ({
@@ -132,7 +144,17 @@ describe('App web pet mounting', () => {
     routeMock.meta = {}
     appStoreMock.sidebarCollapsed = false
     appStoreMock.pageSidebarExpanded = true
+    profilesStoreMock.activeProfileName = 'default'
     delete (window as WindowWithDesktop).hermesDesktop
+  })
+
+  it('wires TTS hydration to login and active-profile state', () => {
+    mountApp()
+
+    expect(watchServerTtsSettingsHydrationMock).toHaveBeenCalledOnce()
+    const sources = watchServerTtsSettingsHydrationMock.mock.calls[0][0]
+    expect(sources.isLoginPage()).toBe(false)
+    expect(sources.activeProfileName()).toBe('default')
   })
 
   it('mounts the global pending-action host in the normal app shell', async () => {
