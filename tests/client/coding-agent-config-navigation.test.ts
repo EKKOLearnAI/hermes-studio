@@ -29,4 +29,20 @@ describe('coding Agent configuration navigation', () => {
     expect(sidebar).toContain("name: 'hermes.agentManager'")
     expect(sidebar).toContain('@include agent-config-sidebar.layout("coding-agent")')
   })
+
+  it('renders working content instead of empty placeholders for every section', () => {
+    const view = readClientFile('views/hermes/CodingAgentConfigView.vue')
+    const skills = readClientFile('views/hermes/SkillsView.vue')
+
+    expect(view).not.toContain('NEmpty')
+    expect(view).not.toContain("router.push({ name: 'hermes.agentManager' })")
+    expect(view).toContain('readCodingAgentConfigFile')
+    expect(view).toContain('writeCodingAgentConfigFile')
+    expect(view).toContain('<SkillsView :target="skillTarget" embedded />')
+    expect(view).toContain("'claude-code': { memory: 'memory', mcp: 'mcp', settings: 'settings' }")
+    expect(view).toContain("codex: { memory: 'agents', mcp: 'config', settings: 'config' }")
+    expect(view).toContain("pi: { memory: 'agents', mcp: 'mcp', settings: 'settings' }")
+    expect(view).toContain("grok: { memory: 'agents', mcp: 'config', settings: 'config' }")
+    expect(skills).toContain('target?: SkillTarget')
+  })
 })

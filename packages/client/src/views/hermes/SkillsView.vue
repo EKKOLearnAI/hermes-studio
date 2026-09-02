@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { NBadge, NButton, NDrawer, NDrawerContent, NInput } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import SkillList from '@/components/hermes/skills/SkillList.vue'
@@ -14,6 +14,14 @@ import { useProfilesStore } from '@/stores/hermes/profiles'
 
 type SourceFilter = SkillSource | 'modified'
 
+const props = withDefaults(defineProps<{
+  target?: SkillTarget
+  embedded?: boolean
+}>(), {
+  target: 'hermes',
+  embedded: false,
+})
+
 const { t } = useI18n()
 const profilesStore = useProfilesStore()
 const categories = ref<SkillCategory[]>([])
@@ -24,7 +32,7 @@ const selectedSkill = ref('')
 const searchQuery = ref('')
 const showSidebar = ref(true)
 const sourceFilter = ref<SourceFilter | null>(null)
-const skillTarget = ref<SkillTarget>('hermes')
+const skillTarget = computed(() => props.target)
 const showImportModal = ref(false)
 const showExternalDirsModal = ref(false)
 const showWriteApprovalDrawer = ref(false)
@@ -62,6 +70,12 @@ onMounted(() => {
 
 onUnmounted(() => {
   mobileQuery?.removeEventListener('change', handleMobileChange)
+})
+
+watch(() => props.target, () => {
+  selectedCategory.value = ''
+  selectedSkill.value = ''
+  loadSkills()
 })
 
 async function loadSkills() {
@@ -148,7 +162,7 @@ function handleSkillSaved() {
 </script>
 
 <template>
-  <div class="skills-view">
+  <div class="skills-view" :class="{ embedded }">
     <header class="page-header">
       <div style="display: flex; align-items: center; gap: 8px;">
         <h2 class="header-title">{{ t('skills.title') }}</h2>
@@ -293,6 +307,13 @@ function handleSkillSaved() {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.skills-view.embedded {
+  height: calc(100 * var(--vh) - 190px);
+  min-height: 420px;
+  padding: 0;
+  background: transparent;
 }
 
 @media (max-width: $breakpoint-mobile) {
