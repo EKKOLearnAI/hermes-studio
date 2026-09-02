@@ -122,8 +122,12 @@ function targetQuery(target: SkillTarget = 'hermes'): string {
   return `?target=${encodeURIComponent(target)}`
 }
 
+function encodeSkillPath(path: string): string {
+  return path.split('/').map(segment => encodeURIComponent(segment)).join('/')
+}
+
 export async function fetchSkillContent(skillPath: string, target: SkillTarget = 'hermes'): Promise<string> {
-  const res = await request<{ content: string }>(`/api/hermes/skills/${skillPath}${targetQuery(target)}`)
+  const res = await request<{ content: string }>(`/api/hermes/skills/${encodeSkillPath(skillPath)}${targetQuery(target)}`)
   return res.content
 }
 
@@ -142,7 +146,8 @@ export async function saveSkillContent(
 }
 
 export async function fetchSkillFiles(category: string, skill: string, target: SkillTarget = 'hermes'): Promise<SkillFileEntry[]> {
-  const res = await request<{ files: SkillFileEntry[] }>(`/api/hermes/skills/${category}/${skill}/files${targetQuery(target)}`)
+  const path = encodeSkillPath(`${category}/${skill}`)
+  const res = await request<{ files: SkillFileEntry[] }>(`/api/hermes/skills/${path}/files${targetQuery(target)}`)
   return res.files
 }
 
