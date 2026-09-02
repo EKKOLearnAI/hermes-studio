@@ -53,6 +53,7 @@ describe('RuntimeRestartPrompt', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     sessionStorage.clear()
+    localStorage.clear()
     useRuntimeRestartPrompt().clearRuntimeRestart()
     api.fetchVersionDownloadJobs.mockReset()
     api.restartWebUiAfterRuntimeChange.mockReset()
@@ -103,5 +104,23 @@ describe('RuntimeRestartPrompt', () => {
 
     expect(api.restartWebUiAfterRuntimeChange).toHaveBeenCalledTimes(1)
     wrapper.unmount()
+  })
+
+  it('keeps handled Runtime downloads suppressed after an app relaunch', async () => {
+    const first = mount(RuntimeRestartPrompt)
+    await flushPromises()
+
+    await first.get('[data-testid="runtime-restart-later"]').trigger('click')
+    expect(first.find('[data-testid="runtime-restart-prompt"]').exists()).toBe(false)
+    first.unmount()
+
+    sessionStorage.clear()
+
+    const second = mount(RuntimeRestartPrompt)
+    await flushPromises()
+
+    expect(second.find('[data-testid="runtime-restart-prompt"]').exists()).toBe(false)
+    expect(api.restartWebUiAfterRuntimeChange).not.toHaveBeenCalled()
+    second.unmount()
   })
 })

@@ -26,12 +26,12 @@ let restartWaitTimer: ReturnType<typeof setInterval> | null = null
 
 function restoreHandledJobs() {
   try {
-    const stored = JSON.parse(sessionStorage.getItem(HANDLED_JOBS_KEY) || '[]')
+    const stored = JSON.parse(localStorage.getItem(HANDLED_JOBS_KEY) || '[]')
     if (Array.isArray(stored)) {
       for (const id of stored) if (typeof id === 'string') handledJobIds.add(id)
     }
   } catch {
-    // Ignore malformed or unavailable session storage.
+    // Ignore malformed or unavailable storage.
   }
 }
 
@@ -39,7 +39,7 @@ function rememberHandledJob(jobId?: string) {
   if (!jobId) return
   handledJobIds.add(jobId)
   try {
-    sessionStorage.setItem(HANDLED_JOBS_KEY, JSON.stringify([...handledJobIds]))
+    localStorage.setItem(HANDLED_JOBS_KEY, JSON.stringify([...handledJobIds]))
   } catch {
     // The in-memory marker still prevents duplicate prompts in this page.
   }
