@@ -1,7 +1,14 @@
+import { randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
-import { resolve } from 'node:path'
+import { createWriteStream } from 'node:fs'
+import { mkdir, unlink } from 'node:fs/promises'
+import { join, resolve } from 'node:path'
+import { finished } from 'node:stream/promises'
 import type { AgentTool, AgentToolContext, AgentToolResult } from './types'
 import { ensureWorkspaceTempRoot, workspaceTempEnvironment } from './workspace-temp'
+
+export const DEFAULT_TERMINAL_EXEC_MAX_OUTPUT_BYTES = 100_000
+export const DEFAULT_TERMINAL_EXEC_MAX_STDERR_BYTES = 25_000
 
 export interface TerminalExecInput extends Record<string, unknown> {
   command: string
@@ -13,15 +20,21 @@ export interface TerminalExecInput extends Record<string, unknown> {
 export interface TerminalExecToolOptions {
   timeoutMs?: number
   platform?: NodeJS.Platform
+  maxOutputBytes?: number
+  maxStderrBytes?: number
 }
 
 export class TerminalExecTool implements AgentTool<TerminalExecInput> {
   readonly definition: AgentTool['definition']
 
   private readonly timeoutMs: number
+  private readonly maxOutputBytes: number
+  private readonly maxStderrBytes: number
 
   constructor(options: TerminalExecToolOptions = {}) {
     this.timeoutMs = positiveInteger(options.timeoutMs, 30_000)
+    this.maxOutputBytes = positiveInteger(options.maxOutputBytes, DEFAULT_TERMINAL_EXEC_MAX_OUTPUT_BYTES)
+    this.maxStderrBytes = positiveInteger(options.maxStderrBytes, DEFAULT_TERMINAL_EXEC_MAX_STDERR_BYTES)
     this.definition = terminalExecDefinition(options.platform ?? process.platform)
   }
 
@@ -41,6 +54,11 @@ export class TerminalExecTool implements AgentTool<TerminalExecInput> {
     }
 
     const tempDirectory = await ensureWorkspaceTempRoot(context)
+    const outputDirectory = join(tempDirectory, 'tool-assets')
+    await mkdir(outputDirectory, { recursive: true })
+    const artifactPrefix = `${safeArtifactName(context.runId || 'run')}-${Date.now()}-${randomUUID()}`
+    const stdoutArtifactPath = join(outputDirectory, `${artifactPrefix}.stdout.log`)
+    const stderrArtifactPath = join(outputDirectory, `${artifactPrefix}.stderr.log`)
     return new Promise<AgentToolResult>((resolveResult) => {
       const child = spawn(normalized.command, args, {
         cwd,
@@ -51,8 +69,13 @@ export class TerminalExecTool implements AgentTool<TerminalExecInput> {
         shell: false,
         windowsHide: true,
       })
-      let stdout = ''
-      let stderr = ''
+      const stdout = new BoundedOutputCapture(this.maxOutputBytes)
+      const stderr = new BoundedOutputCapture(this.maxStderrBytes)
+      const stdoutArtifact = createWriteStream(stdoutArtifactPath, { flags: 'wx', mode: 0o600 })
+      const stderrArtifact = createWriteStream(stderrArtifactPath, { flags: 'wx', mode: 0o600 })
+      const stdoutArtifactDone = settleOutputArtifact(stdoutArtifact)
+      const stderrArtifactDone = settleOutputArtifact(stderrArtifact)
+      let spawnError: Error | undefined
       let timedOut = false
       let aborted = false
 
@@ -66,36 +89,57 @@ export class TerminalExecTool implements AgentTool<TerminalExecInput> {
       }
       context.signal?.addEventListener('abort', onAbort, { once: true })
 
-      child.stdout?.setEncoding('utf8')
-      child.stderr?.setEncoding('utf8')
-      child.stdout?.on('data', chunk => { stdout += chunk })
-      child.stderr?.on('data', chunk => { stderr += chunk })
+      child.stdout?.pipe(stdoutArtifact)
+      child.stderr?.pipe(stderrArtifact)
+      child.stdout?.on('data', chunk => { stdout.append(Buffer.from(chunk)) })
+      child.stderr?.on('data', chunk => { stderr.append(Buffer.from(chunk)) })
       child.on('error', error => {
-        clearTimeout(timer)
-        context.signal?.removeEventListener('abort', onAbort)
-        resolveResult({
-          ok: false,
-          content: error.message,
-          error: error.message,
-          data: { command: normalized.command, args, cwd, originalCommand: input.command },
-        })
+        spawnError = error
       })
-      child.on('close', code => {
+      child.on('close', async code => {
         clearTimeout(timer)
         context.signal?.removeEventListener('abort', onAbort)
-        const content = [stdout.trimEnd(), stderr.trimEnd()].filter(Boolean).join('\n')
+        const [stdoutArtifactError, stderrArtifactError] = await Promise.all([
+          stdoutArtifactDone,
+          stderrArtifactDone,
+        ])
+        const keptStdoutArtifact = stdout.truncated && !stdoutArtifactError
+        const keptStderrArtifact = stderr.truncated && !stderrArtifactError
+        await Promise.all([
+          keptStdoutArtifact ? undefined : unlink(stdoutArtifactPath).catch(() => undefined),
+          keptStderrArtifact ? undefined : unlink(stderrArtifactPath).catch(() => undefined),
+        ])
+        const stdoutText = stdout.text(keptStdoutArtifact ? stdoutArtifactPath : undefined).trimEnd()
+        const stderrText = stderr.text(keptStderrArtifact ? stderrArtifactPath : undefined).trimEnd()
+        const content = [stdoutText, stderrText].filter(Boolean).join('\n')
+        const error = spawnError?.message
+          || (aborted
+            ? 'Command aborted.'
+            : timedOut
+              ? `Command timed out after ${timeoutMs}ms`
+              : code === 0
+                ? undefined
+                : `Command exited with code ${code}`)
         resolveResult({
-          ok: code === 0 && !timedOut && !aborted,
-          content: content || (aborted ? 'Command aborted.' : content),
-          error: aborted ? 'Command aborted.' : timedOut ? `Command timed out after ${timeoutMs}ms` : code === 0 ? undefined : `Command exited with code ${code}`,
+          ok: !spawnError && code === 0 && !timedOut && !aborted,
+          content: content || error || '',
+          error,
           data: {
             command: normalized.command,
             args,
             cwd,
             originalCommand: input.command,
             exitCode: code,
-            stdout,
-            stderr,
+            stdout: stdoutText,
+            stderr: stderrText,
+            stdoutBytes: stdout.totalBytes,
+            stderrBytes: stderr.totalBytes,
+            stdoutTruncated: stdout.truncated,
+            stderrTruncated: stderr.truncated,
+            ...(keptStdoutArtifact ? { stdoutArtifactPath } : {}),
+            ...(keptStderrArtifact ? { stderrArtifactPath } : {}),
+            ...(stdoutArtifactError ? { stdoutArtifactError: stdoutArtifactError.message } : {}),
+            ...(stderrArtifactError ? { stderrArtifactError: stderrArtifactError.message } : {}),
             timedOut,
             aborted,
             tempDirectory,
@@ -104,6 +148,58 @@ export class TerminalExecTool implements AgentTool<TerminalExecInput> {
       })
     })
   }
+}
+
+class BoundedOutputCapture {
+  private readonly prefixChunks: Buffer[] = []
+  private prefixBytes = 0
+  private tail = Buffer.alloc(0)
+  totalBytes = 0
+
+  constructor(private readonly maxBytes: number) {}
+
+  get truncated(): boolean {
+    return this.totalBytes > this.maxBytes
+  }
+
+  append(chunk: Buffer): void {
+    this.totalBytes += chunk.length
+    if (this.prefixBytes < this.maxBytes) {
+      const kept = chunk.subarray(0, this.maxBytes - this.prefixBytes)
+      if (kept.length) {
+        this.prefixChunks.push(kept)
+        this.prefixBytes += kept.length
+      }
+    }
+    const tailBytes = Math.max(1, Math.floor(this.maxBytes / 3))
+    this.tail = Buffer.concat([this.tail, chunk]).subarray(-tailBytes)
+  }
+
+  text(artifactPath?: string): string {
+    const prefix = Buffer.concat(this.prefixChunks)
+    if (!this.truncated) return prefix.toString('utf8')
+    const tailBytes = Math.max(1, Math.floor(this.maxBytes / 3))
+    const headBytes = this.maxBytes - tailBytes
+    const omittedBytes = Math.max(0, this.totalBytes - headBytes - this.tail.length)
+    const location = artifactPath
+      ? ` Full output saved to ${artifactPath}; inspect it with read_file using offsets or a bounded search.`
+      : ''
+    const marker = `\n\n[terminal_exec output truncated: ${this.totalBytes} bytes total, ${omittedBytes} bytes omitted.${location}]\n\n`
+    return `${prefix.subarray(0, headBytes).toString('utf8')}${marker}${this.tail.toString('utf8')}`
+  }
+}
+
+async function settleOutputArtifact(stream: ReturnType<typeof createWriteStream>): Promise<Error | undefined> {
+  try {
+    await finished(stream)
+    return undefined
+  } catch (error) {
+    return error instanceof Error ? error : new Error(String(error))
+  }
+}
+
+function safeArtifactName(value: string): string {
+  return value.replace(/[^a-zA-Z0-9._-]+/g, '-').slice(0, 80) || 'run'
 }
 
 function terminalExecDefinition(platform: NodeJS.Platform): AgentTool['definition'] {
@@ -134,6 +230,7 @@ function terminalExecDefinition(platform: NodeJS.Platform): AgentTool['definitio
         ? 'Commands are not confined to the workspace: explicit absolute Windows paths are supported.'
         : 'Commands are not confined to the workspace: explicit absolute paths and package-manager forms such as npx --dir are supported.',
       'Keep downloads, clones, extracted files, and generated intermediates under the current workspace (prefer .ekko-tmp) when workspace tools need to inspect them.',
+      'Large stdout and stderr are returned as bounded previews; complete streams are saved under .ekko-tmp/tool-assets for paged read_file access or bounded searches.',
       'When the user asks to execute or evaluate Node.js, JavaScript, or Python source code, use code_exec instead, even for a one-line snippet.',
       'Destructive, privileged, remote-shell, publishing, and other dangerous commands require runtime authorization before execution.',
     ].join(' '),

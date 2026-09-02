@@ -10,11 +10,13 @@ const BASE64_FIELD_RE = /^(?:base64|b64|bodyBase64|dataUrl|image_base64|audio_ba
 const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000
 const DEFAULT_MAX_BYTES = 25 * 1024 * 1024
 const MIN_RAW_BASE64_CHARS = 4_096
+export const DEFAULT_TOOL_RESULT_MAX_TEXT_BYTES = 256_000
 
 export interface ToolResultSanitizerOptions {
   tempRoot?: string
   ttlMs?: number
   maxBytes?: number
+  maxTextBytes?: number
   now?: number
 }
 
@@ -26,11 +28,15 @@ export async function sanitizeAgentToolResult(
   await cleanupExpiredToolAssets(tempRoot, options.ttlMs ?? DEFAULT_TTL_MS, options.now ?? Date.now())
   const seen = new WeakSet<object>()
   const sanitize = (value: unknown, key = ''): Promise<unknown> => sanitizeValue(value, key, tempRoot, options, seen)
+  const content = String(await sanitizeStructuredText(result.content, sanitize))
+  const error = result.error === undefined
+    ? undefined
+    : String(await sanitizeStructuredText(result.error, sanitize))
   return {
     ...result,
-    content: String(await sanitizeStructuredText(result.content, sanitize)),
+    content: await boundToolResultText(content, tempRoot, options.maxTextBytes),
     data: result.data === undefined ? undefined : await sanitize(result.data),
-    error: result.error === undefined ? undefined : String(await sanitizeStructuredText(result.error, sanitize)),
+    error: error === undefined ? undefined : await boundToolResultText(error, tempRoot, options.maxTextBytes),
     contentParts: result.contentParts?.reduce<AgentToolContentPart[]>((parts, part) => {
       if (part.type === 'text') parts.push({ type: 'text', text: part.text.slice(0, 100_000) })
       else if (/^image\/(?:png|jpeg|webp|gif)$/i.test(part.mimeType)
@@ -41,6 +47,40 @@ export async function sanitizeAgentToolResult(
       return parts
     }, []),
   }
+}
+
+async function boundToolResultText(
+  text: string,
+  tempRoot: string,
+  requestedMaxBytes = DEFAULT_TOOL_RESULT_MAX_TEXT_BYTES,
+): Promise<string> {
+  const maxBytes = positiveInteger(requestedMaxBytes, DEFAULT_TOOL_RESULT_MAX_TEXT_BYTES)
+  const buffer = Buffer.from(text)
+  if (buffer.length <= maxBytes) return text
+  const digest = createHash('sha256').update(buffer).digest('hex')
+  const artifactPath = join(tempRoot, `tool-result-${digest}.txt`)
+  await mkdir(tempRoot, { recursive: true })
+  try {
+    await writeFile(artifactPath, buffer, { flag: 'wx', mode: 0o600 })
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+  }
+  const tailBytes = Math.max(1, Math.floor(maxBytes / 3))
+  const headBytes = maxBytes - tailBytes
+  const omittedBytes = buffer.length - maxBytes
+  const marker = [
+    '',
+    '',
+    `[tool result truncated: ${buffer.length} bytes total, ${omittedBytes} bytes omitted.`,
+    `Full output saved to ${artifactPath}; inspect it with read_file using offsets or a bounded search.]`,
+    '',
+    '',
+  ].join('\n')
+  return `${buffer.subarray(0, headBytes).toString('utf8')}${marker}${buffer.subarray(-tailBytes).toString('utf8')}`
+}
+
+function positiveInteger(value: number | undefined, fallback: number): number {
+  return Number.isFinite(value) && Number(value) > 0 ? Math.floor(Number(value)) : fallback
 }
 
 export async function cleanupExpiredToolAssets(

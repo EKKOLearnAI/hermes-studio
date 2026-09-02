@@ -10,6 +10,7 @@ import {
   DelegateTaskTool,
   DEFAULT_AGENT_MAX_STEPS,
   DEFAULT_AGENT_MODEL_MAX_RETRIES,
+  DEFAULT_TOOL_RESULT_MAX_TEXT_BYTES,
   ModelProviderError,
   ViewImageTool,
   buildSystemPrompt,
@@ -969,6 +970,48 @@ describe('ekko-agent runtime', () => {
         .run({ messages: ['list profiles'], toolContext: { workspaceRoot } })
       expect(result.output.content).toBe('done')
       expect(fileURLToPath(assetUrl)).toContain(join(workspaceRoot, '.ekko-tmp', 'tool-assets'))
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('bounds oversized tool results before the next model request', async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'ekko-runtime-large-result-'))
+    const largeContent = `head-${'x'.repeat(DEFAULT_TOOL_RESULT_MAX_TEXT_BYTES)}-tail`
+    const largeTool: AgentTool = {
+      definition: {
+        name: 'large_result',
+        description: 'Return oversized text',
+        parameters: { type: 'object' },
+      },
+      async execute() {
+        return { ok: true, content: largeContent }
+      },
+    }
+    const tools = new AgentToolRegistry()
+    tools.register(largeTool)
+    let artifactPath = ''
+    const client = modelClient((request, call) => {
+      if (call === 1) {
+        return {
+          content: '',
+          toolCalls: [{ id: 'call_large', name: 'large_result', arguments: {} }],
+          finishReason: 'tool_calls',
+        }
+      }
+      const toolMessage = request.messages.find(message => message.role === 'tool')
+      expect(Buffer.byteLength(toolMessage?.content || '')).toBeLessThan(DEFAULT_TOOL_RESULT_MAX_TEXT_BYTES + 1_000)
+      expect(toolMessage?.content).toContain('tool result truncated')
+      artifactPath = toolMessage?.content.match(/Full output saved to (.+?); inspect it/)?.[1] || ''
+      return { content: 'done', finishReason: 'stop' }
+    })
+
+    try {
+      const result = await new AgentRuntime({ modelClient: client, tools })
+        .run({ messages: ['run large tool'], toolContext: { workspaceRoot } })
+      expect(result.output.content).toBe('done')
+      expect(artifactPath).toContain(join(workspaceRoot, '.ekko-tmp', 'tool-assets'))
+      await expect(readFile(artifactPath, 'utf8')).resolves.toBe(largeContent)
     } finally {
       await rm(workspaceRoot, { recursive: true, force: true })
     }

@@ -3189,6 +3189,10 @@ export function skillValidationResult( name: string, content: string, ): { statu
 ### `src/tools/terminal.ts`
 
 ```ts
+export const DEFAULT_TERMINAL_EXEC_MAX_OUTPUT_BYTES = 100_000
+
+export const DEFAULT_TERMINAL_EXEC_MAX_STDERR_BYTES = 25_000
+
 export interface TerminalExecInput extends Record<string, unknown> {
   command: string
   args?: string[]
@@ -3199,6 +3203,8 @@ export interface TerminalExecInput extends Record<string, unknown> {
 export interface TerminalExecToolOptions {
   timeoutMs?: number
   platform?: NodeJS.Platform
+  maxOutputBytes?: number
+  maxStderrBytes?: number
 }
 
 export class TerminalExecTool implements AgentTool<TerminalExecInput> {
@@ -3212,10 +3218,13 @@ export function createTerminalTools(options: TerminalExecToolOptions = {}): Agen
 ### `src/tools/tool-result-sanitizer.ts`
 
 ```ts
+export const DEFAULT_TOOL_RESULT_MAX_TEXT_BYTES = 256_000
+
 export interface ToolResultSanitizerOptions {
   tempRoot?: string
   ttlMs?: number
   maxBytes?: number
+  maxTextBytes?: number
   now?: number
 }
 
