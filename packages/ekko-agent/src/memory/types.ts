@@ -203,6 +203,31 @@ export interface MemoryWriteResult {
   reason?: string
 }
 
+export type MemoryBatchOperation =
+  | Omit<MemoryWriteInput, 'actor' | 'identity'>
+  | {
+      operation: 'delete'
+      targetId: string
+      expectedRevision: number
+      mode?: 'soft' | 'hard'
+      reason: string
+    }
+
+export interface MemoryBatchInput {
+  operations: MemoryBatchOperation[]
+  actor?: string
+  explicitUserIntent?: boolean
+  identity?: Partial<MemoryRuntimeIdentity>
+}
+
+export interface MemoryBatchResult {
+  accepted: boolean
+  done: boolean
+  results: MemoryWriteResult[]
+  failedOperationIndex?: number
+  reason?: string
+}
+
 export interface MemoryCreateInput {
   kind: MemoryKind
   itemKey?: string
@@ -264,6 +289,41 @@ export interface MemoryForgetResult {
   reason?: string
 }
 
+export type MemoryStoreMutation =
+  | {
+      type: 'upsert'
+      node: MemoryNode
+      audit?: Omit<MemoryAuditEvent, 'id' | 'nodeId' | 'createdAt'>
+    }
+  | {
+      type: 'supersede'
+      oldNodeId: string
+      newNode: MemoryNode
+      reason: string
+      actor: string
+      sessionId?: string
+    }
+  | {
+      type: 'status'
+      nodeId: string
+      status: MemoryNodeStatus
+      reason: string
+      actor: string
+      expectedRevision?: number
+      sessionId?: string
+      updatedAt?: string
+    }
+  | {
+      type: 'delete'
+      nodeId: string
+      mode: 'soft' | 'hard'
+      reason: string
+      actor: string
+      expectedRevision?: number
+      sessionId?: string
+      updatedAt?: string
+    }
+
 export interface MemoryStore {
   appendMessage(message: MemoryMessage): Promise<void>
   listRecentMessages(input: { sessionId: string; limit: number }): Promise<MemoryMessage[]>
@@ -278,6 +338,7 @@ export interface MemoryStore {
   supersedeNode(input: { oldNodeId: string; newNode: MemoryNode; reason: string; actor: string; sessionId?: string }): Promise<void>
   updateNodeStatus(input: { nodeId: string; status: MemoryNodeStatus; reason: string; actor: string; expectedRevision?: number; sessionId?: string }): Promise<boolean>
   deleteNode(input: { nodeId: string; mode: 'soft' | 'hard'; reason: string; actor: string; expectedRevision?: number; sessionId?: string }): Promise<boolean>
+  applyMutations(mutations: MemoryStoreMutation[]): Promise<void>
   queryNodes(query: MemoryQuery): Promise<MemoryNode[]>
   appendAuditEvent(event: MemoryAuditEvent): Promise<void>
   listAuditEvents(query?: MemoryAuditQuery): Promise<MemoryAuditEvent[]>

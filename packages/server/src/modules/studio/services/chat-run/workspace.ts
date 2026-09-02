@@ -1,13 +1,4 @@
-import { mkdir } from 'fs/promises'
-import { join } from 'path'
-import { getProfileDir } from '../../public/profile-config'
-
-export function defaultHermesWorkspace(profile: string): string {
-  return join(getProfileDir(profile || 'default'), 'workspace')
-}
-
-export async function ensureHermesRunWorkspace(profile: string, workspace?: string | null): Promise<string> {
-  const resolved = String(workspace || '').trim() || defaultHermesWorkspace(profile)
-  await mkdir(resolved, { recursive: true })
-  return resolved
-}
+export {
+  defaultHermesWorkspace,
+  ensureHermesRunWorkspace,
+} from '../workspace/manager'

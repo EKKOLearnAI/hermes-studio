@@ -18,6 +18,8 @@ import type { MemoryCaptureMessage, MemoryService } from '../memory/service'
 import type {
   MemoryAuditEvent,
   MemoryAuditQuery,
+  MemoryBatchInput,
+  MemoryBatchResult,
   MemoryContext,
   MemoryCreateInput,
   MemoryDeleteInput,
@@ -71,6 +73,7 @@ export type EkkoProfileMemoryExpireInput = ProfileMemoryInput<MemoryExpireInput>
 export type EkkoProfileMemoryDeleteInput = ProfileMemoryInput<MemoryDeleteInput>
 export type EkkoProfileMemoryForgetInput = ProfileMemoryInput<MemoryForgetInput>
 export type EkkoProfileMemoryWriteInput = ProfileMemoryInput<MemoryWriteInput>
+export type EkkoProfileMemoryBatchInput = ProfileMemoryInput<MemoryBatchInput>
 
 type ProfileMemoryInput<T extends { identity?: Partial<MemoryRuntimeIdentity> }> =
   Omit<T, 'identity'> & { identity?: Omit<Partial<MemoryRuntimeIdentity>, 'profileId'> }
@@ -311,6 +314,10 @@ export class EkkoProfileMemoryManager {
 
   write(input: EkkoProfileMemoryWriteInput): Promise<MemoryWriteResult> {
     return this.memory.write(this.input(input))
+  }
+
+  applyBatch(input: EkkoProfileMemoryBatchInput): Promise<MemoryBatchResult> {
+    return this.memory.applyBatch(this.input(input))
   }
 
   forget(input: EkkoProfileMemoryForgetInput): Promise<MemoryForgetResult> {

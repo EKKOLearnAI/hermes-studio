@@ -62,8 +62,10 @@ describe('group chat workspace file routes', () => {
     await rm(root, { recursive: true, force: true })
   })
 
-  it('lists the managed room workspace and blocks traversal', async () => {
+  it('lists the managed room workspace and permits local admins to browse outside it', async () => {
     await writeFile(join(workspace, 'notes.txt'), 'hello')
+    await mkdir(join(root, 'outside'))
+    await writeFile(join(root, 'outside', 'shared.txt'), 'shared')
     const list = routeHandler('/api/studio/group-chat/rooms/:roomId/workspace-files/list', 'GET')
     const ctx = createContext()
     await list(ctx)
@@ -72,10 +74,13 @@ describe('group chat workspace file routes', () => {
       entries: [expect.objectContaining({ name: 'notes.txt', path: 'notes.txt', size: 5 })],
     })
 
-    const escaped = createContext('../outside.txt')
-    await list(escaped)
-    expect(escaped.status).toBe(400)
-    expect(escaped.body).toMatchObject({ code: 'invalid_path' })
+    const outside = createContext('../outside')
+    await list(outside)
+    expect(outside.status).toBe(200)
+    expect(outside.body).toMatchObject({
+      path: '../outside',
+      entries: [expect.objectContaining({ name: 'shared.txt', path: '../outside/shared.txt' })],
+    })
   })
 
   it('previews exact bytes from an Agent Hermes workspace with safe response headers', async () => {

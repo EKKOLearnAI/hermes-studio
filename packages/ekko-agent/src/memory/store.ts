@@ -10,6 +10,7 @@ import type {
   MemoryNode,
   MemoryQuery,
   MemoryStore,
+  MemoryStoreMutation,
 } from './types'
 
 const MEMORY_MIGRATIONS: EkkoDatabaseMigration[] = [{
@@ -208,51 +209,18 @@ export class SqliteMemoryStore implements MemoryStore {
     node: MemoryNode,
     audit?: Omit<MemoryAuditEvent, 'id' | 'nodeId' | 'createdAt'>,
   ): Promise<void> {
-    this.databaseManager.transaction(() => {
-      this.writeNode(node)
-      if (audit) this.writeAudit({ ...audit, id: randomUUID(), nodeId: node.id, createdAt: node.updatedAt })
-    })
+    await this.applyMutations([{ type: 'upsert', node, audit }])
   }
 
   async supersedeNode(input: { oldNodeId: string; newNode: MemoryNode; reason: string; actor: string; sessionId?: string }): Promise<void> {
-    this.databaseManager.transaction(() => {
-      const old = this.db.prepare('SELECT * FROM memory_nodes WHERE id = ?').get(input.oldNodeId) as Row | undefined
-      if (!old) throw new Error(`Memory node not found: ${input.oldNodeId}`)
-      const oldNode = nodeFromRow(old)
-      if (input.newNode.revision !== oldNode.revision + 1) {
-        throw new Error(`Memory revision must advance exactly once: ${input.oldNodeId}`)
-      }
-      const changed = this.db.prepare(
-        "UPDATE memory_nodes SET status = 'superseded', updated_at = ? WHERE id = ? AND status = 'active' AND revision = ?",
-      ).run(input.newNode.updatedAt, input.oldNodeId, oldNode.revision)
-      if (Number(changed.changes) !== 1) throw new Error(`Memory node is not active: ${input.oldNodeId}`)
-      this.writeNode({ ...input.newNode, supersedesId: input.oldNodeId })
-      this.syncFts({ ...oldNode, status: 'superseded', updatedAt: input.newNode.updatedAt })
-      this.writeAudit(auditForNode('supersede', input.newNode, input.reason, input.actor, {
-        supersededNodeId: input.oldNodeId,
-      }, input.sessionId))
-    })
+    await this.applyMutations([{ type: 'supersede', ...input }])
   }
 
   async updateNodeStatus(input: { nodeId: string; status: MemoryNode['status']; reason: string; actor: string; expectedRevision?: number; sessionId?: string }): Promise<boolean> {
     const existing = await this.getNode(input.nodeId)
     if (!existing) return false
     if (input.expectedRevision !== undefined && existing.revision !== input.expectedRevision) return false
-    const updatedAt = new Date().toISOString()
-    this.databaseManager.transaction(() => {
-      const changed = this.db.prepare('UPDATE memory_nodes SET status = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ?')
-        .run(input.status, updatedAt, input.nodeId, existing.revision)
-      if (Number(changed.changes) !== 1) throw new Error(`Memory revision changed: ${input.nodeId}`)
-      this.syncFts({ ...existing, status: input.status, revision: existing.revision + 1, updatedAt })
-      this.writeAudit(auditForNode(
-        input.status === 'expired' ? 'expire' : input.status === 'deleted' ? 'delete' : 'update',
-        { ...existing, status: input.status, revision: existing.revision + 1, updatedAt },
-        input.reason,
-        input.actor,
-        undefined,
-        input.sessionId,
-      ))
-    })
+    await this.applyMutations([{ type: 'status', ...input }])
     return true
   }
 
@@ -260,18 +228,15 @@ export class SqliteMemoryStore implements MemoryStore {
     const existing = await this.getNode(input.nodeId)
     if (!existing) return false
     if (input.expectedRevision !== undefined && existing.revision !== input.expectedRevision) return false
-    if (input.mode === 'soft') {
-      return this.updateNodeStatus({ ...input, status: 'deleted' })
-    }
-    this.databaseManager.transaction(() => {
-      this.writeAudit(auditForNode('delete', existing, input.reason, input.actor, { mode: 'hard' }, input.sessionId))
-      if (this.ftsEnabled) this.db.prepare('DELETE FROM memory_nodes_fts WHERE node_id = ?').run(input.nodeId)
-      this.db.prepare('DELETE FROM memory_embeddings WHERE node_id = ?').run(input.nodeId)
-      const removed = this.db.prepare('DELETE FROM memory_nodes WHERE id = ? AND revision = ?')
-        .run(input.nodeId, existing.revision)
-      if (Number(removed.changes) !== 1) throw new Error(`Memory revision changed: ${input.nodeId}`)
-    })
+    await this.applyMutations([{ type: 'delete', ...input }])
     return true
+  }
+
+  async applyMutations(mutations: MemoryStoreMutation[]): Promise<void> {
+    if (!mutations.length) return
+    this.databaseManager.transaction(() => {
+      for (const mutation of mutations) this.applyMutation(mutation)
+    })
   }
 
   async queryNodes(query: MemoryQuery): Promise<MemoryNode[]> {
@@ -431,6 +396,80 @@ export class SqliteMemoryStore implements MemoryStore {
 
   private get db(): DatabaseSync {
     return this.databaseManager.connection
+  }
+
+  private applyMutation(mutation: MemoryStoreMutation): void {
+    if (mutation.type === 'upsert') {
+      this.writeNode(mutation.node)
+      if (mutation.audit) {
+        this.writeAudit({
+          ...mutation.audit,
+          id: randomUUID(),
+          nodeId: mutation.node.id,
+          createdAt: mutation.node.updatedAt,
+        })
+      }
+      return
+    }
+
+    const row = this.db.prepare('SELECT * FROM memory_nodes WHERE id = ?')
+      .get(mutation.type === 'supersede' ? mutation.oldNodeId : mutation.nodeId) as Row | undefined
+    const nodeId = mutation.type === 'supersede' ? mutation.oldNodeId : mutation.nodeId
+    if (!row) throw new Error(`Memory node not found: ${nodeId}`)
+    const existing = nodeFromRow(row)
+
+    if (mutation.type === 'supersede') {
+      if (mutation.newNode.revision !== existing.revision + 1) {
+        throw new Error(`Memory revision must advance exactly once: ${mutation.oldNodeId}`)
+      }
+      const changed = this.db.prepare(
+        "UPDATE memory_nodes SET status = 'superseded', updated_at = ? WHERE id = ? AND status = 'active' AND revision = ?",
+      ).run(mutation.newNode.updatedAt, mutation.oldNodeId, existing.revision)
+      if (Number(changed.changes) !== 1) throw new Error(`Memory node is not active: ${mutation.oldNodeId}`)
+      this.writeNode({ ...mutation.newNode, supersedesId: mutation.oldNodeId })
+      this.syncFts({ ...existing, status: 'superseded', updatedAt: mutation.newNode.updatedAt })
+      this.writeAudit(auditForNode('supersede', mutation.newNode, mutation.reason, mutation.actor, {
+        supersededNodeId: mutation.oldNodeId,
+      }, mutation.sessionId))
+      return
+    }
+
+    if (mutation.expectedRevision !== undefined && existing.revision !== mutation.expectedRevision) {
+      throw new Error(`Memory revision changed: ${mutation.nodeId}`)
+    }
+    if (mutation.type === 'status' || mutation.mode === 'soft') {
+      const status = mutation.type === 'status' ? mutation.status : 'deleted'
+      const updatedAt = mutation.updatedAt || new Date().toISOString()
+      const changed = this.db.prepare(
+        'UPDATE memory_nodes SET status = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ?',
+      ).run(status, updatedAt, mutation.nodeId, existing.revision)
+      if (Number(changed.changes) !== 1) throw new Error(`Memory revision changed: ${mutation.nodeId}`)
+      const updated = { ...existing, status, revision: existing.revision + 1, updatedAt }
+      this.syncFts(updated)
+      this.writeAudit(auditForNode(
+        status === 'expired' ? 'expire' : status === 'deleted' ? 'delete' : 'update',
+        updated,
+        mutation.reason,
+        mutation.actor,
+        undefined,
+        mutation.sessionId,
+      ))
+      return
+    }
+
+    this.writeAudit(auditForNode(
+      'delete',
+      existing,
+      mutation.reason,
+      mutation.actor,
+      { mode: 'hard' },
+      mutation.sessionId,
+    ))
+    if (this.ftsEnabled) this.db.prepare('DELETE FROM memory_nodes_fts WHERE node_id = ?').run(mutation.nodeId)
+    this.db.prepare('DELETE FROM memory_embeddings WHERE node_id = ?').run(mutation.nodeId)
+    const removed = this.db.prepare('DELETE FROM memory_nodes WHERE id = ? AND revision = ?')
+      .run(mutation.nodeId, existing.revision)
+    if (Number(removed.changes) !== 1) throw new Error(`Memory revision changed: ${mutation.nodeId}`)
   }
 
   private initializeFts(): void {

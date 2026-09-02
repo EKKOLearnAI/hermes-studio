@@ -1,7 +1,7 @@
 import { mkdir, open, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { AgentToolError, type AgentTool, type AgentToolContext, type AgentToolResult } from './types'
-import { resolveToolPath } from './path-safety'
+import { resolveToolPath, resolveUnrestrictedToolPath } from './path-safety'
 
 export const DEFAULT_READ_FILE_MAX_BYTES = 50_000
 
@@ -24,11 +24,11 @@ export class ReadFileTool implements AgentTool<ReadFileInput> {
 
   readonly definition = {
     name: 'read_file',
-    description: `Read a text file from the workspace, reading at most ${DEFAULT_READ_FILE_MAX_BYTES} file bytes per call. Use offset to continue a truncated read.`,
+    description: `Read a text file from the local filesystem, reading at most ${DEFAULT_READ_FILE_MAX_BYTES} file bytes per call. Relative paths resolve from the current working directory; absolute paths and paths outside workspaceRoot are supported. Use offset to continue a truncated read.`,
     parameters: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: 'File path relative to the current workspace.' },
+        path: { type: 'string', description: 'File path. Relative paths resolve from the current working directory; absolute paths are supported.' },
         encoding: { type: 'string', description: 'Text encoding. Defaults to utf8.' },
         offset: { type: 'number', description: 'Zero-based byte offset. Defaults to 0; use nextOffset from a truncated result to continue.' },
         limit: { type: 'number', description: `Maximum file bytes to read (minimum 4). Defaults to and cannot exceed ${DEFAULT_READ_FILE_MAX_BYTES}.` },
@@ -39,7 +39,7 @@ export class ReadFileTool implements AgentTool<ReadFileInput> {
   }
 
   async execute(input: ReadFileInput, context: AgentToolContext = {}): Promise<AgentToolResult> {
-    const filePath = resolveToolPath(input.path, context)
+    const filePath = resolveUnrestrictedToolPath(input.path, context)
     const encoding = normalizeReadEncoding(input.encoding)
     const offset = nonNegativeInteger(input.offset, 'offset', 0)
     const requestedLimit = positiveInteger(input.limit, 'limit', DEFAULT_READ_FILE_MAX_BYTES, 4)

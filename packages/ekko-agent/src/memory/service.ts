@@ -15,6 +15,9 @@ import { stableJson } from './store'
 import type {
   MemoryAuditEvent,
   MemoryAuditQuery,
+  MemoryBatchInput,
+  MemoryBatchOperation,
+  MemoryBatchResult,
   MemoryContext,
   MemoryCreateInput,
   MemoryDeleteInput,
@@ -32,6 +35,7 @@ import type {
   MemoryRuntimeIdentity,
   MemoryWritePolicy,
   MemoryStore,
+  MemoryStoreMutation,
   MemoryUpdateInput,
 } from './types'
 
@@ -64,6 +68,12 @@ export interface MemoryCaptureMessage {
   content: string
   metadata?: Record<string, unknown>
   createdAt?: string
+}
+
+interface PreparedMemoryMutation {
+  result: MemoryWriteResult
+  mutation?: MemoryStoreMutation
+  conflictKey?: string
 }
 
 export class MemoryService {
@@ -321,37 +331,118 @@ export class MemoryService {
 
   async write(input: MemoryWriteInput): Promise<MemoryWriteResult> {
     if (!this.isEnabled || !this.store) return { accepted: false, reason: 'Memory store is disabled.' }
+    const prepared = await this.prepareWrite(input)
+    if (prepared.mutation) await this.store.applyMutations([prepared.mutation])
+    return prepared.result
+  }
+
+  async applyBatch(input: MemoryBatchInput): Promise<MemoryBatchResult> {
+    if (!this.isEnabled || !this.store) {
+      return { accepted: false, done: true, results: [], reason: 'Memory store is disabled.' }
+    }
+    if (!Array.isArray(input.operations) || !input.operations.length) {
+      return { accepted: false, done: true, results: [], reason: 'operations must contain at least one memory change.' }
+    }
+
+    const prepared: PreparedMemoryMutation[] = []
+    const claimedKeys = new Map<string, number>()
+    for (const [index, operation] of input.operations.entries()) {
+      const mutation = operation.operation === 'delete'
+        ? await this.prepareDelete({
+            ...operation,
+            actor: input.actor,
+            identity: input.identity,
+          })
+        : await this.prepareWrite({
+            ...operation,
+            actor: input.actor,
+            identity: input.identity,
+            explicitUserIntent: operation.explicitUserIntent ?? input.explicitUserIntent,
+          })
+      if (!mutation.result.accepted) {
+        return {
+          accepted: false,
+          done: true,
+          results: [],
+          failedOperationIndex: index,
+          reason: `Operation ${index + 1}: ${mutation.result.reason || 'Memory mutation was rejected.'} No operations were applied.`,
+        }
+      }
+      if (mutation.conflictKey) {
+        const previous = claimedKeys.get(mutation.conflictKey)
+        if (previous !== undefined) {
+          return {
+            accepted: false,
+            done: true,
+            results: [],
+            failedOperationIndex: index,
+            reason: `Operation ${index + 1} conflicts with operation ${previous + 1}; one atomic batch cannot mutate the same memory slot twice. No operations were applied.`,
+          }
+        }
+        claimedKeys.set(mutation.conflictKey, index)
+      }
+      prepared.push(mutation)
+    }
+
+    try {
+      await this.store.applyMutations(prepared.flatMap(item => item.mutation ? [item.mutation] : []))
+    } catch (error) {
+      return {
+        accepted: false,
+        done: true,
+        results: [],
+        reason: `Atomic memory batch failed and was rolled back: ${error instanceof Error ? error.message : String(error)}`,
+      }
+    }
+    return {
+      accepted: true,
+      done: true,
+      results: prepared.map(item => item.result),
+    }
+  }
+
+  private async prepareWrite(input: MemoryWriteInput): Promise<PreparedMemoryMutation> {
+    const store = this.store!
     const actor = input.actor || 'ekko-agent'
     if (input.operation === 'expire') {
-      if (!input.targetId) return { accepted: false, reason: 'expire requires targetId.' }
+      if (!input.targetId) return rejectedMutation('expire requires targetId.')
       const target = await this.get(input.targetId, input.identity)
-      if (!target) return { accepted: false, reason: 'Memory node not found.' }
+      if (!target) return rejectedMutation('Memory node not found.')
       const revisionError = validateExpectedRevision(target, input.expectedRevision)
-      if (revisionError) return { accepted: false, reason: revisionError }
-      const changed = await this.store.updateNodeStatus({
-        nodeId: input.targetId,
+      if (revisionError) return rejectedMutation(revisionError)
+      const updatedAt = new Date().toISOString()
+      const node: MemoryNode = {
+        ...target,
         status: 'expired',
-        reason: input.reason,
-        actor,
-        expectedRevision: input.expectedRevision,
-        sessionId: input.identity?.sessionId,
-      })
-      const node = changed ? await this.get(input.targetId, input.identity) : undefined
-      return changed
-        ? { accepted: true, nodeId: input.targetId, action: 'expired', node }
-        : { accepted: false, reason: 'Memory revision changed before expiration.' }
+        revision: target.revision + 1,
+        updatedAt,
+      }
+      return {
+        result: { accepted: true, nodeId: input.targetId, action: 'expired', node },
+        mutation: {
+          type: 'status',
+          nodeId: input.targetId,
+          status: 'expired',
+          reason: input.reason,
+          actor,
+          expectedRevision: input.expectedRevision,
+          sessionId: input.identity?.sessionId,
+          updatedAt,
+        },
+        conflictKey: `node:${target.id}`,
+      }
     }
     if (input.operation === 'update' || input.operation === 'supersede') {
-      if (!input.targetId) return { accepted: false, reason: `${input.operation} requires targetId.` }
+      if (!input.targetId) return rejectedMutation(`${input.operation} requires targetId.`)
       const target = await this.get(input.targetId, input.identity)
-      if (!target || target.status !== 'active') return { accepted: false, reason: 'Active memory node not found.' }
+      if (!target || target.status !== 'active') return rejectedMutation('Active memory node not found.')
       const revisionError = validateExpectedRevision(target, input.expectedRevision)
-      if (revisionError) return { accepted: false, reason: revisionError }
+      if (revisionError) return rejectedMutation(revisionError)
       const slot = memoryKindForCanonicalKey(target.key)
-      if (!slot) return { accepted: false, reason: 'Memory has no server-controlled canonical key.' }
+      if (!slot) return rejectedMutation('Memory has no server-controlled canonical key.')
       const changesValue = input.node.valueJson !== undefined || input.valuePatch !== undefined || Boolean(input.unsetValueFields?.length)
       if (changesValue && (!input.node.title?.trim() || !input.node.content?.trim())) {
-        return { accepted: false, reason: 'A value-changing memory update requires title and content derived from its supporting user evidence.' }
+        return rejectedMutation('A value-changing memory update requires title and content derived from its supporting user evidence.')
       }
       const valueJson = applyValuePatch(
         input.node.valueJson === undefined ? target.valueJson : input.node.valueJson,
@@ -377,23 +468,27 @@ export class MemoryService {
         sourceMessageIds: uniqueValues([...target.sourceMessageIds, ...(input.node.sourceMessageIds || [])]),
         createdAt: undefined,
       })
-      if (!canonical.accepted) return canonical
+      if (!canonical.accepted) return rejectedMutation(canonical.reason)
       const normalized = normalizeMemoryNode({
         draft: canonical.draft,
         identity: writableIdentityForNode(input.identity, target),
         explicitUserIntent: input.explicitUserIntent,
       })
-      if (!normalized.accepted) return normalized
+      if (!normalized.accepted) return rejectedMutation(normalized.reason)
       const now = new Date().toISOString()
       const node: MemoryNode = { id: randomUUID(), ...normalized.node, updatedAt: now }
-      await this.store.supersedeNode({
-        oldNodeId: target.id,
-        newNode: node,
-        reason: input.reason,
-        actor,
-        sessionId: input.identity?.sessionId,
-      })
-      return { accepted: true, nodeId: node.id, action: 'updated', node }
+      return {
+        result: { accepted: true, nodeId: node.id, action: 'updated', node },
+        mutation: {
+          type: 'supersede',
+          oldNodeId: target.id,
+          newNode: node,
+          reason: input.reason,
+          actor,
+          sessionId: input.identity?.sessionId,
+        },
+        conflictKey: `node:${target.id}`,
+      }
     }
 
     const canonical = canonicalizeMemoryDraft(input.kind, input.itemKey, {
@@ -401,16 +496,16 @@ export class MemoryService {
       ...(input.scope ? { scope: input.scope } : {}),
       ...(input.identity?.origin ? { origin: input.identity.origin } : {}),
     })
-    if (!canonical.accepted) return canonical
+    if (!canonical.accepted) return rejectedMutation(canonical.reason)
     const normalized = normalizeMemoryNode({
       draft: canonical.draft,
       identity: input.identity,
       explicitUserIntent: input.explicitUserIntent,
     })
-    if (!normalized.accepted) return normalized
+    if (!normalized.accepted) return rejectedMutation(normalized.reason)
     const now = new Date().toISOString()
     let node: MemoryNode = { id: randomUUID(), ...normalized.node, revision: 1, updatedAt: now }
-    const existing = (await this.store.queryNodes({
+    const existing = (await store.queryNodes({
       ...memoryQuery(input.identity as MemoryRuntimeIdentity, {
         key: node.key,
         scopes: [node.scope || PROFILE_MEMORY_SCOPE],
@@ -419,7 +514,7 @@ export class MemoryService {
       limit: 2,
     }))[0]
     if (existing && stableJson(existing.valueJson) === stableJson(node.valueJson) && existing.content === node.content) {
-      return { accepted: true, nodeId: existing.id, action: 'noop', node: existing }
+      return { result: { accepted: true, nodeId: existing.id, action: 'noop', node: existing } }
     }
     if (existing) {
       node = {
@@ -429,25 +524,72 @@ export class MemoryService {
         supersedesId: existing.id,
         sourceMessageIds: uniqueValues([...existing.sourceMessageIds, ...node.sourceMessageIds]),
       }
-      await this.store.supersedeNode({
-        oldNodeId: existing.id,
-        newNode: node,
-        reason: input.reason,
-        actor,
-        sessionId: input.identity?.sessionId,
-      })
-      return { accepted: true, nodeId: node.id, action: 'updated', node }
+      return {
+        result: { accepted: true, nodeId: node.id, action: 'updated', node },
+        mutation: {
+          type: 'supersede',
+          oldNodeId: existing.id,
+          newNode: node,
+          reason: input.reason,
+          actor,
+          sessionId: input.identity?.sessionId,
+        },
+        conflictKey: `node:${existing.id}`,
+      }
     }
 
-    await this.store.upsertNode(node, {
-      eventType: 'create',
-      sessionId: input.identity?.sessionId,
-      profileId: node.profileId,
-      actor,
-      reason: input.reason,
-      payload: { type: node.type, key: node.key },
-    })
-    return { accepted: true, nodeId: node.id, action: 'created', node }
+    return {
+      result: { accepted: true, nodeId: node.id, action: 'created', node },
+      mutation: {
+        type: 'upsert',
+        node,
+        audit: {
+          eventType: 'create',
+          sessionId: input.identity?.sessionId,
+          profileId: node.profileId,
+          actor,
+          reason: input.reason,
+          payload: { type: node.type, key: node.key },
+        },
+      },
+      conflictKey: `slot:${memoryNodeSlotKey(node)}`,
+    }
+  }
+
+  private async prepareDelete(
+    input: Extract<MemoryBatchOperation, { operation: 'delete' }> & {
+      actor?: string
+      identity?: Partial<MemoryRuntimeIdentity>
+    },
+  ): Promise<PreparedMemoryMutation> {
+    const target = await this.get(input.targetId, input.identity)
+    if (!target) return rejectedMutation('Memory node not found.')
+    const revisionError = validateExpectedRevision(target, input.expectedRevision)
+    if (revisionError) return rejectedMutation(revisionError)
+    const mode = input.mode || 'soft'
+    const updatedAt = new Date().toISOString()
+    const node: MemoryNode = mode === 'soft'
+      ? {
+          ...target,
+          status: 'deleted',
+          revision: target.revision + 1,
+          updatedAt,
+        }
+      : target
+    return {
+      result: { accepted: true, nodeId: target.id, action: 'deleted', node },
+      mutation: {
+        type: 'delete',
+        nodeId: target.id,
+        mode,
+        reason: input.reason,
+        actor: input.actor || 'ekko-agent',
+        expectedRevision: input.expectedRevision,
+        sessionId: input.identity?.sessionId,
+        updatedAt,
+      },
+      conflictKey: `node:${target.id}`,
+    }
   }
 
   async forget(input: MemoryForgetInput): Promise<MemoryForgetResult> {
@@ -517,18 +659,24 @@ export class MemoryService {
       const revisionError = validateExpectedRevision(candidates[0], input.expectedRevision)
       if (revisionError) return { deletedIds: [], mode, reason: revisionError }
     }
-    const deletedIds: string[] = []
-    for (const node of candidates) {
-      const deleted = await this.store.deleteNode({
+    try {
+      await this.store.applyMutations(candidates.map(node => ({
+        type: 'delete' as const,
         nodeId: node.id,
         mode,
         reason: input.reason,
         actor: input.actor || 'ekko-agent',
-        expectedRevision: expectedRevisions.get(node.id) ?? (input.id ? input.expectedRevision : undefined),
+        expectedRevision: expectedRevisions.get(node.id) ?? (input.id ? input.expectedRevision : node.revision),
         sessionId: input.identity?.sessionId,
-      })
-      if (deleted) deletedIds.push(node.id)
+      })))
+    } catch (error) {
+      return {
+        deletedIds: [],
+        mode,
+        reason: `Atomic memory deletion failed and was rolled back: ${error instanceof Error ? error.message : String(error)}`,
+      }
     }
+    const deletedIds = candidates.map(node => node.id)
     return {
       deletedIds,
       deletedMemories: candidates.filter(node => deletedIds.includes(node.id)).map(node => ({
@@ -685,7 +833,10 @@ export function hasExplicitMemoryIntent(messages: MemoryCaptureMessage[]): boole
 
 export function hasExplicitMemoryForgetIntent(messages: MemoryCaptureMessage[]): boolean {
   const latestUser = [...messages].reverse().find(message => message.role === 'user')?.content || ''
-  return /(?:忘掉|忘记|别记|不再记|(?:删除|清掉|清除|清空).{0,16}(?:记忆|偏好|记录|信息)|forget|(?:delete|clear|erase) (?:that|this|my|the|all|every).{0,20}(?:memories|memory|preference|record))/i.test(latestUser)
+  const chineseIntent = /(?:忘掉|忘记|别记|不再记)|(?:删除|清掉|清除|清空)(?:掉|一下)?(?:(?:我(?:的)?|你(?:的|(?:所)?(?:保存|记住|记录)的)?|已保存(?:的)?|这(?:条|些)?|(?:所有|全部)(?:的)?)){0,3}(?:记忆|偏好|记录)|(?:删除|清掉|清除|清空)(?:掉|一下)?(?:我的|关于我的)(?:个人)?信息/giu
+  const englishIntent = /\bforget\b|\b(?:delete|clear|erase)\s+(?:that|this|my|the|all|every).{0,20}\b(?:memories|memory|preference|record)s?\b/giu
+  return hasNonNegatedIntent(latestUser, chineseIntent)
+    || hasNonNegatedIntent(latestUser, englishIntent)
 }
 
 export function hasExplicitMemoryForgetAllIntent(messages: MemoryCaptureMessage[]): boolean {
@@ -695,6 +846,22 @@ export function hasExplicitMemoryForgetAllIntent(messages: MemoryCaptureMessage[
     && /(?:记忆|偏好|记录|信息)/.test(latestUser)
   return chineseForgetAll
     || /(?:forget|delete|clear|erase).{0,16}(?:all|every).{0,16}(?:memories|memory|preferences|records)/i.test(latestUser)
+}
+
+function rejectedMutation(reason: string): PreparedMemoryMutation {
+  return { result: { accepted: false, reason } }
+}
+
+function memoryNodeSlotKey(node: MemoryNode): string {
+  return stableJson([node.profileId, node.scope || PROFILE_MEMORY_SCOPE, node.key])
+}
+
+function hasNonNegatedIntent(text: string, pattern: RegExp): boolean {
+  for (const match of text.matchAll(pattern)) {
+    const prefix = text.slice(Math.max(0, match.index! - 12), match.index)
+    if (!/(?:不要|别|禁止|不得|不能|不可|无需|无须|切勿|do\s+not|don't|never)\s*$/iu.test(prefix)) return true
+  }
+  return false
 }
 
 function validateExpectedRevision(node: MemoryNode, expectedRevision: number | undefined): string | undefined {

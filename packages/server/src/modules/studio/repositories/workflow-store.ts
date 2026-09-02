@@ -1,9 +1,8 @@
 import { randomUUID } from 'crypto'
 import { mkdirSync } from 'fs'
-import { join } from 'path'
 import { getDb, jsonDelete, jsonGet, jsonGetAll, jsonSet } from '../infrastructure/database'
 import { WORKFLOWS_TABLE } from '../infrastructure/database/schemas'
-import { config } from '../public/config'
+import { defaultWorkflowWorkspace, selectWorkspace } from '../services/workspace/manager'
 
 export interface WorkflowRecord {
   id: string
@@ -49,14 +48,6 @@ interface WorkflowRow {
 
 function profileName(value?: string | null): string {
   return value?.trim() || 'default'
-}
-
-function safePathSegment(value: string): string {
-  return value.replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').trim() || 'default'
-}
-
-function defaultWorkflowWorkspace(profile: string, workflowId: string): string {
-  return join(config.appHome, 'workflow', safePathSegment(profile), safePathSegment(workflowId))
 }
 
 function parseArrayJson(value: unknown): unknown[] {
@@ -145,7 +136,7 @@ export function createWorkflow(input: WorkflowCreateInput): WorkflowRecord {
   const now = Date.now()
   const id = input.id?.trim() || randomUUID()
   const profile = profileName(input.profile)
-  const workspace = input.workspace?.trim() || defaultWorkflowWorkspace(profile, id)
+  const workspace = selectWorkspace(input.workspace, defaultWorkflowWorkspace(profile, id))
   mkdirSync(workspace, { recursive: true })
   const record: WorkflowRecord = {
     id,
@@ -188,7 +179,7 @@ export function updateWorkflow(id: string, input: WorkflowUpdateInput): Workflow
   if (!existing) return null
   const workspace = input.workspace === undefined
     ? existing.workspace
-    : (input.workspace?.trim() || defaultWorkflowWorkspace(existing.profile, existing.id))
+    : selectWorkspace(input.workspace, defaultWorkflowWorkspace(existing.profile, existing.id))
   if (workspace) mkdirSync(workspace, { recursive: true })
 
   const next: WorkflowRecord = {

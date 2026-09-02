@@ -1,8 +1,11 @@
-import { existsSync } from 'fs'
 import { stat } from 'fs/promises'
-import { homedir } from 'os'
-import { isAbsolute, join, resolve, win32 as pathWin32 } from 'path'
-import { isPathWithin, isRealPathWithin } from './path'
+import { win32 as pathWin32 } from 'path'
+import { isRealPathWithin } from './path'
+import {
+  assertWorkspaceDirectory,
+  resolveWorkspaceDirectory,
+  workspaceBaseDirectory,
+} from '../workspace/manager'
 
 export function workspaceBaseOverride(): string {
   return process.env.WORKSPACE_BASE?.trim() || ''
@@ -45,27 +48,11 @@ export async function isWorkspaceListPathAllowed(
 }
 
 export async function resolveAllowedWorkspaceFolder(inputPath: string): Promise<{ base: string; fullPath: string } | null> {
-  const raw = String(inputPath || '').trim()
-  if (!raw) return null
-
-  if (useWindowsDriveWorkspaceMode()) {
-    const resolved = normalizeWindowsWorkspacePath(raw)
-    if (!resolved) return null
-    return await isWorkspaceListPathAllowed(resolved.fullPath, resolved.base, stat, { trustWindowsDriveRoot: true }) ? resolved : null
-  }
-
-  const base = workspaceBaseOverride() || homedir()
-  const fullPath = isAbsolute(raw) ? resolve(raw) : resolve(join(base, raw))
-  if (!isPathWithin(fullPath, base)) return null
-  if (!existsSync(fullPath)) return null
-  return await isWorkspaceListPathAllowed(fullPath, base, stat) ? { base, fullPath } : null
+  return resolveWorkspaceDirectory(inputPath)
 }
 
 export async function assertAllowedWorkspaceFolder(inputPath: string): Promise<{ base: string; fullPath: string }> {
-  const raw = String(inputPath || '').trim()
-  const resolved = await resolveAllowedWorkspaceFolder(raw)
-  if (resolved) return resolved
-  const err = new Error(raw ? 'Workspace folder is not allowed' : 'workspace is required') as Error & { status?: number }
-  err.status = raw ? 403 : 400
-  throw err
+  return assertWorkspaceDirectory(inputPath)
 }
+
+export { workspaceBaseDirectory }

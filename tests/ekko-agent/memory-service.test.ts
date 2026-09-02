@@ -8,6 +8,7 @@ import {
   MemoryService,
   SqliteMemoryStore,
   createMemoryTools,
+  hasExplicitMemoryForgetIntent,
   resolveMemoryQuery,
   type MemoryNode,
   type MemoryStore,
@@ -31,6 +32,17 @@ afterEach(async () => {
 })
 
 describe('MemoryService', () => {
+  it('does not treat negated configuration deletion text as a memory-forget request', () => {
+    expect(hasExplicitMemoryForgetIntent([{
+      role: 'user',
+      content: '不要删除用户配置、认证信息，也不要忘记现有偏好。',
+    }])).toBe(false)
+    expect(hasExplicitMemoryForgetIntent([{
+      role: 'user',
+      content: '请删除你保存的这条记忆。',
+    }])).toBe(true)
+  })
+
   it('does not retain a memory approval queue table', () => {
     const row = store.databaseManager.connection.prepare(
       "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'memory_review_jobs'",
@@ -509,7 +521,7 @@ describe('MemoryService', () => {
     expect(result.memoryContext?.usedMemoryIds).toHaveLength(1)
   })
 
-  it('writes explicit memory directly in the foreground without a reviewer request', async () => {
+  it('writes explicit memory directly without forcing or narrowing the foreground request', async () => {
     let foregroundCalls = 0
     const create = vi.fn(async (request: ModelRequest) => {
       foregroundCalls += 1
@@ -546,10 +558,11 @@ describe('MemoryService', () => {
       toolContext: { sessionId: 'foreground-source-session', profileId: 'default' },
     })
     const foregroundRequest = create.mock.calls[0][0] as ModelRequest
-    expect(foregroundRequest.toolChoice).toBe('required')
-    expect(foregroundRequest.tools?.map(tool => tool.name)).toEqual([
-      'memory_search', 'memory_get', 'memory_write',
-    ])
+    expect(foregroundRequest.toolChoice).toBeUndefined()
+    expect(foregroundRequest.tools?.map(tool => tool.name)).toEqual(expect.arrayContaining([
+      'read_file',
+      'memory_search', 'memory_get', 'memory_write', 'memory_forget',
+    ]))
     expect(runResult.steps).toEqual(expect.arrayContaining([
       expect.objectContaining({
         type: 'tool',
@@ -581,7 +594,7 @@ describe('MemoryService', () => {
       .toBe(false)
   })
 
-  it('recognizes 清掉你所有的记忆 as an explicit direct forget-all request', async () => {
+  it('recognizes 清掉你所有的记忆 without forcing or narrowing the foreground request', async () => {
     const identity = { sessionId: 'foreground-forget-all', profileId: 'default' }
     const createdIds: string[] = []
     for (let index = 0; index < 5; index += 1) {
@@ -631,10 +644,11 @@ describe('MemoryService', () => {
       toolContext: identity,
     })
     const foregroundRequest = create.mock.calls[0][0] as ModelRequest
-    expect(foregroundRequest.toolChoice).toBe('required')
-    expect(foregroundRequest.tools?.map(tool => tool.name)).toEqual([
-      'memory_search', 'memory_get', 'memory_forget',
-    ])
+    expect(foregroundRequest.toolChoice).toBeUndefined()
+    expect(foregroundRequest.tools?.map(tool => tool.name)).toEqual(expect.arrayContaining([
+      'read_file',
+      'memory_search', 'memory_get', 'memory_write', 'memory_forget',
+    ]))
     expect(runResult.steps).toEqual(expect.arrayContaining([
       expect.objectContaining({
         type: 'tool',
@@ -765,6 +779,91 @@ describe('MemoryService', () => {
         sourceMessageIds: ['location-message-1'],
       },
     })
+  })
+
+  it('applies mixed memory_write operations atomically and returns a terminal result', async () => {
+    const identity = { sessionId: 'atomic-memory-tool', profileId: 'default' }
+    const obsolete = await service.write({
+      operation: 'create',
+      kind: 'general_preference',
+      itemKey: 'obsolete_editor',
+      node: userPreference('旧编辑器'),
+      reason: 'Set up an obsolete memory.',
+      explicitUserIntent: true,
+      identity,
+    })
+    const tool = createMemoryTools(service).find(item => item.definition.name === 'memory_write')!
+
+    const result = await tool.execute({
+      operations: [
+        {
+          operation: 'create',
+          kind: 'home_location',
+          node: { valueJson: '杭州', title: '用户常住地', content: '用户当前常住在杭州。' },
+          reason: '用户明确说明当前常住地。',
+          explicitUserIntent: true,
+        },
+        {
+          operation: 'delete',
+          targetId: obsolete.nodeId,
+          expectedRevision: obsolete.node?.revision,
+          reason: '用户明确要求删除失效偏好。',
+        },
+      ],
+    }, {
+      ...identity,
+      memoryExplicitIntent: true,
+      memoryForgetIntent: true,
+      sourceMessageIds: ['atomic-user-message'],
+    })
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        accepted: true,
+        done: true,
+        results: [
+          { accepted: true, action: 'created' },
+          { accepted: true, action: 'deleted', nodeId: obsolete.nodeId },
+        ],
+      },
+    })
+    expect(result.content).toContain('do not repeat it')
+    await expect(service.get(obsolete.nodeId!, identity)).resolves.toMatchObject({ status: 'deleted' })
+    await expect(service.search(identity, { kinds: ['home_location'] })).resolves.toMatchObject({
+      exact: [expect.objectContaining({ valueJson: '杭州', sourceMessageIds: ['atomic-user-message'] })],
+    })
+  })
+
+  it('applies no memory changes when any batch operation fails validation', async () => {
+    const identity = { sessionId: 'atomic-validation', profileId: 'default' }
+    const result = await service.applyBatch({
+      identity,
+      explicitUserIntent: true,
+      operations: [
+        {
+          operation: 'create',
+          kind: 'language_preference',
+          node: { valueJson: '中文', title: '语言偏好', content: '用户偏好中文。' },
+          reason: 'Valid first operation.',
+        },
+        {
+          operation: 'create',
+          kind: 'project_context',
+          node: { valueJson: 'Hermes Studio', title: '项目', content: '用户在维护 Hermes Studio。' },
+          reason: 'Missing the required itemKey.',
+        },
+      ],
+    })
+
+    expect(result).toMatchObject({
+      accepted: false,
+      done: true,
+      failedOperationIndex: 1,
+      reason: expect.stringContaining('No operations were applied'),
+    })
+    await expect(service.search(identity, { kinds: ['language_preference'] }))
+      .resolves.toMatchObject({ exact: [], relevant: [] })
   })
 
   it('updates an exact memory by id and revision and rejects stale writes', async () => {

@@ -349,13 +349,6 @@ export class AgentRuntime {
     const memoryIdentity = this.memoryIdentityFor(input)
     const memoryPreparation = await this.prepareMemory(input, memoryIdentity, runId)
     const memoryContext = memoryPreparation?.context
-    const captureMessages = this.memoryCaptureMessages(input)
-    const forceInitialMemoryForget = Boolean(
-      memoryIdentity && hasExplicitMemoryForgetIntent(captureMessages),
-    )
-    const forceInitialMemoryWrite = Boolean(
-      memoryIdentity && !forceInitialMemoryForget && hasExplicitMemoryIntent(captureMessages),
-    )
     const sessionId = this.contextKeyFor(input)?.trim()
     const activeBoundaryRun = sessionId
       ? this.registerBoundaryRun(sessionId, runId)
@@ -489,23 +482,6 @@ export class AgentRuntime {
         const modelClient = this.modelClientFor(input)
         emit({ type: 'model.started', runId, step })
         const request = this.modelRequest(input, messages, modelClient, contextKey, modelSignal)
-        if (forceInitialMemoryForget && request.tools) {
-          const forgetTools = request.tools.filter(tool => (
-            tool.name === 'memory_search' || tool.name === 'memory_get' || tool.name === 'memory_forget'
-          ))
-          if (forgetTools.length) {
-            request.tools = forgetTools
-            request.toolChoice = 'required'
-          }
-        } else if (step === 1 && forceInitialMemoryWrite) {
-          const writeTools = request.tools?.filter(tool => (
-            tool.name === 'memory_search' || tool.name === 'memory_get' || tool.name === 'memory_write'
-          ))
-          if (writeTools?.length) {
-            request.tools = writeTools
-            request.toolChoice = 'required'
-          }
-        }
         const recoveryDirective = this.currentRecoveryDirective()
         if (recoveryDirective?.active && request.tools?.length) {
           const allowed = new Set(recoveryDirective.allowedToolNames)

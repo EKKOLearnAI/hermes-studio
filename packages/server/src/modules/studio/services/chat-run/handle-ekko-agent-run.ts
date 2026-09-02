@@ -47,6 +47,7 @@ import { buildOutboundRunEvent } from './resume-payload'
 import { estimateUsageTokensFromMessages } from './usage'
 import type { BackgroundContinuationContext, ChatCodingAgentId, ContentBlock, QueuedRun, SessionState } from './types'
 import { completeWorkspaceRunCheckpoint, startWorkspaceRunCheckpoint } from './workspace-diff-tracker'
+import { selectWorkspace } from '../workspace/manager'
 
 export interface EkkoAgentRunSocketData {
   input: string | ContentBlock[]
@@ -474,7 +475,11 @@ export async function handleEkkoAgentRun(
   const persistedReasoningEffort = normalizeReasoningEffort(data.reasoning_effort ?? storedSession?.reasoning_effort)
   const reasoningEffort = resolveReasoningEffort(persistedReasoningEffort)
   const agent = getGlobalEkkoAgent(profile)
-  const workspace = data.workspace || storedSession?.workspace || agent.sessionWorkspaceDirectory(sessionId)
+  const workspace = selectWorkspace(
+    data.workspace,
+    storedSession?.workspace,
+    () => agent.sessionWorkspaceDirectory(sessionId),
+  )
   const shouldEmitWorkspaceUpdate = Boolean(workspace && !storedSession?.workspace)
   if (storedSession && !storedSession.workspace) updateSession(sessionId, { workspace })
   const displayInput = data.display_input === undefined ? data.input : data.display_input

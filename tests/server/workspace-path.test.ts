@@ -29,12 +29,12 @@ describe('workspace path validation', () => {
     await expect(resolveAllowedWorkspaceFolder(folder)).resolves.toEqual({ base: root, fullPath: folder })
   })
 
-  it('rejects traversal outside the base', async () => {
+  it('accepts an existing workspace outside the configured base', async () => {
     const outside = await mkdtemp(join(tmpdir(), 'hermes-workspace-path-outside-'))
     const { resolveAllowedWorkspaceFolder, assertAllowedWorkspaceFolder } = await import('../../packages/server/src/modules/studio/services/files/workspace-path')
 
-    await expect(resolveAllowedWorkspaceFolder(outside)).resolves.toBeNull()
-    await expect(assertAllowedWorkspaceFolder(outside)).rejects.toMatchObject({ status: 403 })
+    await expect(resolveAllowedWorkspaceFolder(outside)).resolves.toEqual({ base: root, fullPath: outside })
+    await expect(assertAllowedWorkspaceFolder(outside)).resolves.toEqual({ base: root, fullPath: outside })
     await rm(outside, { recursive: true, force: true })
   })
 

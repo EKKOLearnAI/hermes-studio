@@ -4,8 +4,8 @@ import { canManageGroupChatRoom } from '../services/group-chat/access'
 import { getGroupChatRuntimeServer } from '../services/group-chat/runtime'
 import {
     groupWorkspaceRelativePath,
-    resolveGroupWorkspacePath,
 } from '../services/group-chat/workspace-files'
+import { resolveWorkspacePath } from '../services/workspace/manager'
 import {
     buildFileContentHeaders,
     decorateWorkspaceEntries,
@@ -15,7 +15,6 @@ import {
     MAX_DOWNLOAD_SIZE,
     MAX_EDIT_SIZE,
 } from '../public/workspace-files'
-import { defaultHermesWorkspace } from '../services/chat-run/workspace'
 
 function managedRoom(ctx: any): { room: any; storage: ReturnType<NonNullable<ReturnType<typeof getGroupChatRuntimeServer>>['getStorage']> } {
     const server = getGroupChatRuntimeServer()
@@ -42,27 +41,16 @@ function handleWorkspaceError(ctx: any, error: any): void {
 }
 
 async function resolveRoomPath(ctx: any, path: unknown, options: { allowEmpty?: boolean; allowAbsolute?: boolean } = {}) {
-    return resolveGroupWorkspacePath(roomWorkspace(ctx), path, options)
+    return resolveWorkspacePath(roomWorkspace(ctx), path, {
+        access: 'unrestricted',
+        allowAbsolute: true,
+        allowEmpty: options.allowEmpty,
+        missingWorkspaceMessage: 'Room workspace not found',
+    })
 }
 
 async function resolveRoomPreviewPath(ctx: any, path: unknown) {
-    const rawPath = typeof path === 'string' ? path.trim() : ''
-    const isAbsolute = rawPath.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(rawPath)
-    if (!isAbsolute) return resolveRoomPath(ctx, path)
-
-    const { room, storage } = managedRoom(ctx)
-    const roots = [
-        String(room.workspace || '').trim(),
-        ...storage.getRoomAgents(room.id).map((agent: any) => defaultHermesWorkspace(String(agent.profile || 'default'))),
-    ].filter((root, index, all) => root && all.indexOf(root) === index)
-    for (const root of roots) {
-        try {
-            return await resolveGroupWorkspacePath(root, rawPath, { allowAbsolute: true })
-        } catch (error: any) {
-            if (error?.code !== 'invalid_path') throw error
-        }
-    }
-    throw Object.assign(new Error('File is outside the room and Agent workspaces'), { status: 400, code: 'invalid_path' })
+    return resolveRoomPath(ctx, path, { allowAbsolute: true })
 }
 
 export async function listWorkspaceFiles(ctx: any): Promise<void> {

@@ -80,6 +80,36 @@ describe('SqliteMemoryStore', () => {
     ).all() as Array<{ event_type: string }>
     expect(audit.map(row => row.event_type)).toEqual(['supersede', 'delete', 'delete', 'delete'])
   })
+
+  it('rolls back every mutation when a later operation in the batch conflicts', async () => {
+    const first = memoryNode('first', { key: 'first' })
+    const second = memoryNode('second', { key: 'second' })
+    await store.upsertNode(first)
+    await store.upsertNode(second)
+
+    await expect(store.applyMutations([
+      {
+        type: 'status',
+        nodeId: first.id,
+        status: 'expired',
+        expectedRevision: 1,
+        reason: 'first mutation would succeed alone',
+        actor: 'test',
+      },
+      {
+        type: 'status',
+        nodeId: second.id,
+        status: 'expired',
+        expectedRevision: 99,
+        reason: 'force a revision conflict',
+        actor: 'test',
+      },
+    ])).rejects.toThrow('Memory revision changed: second')
+
+    await expect(store.getNode(first.id)).resolves.toMatchObject({ status: 'active', revision: 1 })
+    await expect(store.getNode(second.id)).resolves.toMatchObject({ status: 'active', revision: 1 })
+    await expect(store.listAuditEvents()).resolves.toEqual([])
+  })
 })
 
 function memoryNode(id: string, overrides: Partial<MemoryNode> = {}): MemoryNode {

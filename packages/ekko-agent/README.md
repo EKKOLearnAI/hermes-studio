@@ -83,7 +83,9 @@ Built-in tools:
 
 - `clarify` asks one blocking user question, with optional answer choices, when
   the host provides an interactive clarification handler.
-- `read_file` reads a text file.
+- `read_file` reads a text file from the local filesystem. Relative paths use
+  the current working directory; absolute paths and paths outside
+  `workspaceRoot` are supported.
 - `view_image` loads a local PNG, JPEG, WebP, or GIF as multimodal model
   input while enforcing the runtime workspace boundary and a size limit.
 - `write_file` writes text content and creates parent directories by default.
@@ -106,8 +108,9 @@ Built-in tools:
 - `ekko_self_check` validates Skills/database state and clears only the matching
   current incident revision.
 
-Use `workspaceRoot` to keep file and terminal working directories inside a
-specific workspace.
+Use `workspaceRoot` to set the default working directory and to isolate
+`write_file` and `view_image`. It is not a read or process sandbox:
+`read_file` and `terminal_exec` may use explicit paths outside the workspace.
 
 ```ts
 import { createDefaultToolRegistry } from 'ekko-agent'
@@ -197,10 +200,11 @@ that omit scope configuration remain backward compatible and can access only
 profile-scoped memory.
 
 The foreground agent can search, inspect, create, update, and delete authorized
-memory directly. For an explicit remember, correction, or update request, the
-runtime requires a foreground `memory_write` path; explicit forget requests use
-`memory_forget`. Both tools apply the mutation synchronously and keep the host's
-trusted evidence and scope boundary. Run completion only records trusted
+memory directly. `memory_write.operations` applies multiple creates, updates,
+expirations, and exact deletions atomically in one SQLite transaction while the
+legacy single-operation shape remains compatible. Deletion-only requests may
+use `memory_forget`, whose multi-target and broad deletions are also atomic.
+Both tools keep the host's trusted evidence and scope boundary. Run completion only records trusted
 conversation evidence; it does not start a memory model or create a hidden
 Session summary. See
 [`docs/MEMORY_HARNESS.md`](docs/MEMORY_HARNESS.md) for the executable quality
@@ -460,13 +464,15 @@ const history = setup.conversations.listMessages(session.id)
 ## Memory
 
 `setup.memory` exposes the standalone memory API. Memory-node operations are
-`list`, `get`, `search`, `create`, `update`, `expire`, `delete`, and `forget`.
+`list`, `get`, `search`, `create`, `update`, `expire`, `delete`, `applyBatch`, and `forget`.
 Conversation-derived memory data can be read with `listMessages`,
 and `listAuditEvents`. The lower-level SQLite implementation remains available
 as `setup.memoryStore`.
 
 Foreground runs write and forget durable memories synchronously through
-`memory_write` and `memory_forget`. There is no memory approval queue, review
+`memory_write` and `memory_forget`. Prefer `memory_write.operations` when one
+request implies multiple changes; the response is terminal (`done=true`) after
+the whole batch commits. There is no memory approval queue, review
 worker, or background Session-summary pass.
 
 Database migrations are transactional and retry SQLite lock conflicts. A
@@ -495,6 +501,26 @@ const updated = await setup.memory.update(created.nodeId!, {
   expectedRevision: created.node!.revision,
   identity: { sessionId: session.id, profileId: 'default' },
   node: { valueJson: 'light' },
+})
+
+const batch = await setup.memory.applyBatch({
+  identity: { sessionId: session.id, profileId: 'default' },
+  explicitUserIntent: true,
+  operations: [
+    {
+      operation: 'create',
+      kind: 'language_preference',
+      reason: 'User selected Chinese.',
+      node: { valueJson: 'zh-CN', title: 'Language', content: 'The user prefers Chinese.' },
+    },
+    {
+      operation: 'expire',
+      targetId: updated.nodeId!,
+      expectedRevision: updated.node!.revision,
+      reason: 'The old preference is no longer current.',
+      node: {},
+    },
+  ],
 })
 
 // Soft delete is the default; mode: 'hard' deletes immediately as well.

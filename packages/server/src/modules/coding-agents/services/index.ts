@@ -26,6 +26,7 @@ import { normalizeWindowsCommandPath, windowsCmdShimExecution, windowsCommandNee
 import { updateAgentStatus } from '../../studio/public/agent-status-registry'
 import { assertScopedCodingAgentProviderAllowed } from '../protocol/provider-policy'
 import type { CodingAgentRuntime } from '../../studio/contracts/agents/runtime'
+import { defaultCodingAgentWorkspace } from '../../studio/public/workspace-manager'
 
 const execFileAsync = promisify(execFile)
 const LAUNCH_API_MODES = new Set<ApiMode>(['chat_completions', 'codex_responses', 'anthropic_messages'])
@@ -847,7 +848,7 @@ function getScopedRuntimeConfigRoot(
 }
 
 function getScopedWorkspaceRoot(scope: Required<CodingAgentConfigScope>): string {
-  return join(getWebUiHome(), CODING_AGENT_HOME_DIR, 'workspace', scope.profile, scope.provider)
+  return defaultCodingAgentWorkspace(scope.profile, scope.provider)
 }
 
 function resolveLaunchWorkspaceRoot(scope: Required<CodingAgentConfigScope>, workspace?: string | null): string {

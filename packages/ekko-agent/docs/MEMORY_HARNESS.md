@@ -22,14 +22,17 @@ The harness keeps these boundaries executable:
   generic `profile`, `context`, and `session` scopes. Direct write tools choose only
   from the declared writable set, while recall is limited to the declared read
   set. With no declaration, Ekko defaults to profile scope for compatibility.
-- Durable mutation tools run in the foreground. `memory_write` applies creates
-  and updates synchronously; `memory_forget` applies deletions synchronously.
-- Explicit remember, correction, update, and forget requests force the matching
-  direct mutation path and do not create background jobs.
+- Durable mutation tools run in the foreground. `memory_write.operations`
+  validates every requested create, update, expiration, or exact deletion and
+  commits the complete batch in one transaction; `memory_forget` applies
+  multi-target and broad deletions with the same all-or-nothing guarantee.
+- Explicit remember, correction, update, and forget requests expose the matching
+  direct mutation path without forcing a tool choice or creating background jobs.
 - A list-all request enumerates every active memory in the authorized scopes;
   it is not treated as a relevance query.
-- A failed `memory_write` or `memory_forget` stops that mutation path and returns
-  the real tool error, so a later model turn cannot claim that it succeeded.
+- A failed `memory_write` or `memory_forget` rolls back the complete mutation
+  batch and returns the real tool error, so a later model turn cannot claim that
+  a partial write succeeded.
 - There is no memory approval queue, background review, or Session-summary model
   pass. Run completion only records trusted conversation evidence.
 - Tool payloads and system messages are excluded from the memory transcript.

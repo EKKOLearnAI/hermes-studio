@@ -475,6 +475,8 @@ export type EkkoProfileMemoryForgetInput = ProfileMemoryInput<MemoryForgetInput>
 
 export type EkkoProfileMemoryWriteInput = ProfileMemoryInput<MemoryWriteInput>
 
+export type EkkoProfileMemoryBatchInput = ProfileMemoryInput<MemoryBatchInput>
+
 export class EkkoProfileDirectoryManager {
   readonly skillDirectory: string
   readonly logDirectory: string
@@ -537,6 +539,7 @@ export class EkkoProfileMemoryManager {
   listMessages(input: MemoryMessageListInput): Promise<MemoryMessage[]>
   listAuditEvents(query: EkkoProfileMemoryAuditQuery = {}): Promise<MemoryAuditEvent[]>
   write(input: EkkoProfileMemoryWriteInput): Promise<MemoryWriteResult>
+  applyBatch(input: EkkoProfileMemoryBatchInput): Promise<MemoryBatchResult>
   forget(input: EkkoProfileMemoryForgetInput): Promise<MemoryForgetResult>
   scheduleCapture(identity: EkkoProfileMemoryIdentity, messages: MemoryCaptureMessage[]): void
   drain(): Promise<void>
@@ -1619,6 +1622,7 @@ export class MemoryService {
   async listMessages(input: MemoryMessageListInput): Promise<MemoryMessage[]>
   async listAuditEvents(query: MemoryAuditQuery = {}): Promise<MemoryAuditEvent[]>
   async write(input: MemoryWriteInput): Promise<MemoryWriteResult>
+  async applyBatch(input: MemoryBatchInput): Promise<MemoryBatchResult>
   async forget(input: MemoryForgetInput): Promise<MemoryForgetResult>
   scheduleCapture(identity: MemoryRuntimeIdentity, messages: MemoryCaptureMessage[], writePolicy: MemoryWritePolicy = 'automatic'): void
   async drain(): Promise<void>
@@ -1647,6 +1651,7 @@ export class SqliteMemoryStore implements MemoryStore {
   async supersedeNode(input: { oldNodeId: string; newNode: MemoryNode; reason: string; actor: string; sessionId?: string }): Promise<void>
   async updateNodeStatus(input: { nodeId: string; status: MemoryNode['status']; reason: string; actor: string; expectedRevision?: number; sessionId?: string }): Promise<boolean>
   async deleteNode(input: { nodeId: string; mode: 'soft' | 'hard'; reason: string; actor: string; expectedRevision?: number; sessionId?: string }): Promise<boolean>
+  async applyMutations(mutations: MemoryStoreMutation[]): Promise<void>
   async queryNodes(query: MemoryQuery): Promise<MemoryNode[]>
   async appendAuditEvent(event: MemoryAuditEvent): Promise<void>
   async listAuditEvents(query: MemoryAuditQuery = {}): Promise<MemoryAuditEvent[]>
@@ -1837,6 +1842,23 @@ export interface MemoryWriteResult {
   reason?: string
 }
 
+export type MemoryBatchOperation = | Omit<MemoryWriteInput, 'actor' | 'identity'> | { operation: 'delete' targetId: string expectedRevision: number mode?: 'soft' | 'hard' reason: string }
+
+export interface MemoryBatchInput {
+  operations: MemoryBatchOperation[]
+  actor?: string
+  explicitUserIntent?: boolean
+  identity?: Partial<MemoryRuntimeIdentity>
+}
+
+export interface MemoryBatchResult {
+  accepted: boolean
+  done: boolean
+  results: MemoryWriteResult[]
+  failedOperationIndex?: number
+  reason?: string
+}
+
 export interface MemoryCreateInput {
   kind: MemoryKind
   itemKey?: string
@@ -1898,6 +1920,8 @@ export interface MemoryForgetResult {
   reason?: string
 }
 
+export type MemoryStoreMutation = | { type: 'upsert' node: MemoryNode audit?: Omit<MemoryAuditEvent, 'id' | 'nodeId' | 'createdAt'> } | { type: 'supersede' oldNodeId: string newNode: MemoryNode reason: string actor: string sessionId?: string } | { type: 'status' nodeId: string status: MemoryNodeStatus reason: string actor: string expectedRevision?: number sessionId?: string updatedAt?: string } | { type: 'delete' nodeId: string mode: 'soft' | 'hard' reason: string actor: string expectedRevision?: number sessionId?: string updatedAt?: string }
+
 export interface MemoryStore {
   appendMessage(message: MemoryMessage): Promise<void>
   listRecentMessages(input: { sessionId: string; limit: number }): Promise<MemoryMessage[]>
@@ -1907,6 +1931,7 @@ export interface MemoryStore {
   supersedeNode(input: { oldNodeId: string; newNode: MemoryNode; reason: string; actor: string; sessionId?: string }): Promise<void>
   updateNodeStatus(input: { nodeId: string; status: MemoryNodeStatus; reason: string; actor: string; expectedRevision?: number; sessionId?: string }): Promise<boolean>
   deleteNode(input: { nodeId: string; mode: 'soft' | 'hard'; reason: string; actor: string; expectedRevision?: number; sessionId?: string }): Promise<boolean>
+  applyMutations(mutations: MemoryStoreMutation[]): Promise<void>
   queryNodes(query: MemoryQuery): Promise<MemoryNode[]>
   appendAuditEvent(event: MemoryAuditEvent): Promise<void>
   listAuditEvents(query?: MemoryAuditQuery): Promise<MemoryAuditEvent[]>
@@ -3001,7 +3026,7 @@ export interface WriteFileInput extends Record<string, unknown> {
 
 export class ReadFileTool implements AgentTool<ReadFileInput> {
   readonly concurrency = 'parallel' as const
-  readonly definition = { name: 'read_file', description: `Read a text file from the workspace, reading at most ${DEFAULT_READ_FILE_MAX_BYTES} file bytes per call. Use offset to continue a truncated read.`, parameters: { type: 'object', properties: { path: { type: 'string', description: 'File path relative to the current workspace.' }, encoding: { type: 'string', description: 'Text encoding. Defaults to utf8.' }, offset: { type: 'number', description: 'Zero-based byte offset. Defaults to 0; use nextOffset from a truncated result to continue.' }, limit: { type: 'number', description: `Maximum file bytes to read (minimum 4). Defaults to and cannot exceed ${DEFAULT_READ_FILE_MAX_BYTES}.` }, }, required: ['path'], additionalProperties: false, }, }
+  readonly definition = { name: 'read_file', description: `Read a text file from the local filesystem, reading at most ${DEFAULT_READ_FILE_MAX_BYTES} file bytes per call. Relative paths resolve from the current working directory; absolute paths and paths outside workspaceRoot are supported. Use offset to continue a truncated read.`, parameters: { type: 'object', properties: { path: { type: 'string', description: 'File path. Relative paths resolve from the current working directory; absolute paths are supported.' }, encoding: { type: 'string', description: 'Text encoding. Defaults to utf8.' }, offset: { type: 'number', description: 'Zero-based byte offset. Defaults to 0; use nextOffset from a truncated result to continue.' }, limit: { type: 'number', description: `Maximum file bytes to read (minimum 4). Defaults to and cannot exceed ${DEFAULT_READ_FILE_MAX_BYTES}.` }, }, required: ['path'], additionalProperties: false, }, }
   async execute(input: ReadFileInput, context: AgentToolContext = {}): Promise<AgentToolResult>
 }
 
@@ -3063,6 +3088,8 @@ export function createMcpToolProvider(): AgentToolProvider
 ### `src/tools/path-safety.ts`
 
 ```ts
+export function resolveUnrestrictedToolPath( inputPath: string, context: { cwd?: string; workspaceRoot?: string } = {}, ): string
+
 export function resolveToolPath(inputPath: string, context: { cwd?: string; workspaceRoot?: string } = {}): string
 ```
 ### `src/tools/recovery.ts`

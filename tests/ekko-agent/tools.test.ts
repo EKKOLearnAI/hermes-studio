@@ -136,13 +136,38 @@ describe('ekko-agent tools', () => {
       .rejects.toMatchObject({ code: 'INVALID_TOOL_INPUT' })
   })
 
-  it('blocks file paths outside workspaceRoot', async () => {
+  it('reads files outside workspaceRoot while keeping writes isolated', async () => {
     const reader = new ReadFileTool()
+    const writer = new WriteFileTool()
+    const outsideRoot = await mkdtemp(path.join(os.tmpdir(), 'ekko-agent-tools-outside-'))
+    const outsideFile = path.join(outsideRoot, 'outside.txt')
+    await writeFile(outsideFile, 'outside workspace')
 
-    await expect(reader.execute({ path: '../outside.txt' }, { workspaceRoot })).rejects.toBeInstanceOf(AgentToolError)
-    await expect(reader.execute({ path: '../outside.txt' }, { workspaceRoot })).rejects.toMatchObject({
-      code: 'PATH_OUTSIDE_WORKSPACE',
-    })
+    try {
+      await expect(reader.execute({ path: outsideFile }, { workspaceRoot })).resolves.toMatchObject({
+        ok: true,
+        content: 'outside workspace',
+        data: { path: outsideFile },
+      })
+      await expect(reader.execute({
+        path: path.relative(workspaceRoot, outsideFile),
+      }, { workspaceRoot })).resolves.toMatchObject({
+        ok: true,
+        content: 'outside workspace',
+      })
+      await expect(writer.execute({
+        path: outsideFile,
+        content: 'must remain blocked',
+      }, { workspaceRoot })).rejects.toBeInstanceOf(AgentToolError)
+      await expect(writer.execute({
+        path: outsideFile,
+        content: 'must remain blocked',
+      }, { workspaceRoot })).rejects.toMatchObject({
+        code: 'PATH_OUTSIDE_WORKSPACE',
+      })
+    } finally {
+      await rm(outsideRoot, { recursive: true, force: true })
+    }
   })
 
   it('loads supported workspace images as multimodal tool results', async () => {

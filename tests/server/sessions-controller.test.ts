@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdir, mkdtemp, rm, symlink, truncate, writeFile } from 'fs/promises'
+import { mkdir, mkdtemp, readFile, rm, symlink, truncate, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
-import { join } from 'path'
+import { basename, join } from 'path'
 
 const listConversationSummariesFromDbMock = vi.fn()
 const getConversationDetailFromDbMock = vi.fn()
@@ -348,7 +348,7 @@ describe('session conversations controller', () => {
     expect(ctx.body.sessions[0]).toMatchObject({ id: 'local-conversation', source: 'cli', title: 'Local' })
   })
 
-  it('serves bounded workspace preview bytes and blocks traversal, escaped links, and unauthorized profiles', async () => {
+  it('serves bounded workspace preview bytes from unrestricted local paths while preserving profile authorization', async () => {
     const workspace = await mkdtemp(join(tmpdir(), 'hermes-workspace-preview-'))
     const outside = await mkdtemp(join(tmpdir(), 'hermes-workspace-preview-outside-'))
     const hermesArtifactWorkspace = '/tmp/hermes-test/research/workspace'
@@ -404,28 +404,53 @@ describe('session conversations controller', () => {
         params: { id: 'session-preview' },
         query: { path: join(outside, 'secret.pdf') },
         state: { user: { id: 1, role: 'super_admin' } },
+        set: vi.fn(),
         body: null,
       }
       await mod.readWorkspaceFileContent(absoluteOutsideCtx)
-      expect(absoluteOutsideCtx).toMatchObject({ status: 400, body: { code: 'invalid_path' } })
+      expect(absoluteOutsideCtx.body).toEqual(Buffer.from('%PDF secret'))
 
       const traversalCtx: any = {
         params: { id: 'session-preview' },
-        query: { path: '../secret.pdf' },
+        query: { path: `../${basename(outside)}/secret.pdf` },
         state: { user: { id: 1, role: 'super_admin' } },
+        set: vi.fn(),
         body: null,
       }
       await mod.readWorkspaceFileContent(traversalCtx)
-      expect(traversalCtx).toMatchObject({ status: 400, body: { code: 'invalid_path' } })
+      expect(traversalCtx.body).toEqual(Buffer.from('%PDF secret'))
 
       const escapedCtx: any = {
         params: { id: 'session-preview' },
         query: { path: 'escaped.pdf' },
         state: { user: { id: 1, role: 'super_admin' } },
+        set: vi.fn(),
         body: null,
       }
       await mod.readWorkspaceFileContent(escapedCtx)
-      expect(escapedCtx).toMatchObject({ status: 400, body: { code: 'invalid_path' } })
+      expect(escapedCtx.body).toEqual(Buffer.from('%PDF secret'))
+
+      const absoluteWritePath = join(outside, 'written.txt')
+      const writeCtx: any = {
+        params: { id: 'session-preview' },
+        request: { body: { path: absoluteWritePath, content: 'written outside workspace' } },
+        state: { user: { id: 1, role: 'super_admin' } },
+        body: null,
+      }
+      await mod.writeWorkspaceFile(writeCtx)
+      expect(writeCtx.body).toMatchObject({ ok: true })
+      await expect(readFile(absoluteWritePath, 'utf8')).resolves.toBe('written outside workspace')
+
+      listUserProfilesMock.mockReturnValue([{ profile_name: 'research' }])
+      const regularAdminOutsideCtx: any = {
+        params: { id: 'session-preview' },
+        query: { path: join(outside, 'secret.pdf') },
+        state: { user: { id: 2, role: 'admin' } },
+        set: vi.fn(),
+        body: null,
+      }
+      await mod.readWorkspaceFileContent(regularAdminOutsideCtx)
+      expect(regularAdminOutsideCtx.body).toEqual(Buffer.from('%PDF secret'))
 
       const oversizedCtx: any = {
         params: { id: 'session-preview' },
