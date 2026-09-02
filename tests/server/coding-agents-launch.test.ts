@@ -8,6 +8,7 @@ import {
   codexProxyModels,
   codexProxyResponses,
   isAuthorizedCodexProxyRequest,
+  normalizeGrokChatCompletionsRequest,
   normalizeGrokResponsesRequest,
   registerCodexProxyTarget,
 } from '../../packages/server/src/modules/coding-agents/services/codex/proxy'
@@ -72,6 +73,7 @@ describe('coding agent launch preparation', () => {
   it('maps Grok system input messages to Responses developer messages', () => {
     const body = {
       instructions: 'Keep top-level instructions.',
+      max_output_tokens: 4096,
       input: [
         { role: 'system', content: [{ type: 'input_text', text: 'Grok project rules' }] },
         { role: 'user', content: [{ type: 'input_text', text: 'Hello' }] },
@@ -79,13 +81,33 @@ describe('coding agent launch preparation', () => {
     }
 
     expect(normalizeGrokResponsesRequest(body)).toEqual({
-      ...body,
+      instructions: body.instructions,
       input: [
         { role: 'developer', content: [{ type: 'input_text', text: 'Grok project rules' }] },
         body.input[1],
       ],
     })
     expect(body.input[0].role).toBe('system')
+    expect(body.max_output_tokens).toBe(4096)
+  })
+
+  it('maps Grok Chat Completions system messages to developer messages', () => {
+    const body = {
+      model: 'grok-test',
+      messages: [
+        { role: 'system', content: 'Project rules' },
+        { role: 'user', content: 'Hello' },
+      ],
+    }
+
+    expect(normalizeGrokChatCompletionsRequest(body)).toEqual({
+      ...body,
+      messages: [
+        { role: 'developer', content: 'Project rules' },
+        body.messages[1],
+      ],
+    })
+    expect(body.messages[0].role).toBe('system')
   })
 
   it('gates Codex tool_search feature flags by CLI version', () => {
@@ -2127,19 +2149,57 @@ describe('coding agent launch preparation', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     await codexProxyResponses(makeProxyContext(target.routeKey, target.token, {
+      max_output_tokens: 4096,
       input: [
         { role: 'system', content: [{ type: 'input_text', text: 'Project rules' }] },
         { role: 'user', content: [{ type: 'input_text', text: 'Hello' }] },
       ],
     }))
 
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
+    const forwarded = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(forwarded).toMatchObject({
       model: 'grok-test',
       input: [
         { role: 'developer', content: [{ type: 'input_text', text: 'Project rules' }] },
         { role: 'user', content: [{ type: 'input_text', text: 'Hello' }] },
       ],
     })
+    expect(forwarded).not.toHaveProperty('max_output_tokens')
+  })
+
+  it('normalizes Grok requests before forwarding to Chat Completions providers', async () => {
+    const target = registerCodexProxyTarget({
+      profile: 'default',
+      provider: 'custom',
+      model: 'grok-chat-test',
+      baseUrl: 'https://api.example.com/v1',
+      apiKey: 'sk-upstream',
+      apiMode: 'chat_completions',
+      agentId: 'grok',
+    })
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      id: 'chatcmpl_grok',
+      choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'ok' } }],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await codexProxyResponses(makeProxyContext(target.routeKey, target.token, {
+      instructions: 'Top-level rules',
+      max_output_tokens: 4096,
+      input: [
+        { role: 'system', content: [{ type: 'input_text', text: 'Project rules' }] },
+        { role: 'user', content: [{ type: 'input_text', text: 'Hello' }] },
+      ],
+    }))
+
+    const forwarded = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(forwarded.messages[0]).toMatchObject({
+      role: 'developer',
+      content: expect.stringContaining('Top-level rules'),
+    })
+    expect(forwarded.messages[0].content).toContain('Project rules')
+    expect(forwarded).not.toHaveProperty('max_tokens')
+    expect(forwarded).not.toHaveProperty('max_output_tokens')
   })
 
   it('exposes Codex proxy models with route-token authentication', async () => {
