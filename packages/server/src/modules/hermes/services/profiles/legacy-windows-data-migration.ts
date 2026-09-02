@@ -4,6 +4,23 @@ import { dirname, join, resolve } from 'node:path'
 import { detectHermesRootHome } from '../runtime/path'
 
 export const LEGACY_WINDOWS_DATA_MIGRATION_MARKER = '.studio-windows-appdata-migration.json'
+const MIGRATABLE_DATA_FILES = new Set([
+  '.anthropic_oauth.json',
+  '.cursorrules',
+  '.env',
+  'AGENTS.md',
+  'CLAUDE.md',
+  'MEMORY.md',
+  'SOUL.md',
+  'USER.md',
+  'active_profile',
+  'auth.json',
+  'channel_directory.json',
+  'config.yaml',
+  'system_prompt.md',
+  'todo.json',
+])
+const MIGRATABLE_DATA_DIRECTORIES = new Set(['knowledge', 'memories', 'preferences', 'profiles', 'shared', 'skills'])
 
 type MigrationAction = 'migrate' | 'decline'
 type MigrationState = 'completed' | 'failed' | 'pending'
@@ -65,7 +82,11 @@ function sameWindowsPath(left: string, right: string): boolean {
 async function directoryHasData(directory: string): Promise<boolean> {
   try {
     if (!(await lstat(directory)).isDirectory()) return false
-    return (await readdir(directory)).length > 0
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      if (entry.isFile() && MIGRATABLE_DATA_FILES.has(entry.name)) return true
+      if (entry.isDirectory() && MIGRATABLE_DATA_DIRECTORIES.has(entry.name)) return true
+    }
+    return false
   } catch {
     return false
   }

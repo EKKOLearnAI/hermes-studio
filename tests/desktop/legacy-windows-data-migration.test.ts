@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -50,14 +50,25 @@ afterEach(async () => {
 })
 
 describe('desktop legacy Windows Hermes data migration', () => {
-  it('merges through staging before startup and preserves target-only data', async () => {
+  it('copies only config, memory, and skill data while preserving target-only data', async () => {
     const state = await fixture()
     await mkdir(join(state.source, 'profiles', 'work'), { recursive: true })
+    await mkdir(join(state.source, 'skills', 'legacy-skill'), { recursive: true })
+    await mkdir(join(state.source, 'memories'), { recursive: true })
+    await mkdir(join(state.source, 'sessions'), { recursive: true })
+    await mkdir(join(state.source, 'hermes-agent', 'node_modules', '@hermes'), { recursive: true })
+    await writeFile(join(state.source, 'hermes-agent', 'node_modules', '@hermes', 'bootstrap-installer'), 'runtime only\n')
     await mkdir(state.target, { recursive: true })
     await writeFile(join(state.source, 'config.yaml'), 'model: legacy\n')
+    await writeFile(join(state.source, 'auth.json'), '{"provider":"legacy"}\n')
+    await writeFile(join(state.source, 'MEMORY.md'), 'legacy memory\n')
+    await writeFile(join(state.source, 'skills', 'legacy-skill', 'SKILL.md'), '# Legacy skill\n')
+    await writeFile(join(state.source, 'memories', 'fact.md'), 'remember this\n')
+    await writeFile(join(state.source, 'sessions', 'old.json'), '{"session":true}\n')
     await writeFile(join(state.source, 'gateway.lock'), '{"pid":99999}\n')
     await writeFile(join(state.source, 'profiles', 'work', '.env'), 'TOKEN=legacy\n')
     await writeFile(join(state.target, 'config.yaml'), 'model: current\n')
+    await writeFile(join(state.target, 'auth.json'), '{"provider":"current"}\n')
     await writeFile(join(state.target, 'current-only.txt'), 'keep\n')
     await scheduleMigration(state)
 
@@ -65,26 +76,35 @@ describe('desktop legacy Windows Hermes data migration', () => {
 
     expect(result).toMatchObject({ attempted: true, completed: true, retryPending: false })
     expect(await readFile(join(state.target, 'config.yaml'), 'utf8')).toBe('model: legacy\n')
+    expect(await readFile(join(state.target, 'auth.json'), 'utf8')).toBe('{"provider":"legacy"}\n')
+    expect(await readFile(join(state.target, 'MEMORY.md'), 'utf8')).toBe('legacy memory\n')
+    expect(await readFile(join(state.target, 'skills', 'legacy-skill', 'SKILL.md'), 'utf8')).toBe('# Legacy skill\n')
+    expect(await readFile(join(state.target, 'memories', 'fact.md'), 'utf8')).toBe('remember this\n')
     expect(await readFile(join(state.target, 'profiles', 'work', '.env'), 'utf8')).toBe('TOKEN=legacy\n')
     expect(await readFile(join(state.target, 'current-only.txt'), 'utf8')).toBe('keep\n')
     await expect(readFile(join(state.target, 'gateway.lock'), 'utf8')).rejects.toThrow()
+    await expect(readFile(join(state.target, 'sessions', 'old.json'), 'utf8')).rejects.toThrow()
+    await expect(readFile(join(state.target, 'hermes-agent', 'node_modules', '@hermes', 'bootstrap-installer'), 'utf8')).rejects.toThrow()
     expect(JSON.parse(await readFile(join(state.target, LEGACY_WINDOWS_DATA_MIGRATION_MARKER), 'utf8')))
-      .toMatchObject({ action: 'migrate', state: 'completed' })
+      .toMatchObject({ action: 'migrate', state: 'completed', copiedFiles: 6, skippedSymlinks: [] })
     await expect(readFile(join(state.userHome, LEGACY_WINDOWS_DATA_MIGRATION_STAGING))).rejects.toThrow()
     await expect(readFile(join(state.userHome, LEGACY_WINDOWS_DATA_MIGRATION_BACKUP))).rejects.toThrow()
     expect(await readFile(join(state.source, 'config.yaml'), 'utf8')).toBe('model: legacy\n')
   })
 
-  it('leaves the target intact and retries after a Windows rename lock', async () => {
+  it('keeps a failed marker and retries when a selected config file is locked', async () => {
     const state = await fixture()
     await mkdir(state.source, { recursive: true })
     await mkdir(state.target, { recursive: true })
     await writeFile(join(state.source, 'config.yaml'), 'model: legacy\n')
     await writeFile(join(state.target, 'config.yaml'), 'model: current\n')
     await scheduleMigration(state)
-    const renamePath = vi.fn(async () => { throw new Error('EPERM: file is in use') })
+    const copyFilePath = vi.fn(async (source: string, target: string) => {
+      if (source.endsWith('config.yaml')) throw new Error('EPERM: file is in use')
+      await copyFile(source, target)
+    })
 
-    const failed = await migratePendingLegacyWindowsData({ ...state.options, renamePath })
+    const failed = await migratePendingLegacyWindowsData({ ...state.options, copyFilePath })
 
     expect(failed).toMatchObject({ attempted: true, completed: false, retryPending: true })
     expect(failed.error).toContain('EPERM')

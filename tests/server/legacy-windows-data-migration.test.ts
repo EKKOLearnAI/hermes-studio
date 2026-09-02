@@ -81,6 +81,16 @@ describe('legacy Windows Hermes data migration', () => {
     expect(preferred.sourceDirectory).toBe(state.localLegacy)
   })
 
+  it('ignores a legacy directory that only contains a Hermes runtime', async () => {
+    const state = await fixture()
+    await mkdir(join(state.localLegacy, 'hermes-agent', 'node_modules'), { recursive: true })
+    await mkdir(state.roamingLegacy, { recursive: true })
+    await writeFile(join(state.roamingLegacy, 'auth.json'), '{"provider":"legacy"}\n')
+
+    const status = await getLegacyWindowsDataMigrationStatus(state.options)
+    expect(status).toMatchObject({ shouldPrompt: true, sourceDirectory: state.roamingLegacy })
+  })
+
   it('records a declined decision in the target directory and never prompts again', async () => {
     const state = await fixture()
     await mkdir(state.localLegacy, { recursive: true })
