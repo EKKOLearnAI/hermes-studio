@@ -3044,6 +3044,11 @@ jobTriggered: 'Job acionado',
   },
 
   changelog: {
+    new_0_7_16_1: 'O Desktop agora processa via Electron os pedidos de reinício do Runtime feitos pela Web UI integrada, usando uma reinicialização limpa com proteção contra duplicação e mantendo o reinício da Web UI independente (#2827)',
+    new_0_7_16_2: 'Workflows e chats em grupo agora podem iniciar Agents Claude Code, Codex e Pi nos modos scoped ou global; o modo global isola prompts e ambientes gerenciados pelo Studio sem alterar a configuração do usuário (#2828)',
+    new_0_7_16_3: 'A Grok CLI agora é um Coding Agent de primeira classe com modelos proxy scoped, modo global isolado, retomada nativa de sessões, acompanhamento de uso, Skills, workflows e chats em grupo (#2832)',
+    new_0_7_16_4: 'No Windows, o Agent Manager oferece uma migração única das configurações, autenticação, memória, Skills e bancos de dados antigos do Hermes do AppData para %USERPROFILE%\\.hermes, preservando os dados originais (#2834)',
+    new_0_7_16_5: 'A migração de dados antigos do Windows agora copia apenas dados do usuário e arquivos auxiliares dos bancos com validação e reversão, excluindo Runtimes, sessões e logs substituíveis para evitar falhas causadas por arquivos bloqueados (#2836)',
     new_0_7_15_1: 'A detecção da versão do Hermes Runtime agora consulta diretamente o ambiente local selecionado sem acionar verificações de atualização pela rede, mantendo a inicialização e o gerenciamento de versões confiáveis offline (#2822)',
     new_0_7_15_2: 'Ativar ou instalar um Runtime agora pergunta se deve reiniciar imediatamente; escolher “na próxima inicialização” não reinicia mais automaticamente o Desktop nem a Web UI independente (#2822)',
     new_0_7_14_1: 'O Ekko agora limita cada leitura de arquivo a 50 KB com continuação por deslocamento de bytes e gera comandos de terminal nativos da plataforma, evitando enviar comandos exclusivos do Unix ao Windows (#2812)',

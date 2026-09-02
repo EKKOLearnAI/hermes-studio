@@ -3044,6 +3044,11 @@ jobTriggered: 'Job declenche',
   },
 
   changelog: {
+    new_0_7_16_1: 'Desktop traite désormais via Electron les demandes de redémarrage du Runtime émises par la Web UI intégrée, avec une relance propre et une protection contre les doublons, tout en conservant le redémarrage de la Web UI autonome (#2827)',
+    new_0_7_16_2: 'Les workflows et chats de groupe peuvent désormais lancer les Agents Claude Code, Codex et Pi en mode scoped ou global ; le mode global isole les prompts et environnements gérés par Studio tout en préservant la configuration utilisateur (#2828)',
+    new_0_7_16_3: 'Grok CLI est désormais un Coding Agent de premier plan avec modèles proxy scoped, mode global isolé, reprise native des sessions, suivi de l’usage, Skills, workflows et chats de groupe (#2832)',
+    new_0_7_16_4: 'Sous Windows, Agent Manager propose une migration unique des anciennes configurations, authentifications, mémoires, Skills et bases de données Hermes depuis AppData vers %USERPROFILE%\\.hermes, sans supprimer les données d’origine (#2834)',
+    new_0_7_16_5: 'La migration des anciennes données Windows copie désormais uniquement les données utilisateur et fichiers annexes des bases avec validation et retour arrière, en excluant les Runtimes, sessions et journaux remplaçables afin d’éviter les échecs dus aux fichiers verrouillés (#2836)',
     new_0_7_15_1: 'La détection de version de Hermes Runtime interroge désormais directement l’environnement local sélectionné sans lancer de recherche de mise à jour réseau, pour un démarrage et une gestion des versions fiables hors ligne (#2822)',
     new_0_7_15_2: 'L’activation ou l’installation d’une Runtime demande désormais s’il faut redémarrer immédiatement ; choisir « au prochain démarrage » ne redémarre plus automatiquement l’application Desktop ni la Web UI autonome (#2822)',
     new_0_7_14_1: 'Ekko limite désormais chaque lecture de fichier à 50 Ko avec reprise par décalage d’octets et génère des commandes de terminal natives de la plateforme, afin que Windows ne reçoive plus de commandes réservées à Unix (#2812)',
