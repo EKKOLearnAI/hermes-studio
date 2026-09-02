@@ -21,6 +21,8 @@ type McpServerConfig = StdioMcpServerConfig | StreamableHttpMcpServerConfig
 type McpClientTransport = StdioClientTransport | StreamableHTTPClientTransport
 
 const DEFAULT_MCP_TIMEOUT_MS = 30_000
+const MODEL_TOOL_NAME_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/
+const MCP_PROXY_PREFIX = 'mcp__'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value)
@@ -215,6 +217,85 @@ class McpTool implements AgentTool {
   }
 }
 
+class McpProxyTool implements AgentTool {
+  readonly definition: AgentTool['definition']
+  readonly concurrency: AgentTool['concurrency']
+  private readonly remoteTools: Map<string, any>
+
+  constructor(
+    proxyName: string,
+    serverName: string,
+    tools: any[],
+    private readonly session: McpClientSession,
+    supportsParallelToolCalls: boolean,
+  ) {
+    this.concurrency = supportsParallelToolCalls ? 'parallel' : 'serial'
+    this.remoteTools = new Map(tools.map(tool => [String(tool.name), tool]))
+    this.definition = {
+      name: proxyName,
+      description: [
+        `Call a tool from the ${serverName} MCP server.`,
+        'Pass the exact remote MCP tool name in "tool"; it will be preserved unchanged.',
+        ...tools.map(tool => `${String(tool.name)}: ${String(tool.description || 'No description provided.')}`),
+      ].join(' '),
+      parameters: {
+        type: 'object',
+        oneOf: tools.map(tool => ({
+          type: 'object',
+          title: String(tool.name),
+          description: String(tool.description || `Call ${String(tool.name)}.`),
+          properties: {
+            tool: {
+              const: String(tool.name),
+              description: 'Exact remote MCP tool name.',
+            },
+            arguments: isRecord(tool.inputSchema)
+              ? tool.inputSchema
+              : { type: 'object', properties: {} },
+          },
+          required: ['tool', 'arguments'],
+          additionalProperties: false,
+        })),
+      },
+    }
+  }
+
+  async execute(input: Record<string, unknown>, context: AgentToolContext = {}): Promise<AgentToolResult> {
+    const remoteName = typeof input.tool === 'string' ? input.tool : ''
+    if (!this.remoteTools.has(remoteName)) {
+      const error = `Unknown remote MCP tool: ${remoteName || '(missing)'}`
+      return { ok: false, content: error, error }
+    }
+    const remoteInput = isRecord(input.arguments) ? input.arguments : {}
+    return await this.session.callTool(remoteName, remoteInput, context.timeoutMs || DEFAULT_MCP_TIMEOUT_MS)
+  }
+}
+
+function modelSafeToolName(name: string): boolean {
+  return MODEL_TOOL_NAME_PATTERN.test(name)
+}
+
+function proxyToolName(serverName: string, usedNames: Set<string>): string {
+  const readable = serverName.replace(/[^a-zA-Z0-9_-]/g, '_') || 'server'
+  const base = `${MCP_PROXY_PREFIX}${readable}`.slice(0, 64)
+  if (!usedNames.has(base)) return base
+  const hash = stableNameHash(serverName)
+  for (let attempt = 1; ; attempt += 1) {
+    const suffix = `_${hash}${attempt === 1 ? '' : `_${attempt}`}`
+    const candidate = `${base.slice(0, 64 - suffix.length)}${suffix}`
+    if (!usedNames.has(candidate)) return candidate
+  }
+}
+
+function stableNameHash(value: string): string {
+  let hash = 2166136261
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index)
+    hash = Math.imul(hash, 16777619)
+  }
+  return (hash >>> 0).toString(36)
+}
+
 export function createMcpToolProvider(): AgentToolProvider {
   const sessions = new Map<string, McpClientSession>()
   return {
@@ -238,8 +319,27 @@ export function createMcpToolProvider(): AgentToolProvider {
         }
 
         try {
-          for (const tool of await session.listTools(timeoutMs)) {
-            if (!tool?.name || usedNames.has(String(tool.name))) continue
+          const remoteTools = (await session.listTools(timeoutMs))
+            .filter(tool => !!tool?.name)
+          const requiresProxy = remoteTools.some(tool => {
+            const name = String(tool.name)
+            return !modelSafeToolName(name) || usedNames.has(name)
+          })
+
+          if (requiresProxy && remoteTools.length) {
+            const proxyName = proxyToolName(serverName, usedNames)
+            usedNames.add(proxyName)
+            tools.push(new McpProxyTool(
+              proxyName,
+              serverName,
+              remoteTools,
+              session,
+              server.supportsParallelToolCalls,
+            ))
+            continue
+          }
+
+          for (const tool of remoteTools) {
             usedNames.add(String(tool.name))
             tools.push(new McpTool(
               serverName,

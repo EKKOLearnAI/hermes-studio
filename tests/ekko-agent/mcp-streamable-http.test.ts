@@ -6,6 +6,8 @@ let server: ReturnType<typeof createServer>
 let endpoint = ''
 let initializeCount = 0
 let apiKeyHeaders: Array<string | undefined> = []
+let remoteTools: any[] = []
+let remoteToolCalls: Array<{ name: string; arguments: Record<string, unknown> }> = []
 
 async function readJson(request: IncomingMessage): Promise<any> {
   let body = ''
@@ -23,6 +25,16 @@ function json(response: ServerResponse, payload: unknown, session = false) {
 beforeEach(async () => {
   initializeCount = 0
   apiKeyHeaders = []
+  remoteTools = [{
+    name: 'remote_echo',
+    description: 'Echo over Streamable HTTP',
+    inputSchema: {
+      type: 'object',
+      properties: { text: { type: 'string' } },
+      required: ['text'],
+    },
+  }]
+  remoteToolCalls = []
   server = createServer(async (request, response) => {
     apiKeyHeaders.push(request.headers['x-api-key'] as string | undefined)
     if (request.method === 'DELETE') {
@@ -61,21 +73,17 @@ beforeEach(async () => {
         jsonrpc: '2.0',
         id: message.id,
         result: {
-          tools: [{
-            name: 'remote_echo',
-            description: 'Echo over Streamable HTTP',
-            inputSchema: {
-              type: 'object',
-              properties: { text: { type: 'string' } },
-              required: ['text'],
-            },
-          }],
+          tools: remoteTools,
         },
       })
       return
     }
     if (message.method === 'tools/call') {
       expect(request.headers['mcp-session-id']).toBe('ekko-test-session')
+      remoteToolCalls.push({
+        name: String(message.params.name),
+        arguments: message.params.arguments || {},
+      })
       json(response, {
         jsonrpc: '2.0',
         id: message.id,
@@ -122,6 +130,107 @@ describe('Ekko Streamable HTTP MCP', () => {
     await provider.listTools(context)
     expect(initializeCount).toBe(1)
     expect(apiKeyHeaders.every(value => value === 'test-key')).toBe(true)
+    await provider.listTools({ mcpServers: {} })
+  })
+
+  it('proxies provider-unsafe names while preserving the exact remote tool name', async () => {
+    remoteTools = [{
+      name: 'shared_folder.list_shared_with_me',
+      description: 'List folders shared with the current user',
+      inputSchema: {
+        type: 'object',
+        properties: { limit: { type: 'number' } },
+      },
+    }, {
+      name: 'shared_folder.leave',
+      description: 'Leave a shared folder',
+      inputSchema: {
+        type: 'object',
+        properties: { id: { type: 'string' } },
+        required: ['id'],
+      },
+    }]
+    const provider = createMcpToolProvider()
+    const context = {
+      mcpServers: {
+        'lazycat-shared-folder': {
+          type: 'streamable_http',
+          url: endpoint,
+        },
+      },
+      timeoutMs: 5_000,
+    }
+
+    const tools = await provider.listTools(context)
+    expect(tools).toHaveLength(1)
+    expect(tools[0].definition).toMatchObject({
+      name: 'mcp__lazycat-shared-folder',
+      parameters: {
+        oneOf: [
+          {
+            properties: {
+              tool: { const: 'shared_folder.list_shared_with_me' },
+              arguments: {
+                properties: { limit: { type: 'number' } },
+              },
+            },
+          },
+          {
+            properties: {
+              tool: { const: 'shared_folder.leave' },
+              arguments: {
+                properties: { id: { type: 'string' } },
+                required: ['id'],
+              },
+            },
+          },
+        ],
+      },
+    })
+
+    await tools[0].execute({
+      tool: 'shared_folder.list_shared_with_me',
+      arguments: { limit: 10 },
+    }, context)
+    expect(remoteToolCalls).toEqual([{
+      name: 'shared_folder.list_shared_with_me',
+      arguments: { limit: 10 },
+    }])
+
+    await provider.listTools({ mcpServers: {} })
+  })
+
+  it('uses a server proxy when direct MCP tool names overlap', async () => {
+    const provider = createMcpToolProvider()
+    const context = {
+      mcpServers: {
+        primary: {
+          type: 'streamable_http',
+          url: endpoint,
+        },
+        secondary: {
+          type: 'streamable_http',
+          url: endpoint,
+        },
+      },
+      timeoutMs: 5_000,
+    }
+
+    const tools = await provider.listTools(context)
+    expect(tools.map(tool => tool.definition.name)).toEqual([
+      'remote_echo',
+      'mcp__secondary',
+    ])
+
+    await tools[1].execute({
+      tool: 'remote_echo',
+      arguments: { text: 'from secondary' },
+    }, context)
+    expect(remoteToolCalls.at(-1)).toEqual({
+      name: 'remote_echo',
+      arguments: { text: 'from secondary' },
+    })
+
     await provider.listTools({ mcpServers: {} })
   })
 })
