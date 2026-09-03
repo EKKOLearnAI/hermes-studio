@@ -172,7 +172,12 @@ watch([agentId, section], loadConfigFile, { immediate: true })
 @use '@/styles/variables' as *;
 
 .coding-agent-config-view {
+  display: flex;
+  height: 100%;
   min-height: 100%;
+  min-width: 0;
+  flex-direction: column;
+  box-sizing: border-box;
   padding: 20px;
   background: $bg-main-surface;
 }
@@ -218,7 +223,8 @@ watch([agentId, section], loadConfigFile, { immediate: true })
 }
 
 .coding-agent-mcp-content {
-  min-height: 420px;
+  flex: 1;
+  min-height: 0;
   border: 1px solid $border-color;
   border-radius: 10px;
   background: $bg-card;

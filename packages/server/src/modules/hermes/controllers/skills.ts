@@ -539,7 +539,7 @@ export async function list(ctx: any) {
         extraDirs.push(sharedDir)
         const sharedCategories = withSkillSource(
           await scanSkillsDirIfExists(sharedDir, new Map(), new Set(), [], new Map()),
-          'external',
+          'local',
         )
         categories = mergeExternalCategories(categories, sharedCategories)
       }
@@ -868,13 +868,18 @@ export async function updateSkill(ctx: any) {
       }
     }
 
-    const localSkillDir = await findSkillDirInRoot(skillsDir, category, name)
+    const localSkillDir = target === 'grok'
+      ? await resolveSkillDirForTarget(ctx, category, name)
+      : await findSkillDirInRoot(skillsDir, category, name)
     if (!localSkillDir) {
       ctx.status = 404
       ctx.body = { error: 'Skill not found' }
       return
     }
-    if (!isPathWithin(localSkillDir, skillsDir)) {
+    const writableRoots = target === 'grok'
+      ? [skillsDir, sharedAgentSkillsDir()]
+      : [skillsDir]
+    if (!writableRoots.some(root => isPathWithin(localSkillDir, root))) {
       ctx.status = 403
       ctx.body = { error: 'Access denied' }
       return

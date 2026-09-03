@@ -304,5 +304,6 @@ watch(() => props.agentId, loadServers)
 
 .mcp-view.embedded {
   height: 100%;
+  min-height: 0;
 }
 </style>
