@@ -23,6 +23,8 @@ export interface HermesSessionRow {
   api_mode: string
   reasoning_effort: string
   title: string | null
+  /** Provenance of the stored title: 'user' when set through a rename, 'llm' when mirrored/generated, null for legacy rows. */
+  title_source: string | null
   parent_session_id: string | null
   fork_point_message_id: string | null
   started_at: number
@@ -125,6 +127,7 @@ function mapSessionRow(row: Record<string, unknown>): HermesSessionRow {
     api_mode: String(row.api_mode || ''),
     reasoning_effort: String(row.reasoning_effort || ''),
     title,
+    title_source: row.title_source != null ? String(row.title_source) : null,
     parent_session_id: row.parent_session_id != null ? String(row.parent_session_id) : null,
     fork_point_message_id: row.fork_point_message_id != null ? String(row.fork_point_message_id) : null,
     started_at: Number(row.started_at || 0),
@@ -205,7 +208,7 @@ export function createSession(data: {
       id: data.id, profile: data.profile || 'default', source, agent,
       agent_mode: data.agent_mode || '',
       agent_session_id: data.agent_session_id || '', agent_native_session_id: data.agent_native_session_id || '',
-      user_id: data.user_id == null ? null : String(data.user_id), model: data.model || '', provider: data.provider || '', api_mode: data.api_mode || '', reasoning_effort: data.reasoning_effort || '', title: data.title || null,
+      user_id: data.user_id == null ? null : String(data.user_id), model: data.model || '', provider: data.provider || '', api_mode: data.api_mode || '', reasoning_effort: data.reasoning_effort || '', title: data.title || null, title_source: null,
       parent_session_id: data.parent_session_id || null,
       fork_point_message_id: null,
       started_at: now, ended_at: null, end_reason: null,
@@ -476,8 +479,66 @@ export function clearSessionMessages(id: string): number {
 export function renameSession(id: string, title: string): boolean {
   if (!isSqliteAvailable()) return false
   const db = getDb()!
-  const result = db.prepare(`UPDATE ${SESSIONS_TABLE} SET title = ? WHERE id = ?`).run(title, id)
+  const result = db.prepare(`UPDATE ${SESSIONS_TABLE} SET title = ?, title_source = 'user' WHERE id = ?`).run(title, id)
   return result.changes > 0
+}
+
+export function normalizeSessionTitleText(value: unknown): string {
+  return String(value || '').replace(/\s+/g, ' ').trim()
+}
+
+export function fallbackTitleFromText(text: string, limit: number, ellipsis: boolean): string {
+  const normalized = normalizeSessionTitleText(text)
+  if (!normalized) return ''
+  if (normalized.length <= limit) return normalized
+  return ellipsis ? `${normalized.slice(0, limit)}...` : normalized.slice(0, limit)
+}
+
+/**
+ * Pure-decoration titles — a bare code fence (``` / ```json), a heading glyph,
+ * a lone dash — and truncated raw JSON ({"title, {"title" #2) are model output
+ * that carried no title at all. They must never block a later title repair the
+ * way a deliberate user rename should.
+ */
+export function isMarkdownArtifactTitle(title: string): boolean {
+  const normalized = normalizeSessionTitleText(title)
+  if (normalized.startsWith('{') || normalized.includes('"title')) return true
+  const stripped = normalized.replace(/[`#>*_~\u2014\u2013=]/g, '')
+  if (!stripped) return true
+  return /^(json|ts|js|python|sh|bash|yaml|html)$/i.test(stripped)
+}
+
+/**
+ * Whether *sessionId*'s stored title is still an auto-assigned one — empty,
+ * derived from the preview or first user message, or pure markdown
+ * decoration — rather than a name the user chose. Only replaceable titles may
+ * be healed from Hermes state.db or overwritten by a generated title.
+ */
+export function isReplaceableLocalTitle(sessionId: string): boolean {
+  const session = getSession(sessionId)
+  if (!session) return false
+  const current = normalizeSessionTitleText(session.title)
+  if (!current) return true
+  // A title the user set through a rename is authoritative; never heal it.
+  if (session.title_source === 'user') return false
+  if (isMarkdownArtifactTitle(current)) return true
+  const variants = new Set<string>([''])
+  const preview = normalizeSessionTitleText(session.preview)
+  if (preview) {
+    variants.add(preview)
+    variants.add(fallbackTitleFromText(preview, 40, true))
+    variants.add(fallbackTitleFromText(preview, 63, false))
+    variants.add(fallbackTitleFromText(preview, 100, false))
+  }
+  const firstUser = getFirstSessionMessageByRole(sessionId, 'user')
+  const firstUserText = normalizeSessionTitleText(firstUser?.content)
+  if (firstUserText) {
+    variants.add(firstUserText)
+    variants.add(fallbackTitleFromText(firstUserText, 40, true))
+    variants.add(fallbackTitleFromText(firstUserText, 63, false))
+    variants.add(fallbackTitleFromText(firstUserText, 100, false))
+  }
+  return variants.has(current)
 }
 
 export function setSessionArchived(id: string, archived: boolean): boolean {

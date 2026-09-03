@@ -396,6 +396,26 @@ export async function renameSession(id: string, title: string): Promise<boolean>
   }
 }
 
+/**
+ * Rename a session title in a specific Hermes profile's state.db.
+ */
+export async function renameSessionForProfile(id: string, profile: string, title: string): Promise<boolean> {
+  try {
+    await execHermesWithBin(resolveHermesBin(), ['sessions', 'rename', id, title], {
+      timeout: 10000,
+      ...execOpts,
+      env: {
+        ...process.env,
+        HERMES_HOME: getProfileDir(profile),
+      },
+    })
+    return true
+  } catch (err: any) {
+    logger.error({ err, sessionId: id, profile }, 'Hermes CLI: profile session rename failed')
+    return false
+  }
+}
+
 export interface LogFileInfo {
   name: string
   size: string

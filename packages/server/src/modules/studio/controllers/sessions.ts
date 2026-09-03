@@ -10,6 +10,7 @@ import {
   listHermesSessionSummaries,
   listHermesSessionSummaryGroups,
   notifyHermesSessionModelChanged,
+  renameHermesSessionForProfile,
   stopCodingAgentSessionRun,
 } from '../public/session-agent-runtime'
 import {
@@ -25,6 +26,8 @@ import {
   addMessages as localAddMessages,
   updateSession as localUpdateSession,
   updateSessionStats as localUpdateSessionStats,
+  isReplaceableLocalTitle,
+  normalizeSessionTitleText,
 } from '../public/sessions'
 import { buildDbExportHistory, ExportCompressor } from '../services/context-compressor/export-compressor'
 import { getLocalUsageStats, getRecordedUsageSessionIds, getUsage, getUsageBatch } from '../public/sessions'
@@ -467,6 +470,38 @@ export async function getConversationMessages(ctx: any) {
   }
 }
 
+// Sessions owned by the Hermes Agent: state.db is the canonical store for
+// their titles (same rule as mergeHermesHistorySessions).
+const BRIDGE_TITLE_SOURCES = new Set(['cli', 'global_agent'])
+
+/**
+ * Chat sidebar titles come from the Studio-local cache, which only follows
+ * live session.title.updated events. A missed event strands the fallback
+ * title, and a garbage auto-title (e.g. a bare code fence) can never be
+ * repaired by a later event because it no longer looks replaceable. Heal
+ * replaceable local titles from Hermes state.db on list; titles a user set
+ * explicitly are not replaceable and are left alone.
+ */
+async function reconcileBridgeSessionTitles(profile: string | undefined, sessions: any[]): Promise<void> {
+  const bridgeSessions = sessions.filter(session => BRIDGE_TITLE_SOURCES.has(String(session.source || '')))
+  if (bridgeSessions.length === 0) return
+  let summaries: Array<{ id: string; title?: string | null }>
+  try {
+    summaries = await listHermesSessionSummaries(undefined, 10_000, profile)
+  } catch (err: any) {
+    logger.warn({ err }, '[sessions] bridge session title reconciliation skipped')
+    return
+  }
+  const canonicalTitles = new Map(summaries.map(summary => [summary.id, normalizeSessionTitleText(summary.title)]))
+  for (const session of bridgeSessions) {
+    const canonical = canonicalTitles.get(session.id)
+    if (!canonical || canonical === normalizeSessionTitleText(session.title)) continue
+    if (!isReplaceableLocalTitle(session.id)) continue
+    localUpdateSession(session.id, { title: canonical, title_source: 'llm' })
+    session.title = canonical
+  }
+}
+
 export async function list(ctx: any) {
   const source = (ctx.query.source as string) || undefined
   const limit = ctx.query.limit ? parseInt(ctx.query.limit as string, 10) : undefined
@@ -484,11 +519,13 @@ export async function list(ctx: any) {
     includeArchived: false,
     excludeSessionIds: [...getPendingDeletedSessionIds()],
   })
+  const sessions = filterPendingDeletedSessions(filterArchivedSessions(filterByAllowedProfiles(ctx, allSessions).filter(s =>
+    isRequestedSessionSource(source, s.source) &&
+    (!knownProfiles || knownProfiles.has(s.profile || 'default')),
+  )))
+  await reconcileBridgeSessionTitles(profile, sessions)
   ctx.body = {
-    sessions: filterPendingDeletedSessions(filterArchivedSessions(filterByAllowedProfiles(ctx, allSessions).filter(s =>
-      isRequestedSessionSource(source, s.source) &&
-      (!knownProfiles || knownProfiles.has(s.profile || 'default')),
-    ))),
+    sessions,
   }
 }
 
@@ -1364,6 +1401,19 @@ export async function rename(ctx: any) {
     ctx.status = 500
     ctx.body = { error: 'Failed to rename session' }
     return
+  }
+  // Agent-owned sessions live in state.db too; without this write-through the
+  // History view (state.db canonical) keeps the old name and reconciliation
+  // would undo the rename on the next sidebar load.
+  if (existing && BRIDGE_TITLE_SOURCES.has(String(existing.source || ''))) {
+    const propagated = await renameHermesSessionForProfile(
+      ctx.params.id,
+      existing.profile || requestedProfile(ctx) || 'default',
+      title.trim(),
+    )
+    if (!propagated) {
+      logger.warn({ sessionId: ctx.params.id }, '[sessions] failed to propagate bridge session rename to Hermes')
+    }
   }
   ctx.body = { ok: true }
 }

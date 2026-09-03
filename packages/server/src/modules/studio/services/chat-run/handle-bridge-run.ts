@@ -5,7 +5,7 @@
 
 import type { Server, Socket } from 'socket.io'
 import { getSystemPrompt } from '../../public/runs/prompt'
-import { getFirstSessionMessageByRole, getSession, getSessionMessageCountByRole, createSession, addMessage, updateSession, updateSessionStats } from '../../repositories/session-store'
+import { fallbackTitleFromText, getFirstSessionMessageByRole, getSession, getSessionMessageCountByRole, isReplaceableLocalTitle, normalizeSessionTitleText as normalizeTitleText, createSession, addMessage, updateSession, updateSessionStats } from '../../repositories/session-store'
 import { logger, bridgeLogger } from '../../public/logging'
 import { normalizeTokenUsage, recordSessionUsage } from '../usage/usage-recorder'
 import type {
@@ -105,41 +105,6 @@ function backgroundPendingCount(state: SessionState): number {
     .length
 }
 
-function normalizeTitleText(value: unknown): string {
-  return String(value || '').replace(/\s+/g, ' ').trim()
-}
-
-function fallbackTitleFromText(text: string, limit: number, ellipsis: boolean): string {
-  const normalized = normalizeTitleText(text)
-  if (!normalized) return ''
-  if (normalized.length <= limit) return normalized
-  return ellipsis ? `${normalized.slice(0, limit)}...` : normalized.slice(0, limit)
-}
-
-function isReplaceableLocalTitle(sessionId: string): boolean {
-  const session = getSession(sessionId)
-  if (!session) return false
-  const current = normalizeTitleText(session.title)
-  if (!current) return true
-  const variants = new Set<string>([''])
-  const preview = normalizeTitleText(session.preview)
-  if (preview) {
-    variants.add(preview)
-    variants.add(fallbackTitleFromText(preview, 40, true))
-    variants.add(fallbackTitleFromText(preview, 63, false))
-    variants.add(fallbackTitleFromText(preview, 100, false))
-  }
-  const firstUser = getFirstSessionMessageByRole(sessionId, 'user')
-  const firstUserText = normalizeTitleText(firstUser?.content)
-  if (firstUserText) {
-    variants.add(firstUserText)
-    variants.add(fallbackTitleFromText(firstUserText, 40, true))
-    variants.add(fallbackTitleFromText(firstUserText, 63, false))
-    variants.add(fallbackTitleFromText(firstUserText, 100, false))
-  }
-  return variants.has(current)
-}
-
 function isBridgeSessionSource(source?: string | null): boolean {
   return source === 'cli' || source === 'global_agent'
 }
@@ -156,6 +121,7 @@ function syncBridgeGeneratedTitle(sessionId: string, title: unknown, emit: (even
   if (normalizeTitleText(session.title) === nextTitle) return false
   updateSession(sessionId, {
     title: nextTitle,
+    title_source: 'llm',
     last_active: Math.floor(Date.now() / 1000),
   } as any)
   emit('session.title.updated', {
