@@ -56,7 +56,6 @@ const content = ref('')
 const loading = ref(false)
 const saving = ref(false)
 const error = ref('')
-const grokEffectiveView = ref(true)
 
 const validAgentId = computed<CodingAgentId | null>(() =>
   agentId.value in configKeys ? agentId.value as CodingAgentId : null,
@@ -74,11 +73,6 @@ const skillTarget = computed<SkillTarget>(() =>
   validAgentId.value ? skillTargets[validAgentId.value] : 'hermes',
 )
 const dirty = computed(() => content.value !== (configFile.value?.content || ''))
-const configScope = computed(() => (
-  agentId.value === 'grok' && grokEffectiveView.value
-    ? { sessionId: 'latest' }
-    : {}
-))
 
 async function loadConfigFile() {
   configFile.value = null
@@ -88,7 +82,7 @@ async function loadConfigFile() {
 
   loading.value = true
   try {
-    const file = await readCodingAgentConfigFile(validAgentId.value, configKey.value, configScope.value)
+    const file = await readCodingAgentConfigFile(validAgentId.value, configKey.value)
     configFile.value = file
     content.value = file.content
   } catch (err: any) {
@@ -102,7 +96,7 @@ async function saveConfigFile() {
   if (!validAgentId.value || !configKey.value || saving.value) return
   saving.value = true
   try {
-    const file = await writeCodingAgentConfigFile(validAgentId.value, configKey.value, content.value, configScope.value)
+    const file = await writeCodingAgentConfigFile(validAgentId.value, configKey.value, content.value)
     configFile.value = file
     content.value = file.content
     message.success(t('files.saveFile'))
@@ -113,7 +107,7 @@ async function saveConfigFile() {
   }
 }
 
-watch([agentId, section, grokEffectiveView], loadConfigFile, { immediate: true })
+watch([agentId, section], loadConfigFile, { immediate: true })
 </script>
 
 <template>
@@ -141,23 +135,12 @@ watch([agentId, section, grokEffectiveView], loadConfigFile, { immediate: true }
         <div class="editor-toolbar">
           <div class="file-meta">
             <code>{{ configFile?.absolutePath || configFile?.path }}</code>
-            <NTag v-if="configFile?.source === 'runtime'" type="info" size="small" :bordered="false">
-              {{ configFile.sessionId }}
-            </NTag>
             <NTag v-if="configFile && !configFile.exists" size="small" :bordered="false">
               {{ t('codingAgents.configFileNotCreated') }}
             </NTag>
           </div>
           <div class="editor-actions">
             <NButton
-              v-if="agentId === 'grok'"
-              size="small"
-              @click="grokEffectiveView = !grokEffectiveView"
-            >
-              {{ grokEffectiveView ? t('codingAgents.launchModeGlobal') : t('codingAgents.launchModeScoped') }}
-            </NButton>
-            <NButton
-              v-if="configFile?.writable !== false"
               type="primary"
               size="small"
               :disabled="!dirty"
@@ -172,7 +155,6 @@ watch([agentId, section, grokEffectiveView], loadConfigFile, { immediate: true }
           v-model:value="content"
           class="config-editor"
           type="textarea"
-          :readonly="configFile?.writable === false"
           :autosize="{ minRows: 18 }"
           :placeholder="configFile?.path"
         />

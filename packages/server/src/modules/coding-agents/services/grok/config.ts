@@ -101,13 +101,6 @@ export function grokUserMcpConfig(content: string): string {
   return value ? `${value}\n` : ''
 }
 
-export function grokMcpConfig(content: string): string {
-  const value = joinGrokConfigBlocks(
-    grokConfigBlocks(content).filter(block => Boolean(mcpServerName(block[0] || ''))),
-  )
-  return value ? `${value}\n` : ''
-}
-
 export function stripManagedGrokMcp(content: string): string {
   return joinGrokConfigBlocks(grokConfigBlocks(content)
     .filter((block) => {
