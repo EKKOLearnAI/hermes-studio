@@ -10,7 +10,8 @@ import {
   type CodingAgentId,
 } from '@/api/coding-agents'
 import type { SkillTarget } from '@/api/hermes/skills'
-import SkillsView from '@/views/hermes/SkillsView.vue'
+import CodingAgentMcpPanel from '@/components/coding-agents/CodingAgentMcpPanel.vue'
+import CodingAgentSkillsPanel from '@/components/coding-agents/CodingAgentSkillsPanel.vue'
 
 const route = useRoute()
 const { t } = useI18n()
@@ -78,7 +79,7 @@ async function loadConfigFile() {
   configFile.value = null
   content.value = ''
   error.value = ''
-  if (!validAgentId.value || !configKey.value) return
+  if (!validAgentId.value || !configKey.value || section.value === 'mcp') return
 
   loading.value = true
   try {
@@ -112,7 +113,7 @@ watch([agentId, section], loadConfigFile, { immediate: true })
 
 <template>
   <div class="coding-agent-config-view">
-    <header class="page-header">
+    <header v-if="section !== 'skills' && section !== 'mcp'" class="page-header">
       <div>
         <h2 class="header-title">{{ agentName }} · {{ sectionLabel }}</h2>
         <p v-if="section !== 'skills'" class="header-description">
@@ -122,7 +123,11 @@ watch([agentId, section], loadConfigFile, { immediate: true })
     </header>
 
     <div v-if="section === 'skills'" class="coding-agent-skills-content">
-      <SkillsView :target="skillTarget" embedded />
+      <CodingAgentSkillsPanel :target="skillTarget" />
+    </div>
+
+    <div v-else-if="section === 'mcp' && validAgentId" class="coding-agent-mcp-content">
+      <CodingAgentMcpPanel :agent-id="validAgentId" />
     </div>
 
     <div v-else class="coding-agent-config-content">
@@ -206,10 +211,18 @@ watch([agentId, section], loadConfigFile, { immediate: true })
 
 .coding-agent-skills-content {
   min-height: 420px;
-  padding: 16px;
   border: 1px solid $border-color;
   border-radius: 10px;
   background: $bg-card;
+  overflow: hidden;
+}
+
+.coding-agent-mcp-content {
+  min-height: 420px;
+  border: 1px solid $border-color;
+  border-radius: 10px;
+  background: $bg-card;
+  overflow: hidden;
 }
 
 .editor-toolbar,

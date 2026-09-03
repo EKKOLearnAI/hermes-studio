@@ -13,6 +13,12 @@ import {
   writeCodingAgentConfigFile,
   type CodingAgentConfigScope,
 } from '../services'
+import {
+  listCodingAgentMcpServers,
+  removeCodingAgentMcpServer,
+  testCodingAgentMcpServer,
+  upsertCodingAgentMcpServer,
+} from '../services/mcp-manager'
 
 function configScope(ctx: Context): CodingAgentConfigScope {
   const body = ctx.request.body as { profile?: unknown; provider?: unknown } | undefined
@@ -76,6 +82,63 @@ export async function writeConfigFile(ctx: Context) {
   } catch (err: any) {
     ctx.status = err.status || 500
     ctx.body = { error: err.message || 'Failed to write coding agent config file' }
+  }
+}
+
+export async function listMcpServers(ctx: Context) {
+  try {
+    ctx.body = await listCodingAgentMcpServers(ctx.params.id, configScope(ctx))
+  } catch (err: any) {
+    ctx.status = err.status || 500
+    ctx.body = { error: err.message || 'Failed to list coding agent MCP servers' }
+  }
+}
+
+export async function addMcpServer(ctx: Context) {
+  try {
+    const body = (ctx.request.body || {}) as { name?: unknown; config?: unknown }
+    ctx.body = await upsertCodingAgentMcpServer(
+      ctx.params.id,
+      typeof body.name === 'string' ? body.name : '',
+      body.config as Record<string, any>,
+      configScope(ctx),
+    )
+  } catch (err: any) {
+    ctx.status = err.status || 500
+    ctx.body = { error: err.message || 'Failed to add coding agent MCP server' }
+  }
+}
+
+export async function updateMcpServer(ctx: Context) {
+  try {
+    const body = (ctx.request.body || {}) as { config?: unknown }
+    ctx.body = await upsertCodingAgentMcpServer(
+      ctx.params.id,
+      ctx.params.name,
+      body.config as Record<string, any>,
+      configScope(ctx),
+    )
+  } catch (err: any) {
+    ctx.status = err.status || 500
+    ctx.body = { error: err.message || 'Failed to update coding agent MCP server' }
+  }
+}
+
+export async function removeMcpServer(ctx: Context) {
+  try {
+    ctx.body = await removeCodingAgentMcpServer(ctx.params.id, ctx.params.name, configScope(ctx))
+  } catch (err: any) {
+    ctx.status = err.status || 500
+    ctx.body = { error: err.message || 'Failed to remove coding agent MCP server' }
+  }
+}
+
+export async function testMcpServer(ctx: Context) {
+  try {
+    ctx.body = await testCodingAgentMcpServer(ctx.params.id, ctx.params.name, configScope(ctx))
+  } catch (err: any) {
+    ctx.status = err.status || 503
+    ctx.body = { error: err.message || 'Failed to test coding agent MCP server' }
   }
 }
 

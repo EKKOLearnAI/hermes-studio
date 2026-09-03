@@ -1362,6 +1362,33 @@ function piMcpConfig(profile: string, ...externalContents: Array<string | null |
   }, null, 2)}\n`
 }
 
+export function getCodingAgentManagedMcpServerConfigs(
+  id: CodingAgentId,
+  profile = 'default',
+): Record<string, Record<string, unknown>> {
+  if (!['claude-code', 'codex', 'pi', 'grok'].includes(id)) return {}
+  return Object.fromEntries(HERMES_MCP_SERVERS.map((item) => {
+    const server = hermesMcpServerConfig(profile || 'default', item.name, item.toolset)
+    if (id === 'pi') {
+      const requestTimeoutMs = item.toolset === 'api' || item.toolset === 'use' ? 120_000 : 1_860_000
+      return [item.name, {
+        ...server,
+        lifecycle: 'lazy',
+        directTools: false,
+        toolPrefix: 'none',
+        requestTimeoutMs,
+      }]
+    }
+    if (id === 'codex' || id === 'grok') {
+      return [item.name, {
+        ...server,
+        startup_timeout_sec: 120,
+      }]
+    }
+    return [item.name, server]
+  }))
+}
+
 function migratePiRuntimeMcpContent(content: string): string | null {
   try {
     const parsed = JSON.parse(content)
