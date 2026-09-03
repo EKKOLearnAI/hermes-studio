@@ -11,14 +11,15 @@ import {
   startCodingAgentRun,
   stopCodingAgentRun,
   writeCodingAgentConfigFile,
-  type CodingAgentConfigScope,
+  type CodingAgentConfigRequestScope,
 } from '../services'
 
-function configScope(ctx: Context): CodingAgentConfigScope {
-  const body = ctx.request.body as { profile?: unknown; provider?: unknown } | undefined
+function configScope(ctx: Context): CodingAgentConfigRequestScope {
+  const body = ctx.request.body as { profile?: unknown; provider?: unknown; sessionId?: unknown } | undefined
   return {
     profile: ctx.state.profile?.name || (typeof ctx.query.profile === 'string' ? ctx.query.profile : '') || (typeof body?.profile === 'string' ? body.profile : ''),
     provider: (typeof ctx.query.provider === 'string' ? ctx.query.provider : '') || (typeof body?.provider === 'string' ? body.provider : ''),
+    sessionId: (typeof ctx.query.sessionId === 'string' ? ctx.query.sessionId : '') || (typeof body?.sessionId === 'string' ? body.sessionId : ''),
   }
 }
 

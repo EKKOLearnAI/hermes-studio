@@ -93,11 +93,15 @@ export interface CodingAgentConfigFileContent {
   profile: string
   provider: string
   rootDir: string
+  writable?: boolean
+  source?: 'global' | 'runtime'
+  sessionId?: string
 }
 
 export interface CodingAgentConfigScope {
   profile?: string | null
   provider?: string | null
+  sessionId?: string | null
 }
 
 export interface CodingAgentLaunchRequest {
@@ -161,6 +165,7 @@ export async function readCodingAgentConfigFile(
   const params = new URLSearchParams()
   if (scope.profile) params.set('profile', scope.profile)
   if (scope.provider) params.set('provider', scope.provider)
+  if (scope.sessionId) params.set('sessionId', scope.sessionId)
   const query = params.toString()
   return request<CodingAgentConfigFileContent>(
     `/api/coding-agents/${id}/config-files/${encodeURIComponent(key)}${query ? `?${query}` : ''}`,
@@ -175,7 +180,7 @@ export async function writeCodingAgentConfigFile(
 ): Promise<CodingAgentConfigFileContent> {
   return request<CodingAgentConfigFileContent>(`/api/coding-agents/${id}/config-files/${encodeURIComponent(key)}`, {
     method: 'PUT',
-    body: JSON.stringify({ content, profile: scope.profile, provider: scope.provider }),
+    body: JSON.stringify({ content, profile: scope.profile, provider: scope.provider, sessionId: scope.sessionId }),
   })
 }
 

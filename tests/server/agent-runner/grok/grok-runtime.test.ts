@@ -102,7 +102,9 @@ describe('Grok runtime isolation', () => {
     const sourceHome = join(root, 'user-grok')
     const rootDir = join(root, 'runtime')
     await mkdir(join(sourceHome, 'skills', 'review'), { recursive: true })
+    await mkdir(join(root, '.agents', 'skills', 'shared'), { recursive: true })
     writeFileSync(join(sourceHome, 'skills', 'review', 'SKILL.md'), 'Review skill.\n')
+    writeFileSync(join(root, '.agents', 'skills', 'shared', 'SKILL.md'), 'Shared skill.\n')
 
     await prepareScopedGrokRuntime({
       sourceHome,
@@ -120,6 +122,7 @@ describe('Grok runtime isolation', () => {
     })
 
     expect(readFileSync(join(rootDir, 'skills', 'review', 'SKILL.md'), 'utf-8')).toBe('Review skill.\n')
+    expect(readFileSync(join(rootDir, 'skills', 'shared', 'SKILL.md'), 'utf-8')).toBe('Shared skill.\n')
   })
 
   it('removes only Studio-managed MCP blocks', () => {

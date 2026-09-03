@@ -49,6 +49,10 @@ function codexSystemSkillsDir(): string {
   return join(homedir(), '.codex', 'skills', '.system')
 }
 
+function sharedAgentSkillsDir(): string {
+  return join(homedir(), '.agents', 'skills')
+}
+
 function requestTargetSkillsDir(ctx: any): string {
   const target = requestSkillTarget(ctx)
   return target === 'hermes' ? requestSkillsDir(ctx) : globalSkillsDir(target)
@@ -67,6 +71,9 @@ async function resolveSkillDirForTarget(ctx: any, category: string, skillName: s
 
   if (target === 'codex') {
     return findSkillDirInRoot(codexSystemSkillsDir(), category, skillName)
+  }
+  if (target === 'grok') {
+    return findSkillDirInRoot(sharedAgentSkillsDir(), category, skillName)
   }
 
   return null
@@ -527,6 +534,14 @@ export async function list(ctx: any) {
           'builtin',
         )
         categories = mergeExternalCategories(categories, systemCategories)
+      } else if (target === 'grok') {
+        const sharedDir = sharedAgentSkillsDir()
+        extraDirs.push(sharedDir)
+        const sharedCategories = withSkillSource(
+          await scanSkillsDirIfExists(sharedDir, new Map(), new Set(), [], new Map()),
+          'external',
+        )
+        categories = mergeExternalCategories(categories, sharedCategories)
       }
       ctx.body = {
         categories,

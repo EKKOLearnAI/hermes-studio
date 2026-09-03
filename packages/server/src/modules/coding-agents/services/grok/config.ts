@@ -101,6 +101,13 @@ export function grokUserMcpConfig(content: string): string {
   return value ? `${value}\n` : ''
 }
 
+export function grokMcpConfig(content: string): string {
+  const value = joinGrokConfigBlocks(
+    grokConfigBlocks(content).filter(block => Boolean(mcpServerName(block[0] || ''))),
+  )
+  return value ? `${value}\n` : ''
+}
+
 export function stripManagedGrokMcp(content: string): string {
   return joinGrokConfigBlocks(grokConfigBlocks(content)
     .filter((block) => {
@@ -138,16 +145,16 @@ async function copyGlobalDirectory(source: string, target: string): Promise<void
   })
 }
 
-async function syncGlobalSkillsDirectory(sourceHome: string, rootDir: string): Promise<void> {
-  const source = join(sourceHome, 'skills')
+async function syncSkillsDirectory(source: string, target: string): Promise<void> {
   if (!existsSync(source)) return
-  await cp(source, join(rootDir, 'skills'), {
-    recursive: true,
-    dereference: true,
-    errorOnExist: false,
-    force: true,
-    preserveTimestamps: true,
+  await cp(source, target, {
+    recursive: true, dereference: true, errorOnExist: false, force: true, preserveTimestamps: true,
   })
+}
+
+async function syncGlobalSkillsDirectories(sourceHome: string, rootDir: string): Promise<void> {
+  await syncSkillsDirectory(join(sourceHome, 'skills'), join(rootDir, 'skills'))
+  await syncSkillsDirectory(join(sourceHome, '..', '.agents', 'skills'), join(rootDir, 'skills'))
 }
 
 function shouldCopyGlobalFile(name: string): boolean {
@@ -176,6 +183,7 @@ export async function prepareGlobalGrokRuntime(input: {
       }
     }
   }
+  await syncGlobalSkillsDirectories(input.sourceHome, input.rootDir)
 
   const configPath = join(input.rootDir, 'config.toml')
   const promptFile = join(input.rootDir, 'AGENTS.md')
@@ -235,7 +243,7 @@ export async function prepareScopedGrokRuntime(input: {
   managedMcpToml: string
 }): Promise<GrokRuntimeFiles> {
   await mkdir(input.rootDir, { recursive: true, mode: 0o700 })
-  if (input.sourceHome) await syncGlobalSkillsDirectory(input.sourceHome, input.rootDir)
+  if (input.sourceHome) await syncGlobalSkillsDirectories(input.sourceHome, input.rootDir)
   const configPath = join(input.rootDir, 'config.toml')
   const promptFile = join(input.rootDir, 'AGENTS.md')
   const config = [
