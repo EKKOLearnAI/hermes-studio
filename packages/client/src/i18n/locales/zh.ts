@@ -610,6 +610,7 @@ export default {
       accessFailureMode: '当前模式：{mode}',
       accessFailureDeviceName: '设备名称：{deviceName}',
       accessFailureTime: '失败时间：{time}',
+      purchaseAccess: '去购买',
       accessModes: {
         internal: '内测',
         public_beta: '公测',

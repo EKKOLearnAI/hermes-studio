@@ -31,6 +31,12 @@ function normalizePanelView(value: unknown): AppPanelView {
 }
 
 const DISMISSED_ACCESS_FAILURE_KEY = 'hermes:app-access-failure-dismissed-at'
+const APP_ACCESS_PURCHASE_URL = 'https://hermes-studio.ai/pricing/'
+const PURCHASE_REQUIRED_FAILURE_CODES = new Set([
+  'cloud_subscription_required',
+  'paid_account_required',
+  'app_access_expired',
+])
 const DEFAULT_MOBILE_RELEASE: StudioMobileRelease = {
   version: '1.0.0',
   channels: {
@@ -46,7 +52,7 @@ const DEFAULT_MOBILE_RELEASE: StudioMobileRelease = {
   },
 }
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const message = useMessage()
@@ -165,6 +171,22 @@ const accessFailureMode = computed(() => {
   const plan = accessFailure.value?.plan || 'unknown'
   const knownPlan = plan === 'internal' || plan === 'public_beta' || plan === 'paid' ? plan : 'unknown'
   return t(`connections.app.accessModes.${knownPlan}`)
+})
+const accessFailureTime = computed(() => {
+  const occurredAt = Number(accessFailure.value?.occurredAt || 0)
+  if (!occurredAt) return ''
+  return new Intl.DateTimeFormat(locale.value, {
+    dateStyle: 'medium',
+    timeStyle: 'medium',
+  }).format(new Date(occurredAt))
+})
+const accessFailureRequiresPurchase = computed(() => {
+  const failure = accessFailure.value
+  if (!failure) return false
+  if (PURCHASE_REQUIRED_FAILURE_CODES.has(failure.code)) return true
+  return failure.plan === 'paid'
+    && failure.code === 'app_entitlement_expired'
+    && failure.tokenTtlSeconds === 0
 })
 
 const columns = computed<DataTableColumns<AppConnection>>(() => [
@@ -582,7 +604,19 @@ onUnmounted(() => {
         <span v-if="accessFailure.deviceName">
           {{ t('connections.app.accessFailureDeviceName', { deviceName: accessFailure.deviceName }) }}
         </span>
-        <span>{{ t('connections.app.accessFailureTime', { time: new Date(accessFailure.occurredAt).toLocaleString() }) }}</span>
+        <span>{{ t('connections.app.accessFailureTime', { time: accessFailureTime }) }}</span>
+      </div>
+      <div v-if="accessFailureRequiresPurchase" class="app-access-failure__actions">
+        <NButton
+          tag="a"
+          :href="APP_ACCESS_PURCHASE_URL"
+          target="_blank"
+          rel="noopener noreferrer"
+          size="small"
+          type="primary"
+        >
+          {{ t('connections.app.purchaseAccess') }}
+        </NButton>
       </div>
     </NAlert>
 
@@ -1389,6 +1423,11 @@ onUnmounted(() => {
     gap: 4px 12px;
     color: $text-muted;
     font-size: 12px;
+  }
+
+  &__actions {
+    margin-top: 10px;
+    display: flex;
   }
 }
 

@@ -610,6 +610,7 @@ export default {
       accessFailureMode: 'Current mode: {mode}',
       accessFailureDeviceName: 'Device: {deviceName}',
       accessFailureTime: 'Failed at: {time}',
+      purchaseAccess: 'View plans',
       accessModes: {
         internal: 'Internal testing',
         public_beta: 'Public beta',
