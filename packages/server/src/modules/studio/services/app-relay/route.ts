@@ -4,7 +4,7 @@ import { readAppConfig, writeAppConfig } from '../config/app-config'
 export type AppRelayRoute = 'official' | 'cloudflare'
 
 export const DEFAULT_APP_RELAY_ROUTE: AppRelayRoute = 'official'
-export const CLOUDFLARE_APP_RELAY_URL = 'https://cn.hermes-studio.ai'
+export const CLOUDFLARE_APP_RELAY_URL = 'https://testapi.hermes-studio.ai'
 
 export function isAppRelayRoute(value: unknown): value is AppRelayRoute {
   return value === 'official' || value === 'cloudflare'

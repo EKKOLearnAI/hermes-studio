@@ -619,6 +619,8 @@ export default {
       accessFailures: {
         tokenExpired: 'Token expired',
         paidAccountRequired: 'The current account is not a paid account and cannot use this feature',
+        cloudSubscriptionRequired: 'This account does not have HStudio Cloud access',
+        appAccessExpired: 'This internal test or public beta access has expired',
         required: 'The App did not provide an access entitlement',
         invalid: 'The App access entitlement is invalid',
         expired: 'The App access entitlement has expired',

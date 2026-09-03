@@ -186,6 +186,16 @@ export interface CloudAppPreconnection {
   refreshRemaining: number
 }
 
+export interface CloudAppAccessFailure {
+  code: string
+  deviceCode: string
+  deviceName: string
+  cloudUserId: number
+  connectionType: 'cloud'
+  plan: string
+  occurredAt: number
+}
+
 interface LocalSocketBridge {
   id: string
   namespace: string
@@ -214,6 +224,7 @@ export class AppRelayClient {
     preconnection: CloudAppPreconnection
   }>()
   private readonly cloudConnectionOnline = new Map<string, boolean>()
+  private latestAccessFailure: CloudAppAccessFailure | null = null
   private readonly downloadSessions = new RelayDownloadSessions()
   private preconnectionExpired = false
   private cloudMediaMaxBytes = DEFAULT_CLOUD_MEDIA_MAX_BYTES
@@ -288,6 +299,10 @@ export class AppRelayClient {
     this.socket.on('connection.activated', (payload: Record<string, unknown> = {}) => {
       const preconnectId = String(payload.preconnectId || payload.preconnect_id || '').trim()
       if (preconnectId) this.pendingPreconnections.delete(preconnectId)
+      this.clearAccessFailure(payload)
+    })
+    this.socket.on('connection.access.failed', (payload: Record<string, unknown> = {}) => {
+      this.rememberAccessFailure(payload)
     })
     this.socket.on('connection.snapshot', (payload: Record<string, unknown> = {}) => {
       this.rememberConnectionSnapshot(payload)
@@ -465,6 +480,12 @@ export class AppRelayClient {
     const prefix = `${deviceCode}\u0000`
     return [...this.cloudConnectionOnline.entries()]
       .some(([key, online]) => key.startsWith(prefix) && online)
+  }
+
+  getLatestAccessFailure(now = Date.now()): CloudAppAccessFailure | null {
+    const failure = this.latestAccessFailure
+    if (!failure || now - failure.occurredAt > 30 * 60 * 1000) return null
+    return { ...failure }
   }
 
   waitForConnected(timeoutMs = 5000): Promise<boolean> {
@@ -792,6 +813,41 @@ export class AppRelayClient {
       if (deviceCode && cloudUserId) {
         this.cloudConnectionOnline.set(cloudConnectionKey(deviceCode, cloudUserId), Boolean(connection.online))
       }
+    }
+  }
+
+  private rememberAccessFailure(payload: Record<string, unknown>): void {
+    const machineId = String(payload.machineId || payload.machine_id || '').trim()
+    const code = String(payload.code || payload.reason || '').trim()
+    if (machineId !== this.options.machineId || ![
+      'cloud_subscription_required',
+      'paid_account_required',
+      'app_access_expired',
+    ].includes(code)) return
+    const occurredAt = Number(payload.occurredAt || payload.occurred_at)
+    const plan = String(payload.plan || '').trim()
+    this.latestAccessFailure = {
+      code,
+      deviceCode: String(payload.deviceCode || payload.device_code || '').trim().slice(0, 255),
+      deviceName: String(payload.deviceName || payload.device_name || '').trim().slice(0, 255),
+      cloudUserId: normalizeCloudUserId(
+        payload.appUserId || payload.app_user_id || payload.userId || payload.user_id,
+      ),
+      connectionType: 'cloud',
+      plan: ['internal', 'public_beta', 'paid'].includes(plan) ? plan : 'unknown',
+      occurredAt: Number.isFinite(occurredAt) && occurredAt > 0 ? occurredAt : Date.now(),
+    }
+  }
+
+  private clearAccessFailure(payload: Record<string, unknown>): void {
+    const failure = this.latestAccessFailure
+    if (!failure) return
+    const deviceCode = String(payload.deviceCode || payload.device_code || '').trim()
+    const cloudUserId = normalizeCloudUserId(
+      payload.appUserId || payload.app_user_id || payload.userId || payload.user_id,
+    )
+    if (failure.deviceCode === deviceCode && (!failure.cloudUserId || failure.cloudUserId === cloudUserId)) {
+      this.latestAccessFailure = null
     }
   }
 

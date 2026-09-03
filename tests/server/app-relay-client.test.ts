@@ -128,6 +128,37 @@ describe('AppRelayClient', () => {
     await expect(connected).resolves.toBe(true)
   })
 
+  it('remembers the latest cloud access failure reported by the relay', async () => {
+    const { startAppRelayClient } = await import('../../packages/server/src/modules/studio/services/app-relay/client')
+    const client = startAppRelayClient({
+      relayUrl: 'https://relay.example.com',
+      machineId: 'hwui_machine_1234567890',
+      publicKey: 'machine-public-key',
+      localBaseUrl: 'http://127.0.0.1:8648',
+      fetchImpl: vi.fn() as any,
+    })!
+    const remote = sockets[0]
+    remote.__handlers.get('connection.access.failed')?.({
+      machineId: 'hwui_machine_1234567890',
+      deviceCode: 'app-device-1',
+      deviceName: 'Phone',
+      appUserId: 7,
+      plan: 'paid',
+      code: 'cloud_subscription_required',
+      occurredAt: 123456,
+    })
+
+    expect(client.getLatestAccessFailure(123457)).toEqual({
+      code: 'cloud_subscription_required',
+      deviceCode: 'app-device-1',
+      deviceName: 'Phone',
+      cloudUserId: 7,
+      connectionType: 'cloud',
+      plan: 'paid',
+      occurredAt: 123456,
+    })
+  })
+
   it('forwards local API requests with safe headers and binary support', async () => {
     const fetchImpl = vi.fn(async (url: string) => url.endsWith('/api/studio/tts/synthesize')
       ? new Response(Uint8Array.from([7, 8, 9]), {

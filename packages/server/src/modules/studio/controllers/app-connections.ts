@@ -52,14 +52,20 @@ function connectionPayload(now = Math.floor(Date.now() / 1000)) {
 
 export async function listAppConnectionsController(ctx: Context) {
   const connections = connectionPayload()
-  const accessFailure = getLatestLocalAppEntitlementFailure()
+  const localAccessFailure = getLatestLocalAppEntitlementFailure()
+  const cloudAccessFailure = getAppRelayClient(APP_RELAY_CONNECTION_ID)?.getLatestAccessFailure() || null
+  const accessFailure = !localAccessFailure || (
+    cloudAccessFailure && cloudAccessFailure.occurredAt > localAccessFailure.occurredAt
+  )
+    ? cloudAccessFailure
+    : localAccessFailure
+  const connectionType = accessFailure && 'connectionType' in accessFailure
+    ? accessFailure.connectionType
+    : 'lan'
   const failedConnection = accessFailure
     ? connections.find(connection => (
-        connection.connection_type === 'lan'
+        connection.connection_type === connectionType
         && connection.device_code === accessFailure.deviceCode
-        && (!accessFailure.cloudUserId || connection.cloud_user_id === accessFailure.cloudUserId)
-      )) || connections.find(connection => (
-        connection.device_code === accessFailure.deviceCode
         && (!accessFailure.cloudUserId || connection.cloud_user_id === accessFailure.cloudUserId)
       ))
     : null
@@ -68,7 +74,9 @@ export async function listAppConnectionsController(ctx: Context) {
     access_failure: accessFailure
       ? {
           ...accessFailure,
-          deviceName: failedConnection?.device_name || '',
+          deviceName: ('deviceName' in accessFailure ? accessFailure.deviceName : '')
+            || failedConnection?.device_name
+            || '',
         }
       : null,
   }

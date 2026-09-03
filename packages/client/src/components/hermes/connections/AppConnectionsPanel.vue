@@ -134,6 +134,15 @@ const remainingTime = computed(() => {
 const accessFailureReason = computed(() => {
   const failure = accessFailure.value
   if (!failure) return ''
+  if (failure.code === 'cloud_subscription_required') {
+    return t('connections.app.accessFailures.cloudSubscriptionRequired')
+  }
+  if (failure.code === 'paid_account_required') {
+    return t('connections.app.accessFailures.paidAccountRequired')
+  }
+  if (failure.code === 'app_access_expired') {
+    return t('connections.app.accessFailures.appAccessExpired')
+  }
   if (failure.plan === 'internal' || failure.plan === 'public_beta') {
     return t('connections.app.accessFailures.tokenExpired')
   }
@@ -266,9 +275,17 @@ async function loadConnections(options: { silent?: boolean; detectScanConnection
     const response = await fetchAppConnections()
     connections.value = response.connections
     const nextFailure = response.access_failure || null
-    accessFailure.value = nextFailure && nextFailure.occurredAt > dismissedAccessFailureAt.value
+    const previousFailureAt = Number(accessFailure.value?.occurredAt || 0)
+    const visibleFailure = nextFailure && nextFailure.occurredAt > dismissedAccessFailureAt.value
       ? nextFailure
       : null
+    accessFailure.value = visibleFailure
+    if (visibleFailure && visibleFailure.occurredAt > previousFailureAt && showScanModal.value) {
+      showScanModal.value = false
+      lanAuthorization.value = null
+      cloudAuthorization.value = null
+      qrCodeDataUrls.value = { lan: '', cloud: '' }
+    }
     if (options.detectScanConnection && showScanModal.value) {
       const connected = response.connections.some(connection => (
         connection.active
@@ -550,26 +567,26 @@ onUnmounted(() => {
       </div>
     </header>
 
-    <template v-if="panelView === 'list'">
-      <NAlert
-        v-if="accessFailure"
-        class="app-access-failure"
-        type="error"
-        :title="t('connections.app.accessFailureTitle')"
-        :bordered="false"
-        closable
-        @close="dismissAccessFailure"
-      >
-        <div class="app-access-failure__reason">{{ accessFailureReason }}</div>
-        <div class="app-access-failure__meta">
-          <span>{{ t('connections.app.accessFailureMode', { mode: accessFailureMode }) }}</span>
-          <span v-if="accessFailure.deviceName">
-            {{ t('connections.app.accessFailureDeviceName', { deviceName: accessFailure.deviceName }) }}
-          </span>
-          <span>{{ t('connections.app.accessFailureTime', { time: new Date(accessFailure.occurredAt).toLocaleString() }) }}</span>
-        </div>
-      </NAlert>
+    <NAlert
+      v-if="accessFailure"
+      class="app-access-failure"
+      type="error"
+      :title="t('connections.app.accessFailureTitle')"
+      :bordered="false"
+      closable
+      @close="dismissAccessFailure"
+    >
+      <div class="app-access-failure__reason">{{ accessFailureReason }}</div>
+      <div class="app-access-failure__meta">
+        <span>{{ t('connections.app.accessFailureMode', { mode: accessFailureMode }) }}</span>
+        <span v-if="accessFailure.deviceName">
+          {{ t('connections.app.accessFailureDeviceName', { deviceName: accessFailure.deviceName }) }}
+        </span>
+        <span>{{ t('connections.app.accessFailureTime', { time: new Date(accessFailure.occurredAt).toLocaleString() }) }}</span>
+      </div>
+    </NAlert>
 
+    <template v-if="panelView === 'list'">
       <div class="cloud-route-setting">
         <div class="cloud-route-copy">
           <strong>{{ t('connections.app.routeTitle') }}</strong>

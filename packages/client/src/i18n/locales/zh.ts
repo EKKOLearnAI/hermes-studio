@@ -619,6 +619,8 @@ export default {
       accessFailures: {
         tokenExpired: 'Token 已失效',
         paidAccountRequired: '当前账户不是付费账号，无法使用该功能',
+        cloudSubscriptionRequired: '当前账号未开通 HStudio Cloud，无法使用云端连接',
+        appAccessExpired: '当前内测或公测资格已过期，无法使用云端连接',
         required: 'App 未携带访问授权签名',
         invalid: 'App 访问授权签名无效',
         expired: 'App 访问授权已过期',
