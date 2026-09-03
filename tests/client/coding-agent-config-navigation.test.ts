@@ -45,6 +45,8 @@ describe('coding Agent configuration navigation', () => {
     expect(view).toContain("grok: { memory: 'agents', mcp: 'mcp', settings: 'settings' }")
     expect(view).toContain("{ sessionId: 'latest' }")
     expect(view).toContain(':readonly="configFile?.writable === false"')
+    expect(view).toContain('<code>{{ configFile?.path }}</code>')
+    expect(view).not.toContain('configFile?.absolutePath || configFile?.path')
     expect(skills).toContain('target?: SkillTarget')
   })
 })

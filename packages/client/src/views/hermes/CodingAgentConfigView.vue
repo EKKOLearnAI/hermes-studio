@@ -140,7 +140,7 @@ watch([agentId, section, grokEffectiveView], loadConfigFile, { immediate: true }
       <template v-else-if="configKey">
         <div class="editor-toolbar">
           <div class="file-meta">
-            <code>{{ configFile?.absolutePath || configFile?.path }}</code>
+            <code>{{ configFile?.path }}</code>
             <NTag v-if="configFile?.source === 'runtime'" type="info" size="small" :bordered="false">
               {{ configFile.sessionId }}
             </NTag>
