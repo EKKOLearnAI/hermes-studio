@@ -907,9 +907,23 @@ describe('coding agent launch preparation', () => {
     writeFileSync(claudeGlobalSettingsPath, `${JSON.stringify({
       enabledMcpjsonServers: ['nowledge-mem'],
       plugins: { 'nowledge-mem@nowledge-community': true },
+      forceLoginMethod: 'claudeai',
+      apiKeyHelper: '/tmp/native-claude-key-helper',
+      env: {
+        SAFE_USER_SETTING: 'preserved',
+        CLAUDE_CODE_OAUTH_TOKEN: 'stale-native-oauth-token',
+        ANTHROPIC_AUTH_TOKEN: 'stale-native-auth-token',
+        ANTHROPIC_API_KEY: 'stale-native-api-key',
+        ANTHROPIC_BASE_URL: 'https://native-login.example',
+      },
     }, null, 2)}
 `)
     writeFileSync(codexGlobalConfigPath, [
+      'preferred_auth_method = "chatgpt"',
+      'forced_login_method = "chatgpt"',
+      'chatgpt_base_url = "https://native-login.example"',
+      'experimental_bearer_token = "stale-native-token"',
+      '',
       '[mcp_servers.nowledge-mem]',
       'type = "streamableHttp"',
       'url = "https://nowledge-mem.example/remote-api/mcp/"',
@@ -923,6 +937,9 @@ describe('coding agent launch preparation', () => {
       '',
       '[model_providers.unrelated]',
       'name = "should-not-be-copied"',
+      '',
+      '[auth]',
+      'access_token = "stale-native-token"',
       '',
     ].join('\n'))
     writeFileSync(codexScopedConfigPath, [
@@ -955,6 +972,13 @@ describe('coding agent launch preparation', () => {
     const claudeMcp = JSON.parse(readFileSync(join(claude.rootDir, 'mcp.json'), 'utf-8'))
     expect(claudeSettings.enabledMcpjsonServers).toEqual(['nowledge-mem'])
     expect(claudeSettings.plugins).toMatchObject({ 'nowledge-mem@nowledge-community': true })
+    expect(claudeSettings).not.toHaveProperty('forceLoginMethod')
+    expect(claudeSettings).not.toHaveProperty('apiKeyHelper')
+    expect(claudeSettings.env.SAFE_USER_SETTING).toBe('preserved')
+    expect(claudeSettings.env).not.toHaveProperty('CLAUDE_CODE_OAUTH_TOKEN')
+    expect(claudeSettings.env).not.toHaveProperty('ANTHROPIC_AUTH_TOKEN')
+    expect(claudeSettings.env.ANTHROPIC_API_KEY).toMatch(/^hwui_/)
+    expect(claudeSettings.env.ANTHROPIC_BASE_URL).toMatch(/^http:\/\/127\.0\.0\.1:/)
     expect(claudeMcp.mcpServers['nowledge-mem']).toMatchObject({
       type: 'http',
       url: 'https://nowledge-mem.example/remote-api/mcp/',
@@ -973,6 +997,11 @@ describe('coding agent launch preparation', () => {
     expect(codexConfig.match(/^\[mcp_servers\.nowledge-mem\.http_headers\]$/gm)).toHaveLength(1)
     expect(codexConfig).toContain('url = "https://nowledge-mem.scoped-latest.example/remote-api/mcp/"')
     expect(codexConfig).toContain('APP = "codex-scoped-latest"')
+    expect(codexConfig).not.toContain('preferred_auth_method')
+    expect(codexConfig).not.toContain('forced_login_method')
+    expect(codexConfig).not.toContain('chatgpt_base_url')
+    expect(codexConfig).not.toContain('stale-native-token')
+    expect(codexConfig).not.toContain('[auth]')
     expect(codexConfig).not.toContain('APP = "codex"')
     expect(codexConfig).not.toContain('APP = "codex-scoped"')
     expect(codexConfig).not.toContain('command = "stale-managed"')

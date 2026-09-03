@@ -1853,10 +1853,9 @@ export class CodingAgentRunManager {
     ]
     const child = spawnCodingAgentChild(run.launch.command, args, {
       cwd: existsSync(run.launch.workspaceDir) ? run.launch.workspaceDir : homedir(),
-      env: {
-        ...process.env,
-        ...(run.launch.env || {}),
-      },
+      env: run.launch.mode === 'global'
+        ? { ...process.env, ...(run.launch.env || {}) }
+        : isolatedCodingAgentChildEnv(run.launch.env),
       pipeStdin: true,
     })
     run.currentChild = child
@@ -2508,10 +2507,9 @@ export class CodingAgentRunManager {
 
     const child = spawnCodingAgentChild(run.launch.command, args, {
       cwd: existsSync(run.launch.workspaceDir) ? run.launch.workspaceDir : homedir(),
-      env: {
-        ...process.env,
-        ...(run.launch.env || {}),
-      },
+      env: run.launch.mode === 'global'
+        ? { ...process.env, ...(run.launch.env || {}) }
+        : isolatedCodingAgentChildEnv(run.launch.env),
       pipeStdin: true,
     })
     run.currentChild = child

@@ -1156,7 +1156,27 @@ function inheritClaudeSettings(existingContent: string | null | undefined = ''):
   try {
     const parsed = JSON.parse(existingContent)
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
-    return { ...parsed }
+    const inherited = { ...parsed } as Record<string, unknown>
+    // Scoped Coding Agent runs authenticate exclusively through the selected
+    // Hermes Studio profile proxy. Never inherit native Claude login/provider
+    // routing, otherwise a stale OAuth session can override the profile.
+    delete inherited.apiKeyHelper
+    delete inherited.awsAuthRefresh
+    delete inherited.awsCredentialExport
+    delete inherited.forceLoginMethod
+    if (inherited.env && typeof inherited.env === 'object' && !Array.isArray(inherited.env)) {
+      inherited.env = Object.fromEntries(
+        Object.entries(inherited.env as Record<string, unknown>)
+          .filter(([key, value]) => typeof value === 'string' && !(
+              key.startsWith('ANTHROPIC_')
+              || key === 'CLAUDE_CODE_OAUTH_TOKEN'
+              || key === 'CLAUDE_CODE_USE_BEDROCK'
+              || key === 'CLAUDE_CODE_USE_VERTEX'
+              || key === 'CLAUDE_CODE_USE_FOUNDRY'
+            )),
+      )
+    }
+    return inherited
   } catch {
     return {}
   }
@@ -1234,6 +1254,10 @@ function codexRuntimeUserConfig(...contents: Array<string | null | undefined>): 
     'model_reasoning_effort',
     'developer_instructions',
     'disable_response_storage',
+    'experimental_bearer_token',
+    'forced_login_method',
+    'preferred_auth_method',
+    'chatgpt_base_url',
   ])
   const runtimeFeatures = new Set(['tool_search', 'tool_search_always_defer_mcp_tools'])
 
@@ -1260,6 +1284,10 @@ function codexRuntimeUserConfig(...contents: Array<string | null | undefined>): 
         || section.startsWith('model.')
         || section.startsWith('model_providers.')
         || section.startsWith('mcp_servers.')
+        || section === 'auth'
+        || section.startsWith('auth.')
+        || section === 'account'
+        || section.startsWith('account.')
       ) continue
       const lines = sections.get(section) || []
       if (line.trim()) lines.push(line)

@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
-import { NAlert, NButton, NEmpty, NInput, NModal, NRadioButton, NRadioGroup, NScrollbar, NSpin, useMessage } from 'naive-ui'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { NAlert, NButton, NEmpty, NInput, NModal, NRadioButton, NRadioGroup, NSpin, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import McpServerCard from '@/components/hermes/mcp/McpServerCard.vue'
 import { useMcpConfigInput } from '@/composables/useMcpConfigInput'
@@ -27,12 +27,12 @@ const error = ref('')
 const searchQuery = ref('')
 const servers = ref<CodingAgentMcpServerInfo[]>([])
 const testedTools = ref<Record<string, Array<{ name: string; description?: string }>>>({})
+const testErrors = ref<Record<string, string>>({})
 const testingServers = ref<Set<string>>(new Set())
 const showModal = ref(false)
 const modalMode = ref<'add' | 'edit'>('add')
 const editingName = ref('')
-const toolsServer = ref<CodingAgentMcpServerInfo | null>(null)
-const showToolsModal = ref(false)
+const probeVersions = new Map<string, number>()
 
 const {
   inputMode,
@@ -71,19 +71,36 @@ const toolsByServer = computed<Record<string, Array<{ name: string; description?
     testedTools.value[server.name] || server.tool_details || [],
   ])),
 )
-const selectedTools = computed(() => toolsServer.value ? toolsByServer.value[toolsServer.value.name] || [] : [])
+
+const displayedServers = computed<CodingAgentMcpServerInfo[]>(() =>
+  servers.value.map((server) => {
+    const tools = toolsByServer.value[server.name] || []
+    const tested = Object.prototype.hasOwnProperty.call(testedTools.value, server.name)
+    const testError = testErrors.value[server.name]
+    return {
+      ...server,
+      connected: server.raw_config.enabled !== false && tested && !testError,
+      tools: tools.length,
+      tools_registered: tools.length,
+      tool_names: tools.map(tool => tool.name),
+      tool_names_registered: tools.map(tool => tool.name),
+      tool_details: tools,
+      error: testError || null,
+    }
+  }),
+)
 
 const summary = computed(() => ({
-  total: servers.value.length,
-  enabled: servers.value.filter(server => server.raw_config.enabled !== false).length,
-  managed: servers.value.filter(server => server.managed).length,
-  tools: servers.value.reduce((total, server) => total + server.tools_registered, 0),
+  total: displayedServers.value.length,
+  enabled: displayedServers.value.filter(server => server.raw_config.enabled !== false).length,
+  managed: displayedServers.value.filter(server => server.managed).length,
+  tools: displayedServers.value.reduce((total, server) => total + server.tools_registered, 0),
 }))
 
 const filteredServers = computed(() => {
   const query = searchQuery.value.trim().toLowerCase()
-  if (!query) return servers.value
-  return servers.value.filter(server =>
+  if (!query) return displayedServers.value
+  return displayedServers.value.filter(server =>
     server.name.toLowerCase().includes(query)
     || server.transport.includes(query)
     || String(server.raw_config.command || '').toLowerCase().includes(query)
@@ -96,12 +113,73 @@ function errorMessage(value: unknown): string {
   return value instanceof Error ? value.message : String(value)
 }
 
+function nextProbeVersion(name: string): number {
+  const version = (probeVersions.get(name) || 0) + 1
+  probeVersions.set(name, version)
+  return version
+}
+
+function setServerTesting(name: string, testing: boolean) {
+  const next = new Set(testingServers.value)
+  if (testing) next.add(name)
+  else next.delete(name)
+  testingServers.value = next
+}
+
+function invalidateServerProbe(name: string) {
+  nextProbeVersion(name)
+  setServerTesting(name, false)
+  const nextTools = { ...testedTools.value }
+  const nextErrors = { ...testErrors.value }
+  delete nextTools[name]
+  delete nextErrors[name]
+  testedTools.value = nextTools
+  testErrors.value = nextErrors
+}
+
+async function probeServer(server: CodingAgentMcpServerInfo, notify: boolean) {
+  const version = nextProbeVersion(server.name)
+  setServerTesting(server.name, true)
+  const nextErrors = { ...testErrors.value }
+  delete nextErrors[server.name]
+  testErrors.value = nextErrors
+  try {
+    const response = await testCodingAgentMcpServer(props.agentId, server.name)
+    if (probeVersions.get(server.name) !== version) return
+    if (!response.ok) throw new Error(response.error || t('mcp.testEmpty'))
+    const tools = response.tool_details?.length
+      ? response.tool_details
+      : (response.tools || []).map(name => ({ name }))
+    testedTools.value = { ...testedTools.value, [server.name]: tools }
+    if (notify) message.success(t('mcp.testOk', { count: tools.length }))
+  } catch (probeError) {
+    if (probeVersions.get(server.name) !== version) return
+    testErrors.value = { ...testErrors.value, [server.name]: errorMessage(probeError) }
+    if (notify) message.error(`${t('mcp.testFailed')}: ${errorMessage(probeError)}`)
+  } finally {
+    if (probeVersions.get(server.name) === version) setServerTesting(server.name, false)
+  }
+}
+
+async function probeEnabledServers(candidates: CodingAgentMcpServerInfo[]) {
+  await Promise.allSettled(
+    candidates
+      .filter(server => server.raw_config.enabled !== false)
+      .map(server => probeServer(server, false)),
+  )
+}
+
 async function loadServers() {
   loading.value = true
   error.value = ''
   try {
     const response = await fetchCodingAgentMcpServers(props.agentId)
     servers.value = response.servers || []
+    const loadedNames = new Set(servers.value.map(server => server.name))
+    for (const name of probeVersions.keys()) {
+      if (!loadedNames.has(name)) invalidateServerProbe(name)
+    }
+    void probeEnabledServers(servers.value)
   } catch (loadError) {
     error.value = errorMessage(loadError)
   } finally {
@@ -161,11 +239,7 @@ async function saveServer() {
 async function removeServer(server: CodingAgentMcpServerInfo) {
   try {
     await removeCodingAgentMcpServer(props.agentId, server.name)
-    if (!server.managed) {
-      const next = { ...testedTools.value }
-      delete next[server.name]
-      testedTools.value = next
-    }
+    invalidateServerProbe(server.name)
     await loadServers()
     message.success(t('mcp.serverRemoved', { name: server.name }))
   } catch (removeError) {
@@ -175,15 +249,12 @@ async function removeServer(server: CodingAgentMcpServerInfo) {
 
 async function toggleServer(server: CodingAgentMcpServerInfo) {
   try {
+    const enabled = server.raw_config.enabled === false
     await updateCodingAgentMcpServer(props.agentId, server.name, {
       ...server.raw_config,
-      enabled: server.raw_config.enabled === false,
+      enabled,
     })
-    if (server.raw_config.enabled !== false) {
-      const next = { ...testedTools.value }
-      delete next[server.name]
-      testedTools.value = next
-    }
+    invalidateServerProbe(server.name)
     await loadServers()
   } catch (toggleError) {
     message.error(`${t('common.saveFailed')}: ${errorMessage(toggleError)}`)
@@ -191,39 +262,21 @@ async function toggleServer(server: CodingAgentMcpServerInfo) {
 }
 
 async function testServer(server: CodingAgentMcpServerInfo) {
-  const next = new Set(testingServers.value)
-  next.add(server.name)
-  testingServers.value = next
-  try {
-    const response = await testCodingAgentMcpServer(props.agentId, server.name)
-    if (response.ok) {
-      testedTools.value = {
-        ...testedTools.value,
-        [server.name]: response.tool_details?.length
-          ? response.tool_details
-          : (response.tools || []).map(name => ({ name })),
-      }
-      message.success(t('mcp.testOk', { count: response.tools?.length || 0 }))
-      await loadServers()
-    } else {
-      message.warning(response.error || t('mcp.testEmpty'))
-    }
-  } catch (testError) {
-    message.error(`${t('mcp.testFailed')}: ${errorMessage(testError)}`)
-  } finally {
-    const current = new Set(testingServers.value)
-    current.delete(server.name)
-    testingServers.value = current
-  }
+  await probeServer(server, true)
 }
 
-function openTools(server: CodingAgentMcpServerInfo) {
-  toolsServer.value = server
-  showToolsModal.value = true
+async function changeAgent() {
+  for (const name of probeVersions.keys()) invalidateServerProbe(name)
+  probeVersions.clear()
+  servers.value = []
+  await loadServers()
 }
 
 onMounted(loadServers)
-watch(() => props.agentId, loadServers)
+onBeforeUnmount(() => {
+  for (const name of probeVersions.keys()) invalidateServerProbe(name)
+})
+watch(() => props.agentId, changeAgent)
 </script>
 
 <template>
@@ -280,19 +333,17 @@ watch(() => props.agentId, loadServers)
             :key="server.name"
             :server="server"
             :tools-by-server="toolsByServer"
-            :show-manage-tools="true"
+            :show-manage-tools="false"
             :show-reload="false"
             :readonly="server.managed"
             :allow-readonly-toggle="true"
             :allow-readonly-remove="true"
-            readonly-tools-view
             :context-label="server.managed ? t('ekkoConfig.managed') : t('ekkoConfig.custom')"
             :testing="testingServers.has(server.name)"
             @edit="openEdit(server)"
             @test="testServer(server)"
             @remove="removeServer(server)"
             @toggle-enabled="toggleServer(server)"
-            @manage-tools="openTools(server)"
           />
         </div>
         <NEmpty v-else :description="t('mcp.empty')" />
@@ -327,33 +378,6 @@ watch(() => props.agentId, loadServers)
       </div>
     </NModal>
 
-    <NModal
-      v-model:show="showToolsModal"
-      :title="`${toolsServer?.name || ''} · ${t('mcp.toolList')}`"
-      preset="card"
-      :style="{ width: 'min(620px, calc(100vw - 32px))' }"
-    >
-      <NScrollbar style="max-height: min(60vh, 480px)">
-        <div v-if="selectedTools.length" class="readonly-tools-list">
-          <div v-for="tool in selectedTools" :key="tool.name" class="readonly-tool-row">
-            <code>{{ tool.name }}</code>
-            <span v-if="tool.description">{{ tool.description }}</span>
-          </div>
-        </div>
-        <NEmpty v-else :description="t('mcp.toolsEmpty')" />
-      </NScrollbar>
-      <div class="modal-actions">
-        <NButton @click="showToolsModal = false">{{ t('mcp.cancel') }}</NButton>
-        <NButton
-          v-if="toolsServer"
-          type="primary"
-          :loading="testingServers.has(toolsServer.name)"
-          @click="testServer(toolsServer)"
-        >
-          {{ t('mcp.test') }}
-        </NButton>
-      </div>
-    </NModal>
   </div>
 </template>
 
@@ -365,23 +389,5 @@ watch(() => props.agentId, loadServers)
 .mcp-view.embedded {
   height: 100%;
   min-height: 0;
-}
-
-.readonly-tools-list {
-  display: grid;
-  gap: 8px;
-}
-
-.readonly-tool-row {
-  display: grid;
-  gap: 4px;
-  padding: 10px 12px;
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-}
-
-.readonly-tool-row span {
-  color: var(--text-muted);
-  font-size: 12px;
 }
 </style>

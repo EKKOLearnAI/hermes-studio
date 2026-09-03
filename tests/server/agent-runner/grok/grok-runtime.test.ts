@@ -76,6 +76,16 @@ describe('Grok runtime isolation', () => {
       reasoningEffort: 'high',
       systemPrompt: 'Studio instructions.',
       userInstructions: 'User instructions.',
+      settingsContent: [
+        'api_key = "stale-native-key"',
+        'access_token = "stale-native-token"',
+        '',
+        '[auth]',
+        'refresh_token = "stale-refresh-token"',
+        '',
+        '[cli]',
+        'installer = "npm"',
+      ].join('\n'),
       managedMcpToml: '[mcp_servers.hermes-studio-use]\ncommand = "studio-mcp"\n',
     })
 
@@ -84,6 +94,10 @@ describe('Grok runtime isolation', () => {
     expect(config).toContain('api_backend = "responses"')
     expect(config).toContain('env_key = "HERMES_STUDIO_GROK_API_KEY"')
     expect(config).not.toContain('api_key =')
+    expect(config).not.toContain('stale-native')
+    expect(config).not.toContain('stale-refresh-token')
+    expect(config).not.toContain('[auth]')
+    expect(config).toContain('[cli]')
 
     const promptPath = join(rootDir, 'AGENTS.md')
     const prompt = readFileSync(promptPath, 'utf-8')

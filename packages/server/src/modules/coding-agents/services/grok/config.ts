@@ -95,7 +95,17 @@ export function grokSettingsConfig(content: string): string {
 export function grokRuntimeSettingsConfig(...contents: Array<string | null | undefined>): string {
   const topLevel = new Map<string, string>()
   const sections = new Map<string, string[]>()
-  const runtimeKeys = new Set(['model', 'default', 'default_reasoning_effort', 'context_window', 'max_completion_tokens'])
+  const runtimeKeys = new Set([
+    'model',
+    'default',
+    'default_reasoning_effort',
+    'context_window',
+    'max_completion_tokens',
+    'api_key',
+    'access_token',
+    'refresh_token',
+    'auth_token',
+  ])
 
   for (const content of contents) {
     let section = ''
@@ -110,7 +120,15 @@ export function grokRuntimeSettingsConfig(...contents: Array<string | null | und
         if (assignment && !runtimeKeys.has(assignment[1])) topLevel.set(assignment[1], line)
         continue
       }
-      if (section === 'models' || section.startsWith('model.') || section.startsWith('mcp_servers.')) continue
+      if (
+        section === 'models'
+        || section.startsWith('model.')
+        || section.startsWith('mcp_servers.')
+        || section === 'auth'
+        || section.startsWith('auth.')
+        || section === 'account'
+        || section.startsWith('account.')
+      ) continue
       const lines = sections.get(section) || []
       if (line.trim()) lines.push(line)
       sections.set(section, lines)
