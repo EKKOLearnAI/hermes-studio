@@ -5,7 +5,7 @@ import { useI18n } from "vue-i18n";
 import { changePassword, changeUsername, fetchCurrentUser, fetchLockedIps, unlockSpecificIp, unlockAllIps, fetchMyAvatar, updateMyAvatar, resetMyAvatar } from "@/api/studio/auth";
 import type { LockedIp, UserAvatar } from "@/api/studio/auth";
 import ProfileAvatar from "@/components/hermes/profiles/ProfileAvatar.vue";
-import multiavatar from "@multiavatar/multiavatar";
+import boring from "boring-avatars-vanilla";
 
 const { t } = useI18n();
 const message = useMessage();
@@ -89,7 +89,7 @@ async function handleRandomAvatar() {
       ? crypto.randomUUID()
       : Math.random().toString(36).slice(2)
     const seed = `${username.value || 'default'}-${Date.now()}-${randomPart}`
-    const svg = multiavatar(seed)
+    const svg = boring({ name: seed, variant: 'beam' })
     const dataUrl = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svg)))
     await updateMyAvatar({ type: 'image', dataUrl, seed })
     avatar.value = { type: 'image', dataUrl, seed }
