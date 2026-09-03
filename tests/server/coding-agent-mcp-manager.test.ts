@@ -4,6 +4,8 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { configureProfileConfig } from '../../packages/server/src/modules/studio/public/profile-config'
 
+const stdioOptions: any[] = []
+
 vi.mock('@modelcontextprotocol/client', () => ({
   Client: class {
     async connect() {}
@@ -17,7 +19,11 @@ vi.mock('@modelcontextprotocol/client', () => ({
 }))
 
 vi.mock('@modelcontextprotocol/client/stdio', () => ({
-  StdioClientTransport: class {},
+  StdioClientTransport: class {
+    constructor(options: any) {
+      stdioOptions.push(options)
+    }
+  },
 }))
 
 import {
@@ -26,6 +32,7 @@ import {
   testCodingAgentMcpServer,
   upsertCodingAgentMcpServer,
 } from '../../packages/server/src/modules/coding-agents/services/mcp-manager'
+import { codingAgentRunManager } from '../../packages/server/src/modules/coding-agents/services/runtime/run-manager'
 
 const homes: string[] = []
 
@@ -55,6 +62,8 @@ function makeHome(): string {
 afterEach(() => {
   delete process.env.HERMES_CODING_AGENT_GLOBAL_HOME
   delete process.env.HERMES_WEB_UI_HOME
+  delete process.env.HERMES_PROFILE_API_KEY
+  stdioOptions.splice(0)
   for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true })
 })
 
@@ -162,6 +171,35 @@ describe('coding Agent MCP manager', () => {
     expect(persisted).not.toContain('[mcp_servers.hermes-studio-api]')
   })
 
+  it('reads and preserves quoted TOML header keys when an MCP server is edited', async () => {
+    const home = makeHome()
+    const path = join(home, '.codex', 'config.toml')
+    mkdirSync(join(home, '.codex'), { recursive: true })
+    writeFileSync(path, [
+      '[mcp_servers.docs]',
+      'url = "https://example.com/mcp"',
+      '',
+      '[mcp_servers.docs.http_headers]',
+      '"X-Mode" = "safe"',
+      '"Authorization" = "Bearer value#fragment"',
+      '',
+    ].join('\n'))
+
+    const listed = await listCodingAgentMcpServers('codex')
+    expect(listed.servers.find(server => server.name === 'docs')?.raw_config.headers).toEqual({
+      'X-Mode': 'safe',
+      Authorization: 'Bearer value#fragment',
+    })
+
+    await upsertCodingAgentMcpServer('codex', 'docs', {
+      ...listed.servers.find(server => server.name === 'docs')!.raw_config,
+      enabled: false,
+    })
+    const persisted = readFileSync(path, 'utf-8')
+    expect(persisted).toContain('X-Mode = "safe"')
+    expect(persisted).toContain('Authorization = "Bearer value#fragment"')
+  })
+
   it('uses per-Agent enable overrides for Studio-managed servers and directly tests custom servers', async () => {
     const home = makeHome()
     expect(existsSync(join(home, '.claude', 'mcp.json'))).toBe(false)
@@ -175,6 +213,7 @@ describe('coding Agent MCP manager', () => {
     expect(existsSync(join(home, '.claude', 'mcp.json'))).toBe(false)
 
     await upsertCodingAgentMcpServer('claude-code', 'custom', { command: 'custom-mcp' })
+    process.env.HERMES_PROFILE_API_KEY = 'must-not-reach-mcp-probe'
     await expect(testCodingAgentMcpServer('claude-code', 'custom')).resolves.toEqual({
       ok: true,
       tools: ['custom_tool'],
@@ -184,5 +223,33 @@ describe('coding Agent MCP manager', () => {
         input_schema: { type: 'object', properties: {} },
       }],
     })
+    expect(stdioOptions).toHaveLength(1)
+    expect(stdioOptions[0].env.HERMES_PROFILE_API_KEY).toBeUndefined()
+  })
+
+  it('invalidates every provider runtime for an Agent and Profile after managed MCP changes', async () => {
+    makeHome()
+    const matched: string[] = []
+    vi.spyOn(codingAgentRunManager, 'invalidateMatching').mockImplementation((predicate) => {
+      for (const launch of [
+        { agentId: 'codex', profile: 'default', provider: 'custom:first' },
+        { agentId: 'codex', profile: 'default', provider: 'custom:second' },
+        { agentId: 'codex', profile: 'other', provider: 'custom:first' },
+        { agentId: 'claude-code', profile: 'default', provider: 'custom:first' },
+      ] as any[]) {
+        if (predicate(launch)) matched.push(`${launch.agentId}/${launch.profile}/${launch.provider}`)
+      }
+      return { invalidated: matched.length, deferred: 0 }
+    })
+
+    await upsertCodingAgentMcpServer('codex', 'hermes-studio-api', {
+      url: 'https://mcp.example.com/api',
+      enabled: true,
+    }, { profile: 'default', provider: 'custom:first' })
+
+    expect(matched).toEqual([
+      'codex/default/custom:first',
+      'codex/default/custom:second',
+    ])
   })
 })

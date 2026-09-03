@@ -26,6 +26,9 @@ import { compactCodexThread } from './codex-compact'
 import { updateManagedPromptFileSync } from '../prompt-file'
 import { grokSessionExists, startGrokTurnProcess } from '../grok/turn-process'
 import { applyGrokStreamEvent } from '../grok/event-adapter'
+import { isolatedCodingAgentChildEnv } from './child-env'
+
+export { isolatedCodingAgentChildEnv } from './child-env'
 
 const DEFAULT_IDLE_MS = 30 * 60 * 1000
 const TERMINAL_OUTPUT_FLUSH_MS = 120
@@ -443,33 +446,6 @@ function spawnCodingAgentChild(command: string, args: string[], options: {
     detached: process.platform !== 'win32',
     windowsHide: process.platform === 'win32',
   })
-}
-
-const CODING_AGENT_CHILD_ENV_KEYS = new Set([
-  'PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'TERM',
-  'TMP', 'TEMP', 'TMPDIR',
-  'LANG', 'LANGUAGE', 'TZ',
-  'SystemRoot', 'WINDIR', 'ComSpec', 'PATHEXT',
-  'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'PROGRAMDATA',
-  'ProgramFiles', 'ProgramFiles(x86)', 'ProgramW6432',
-  'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY',
-  'http_proxy', 'https_proxy', 'no_proxy',
-  'NODE_PATH', 'NODE_EXTRA_CA_CERTS',
-])
-
-export function isolatedCodingAgentChildEnv(
-  launchEnv: NodeJS.ProcessEnv = {},
-  sourceEnv: NodeJS.ProcessEnv = process.env,
-): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = {}
-  for (const [key, value] of Object.entries(sourceEnv)) {
-    if (value === undefined) continue
-    if (CODING_AGENT_CHILD_ENV_KEYS.has(key) || key.startsWith('LC_')) env[key] = value
-  }
-  for (const [key, value] of Object.entries(launchEnv)) {
-    if (value !== undefined) env[key] = value
-  }
-  return env
 }
 
 function piAssistantMessageText(message: any): string {

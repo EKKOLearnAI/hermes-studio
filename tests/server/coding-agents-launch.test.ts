@@ -18,6 +18,7 @@ import {
   prepareCodingAgentLaunch,
   restorePersistedCodexProxyTargets,
   restorePersistedPiProxyTargets,
+  writeCodingAgentConfigFile,
 } from '../../packages/server/src/bootstrap/coding-agents'
 import { getModelContextLength } from '../../packages/server/src/modules/hermes/services/models/context'
 import {
@@ -180,6 +181,10 @@ describe('coding agent launch preparation', () => {
         'requires_openai_auth = false',
         `experimental_bearer_token = ${JSON.stringify(token)}`,
         '',
+        '[mcp_servers.unrelated]',
+        'base_url = "https://mcp.example.com/not-a-codex-proxy"',
+        'experimental_bearer_token = "not-a-runtime-token"',
+        '',
       ].join('\n'))
     }
 
@@ -220,6 +225,64 @@ describe('coding agent launch preparation', () => {
     const managedBlock = config.match(/\[mcp_servers\.hermes-studio-api\][\s\S]*?(?=\n\[|$)/)?.[0] || ''
     expect(managedBlock).toContain('url = "https://mcp.example.com/api"')
     expect(managedBlock).not.toContain('command =')
+  })
+
+  it('keeps Studio-managed Codex settings at TOML root when user config contains tables', async () => {
+    const home = makeHome()
+    const globalConfigPath = join(home, 'global-home', '.codex', 'config.toml')
+    mkdirSync(dirname(globalConfigPath), { recursive: true })
+    writeFileSync(globalConfigPath, [
+      'sandbox_mode = "workspace-write"',
+      '',
+      '[hooks.state."state-id"]',
+      'command = "state-hook"',
+      '',
+    ].join('\n'))
+
+    const launch = await prepareCodingAgentLaunch('codex', {
+      profile: 'default',
+      provider: 'custom:test',
+      model: 'codex-model',
+      baseUrl: 'https://api.example.com/v1',
+      apiKey: 'sk-runtime',
+      apiMode: 'codex_responses',
+      sessionId: 'codex-table-order-session',
+      agentSessionId: 'codex-table-order-agent-session',
+    })
+    const config = readFileSync(join(launch.rootDir, 'config.toml'), 'utf-8')
+    const providerIndex = config.indexOf('model_provider = "custom"')
+    const providerSectionIndex = config.indexOf('[model_providers.custom]')
+    const hooksSectionIndex = config.indexOf('[hooks.state."state-id"]')
+
+    expect(providerIndex).toBeGreaterThanOrEqual(0)
+    expect(providerIndex).toBeLessThan(providerSectionIndex)
+    expect(providerSectionIndex).toBeLessThan(hooksSectionIndex)
+    expect(config.slice(0, config.indexOf('\n['))).toContain('model = "codex-model"')
+  })
+
+  it('invalidates all scoped runtimes when a shared Coding Agent config changes', async () => {
+    makeHome()
+    const matched: string[] = []
+    vi.spyOn(codingAgentRunManager, 'invalidateMatching').mockImplementation((predicate) => {
+      for (const launch of [
+        { agentId: 'codex', profile: 'default', provider: 'custom:first' },
+        { agentId: 'codex', profile: 'other', provider: 'custom:second' },
+        { agentId: 'claude-code', profile: 'default', provider: 'custom:first' },
+      ] as any[]) {
+        if (predicate(launch)) matched.push(`${launch.agentId}/${launch.profile}/${launch.provider}`)
+      }
+      return { invalidated: matched.length, deferred: 0 }
+    })
+
+    await writeCodingAgentConfigFile('codex', 'agents', 'Updated shared instructions.\n', {
+      profile: 'default',
+      provider: 'custom:first',
+    })
+
+    expect(matched).toEqual([
+      'codex/default/custom:first',
+      'codex/other/custom:second',
+    ])
   })
 
   it('translates Studio reasoning choices into Pi thinking levels', () => {

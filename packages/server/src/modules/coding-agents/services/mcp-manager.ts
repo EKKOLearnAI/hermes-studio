@@ -2,6 +2,7 @@ import { Client, SSEClientTransport, StreamableHTTPClientTransport } from '@mode
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 import {
   getCodingAgentManagedMcpServerConfigs,
+  invalidateCodingAgentConfigRuntime,
   readCodingAgentConfigFile,
   writeCodingAgentConfigFile,
   type CodingAgentId,
@@ -13,6 +14,7 @@ import {
   setManagedMcpServerEnabled,
   setManagedMcpServerOverride,
 } from './mcp-overrides'
+import { isolatedCodingAgentChildEnv } from './runtime/child-env'
 
 const CODING_AGENT_IDS = new Set(['claude-code', 'codex', 'pi', 'grok'])
 const STUDIO_MANAGED_NAMES = new Set([
@@ -194,6 +196,44 @@ function parseTomlValue(raw: string): any {
   return value
 }
 
+function stripTomlInlineComment(value: string): string {
+  let quote = ''
+  let escaped = false
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index]
+    if (quote) {
+      if (quote === '"' && char === '\\' && !escaped) {
+        escaped = true
+        continue
+      }
+      if (char === quote && !escaped) quote = ''
+      escaped = false
+      continue
+    }
+    if (char === '"' || char === '\'') {
+      quote = char
+      continue
+    }
+    if (char === '#' && (index === 0 || /\s/.test(value[index - 1]))) {
+      return value.slice(0, index).trimEnd()
+    }
+  }
+  return value.trimEnd()
+}
+
+function parseTomlAssignment(line: string): { key: string; value: any } | null {
+  const match = line.match(/^\s*(?:"((?:[^"\\]|\\.)*)"|'([^']*)'|([A-Za-z0-9_.-]+))\s*=\s*(.*)$/)
+  if (!match) return null
+  let key = match[1] ?? match[2] ?? match[3] ?? ''
+  if (match[1] != null) {
+    try { key = JSON.parse(`"${match[1]}"`) } catch {}
+  }
+  return {
+    key,
+    value: parseTomlValue(stripTomlInlineComment(match[4])),
+  }
+}
+
 function parseTomlServer(name: string, block: string): Record<string, any> {
   const config: Record<string, any> = {}
   let subtable = ''
@@ -203,10 +243,9 @@ function parseTomlServer(name: string, block: string): Record<string, any> {
       subtable = header.name === name ? header.subtable : ''
       continue
     }
-    const match = line.match(/^\s*([A-Za-z0-9_.-]+)\s*=\s*(.*?)\s*(?:#.*)?$/)
-    if (!match) continue
-    const key = match[1]
-    const value = parseTomlValue(match[2])
+    const assignment = parseTomlAssignment(line)
+    if (!assignment) continue
+    const { key, value } = assignment
     if (subtable) {
       const targetKey = subtable === 'http_headers' ? 'headers' : subtable
       if (!isRecord(config[targetKey])) config[targetKey] = {}
@@ -393,6 +432,7 @@ export async function upsertCodingAgentMcpServer(
       normalizedName,
       config.enabled !== false,
     )
+    invalidateCodingAgentConfigRuntime(id, scope, { profileScoped: true })
     return { ok: true, name: normalizedName }
   }
   if (!isRecord(config) || (!String(config.command || '').trim() && !String(config.url || '').trim())) {
@@ -412,6 +452,7 @@ export async function removeCodingAgentMcpServer(
 ): Promise<{ ok: true }> {
   if (STUDIO_MANAGED_NAMES.has(name)) {
     setManagedMcpServerEnabled(id, scope.profile || 'default', name, false)
+    invalidateCodingAgentConfigRuntime(id, scope, { profileScoped: true })
     return { ok: true }
   }
   const current = await readServers(id, scope)
@@ -449,13 +490,7 @@ export async function testCodingAgentMcpServer(
         : new StdioClientTransport({
             command: String(config.command || ''),
             args: Array.isArray(config.args) ? config.args.map(String) : [],
-            env: {
-              ...Object.fromEntries(
-                Object.entries(process.env)
-                  .filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
-              ),
-              ...stringRecord(config.env),
-            },
+            env: isolatedCodingAgentChildEnv(stringRecord(config.env)),
             stderr: 'ignore',
           })
     await client.connect(transport, { timeout: 5_000 })

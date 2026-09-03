@@ -1252,7 +1252,8 @@ function parseCodexExternalMcpBlocks(...contents: Array<string | null | undefine
 }
 
 function codexRuntimeUserConfig(...contents: Array<string | null | undefined>): {
-  other: string
+  topLevelLines: string[]
+  sectionBlocks: string[]
   featureLines: string[]
 } {
   const topLevel = new Map<string, string>()
@@ -1307,12 +1308,13 @@ function codexRuntimeUserConfig(...contents: Array<string | null | undefined>): 
     }
   }
 
-  const blocks = [...topLevel.values()]
+  const sectionBlocks: string[] = []
   for (const [section, lines] of sections) {
-    if (lines.length) blocks.push(`[${section}]\n${lines.join('\n')}`)
+    if (lines.length) sectionBlocks.push(`[${section}]\n${lines.join('\n')}`)
   }
   return {
-    other: blocks.join('\n\n'),
+    topLevelLines: [...topLevel.values()],
+    sectionBlocks,
     featureLines: [...featureLines.values()],
   }
 }
@@ -1735,15 +1737,24 @@ function persistedCodexProxyConfigs(): Array<{ agentId: 'codex' | 'grok'; path: 
   return configs
 }
 
-function lastTomlString(content: string, key: string): string {
-  const pattern = new RegExp(`^\\s*${key.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}\\s*=\\s*(\"(?:[^\"\\\\]|\\\\.)*\")\\s*(?:#.*)?$`, 'gm')
-  let value = ''
-  for (const match of content.matchAll(pattern)) {
+function tomlSectionString(content: string, sectionName: string, key: string): string {
+  let section = ''
+  for (const line of content.split(/\r?\n/)) {
+    const header = line.match(/^\s*\[([^\]]+)\]\s*(?:#.*)?$/)
+    if (header) {
+      section = header[1].trim()
+      continue
+    }
+    if (section !== sectionName) continue
+    const assignment = line.match(/^\s*([A-Za-z0-9_.-]+)\s*=\s*(\"(?:[^\"\\]|\\.)*\")\s*(?:#.*)?$/)
+    if (assignment?.[1] !== key) continue
     try {
-      value = JSON.parse(match[1])
-    } catch {}
+      return JSON.parse(assignment[2])
+    } catch {
+      return ''
+    }
   }
-  return value
+  return ''
 }
 
 export async function restorePersistedCodexProxyTargets(): Promise<number> {
@@ -1752,8 +1763,8 @@ export async function restorePersistedCodexProxyTargets(): Promise<number> {
   for (const config of persistedCodexProxyConfigs()) {
     const content = await safeReadFile(config.path)
     if (!content) continue
-    const proxyBaseUrl = lastTomlString(content, 'base_url')
-    const token = lastTomlString(content, 'experimental_bearer_token')
+    const proxyBaseUrl = tomlSectionString(content, 'model_providers.custom', 'base_url')
+    const token = tomlSectionString(content, 'model_providers.custom', 'experimental_bearer_token')
     const routeKey = proxyBaseUrl.match(/\/api\/codex-proxy\/([^/]+)\/v1\/?$/)?.[1] || ''
     if (!routeKey || !token || restoredRouteKeys.has(routeKey)) continue
     try {
@@ -2602,7 +2613,8 @@ export async function readCodingAgentConfigFile(id: string, key: string, scope: 
 
 export async function writeCodingAgentConfigFile(id: string, key: string, content: string, scope: CodingAgentConfigScope = {}): Promise<CodingAgentConfigFileContent> {
   const normalizedScope = normalizeConfigScope(scope)
-  const definition = id === 'grok' && key === 'mcp' && normalizedScope.provider !== 'default'
+  const providerScoped = id === 'grok' && key === 'mcp' && normalizedScope.provider !== 'default'
+  const definition = providerScoped
     ? getScopedConfigFileDefinition(id, key, normalizedScope)
     : getLiveConfigFileDefinition(id, key)
   if (!definition) {
@@ -2626,11 +2638,10 @@ export async function writeCodingAgentConfigFile(id: string, key: string, conten
 
   await mkdir(dirname(definition.absolutePath), { recursive: true })
   await writeFile(definition.absolutePath, buffer)
-  codingAgentRunManager.stopMatching(launch => (
-    launch.agentId === id &&
-    launch.profile === normalizedScope.profile &&
-    normalizeScopeSegment(launch.provider, 'default', 'provider') === normalizedScope.provider
-  ), { reportClosed: true })
+  invalidateCodingAgentConfigRuntime(id, normalizedScope, {
+    profileScoped: providerScoped,
+    providerScoped,
+  })
   return {
     ...definition,
     ...normalizedScope,
@@ -2646,6 +2657,23 @@ export async function writeCodingAgentConfigFile(id: string, key: string, conten
     exists: true,
     size: buffer.length,
   }
+}
+
+export function invalidateCodingAgentConfigRuntime(
+  id: string,
+  scope: CodingAgentConfigScope = {},
+  options: { profileScoped?: boolean; providerScoped?: boolean } = {},
+): { invalidatedRuns: number; deferredRuns: number } {
+  const normalizedScope = normalizeConfigScope(scope)
+  const result = codingAgentRunManager.invalidateMatching(launch => (
+    launch.agentId === id
+    && (!options.profileScoped || launch.profile === normalizedScope.profile)
+    && (
+      !options.providerScoped
+      || normalizeScopeSegment(launch.provider, 'default', 'provider') === normalizedScope.provider
+    )
+  ))
+  return { invalidatedRuns: result.invalidated, deferredRuns: result.deferred }
 }
 
 export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLaunchInput): Promise<CodingAgentLaunchResult> {
@@ -2926,7 +2954,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       .filter(Boolean)
       .join('\n\n')
     const configToml = [
-      userRuntimeConfig.other,
+      ...userRuntimeConfig.topLevelLines,
       `model_catalog_json = ${JSON.stringify(catalogPath)}`,
       `model_provider = ${JSON.stringify(providerId)}`,
       `model = ${JSON.stringify(model)}`,
@@ -2942,6 +2970,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       'requires_openai_auth = false',
       ...(codexApiKey ? [`experimental_bearer_token = ${JSON.stringify(codexApiKey)}`] : []),
       '',
+      ...userRuntimeConfig.sectionBlocks.flatMap(block => [block, '']),
       codexMcpConfigToml(
         scope.profile,
         'codex',

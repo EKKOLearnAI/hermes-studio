@@ -849,6 +849,7 @@ describe('coding agent Windows process launch', () => {
     const manager = new CodingAgentRunManager()
     const emitted: Array<{ event: string; payload: any }> = []
     ;(manager as any).ensureDbSession = () => {}
+    ;(manager as any).addUserMessage = () => 1
     ;(manager as any).persistTerminalResponse = () => undefined
     ;(manager as any).refreshCodingAgentUsage = async () => {}
     ;(manager as any).completeWorkspaceRunDiff = () => undefined
