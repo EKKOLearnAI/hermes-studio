@@ -86,7 +86,7 @@ const remoteRelay = {
   url: process.env.HERMES_REMOTE_RELAY_URL?.trim() || 'https://api.hermes-studio.ai',
 }
 const appRelay = {
-  url: process.env.HERMES_APP_RELAY_URL?.trim() || 'https://testapi.hermes-studio.ai',
+  url: process.env.HERMES_APP_RELAY_URL?.trim() || 'https://api.hermes-studio.ai',
   entitlementRequired: isAppEntitlementRequired(),
 }
 

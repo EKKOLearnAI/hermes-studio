@@ -73,7 +73,7 @@ describe('app relay controller', () => {
         pairingExpiresAt: 12345,
         expiresAt: 12345,
         route: 'official',
-        relayUrl: 'https://testapi.hermes-studio.ai',
+        relayUrl: 'https://api.hermes-studio.ai',
       },
     })
   })
