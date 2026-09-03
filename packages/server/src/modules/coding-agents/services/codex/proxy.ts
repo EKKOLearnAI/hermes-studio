@@ -216,11 +216,16 @@ function responseEventForCodexClient(target: CodexProxyTarget, event: CanonicalR
 }
 
 function observableResponsesEvents(target: CodexProxyTarget, events: AsyncIterable<CanonicalResponsesEvent>): AsyncIterable<CanonicalResponsesEvent> {
-  async function* observe() {
+async function* observe() {
     for await (const event of normalizeResponsesSseEvents(events)) {
       codingAgentRunManager.handleProxyUsageEvent(target.agentSessionId, event)
       const clientEvent = responseEventForCodexClient(target, event)
-      codingAgentRunManager.handleResponseEvent(target.agentSessionId, clientEvent)
+      // Grok prints the same streamed text through its `streaming-json`
+      // stdout. Feeding proxy events directly into the run as well would
+      // append every model delta twice.
+      if (target.agentId !== 'grok') {
+        codingAgentRunManager.handleResponseEvent(target.agentSessionId, clientEvent)
+      }
       yield clientEvent
     }
   }

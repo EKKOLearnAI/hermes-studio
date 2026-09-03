@@ -23,6 +23,7 @@ import {
   normalizePiThinkingLevel,
   piModelSupportsThinking,
 } from '../../packages/server/src/modules/coding-agents/services/pi/thinking'
+import { codingAgentRunManager } from '../../packages/server/src/modules/coding-agents/services/runtime/run-manager'
 
 const homes: string[] = []
 
@@ -2200,6 +2201,40 @@ describe('coding agent launch preparation', () => {
     expect(forwarded.messages[0].content).toContain('Project rules')
     expect(forwarded).not.toHaveProperty('max_tokens')
     expect(forwarded).not.toHaveProperty('max_output_tokens')
+  })
+
+  it('does not append Grok proxy deltas before Grok prints them through stdout', async () => {
+    const target = registerCodexProxyTarget({
+      profile: 'default',
+      provider: 'openai-api',
+      model: 'grok-stream-test',
+      baseUrl: 'https://api.openai.com/v1',
+      apiKey: 'sk-upstream',
+      apiMode: 'codex_responses',
+      agentId: 'grok',
+      agentSessionId: 'agent-session-grok-stream',
+    })
+    const handleResponseEvent = vi.spyOn(codingAgentRunManager, 'handleResponseEvent')
+    const encoder = new TextEncoder()
+    const fetchMock = vi.fn(async () => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode('event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"hello"}\n\n'))
+        controller.enqueue(encoder.encode('event: response.completed\ndata: {"type":"response.completed","response":{"id":"resp_grok","status":"completed","output":[]}}\n\n'))
+        controller.close()
+      },
+    }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const ctx = makeProxyContext(target.routeKey, target.token, {
+      stream: true,
+      input: [{ role: 'user', content: [{ type: 'input_text', text: 'Hello' }] }],
+    })
+    await codexProxyResponses(ctx)
+    for await (const _chunk of ctx.body) {
+      // Drain the proxy stream so all observable events are processed.
+    }
+
+    expect(handleResponseEvent).not.toHaveBeenCalled()
   })
 
   it('exposes Codex proxy models with route-token authentication', async () => {
