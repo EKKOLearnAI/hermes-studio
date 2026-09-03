@@ -61,6 +61,7 @@ import { createCodexProxyRequestBodyParser, createRequestBodyParser } from '../m
 import {
   getCodingAgentsStatus,
   migratePersistedPiRuntimeMcpConfigs,
+  restorePersistedCodexProxyTargets,
   restorePersistedPiProxyTargets,
 } from './coding-agents'
 import { isAuthorizedCodexProxyRequest } from '../modules/coding-agents/services/codex/proxy'
@@ -435,6 +436,15 @@ export async function bootstrap() {
     }
   } catch (err) {
     logger.warn(err, '[bootstrap] failed to migrate persisted Pi MCP runtime configs')
+  }
+
+  try {
+    const restoredCodexProxyTargets = await restorePersistedCodexProxyTargets()
+    if (restoredCodexProxyTargets > 0) {
+      console.log(`[bootstrap] restored ${restoredCodexProxyTargets} persisted Codex/Grok proxy target(s)`)
+    }
+  } catch (err) {
+    logger.warn(err, '[bootstrap] failed to restore persisted Codex/Grok proxy targets')
   }
 
   try {

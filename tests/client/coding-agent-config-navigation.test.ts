@@ -57,6 +57,7 @@ describe('coding Agent configuration navigation', () => {
     expect(skillsPanel).toContain('<SkillsView :target="target" embedded />')
     expect(mcpPanel).toContain('<McpServerCard')
     expect(mcpPanel).toContain(':readonly="server.managed"')
+    expect(mcpPanel).toContain(':allow-readonly-edit="true"')
     expect(mcpPanel).toContain('probeEnabledServers')
     expect(mcpPanel).toContain(':show-manage-tools="false"')
     expect(mcpPanel).toContain('toolsByServer')

@@ -14,6 +14,7 @@ const props = defineProps<{
   testing?: boolean
   allowReadonlyToggle?: boolean
   allowReadonlyRemove?: boolean
+  allowReadonlyEdit?: boolean
   readonlyToolsView?: boolean
 }>()
 
@@ -89,7 +90,7 @@ const MAX_VISIBLE_TOOLS = 20
     <!-- 底部：按钮 + 开关 -->
     <div class="card-footer">
       <div class="card-actions">
-        <NButton v-if="!readonly" size="tiny" quaternary @click="emit('edit', server)">{{ t('mcp.edit') }}</NButton>
+        <NButton v-if="!readonly || allowReadonlyEdit" size="tiny" quaternary @click="emit('edit', server)">{{ t('mcp.edit') }}</NButton>
         <NButton v-if="showManageTools !== false" size="tiny" quaternary @click="emit('manageTools', server)">
           {{ readonlyToolsView ? t('mcp.toolList') : t('mcp.manageTools') }}
         </NButton>

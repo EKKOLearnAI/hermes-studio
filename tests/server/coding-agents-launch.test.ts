@@ -16,6 +16,7 @@ import {
   codexToolSearchConfig,
   migratePersistedPiRuntimeMcpConfigs,
   prepareCodingAgentLaunch,
+  restorePersistedCodexProxyTargets,
   restorePersistedPiProxyTargets,
 } from '../../packages/server/src/bootstrap/coding-agents'
 import { getModelContextLength } from '../../packages/server/src/modules/hermes/services/models/context'
@@ -24,6 +25,8 @@ import {
   piModelSupportsThinking,
 } from '../../packages/server/src/modules/coding-agents/services/pi/thinking'
 import { codingAgentRunManager } from '../../packages/server/src/modules/coding-agents/services/runtime/run-manager'
+import { configureProfileConfig } from '../../packages/server/src/modules/studio/public/profile-config'
+import { upsertCodingAgentMcpServer } from '../../packages/server/src/modules/coding-agents/services/mcp-manager'
 
 const homes: string[] = []
 
@@ -40,6 +43,28 @@ function makeHome() {
   process.env.HERMES_WEB_UI_HOME = home
   process.env.HERMES_CODING_AGENT_GLOBAL_HOME = join(home, 'global-home')
   process.env.CODEX_HOME = join(home, 'global-home', '.codex')
+  configureProfileConfig({
+    buildModelGroups: () => ({ default: '', groups: [] }),
+    getProfilesBaseDir: () => join(home, 'profiles'),
+    getProfileDir: profile => join(home, 'profiles', profile),
+    getActiveProfileName: () => 'default',
+    listProfileNames: () => ['default'],
+    providerEnvironmentMap: {},
+    readConfigYaml: async () => ({}),
+    readConfigYamlForProfile: async () => ({
+      custom_providers: [{
+        name: 'test',
+        base_url: 'https://api.example.com/v1',
+        api_key: 'sk-restored-upstream',
+        api_mode: 'codex_responses',
+      }],
+    }),
+    safeReadFile: async filePath => existsSync(filePath) ? readFileSync(filePath, 'utf-8') : null,
+    saveEnvValue: async () => undefined,
+    saveEnvValueForProfile: async () => undefined,
+    updateConfigYaml: async () => undefined,
+    updateConfigYamlForProfile: async () => undefined,
+  })
   return home
 }
 
@@ -59,6 +84,7 @@ afterEach(() => {
 
 function makeProxyContext(routeKey: string, token: string, body: any): any {
   return {
+    path: `/api/codex-proxy/${routeKey}/v1/responses`,
     params: { key: routeKey },
     request: { body },
     responseHeaders: {} as Record<string, string>,
@@ -119,6 +145,81 @@ describe('coding agent launch preparation', () => {
     expect(codexToolSearchConfig('0.141.0')).toEqual({ toolSearch: true, alwaysDefer: true })
     expect(codexToolSearchConfig('0.142.0')).toEqual({ toolSearch: true, alwaysDefer: false })
     expect(codexToolSearchConfig('')).toEqual({ toolSearch: true, alwaysDefer: true })
+  })
+
+  it('restores persisted Codex and Grok profile proxy targets after a server restart', async () => {
+    const home = makeHome()
+    for (const [agentId, suffix] of [['codex', 'codex-restart'], ['grok', 'grok-restart']] as const) {
+      const routeKey = Buffer.from(JSON.stringify([
+        'default',
+        'custom:test',
+        `${agentId}-model`,
+        'codex_responses',
+        'https://api.example.com/v1',
+        `${agentId}-agent-session`,
+        `${agentId}-chat-session`,
+      ])).toString('base64url')
+      const token = `hwui_${suffix}`
+      const configPath = join(
+        home,
+        'coding-agent',
+        'model',
+        'default',
+        'custom_test',
+        agentId,
+        'runs',
+        suffix,
+        'config.toml',
+      )
+      mkdirSync(dirname(configPath), { recursive: true })
+      writeFileSync(configPath, [
+        'model_provider = "custom"',
+        '',
+        '[model_providers.custom]',
+        `base_url = "http://127.0.0.1:8648/api/codex-proxy/${routeKey}/v1"`,
+        'requires_openai_auth = false',
+        `experimental_bearer_token = ${JSON.stringify(token)}`,
+        '',
+      ].join('\n'))
+    }
+
+    await expect(restorePersistedCodexProxyTargets()).resolves.toBe(2)
+
+    for (const [agentId, suffix] of [['codex', 'codex-restart'], ['grok', 'grok-restart']] as const) {
+      const routeKey = Buffer.from(JSON.stringify([
+        'default',
+        'custom:test',
+        `${agentId}-model`,
+        'codex_responses',
+        'https://api.example.com/v1',
+        `${agentId}-agent-session`,
+        `${agentId}-chat-session`,
+      ])).toString('base64url')
+      expect(isAuthorizedCodexProxyRequest(makeProxyContext(routeKey, `hwui_${suffix}`, {}))).toBe(true)
+    }
+  })
+
+  it('applies edited Studio-managed MCP configuration to the scoped Codex runtime', async () => {
+    const home = makeHome()
+    await upsertCodingAgentMcpServer('codex', 'hermes-studio-api', {
+      url: 'https://mcp.example.com/api',
+      enabled: true,
+    }, { profile: 'default', provider: 'custom:test' })
+
+    const launch = await prepareCodingAgentLaunch('codex', {
+      profile: 'default',
+      provider: 'custom:test',
+      model: 'codex-model',
+      baseUrl: 'https://api.example.com/v1',
+      apiKey: 'sk-runtime',
+      apiMode: 'codex_responses',
+      sessionId: 'managed-mcp-session',
+      agentSessionId: 'managed-mcp-agent-session',
+    })
+    const config = readFileSync(join(launch.rootDir, 'config.toml'), 'utf-8')
+    const managedBlock = config.match(/\[mcp_servers\.hermes-studio-api\][\s\S]*?(?=\n\[|$)/)?.[0] || ''
+    expect(managedBlock).toContain('url = "https://mcp.example.com/api"')
+    expect(managedBlock).not.toContain('command =')
   })
 
   it('translates Studio reasoning choices into Pi thinking levels', () => {

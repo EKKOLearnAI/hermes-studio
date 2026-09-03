@@ -4,6 +4,7 @@ import { getWebUiHome } from '../../studio/public/config'
 
 interface ManagedMcpOverrides {
   disabled?: Record<string, Record<string, string[]>>
+  configs?: Record<string, Record<string, Record<string, Record<string, unknown>>>>
 }
 
 function overridesPath(): string {
@@ -31,6 +32,35 @@ function writeOverrides(value: ManagedMcpOverrides): void {
 export function getDisabledManagedMcpServers(id: string, profile = 'default'): Set<string> {
   const values = readOverrides().disabled?.[id]?.[profile] || []
   return new Set(values.map(String).filter(Boolean))
+}
+
+export function getManagedMcpServerOverride(
+  id: string,
+  profile: string,
+  name: string,
+): Record<string, unknown> {
+  const value = readOverrides().configs?.[id]?.[profile]?.[name]
+  return value && typeof value === 'object' && !Array.isArray(value) ? { ...value } : {}
+}
+
+export function setManagedMcpServerOverride(
+  id: string,
+  profile: string,
+  name: string,
+  config: Record<string, unknown>,
+): void {
+  const value = readOverrides()
+  const configs = value.configs ||= {}
+  const byAgent = configs[id] ||= {}
+  const byProfile = byAgent[profile] ||= {}
+  const persisted = { ...config }
+  delete persisted.enabled
+  if (Object.keys(persisted).length) byProfile[name] = persisted
+  else delete byProfile[name]
+  if (!Object.keys(byProfile).length) delete byAgent[profile]
+  if (!Object.keys(byAgent).length) delete configs[id]
+  if (!Object.keys(configs).length) delete value.configs
+  writeOverrides(value)
 }
 
 export function setManagedMcpServerEnabled(

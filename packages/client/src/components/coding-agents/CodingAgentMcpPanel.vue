@@ -336,6 +336,7 @@ watch(() => props.agentId, changeAgent)
             :show-manage-tools="false"
             :show-reload="false"
             :readonly="server.managed"
+            :allow-readonly-edit="true"
             :allow-readonly-toggle="true"
             :allow-readonly-remove="true"
             :context-label="server.managed ? t('ekkoConfig.managed') : t('ekkoConfig.custom')"

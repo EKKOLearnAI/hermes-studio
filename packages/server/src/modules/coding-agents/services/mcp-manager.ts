@@ -9,7 +9,9 @@ import {
 } from './index'
 import {
   getDisabledManagedMcpServers,
+  getManagedMcpServerOverride,
   setManagedMcpServerEnabled,
+  setManagedMcpServerOverride,
 } from './mcp-overrides'
 
 const CODING_AGENT_IDS = new Set(['claude-code', 'codex', 'pi', 'grok'])
@@ -289,6 +291,7 @@ async function readServers(id: string, scope: CodingAgentConfigScope): Promise<{
   for (const [name, config] of Object.entries(managed)) {
     servers.set(name, normalizeConfig({
       ...config,
+      ...getManagedMcpServerOverride(id, scope.profile || 'default', name),
       ...(disabledManaged.has(name) ? { enabled: false } : {}),
     }))
   }
@@ -364,6 +367,26 @@ export async function upsertCodingAgentMcpServer(
     throw error
   }
   if (STUDIO_MANAGED_NAMES.has(normalizedName)) {
+    const managedConfig = getCodingAgentManagedMcpServerConfigs(
+      id as CodingAgentId,
+      scope.profile || 'default',
+    )[normalizedName] || {}
+    const suppliedConfig = isRecord(config) ? config : {}
+    const changesConfiguration = Object.keys(suppliedConfig).some(key => key !== 'enabled')
+    const updatedConfig = normalizeConfig(changesConfiguration
+      ? suppliedConfig
+      : { ...managedConfig, ...suppliedConfig })
+    if (!String(updatedConfig.command || '').trim() && !String(updatedConfig.url || '').trim()) {
+      const error = new Error('MCP server requires command or url')
+      ;(error as any).status = 400
+      throw error
+    }
+    setManagedMcpServerOverride(
+      id,
+      scope.profile || 'default',
+      normalizedName,
+      updatedConfig,
+    )
     setManagedMcpServerEnabled(
       id,
       scope.profile || 'default',

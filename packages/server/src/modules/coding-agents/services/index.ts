@@ -19,7 +19,7 @@ import { getSystemPrompt } from '../../studio/public/runs/prompt'
 import { codingAgentRunManager } from './runtime/run-manager'
 import { PI_EXTENDED_THINKING_LEVEL_MAP, piModelSupportsThinking } from './pi/thinking'
 import { GROK_API_KEY_ENV, GROK_CODING_AGENT_DEFINITION, GROK_PROVIDER_ID } from './grok/definition'
-import { getDisabledManagedMcpServers } from './mcp-overrides'
+import { getDisabledManagedMcpServers, getManagedMcpServerOverride } from './mcp-overrides'
 import {
   grokSettingsConfig,
   grokUserMcpConfig,
@@ -1117,6 +1117,18 @@ function hermesMcpServerConfig(profile: string, serverName: string, toolset: str
   }
 }
 
+function managedHermesMcpServerConfig(
+  agentId: CodingAgentId,
+  profile: string,
+  serverName: string,
+  toolset: string,
+): Record<string, unknown> {
+  const override = getManagedMcpServerOverride(agentId, profile, serverName)
+  return Object.keys(override).length
+    ? override
+    : hermesMcpServerConfig(profile, serverName, toolset)
+}
+
 function isManagedHermesMcpServer(value: unknown): boolean {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
   const server = value as Record<string, any>
@@ -1189,7 +1201,7 @@ function claudeMcpConfigJson(profile: string, ...existingContents: Array<string 
   }
   for (const server of HERMES_MCP_SERVERS) {
     if (getDisabledManagedMcpServers('claude-code', profile).has(server.name)) continue
-    const config = hermesMcpServerConfig(profile, server.name, server.toolset)
+    const config = managedHermesMcpServerConfig('claude-code', profile, server.name, server.toolset)
     mcpServers[server.name] = config
   }
   return `${JSON.stringify({ mcpServers }, null, 2)}\n`
@@ -1313,15 +1325,18 @@ function codexMcpConfigToml(
   const blocks: string[] = [...parseCodexExternalMcpBlocks(...externalContents)]
   const disabledManaged = getDisabledManagedMcpServers(agentId, profile)
   for (const item of HERMES_MCP_SERVERS) {
-    const server = hermesMcpServerConfig(profile, item.name, item.toolset)
+    const server = managedHermesMcpServerConfig(agentId, profile, item.name, item.toolset)
     const lines = [
       `[mcp_servers.${item.name}]`,
-      `command = ${tomlString(server.command)}`,
     ]
-    if (server.args?.length) lines.push(`args = ${tomlStringArray(server.args)}`)
+    if (typeof server.command === 'string' && server.command) lines.push(`command = ${tomlString(server.command)}`)
+    if (typeof server.url === 'string' && server.url) lines.push(`url = ${tomlString(server.url)}`)
+    if (Array.isArray(server.args) && server.args.length) lines.push(`args = ${tomlStringArray(server.args.map(String))}`)
     if (disabledManaged.has(item.name)) lines.push('enabled = false')
-    lines.push('startup_timeout_sec = 120')
-    lines.push(`env = ${tomlInlineStringTable(server.env)}`)
+    lines.push(`startup_timeout_sec = ${typeof server.startup_timeout_sec === 'number' ? server.startup_timeout_sec : 120}`)
+    if (server.env && typeof server.env === 'object' && !Array.isArray(server.env)) {
+      lines.push(`env = ${tomlInlineStringTable(server.env as Record<string, string>)}`)
+    }
     lines.push('')
     blocks.push(lines.join('\n'))
   }
@@ -1443,7 +1458,7 @@ function piMcpConfig(profile: string, ...externalContents: Array<string | null |
   const mcpServers = Object.fromEntries(HERMES_MCP_SERVERS
     .filter(item => !disabledManaged.has(item.name))
     .map((item) => {
-    const server = hermesMcpServerConfig(profile, item.name, item.toolset)
+    const server = managedHermesMcpServerConfig('pi', profile, item.name, item.toolset)
     const requestTimeoutMs = item.toolset === 'api' || item.toolset === 'use' ? 120_000 : 1_860_000
     return [item.name, {
       ...server,
@@ -1472,7 +1487,7 @@ export function getCodingAgentManagedMcpServerConfigs(
   if (!['claude-code', 'codex', 'pi', 'grok'].includes(id)) return {}
   const disabledManaged = getDisabledManagedMcpServers(id, profile)
   return Object.fromEntries(HERMES_MCP_SERVERS.map((item) => {
-    const server = hermesMcpServerConfig(profile || 'default', item.name, item.toolset)
+    const server = managedHermesMcpServerConfig(id, profile || 'default', item.name, item.toolset)
     if (id === 'pi') {
       const requestTimeoutMs = item.toolset === 'api' || item.toolset === 'use' ? 120_000 : 1_860_000
       return [item.name, {
@@ -1680,6 +1695,98 @@ export async function restorePersistedPiProxyTargets(): Promise<number> {
       restoredCount += 1
     } catch {
       // Ignore invalid or legacy files; preparing the launch rewrites them.
+    }
+  }
+  return restoredCount
+}
+
+function persistedCodexProxyConfigs(): Array<{ agentId: 'codex' | 'grok'; path: string }> {
+  const modelRoot = join(getWebUiHome(), CODING_AGENT_HOME_DIR, 'model')
+  if (!existsSync(modelRoot)) return []
+  const configs: Array<{ agentId: 'codex' | 'grok'; path: string }> = []
+  const visit = (path: string, agentId: 'codex' | 'grok') => {
+    let entries
+    try {
+      entries = readdirSync(path, { withFileTypes: true, encoding: 'utf8' })
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      const child = join(path, entry.name)
+      if (entry.isDirectory()) visit(child, agentId)
+      else if (entry.isFile() && entry.name === 'config.toml') configs.push({ agentId, path: child })
+    }
+  }
+  const directories = (path: string) => {
+    try {
+      return readdirSync(path, { withFileTypes: true, encoding: 'utf8' }).filter(entry => entry.isDirectory())
+    } catch {
+      return []
+    }
+  }
+  for (const profile of directories(modelRoot)) {
+    for (const provider of directories(join(modelRoot, profile.name))) {
+      for (const agentId of ['codex', 'grok'] as const) {
+        const agentRoot = join(modelRoot, profile.name, provider.name, agentId)
+        if (existsSync(agentRoot)) visit(agentRoot, agentId)
+      }
+    }
+  }
+  return configs
+}
+
+function lastTomlString(content: string, key: string): string {
+  const pattern = new RegExp(`^\\s*${key.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}\\s*=\\s*(\"(?:[^\"\\\\]|\\\\.)*\")\\s*(?:#.*)?$`, 'gm')
+  let value = ''
+  for (const match of content.matchAll(pattern)) {
+    try {
+      value = JSON.parse(match[1])
+    } catch {}
+  }
+  return value
+}
+
+export async function restorePersistedCodexProxyTargets(): Promise<number> {
+  let restoredCount = 0
+  const restoredRouteKeys = new Set<string>()
+  for (const config of persistedCodexProxyConfigs()) {
+    const content = await safeReadFile(config.path)
+    if (!content) continue
+    const proxyBaseUrl = lastTomlString(content, 'base_url')
+    const token = lastTomlString(content, 'experimental_bearer_token')
+    const routeKey = proxyBaseUrl.match(/\/api\/codex-proxy\/([^/]+)\/v1\/?$/)?.[1] || ''
+    if (!routeKey || !token || restoredRouteKeys.has(routeKey)) continue
+    try {
+      const keyParts = JSON.parse(Buffer.from(routeKey, 'base64url').toString('utf-8'))
+      if (!Array.isArray(keyParts) || keyParts.length < 5) continue
+      const [profile, provider, model, apiMode, baseUrl, agentSessionId = '', chatSessionId = ''] =
+        keyParts.map(value => String(value || ''))
+      const resolved = await resolveStoredProviderLaunchInput({
+        mode: 'scoped',
+        profile,
+        provider,
+        model,
+        apiMode: normalizeLaunchApiMode(apiMode, 'chat_completions'),
+        baseUrl,
+        sessionId: chatSessionId,
+      }, null)
+      const apiKey = String(resolved.apiKey || '').trim()
+      if (!profile || !provider || !model || !baseUrl || !apiKey) continue
+      restoreCodexProxyTarget({
+        profile,
+        provider,
+        model,
+        baseUrl,
+        apiKey,
+        apiMode: normalizeLaunchApiMode(apiMode, 'chat_completions'),
+        agentId: config.agentId,
+        agentSessionId,
+        chatSessionId,
+      }, token)
+      restoredRouteKeys.add(routeKey)
+      restoredCount += 1
+    } catch {
+      // Ignore stale or invalid runtime configs; preparing the next launch rewrites them.
     }
   }
   return restoredCount
