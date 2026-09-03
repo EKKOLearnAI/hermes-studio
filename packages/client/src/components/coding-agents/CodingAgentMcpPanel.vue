@@ -301,7 +301,7 @@ watch(() => props.agentId, changeAgent)
             <strong>{{ summary.total }}</strong>
           </div>
           <div class="summary-card success">
-            <span class="summary-label">{{ t('ekkoConfig.enabled') }}</span>
+            <span class="summary-label">{{ t('ekkoConfig.enabledServers') }}</span>
             <strong>{{ summary.enabled }}</strong>
           </div>
           <div class="summary-card warning">
