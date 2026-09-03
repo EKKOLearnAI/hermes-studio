@@ -92,6 +92,38 @@ export function grokSettingsConfig(content: string): string {
   return value ? `${value}\n` : ''
 }
 
+export function grokRuntimeSettingsConfig(...contents: Array<string | null | undefined>): string {
+  const topLevel = new Map<string, string>()
+  const sections = new Map<string, string[]>()
+  const runtimeKeys = new Set(['model', 'default', 'default_reasoning_effort', 'context_window', 'max_completion_tokens'])
+
+  for (const content of contents) {
+    let section = ''
+    for (const line of String(content || '').split(/\r?\n/)) {
+      const header = line.match(/^\s*\[([^\]]+)\]\s*$/)
+      if (header) {
+        section = header[1].trim()
+        continue
+      }
+      const assignment = line.match(/^\s*([A-Za-z0-9_.-]+)\s*=/)
+      if (!section) {
+        if (assignment && !runtimeKeys.has(assignment[1])) topLevel.set(assignment[1], line)
+        continue
+      }
+      if (section === 'models' || section.startsWith('model.') || section.startsWith('mcp_servers.')) continue
+      const lines = sections.get(section) || []
+      if (line.trim()) lines.push(line)
+      sections.set(section, lines)
+    }
+  }
+
+  const blocks = [...topLevel.values()]
+  for (const [section, lines] of sections) {
+    if (lines.length) blocks.push(`[${section}]\n${lines.join('\n')}`)
+  }
+  return blocks.join('\n\n')
+}
+
 export function grokUserMcpConfig(content: string): string {
   const value = joinGrokConfigBlocks(
     grokConfigBlocks(content).filter(block => (
@@ -233,6 +265,7 @@ export async function prepareScopedGrokRuntime(input: {
   reasoningEffort: string
   systemPrompt: string
   userInstructions: string
+  settingsContent?: string
   managedMcpToml: string
 }): Promise<GrokRuntimeFiles> {
   await mkdir(input.rootDir, { recursive: true, mode: 0o700 })
@@ -240,6 +273,7 @@ export async function prepareScopedGrokRuntime(input: {
   const configPath = join(input.rootDir, 'config.toml')
   const promptFile = join(input.rootDir, 'AGENTS.md')
   const config = [
+    grokRuntimeSettingsConfig(input.settingsContent),
     '[models]',
     `default = ${tomlString(GROK_PROVIDER_ID)}`,
     ...(input.reasoningEffort ? [`default_reasoning_effort = ${tomlString(input.reasoningEffort)}`] : []),

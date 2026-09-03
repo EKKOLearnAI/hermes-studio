@@ -19,6 +19,7 @@ import { getSystemPrompt } from '../../studio/public/runs/prompt'
 import { codingAgentRunManager } from './runtime/run-manager'
 import { PI_EXTENDED_THINKING_LEVEL_MAP, piModelSupportsThinking } from './pi/thinking'
 import { GROK_API_KEY_ENV, GROK_CODING_AGENT_DEFINITION, GROK_PROVIDER_ID } from './grok/definition'
+import { getDisabledManagedMcpServers } from './mcp-overrides'
 import {
   grokSettingsConfig,
   grokUserMcpConfig,
@@ -1126,6 +1127,7 @@ function isManagedHermesMcpServer(value: unknown): boolean {
 function normalizeClaudeMcpServer(server: unknown): unknown {
   if (!server || typeof server !== 'object' || Array.isArray(server)) return server
   const normalized = { ...(server as Record<string, unknown>) }
+  delete normalized.enabled
   if (normalized.type === 'streamableHttp') normalized.type = 'http'
   return normalized
 }
@@ -1139,6 +1141,8 @@ function parseClaudeMcpServers(existingContent: string | null | undefined = ''):
       .filter(([name, server]) => {
         if (HERMES_MCP_SERVER_NAMES.has(name)) return false
         if (LEGACY_HERMES_MCP_SERVER_NAMES.has(name)) return false
+        if (server && typeof server === 'object' && !Array.isArray(server)
+          && (server as Record<string, unknown>).enabled === false) return false
         return !isManagedHermesMcpServer(server)
       })
       .map(([name, server]) => [name, normalizeClaudeMcpServer(server)]))
@@ -1152,14 +1156,7 @@ function inheritClaudeSettings(existingContent: string | null | undefined = ''):
   try {
     const parsed = JSON.parse(existingContent)
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
-    const inherited: Record<string, unknown> = {}
-    const enabledServers = (parsed as any).enabledMcpjsonServers
-    if (Array.isArray(enabledServers)) inherited.enabledMcpjsonServers = enabledServers.map(String).filter(Boolean)
-    const plugins = (parsed as any).plugins
-    if (plugins && typeof plugins === 'object' && !Array.isArray(plugins)) inherited.plugins = plugins
-    const enabledPlugins = (parsed as any).enabledPlugins
-    if (enabledPlugins && typeof enabledPlugins === 'object' && !Array.isArray(enabledPlugins)) inherited.enabledPlugins = enabledPlugins
-    return inherited
+    return { ...parsed }
   } catch {
     return {}
   }
@@ -1171,7 +1168,9 @@ function claudeMcpConfigJson(profile: string, ...existingContents: Array<string 
     Object.assign(mcpServers, parseClaudeMcpServers(content))
   }
   for (const server of HERMES_MCP_SERVERS) {
-    mcpServers[server.name] = hermesMcpServerConfig(profile, server.name, server.toolset)
+    if (getDisabledManagedMcpServers('claude-code', profile).has(server.name)) continue
+    const config = hermesMcpServerConfig(profile, server.name, server.toolset)
+    mcpServers[server.name] = config
   }
   return `${JSON.stringify({ mcpServers }, null, 2)}\n`
 }
@@ -1220,8 +1219,71 @@ function parseCodexExternalMcpBlocks(...contents: Array<string | null | undefine
   return Array.from(blockByServer.values()).filter(Boolean)
 }
 
-function codexMcpConfigToml(profile: string, ...externalContents: Array<string | null | undefined>): string {
+function codexRuntimeUserConfig(...contents: Array<string | null | undefined>): {
+  other: string
+  featureLines: string[]
+} {
+  const topLevel = new Map<string, string>()
+  const sections = new Map<string, string[]>()
+  const featureLines = new Map<string, string>()
+  const runtimeKeys = new Set([
+    'model',
+    'model_provider',
+    'model_catalog_json',
+    'model_reasoning_summary',
+    'model_reasoning_effort',
+    'developer_instructions',
+    'disable_response_storage',
+  ])
+  const runtimeFeatures = new Set(['tool_search', 'tool_search_always_defer_mcp_tools'])
+
+  for (const content of contents) {
+    if (!content?.trim()) continue
+    let section = ''
+    for (const line of content.split(/\r?\n/)) {
+      const header = line.match(/^\s*\[([^\]]+)\]\s*$/)
+      if (header) {
+        section = header[1].trim()
+        continue
+      }
+      const assignment = line.match(/^\s*([A-Za-z0-9_.-]+)\s*=/)
+      if (!section) {
+        if (assignment && !runtimeKeys.has(assignment[1])) topLevel.set(assignment[1], line)
+        continue
+      }
+      if (section === 'features') {
+        if (assignment && !runtimeFeatures.has(assignment[1])) featureLines.set(assignment[1], line)
+        continue
+      }
+      if (
+        section === 'models'
+        || section.startsWith('model.')
+        || section.startsWith('model_providers.')
+        || section.startsWith('mcp_servers.')
+      ) continue
+      const lines = sections.get(section) || []
+      if (line.trim()) lines.push(line)
+      sections.set(section, lines)
+    }
+  }
+
+  const blocks = [...topLevel.values()]
+  for (const [section, lines] of sections) {
+    if (lines.length) blocks.push(`[${section}]\n${lines.join('\n')}`)
+  }
+  return {
+    other: blocks.join('\n\n'),
+    featureLines: [...featureLines.values()],
+  }
+}
+
+function codexMcpConfigToml(
+  profile: string,
+  agentId: 'codex' | 'grok',
+  ...externalContents: Array<string | null | undefined>
+): string {
   const blocks: string[] = [...parseCodexExternalMcpBlocks(...externalContents)]
+  const disabledManaged = getDisabledManagedMcpServers(agentId, profile)
   for (const item of HERMES_MCP_SERVERS) {
     const server = hermesMcpServerConfig(profile, item.name, item.toolset)
     const lines = [
@@ -1229,6 +1291,7 @@ function codexMcpConfigToml(profile: string, ...externalContents: Array<string |
       `command = ${tomlString(server.command)}`,
     ]
     if (server.args?.length) lines.push(`args = ${tomlStringArray(server.args)}`)
+    if (disabledManaged.has(item.name)) lines.push('enabled = false')
     lines.push('startup_timeout_sec = 120')
     lines.push(`env = ${tomlInlineStringTable(server.env)}`)
     lines.push('')
@@ -1245,12 +1308,14 @@ function getPiMcpAdapterEntry(): string {
   return join(getPiMcpAdapterRoot(), 'node_modules', 'pi-mcp-adapter', 'index.ts')
 }
 
-function piSettingsConfig(existingContent = '', runtimeExtensionPath = ''): string {
+function piSettingsConfig(existingContents: string[] = [], runtimeExtensionPath = ''): string {
   let existing: Record<string, unknown> = {}
-  try {
-    const parsed = JSON.parse(existingContent)
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) existing = parsed
-  } catch {}
+  for (const content of existingContents) {
+    try {
+      const parsed = JSON.parse(content)
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) existing = { ...existing, ...parsed }
+    } catch {}
+  }
   const configuredExtensions = Array.isArray(existing.extensions)
     ? existing.extensions.filter(value => typeof value === 'string' && value.trim())
     : []
@@ -1318,7 +1383,14 @@ function parsePiExternalMcpConfig(...contents: Array<string | null | undefined>)
           if (HERMES_MCP_SERVER_NAMES.has(name)) continue
           if (LEGACY_HERMES_MCP_SERVER_NAMES.has(name)) continue
           if (isManagedHermesMcpServer(server)) continue
-          mcpServers[name] = server
+          if (server && typeof server === 'object' && !Array.isArray(server)) {
+            const normalized = { ...(server as Record<string, unknown>) }
+            if (normalized.enabled === false) continue
+            delete normalized.enabled
+            mcpServers[name] = normalized
+          } else {
+            mcpServers[name] = server
+          }
         }
       }
     } catch {
@@ -1339,7 +1411,10 @@ function piUserMcpConfig(...existingContents: Array<string | null | undefined>):
 
 function piMcpConfig(profile: string, ...externalContents: Array<string | null | undefined>): string {
   const external = parsePiExternalMcpConfig(...externalContents)
-  const mcpServers = Object.fromEntries(HERMES_MCP_SERVERS.map((item) => {
+  const disabledManaged = getDisabledManagedMcpServers('pi', profile)
+  const mcpServers = Object.fromEntries(HERMES_MCP_SERVERS
+    .filter(item => !disabledManaged.has(item.name))
+    .map((item) => {
     const server = hermesMcpServerConfig(profile, item.name, item.toolset)
     const requestTimeoutMs = item.toolset === 'api' || item.toolset === 'use' ? 120_000 : 1_860_000
     return [item.name, {
@@ -1367,6 +1442,7 @@ export function getCodingAgentManagedMcpServerConfigs(
   profile = 'default',
 ): Record<string, Record<string, unknown>> {
   if (!['claude-code', 'codex', 'pi', 'grok'].includes(id)) return {}
+  const disabledManaged = getDisabledManagedMcpServers(id, profile)
   return Object.fromEntries(HERMES_MCP_SERVERS.map((item) => {
     const server = hermesMcpServerConfig(profile || 'default', item.name, item.toolset)
     if (id === 'pi') {
@@ -1377,15 +1453,20 @@ export function getCodingAgentManagedMcpServerConfigs(
         directTools: false,
         toolPrefix: 'none',
         requestTimeoutMs,
+        ...(disabledManaged.has(item.name) ? { enabled: false } : {}),
       }]
     }
     if (id === 'codex' || id === 'grok') {
       return [item.name, {
         ...server,
         startup_timeout_sec: 120,
+        ...(disabledManaged.has(item.name) ? { enabled: false } : {}),
       }]
     }
-    return [item.name, server]
+    return [item.name, {
+      ...server,
+      ...(disabledManaged.has(item.name) ? { enabled: false } : {}),
+    }]
   }))
 }
 
@@ -2353,7 +2434,7 @@ export async function readCodingAgentConfigFile(id: string, key: string, scope: 
     const content = id === 'grok' && key === 'mcp'
       ? mergeGrokConfigWithManagedMcp(
         grokUserMcpConfig(`${globalGrokConfig}\n${sourceContent}`),
-        codexMcpConfigToml(normalizedScope.profile),
+        codexMcpConfigToml(normalizedScope.profile, 'grok'),
       )
       : id === 'grok' && key === 'settings'
         ? grokSettingsConfig(sourceContent)
@@ -2369,7 +2450,7 @@ export async function readCodingAgentConfigFile(id: string, key: string, scope: 
   } catch (err: any) {
     if (err?.code !== 'ENOENT') throw err
     const defaultContent = id === 'grok' && key === 'mcp'
-      ? mergeGrokConfigWithManagedMcp('', codexMcpConfigToml(normalizedScope.profile))
+      ? mergeGrokConfigWithManagedMcp('', codexMcpConfigToml(normalizedScope.profile, 'grok'))
       : id === 'pi'
         ? piLiveConfigDefault(key, normalizedScope.profile) || ''
         : ''
@@ -2422,7 +2503,7 @@ export async function writeCodingAgentConfigFile(id: string, key: string, conten
     content: id === 'grok' && key === 'mcp'
       ? mergeGrokConfigWithManagedMcp(
           grokUserMcpConfig(persistedContent),
-          codexMcpConfigToml(normalizedScope.profile),
+          codexMcpConfigToml(normalizedScope.profile, 'grok'),
         )
       : id === 'grok' && key === 'settings'
         ? grokSettingsConfig(persistedContent)
@@ -2517,7 +2598,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
         sourceHome: process.env.GROK_HOME?.trim() || join(getGlobalConfigHome(), '.grok'),
         rootDir,
         systemPrompt,
-        managedMcpToml: codexMcpConfigToml(scope.profile),
+        managedMcpToml: codexMcpConfigToml(scope.profile, 'grok'),
       })
       promptFile = prepared.promptFile
       files = prepared.files
@@ -2619,10 +2700,14 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     const modelName = displayNameForModel(model)
     const globalSettingsPath = getLiveConfigFileDefinition(tool.id, 'settings')?.absolutePath
     const inheritedSettings = inheritClaudeSettings(globalSettingsPath ? await safeReadFile(globalSettingsPath) : '')
+    const inheritedEnv = inheritedSettings.env && typeof inheritedSettings.env === 'object' && !Array.isArray(inheritedSettings.env)
+      ? inheritedSettings.env as Record<string, unknown>
+      : {}
     const settings = {
       ...inheritedSettings,
       model,
       env: {
+        ...inheritedEnv,
         ...(claudeApiKey ? { ANTHROPIC_API_KEY: claudeApiKey } : {}),
         ...(claudeBaseUrl ? { ANTHROPIC_BASE_URL: claudeBaseUrl } : {}),
         ANTHROPIC_MODEL: model,
@@ -2686,21 +2771,33 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     const providerId = 'custom'
     const catalogPath = join(rootDir, CODEX_MODEL_CATALOG_FILE)
     const toolSearchFeatures = await resolveCodexToolSearchConfig()
-    const featureConfig = toolSearchFeatures.toolSearch || toolSearchFeatures.alwaysDefer
+    const globalCodexConfig = await safeReadFile(getLiveConfigFileDefinition(tool.id, 'config')?.absolutePath || '')
+    const scopedCodexConfig = await safeReadFile(getScopedConfigFileDefinition(tool.id, 'config', scope)?.absolutePath || '')
+    const userRuntimeConfig = codexRuntimeUserConfig(globalCodexConfig, scopedCodexConfig)
+    const featureConfig = userRuntimeConfig.featureLines.length || toolSearchFeatures.toolSearch || toolSearchFeatures.alwaysDefer
       ? [
           '',
           '[features]',
+          ...userRuntimeConfig.featureLines,
           ...(toolSearchFeatures.toolSearch ? ['tool_search = true'] : []),
           ...(toolSearchFeatures.alwaysDefer ? ['tool_search_always_defer_mcp_tools = true'] : []),
         ]
       : []
+    const codexUserInstructions = [
+      (await activeGlobalCodexInstructions(getGlobalCodexHome())).trim(),
+      (await safeReadFile(getScopedConfigFileDefinition(tool.id, 'agents', scope)?.absolutePath || ''))?.trim() || '',
+    ].filter((value, index, values) => value && values.indexOf(value) === index)
+    const effectiveCodexInstructions = [scopedSystemPrompt.trim(), ...codexUserInstructions]
+      .filter(Boolean)
+      .join('\n\n')
     const configToml = [
+      userRuntimeConfig.other,
       `model_catalog_json = ${JSON.stringify(catalogPath)}`,
       `model_provider = ${JSON.stringify(providerId)}`,
       `model = ${JSON.stringify(model)}`,
       'model_reasoning_summary = "auto"',
       ...(reasoningEffort ? [`model_reasoning_effort = ${JSON.stringify(reasoningEffort)}`] : []),
-      `developer_instructions = ${tomlMultilineString(scopedSystemPrompt.trim())}`,
+      `developer_instructions = ${tomlMultilineString(effectiveCodexInstructions)}`,
       'disable_response_storage = true',
       '',
       `[model_providers.${providerId}]`,
@@ -2712,8 +2809,9 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       '',
       codexMcpConfigToml(
         scope.profile,
-        await safeReadFile(getLiveConfigFileDefinition(tool.id, 'config')?.absolutePath || ''),
-        await safeReadFile(getScopedConfigFileDefinition(tool.id, 'config', scope)?.absolutePath || ''),
+        'codex',
+        globalCodexConfig,
+        scopedCodexConfig,
       ),
       ...featureConfig,
     ].join('\n')
@@ -2726,6 +2824,8 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     await writeFile(catalogPath, `${JSON.stringify(catalog, null, 2)}\n`, 'utf-8')
     files.push({ key: 'model_catalog', path: CODEX_MODEL_CATALOG_FILE, absolutePath: catalogPath })
     await writeScopedFile('config', configToml)
+    await writeManagedPromptFile(join(rootDir, 'AGENTS.md'), scopedSystemPrompt, codexUserInstructions.join('\n\n'))
+    files.push({ key: 'agents', path: 'AGENTS.md', absolutePath: join(rootDir, 'AGENTS.md') })
     await writeScopedFile('auth', `${JSON.stringify({}, null, 2)}\n`)
 
     env = { CODEX_HOME: rootDir }
@@ -2765,10 +2865,10 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     await mkdir(sessionsDir, { recursive: true })
     await writeRuntimeFile('studio_extension', PI_STUDIO_EXTENSION_FILE, piStudioRuntimeExtension())
     await writeRuntimeFile('dynamic_prompt', PI_DYNAMIC_PROMPT_FILE, '')
-    await writeRuntimeFile('settings', 'settings.json', piSettingsConfig(
+    await writeRuntimeFile('settings', 'settings.json', piSettingsConfig([
+      (await safeReadFile(getLiveConfigFileDefinition(tool.id, 'settings')?.absolutePath || '')) || '',
       (await safeReadFile(getScopedConfigFileDefinition(tool.id, 'settings', scope)?.absolutePath || '')) || '',
-      studioExtensionPath,
-    ))
+    ], studioExtensionPath))
     await writeRuntimeFile('models', 'models.json', piModelsConfig({
       baseUrl: piBaseUrl,
       apiKey: piApiKey,
@@ -2798,7 +2898,12 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       await safeReadFile(getLiveConfigFileDefinition(tool.id, 'mcp')?.absolutePath || ''),
       await safeReadFile(getScopedConfigFileDefinition(tool.id, 'mcp', scope)?.absolutePath || ''),
     ))
-    await writeRuntimeFile('prompt', 'APPEND_SYSTEM.md', `${scopedSystemPrompt.trim()}\n`)
+    const piInstructions = [
+      scopedSystemPrompt.trim(),
+      (await safeReadFile(getLiveConfigFileDefinition(tool.id, 'agents')?.absolutePath || ''))?.trim() || '',
+      (await safeReadFile(getScopedConfigFileDefinition(tool.id, 'agents', scope)?.absolutePath || ''))?.trim() || '',
+    ].filter((value, index, values) => value && values.indexOf(value) === index)
+    await writeRuntimeFile('prompt', 'APPEND_SYSTEM.md', `${piInstructions.join('\n\n')}\n`)
     env = {
       PI_CODING_AGENT_DIR: rootDir,
       PI_CODING_AGENT_SESSION_DIR: sessionsDir,
@@ -2835,6 +2940,8 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     const globalGrokHome = process.env.GROK_HOME?.trim() || join(getGlobalConfigHome(), '.grok')
     const globalInstructions = await safeReadFile(join(globalGrokHome, 'AGENTS.md')) || ''
     const scopedInstructions = await safeReadFile(join(baseConfigRoot, 'AGENTS.md')) || ''
+    const globalGrokConfig = await safeReadFile(getLiveConfigFileDefinition(tool.id, 'config')?.absolutePath || '')
+    const scopedGrokConfig = await safeReadFile(join(baseConfigRoot, 'config.toml'))
     const prepared = await prepareScopedGrokRuntime({
       sourceHome: globalGrokHome,
       rootDir,
@@ -2849,10 +2956,12 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       userInstructions: [globalInstructions.trim(), scopedInstructions.trim()]
         .filter((value, index, values) => value && values.indexOf(value) === index)
         .join('\n\n'),
+      settingsContent: [globalGrokConfig, scopedGrokConfig].filter(Boolean).join('\n\n'),
       managedMcpToml: codexMcpConfigToml(
         scope.profile,
-        await safeReadFile(getLiveConfigFileDefinition(tool.id, 'config')?.absolutePath || ''),
-        await safeReadFile(join(baseConfigRoot, 'config.toml')),
+        'grok',
+        globalGrokConfig,
+        scopedGrokConfig,
       ),
     })
     files.push(...prepared.files)

@@ -39,6 +39,7 @@ function makeHome() {
   homes.push(home)
   process.env.HERMES_WEB_UI_HOME = home
   process.env.HERMES_CODING_AGENT_GLOBAL_HOME = join(home, 'global-home')
+  process.env.CODEX_HOME = join(home, 'global-home', '.codex')
   return home
 }
 
@@ -49,6 +50,7 @@ beforeEach(() => {
 afterEach(() => {
   delete process.env.HERMES_WEB_UI_HOME
   delete process.env.HERMES_CODING_AGENT_GLOBAL_HOME
+  delete process.env.CODEX_HOME
   delete process.env.HERMES_AGENT_NODE
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
@@ -1298,7 +1300,10 @@ describe('coding agent launch preparation', () => {
     expect(config).toContain('HERMES_MCP_TOOLSET = "use"')
     expect(config).toContain('HERMES_WEB_UI_MANAGED_MCP = "1"')
 
-    expect(result.files.some(file => file.key === 'agents')).toBe(false)
+    expect(result.files.some(file => file.key === 'agents')).toBe(true)
+    const agents = readFileSync(join(result.rootDir, 'AGENTS.md'), 'utf-8')
+    expect(agents).toContain('Hermes Studio MCP usage')
+    expect(agents).toContain('# 输出格式规范')
 
     const catalog = JSON.parse(readFileSync(join(result.rootDir, 'codex-model-catalog.json'), 'utf-8'))
     expect(catalog.models.some((entry: any) => entry.slug === 'openai/gpt-oss-20b:free')).toBe(true)

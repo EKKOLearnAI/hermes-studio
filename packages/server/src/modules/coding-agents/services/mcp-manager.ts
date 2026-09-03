@@ -1,7 +1,5 @@
 import { Client, SSEClientTransport, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
-import { bridgeMcpAction } from '../../hermes/services/mcp/bridge-actions'
-import type { McpServerEntry } from '../../hermes/contracts/mcp'
 import {
   getCodingAgentManagedMcpServerConfigs,
   readCodingAgentConfigFile,
@@ -9,6 +7,10 @@ import {
   type CodingAgentId,
   type CodingAgentConfigScope,
 } from './index'
+import {
+  getDisabledManagedMcpServers,
+  setManagedMcpServerEnabled,
+} from './mcp-overrides'
 
 const CODING_AGENT_IDS = new Set(['claude-code', 'codex', 'pi', 'grok'])
 const STUDIO_MANAGED_NAMES = new Set([
@@ -283,8 +285,12 @@ async function readServers(id: string, scope: CodingAgentConfigScope): Promise<{
   }
 
   const managed = getCodingAgentManagedMcpServerConfigs(id as CodingAgentId, scope.profile)
+  const disabledManaged = getDisabledManagedMcpServers(id, scope.profile || 'default')
   for (const [name, config] of Object.entries(managed)) {
-    servers.set(name, normalizeConfig(config))
+    servers.set(name, normalizeConfig({
+      ...config,
+      ...(disabledManaged.has(name) ? { enabled: false } : {}),
+    }))
   }
   return {
     content: file.content,
@@ -318,34 +324,22 @@ async function writeServer(
   await writeCodingAgentConfigFile(id, configKey(id), content, scope)
 }
 
-function runtimeByName(entries: McpServerEntry[]): Map<string, McpServerEntry> {
-  return new Map(entries.map(entry => [entry.name, entry]))
-}
-
 export async function listCodingAgentMcpServers(
   id: string,
   scope: CodingAgentConfigScope = {},
 ): Promise<CodingAgentMcpList> {
   const { servers } = await readServers(id, scope)
-  let runtimeServers: McpServerEntry[] = []
-  try {
-    const response = await bridgeMcpAction('mcp_list', {}, scope.profile)
-    if ('servers' in response && Array.isArray(response.servers)) runtimeServers = response.servers
-  } catch {}
-  const runtime = runtimeByName(runtimeServers)
   const normalized = [...servers].map(([name, config]) => {
-    const live = runtime.get(name)
-    const toolNames = live?.tool_names || []
     return {
       name,
       transport: normalizeTransport(config),
-      connected: config.enabled !== false && Boolean(live?.connected),
-      tools: live?.tools || toolNames.length,
-      tools_registered: live?.tools_registered || toolNames.length,
-      tool_names: toolNames,
-      tool_names_registered: live?.tool_names_registered || toolNames,
-      tool_details: toolNames.map(tool => ({ name: tool })),
-      error: live?.error || null,
+      connected: false,
+      tools: 0,
+      tools_registered: 0,
+      tool_names: [],
+      tool_names_registered: [],
+      tool_details: [],
+      error: null,
       raw_config: config,
       managed: isManaged(name, config),
     } satisfies CodingAgentMcpServer
@@ -370,9 +364,13 @@ export async function upsertCodingAgentMcpServer(
     throw error
   }
   if (STUDIO_MANAGED_NAMES.has(normalizedName)) {
-    const error = new Error('Studio-managed MCP servers are read-only')
-    ;(error as any).status = 409
-    throw error
+    setManagedMcpServerEnabled(
+      id,
+      scope.profile || 'default',
+      normalizedName,
+      config.enabled !== false,
+    )
+    return { ok: true, name: normalizedName }
   }
   if (!isRecord(config) || (!String(config.command || '').trim() && !String(config.url || '').trim())) {
     const error = new Error('MCP server requires command or url')
@@ -390,9 +388,8 @@ export async function removeCodingAgentMcpServer(
   scope: CodingAgentConfigScope = {},
 ): Promise<{ ok: true }> {
   if (STUDIO_MANAGED_NAMES.has(name)) {
-    const error = new Error('Studio-managed MCP servers are read-only')
-    ;(error as any).status = 409
-    throw error
+    setManagedMcpServerEnabled(id, scope.profile || 'default', name, false)
+    return { ok: true }
   }
   const current = await readServers(id, scope)
   await writeServer(id, current.content, name, null, scope)
@@ -403,14 +400,13 @@ export async function testCodingAgentMcpServer(
   id: string,
   name: string,
   scope: CodingAgentConfigScope = {},
-): Promise<{ ok: boolean; tools?: string[]; error?: string }> {
+): Promise<{
+  ok: boolean
+  tools?: string[]
+  tool_details?: Array<{ name: string; description?: string; input_schema?: Record<string, unknown> }>
+  error?: string
+}> {
   assertAgentId(id)
-  if (STUDIO_MANAGED_NAMES.has(name)) {
-    const response = await bridgeMcpAction('mcp_server_test', { name }, scope.profile)
-    if ('tools' in response) return { ok: response.ok, tools: response.tools, error: response.error }
-    return { ok: response.ok, error: response.error }
-  }
-
   const current = await readServers(id, scope)
   const config = current.servers.get(name)
   if (!config) return { ok: false, error: `MCP server not found: ${name}` }
@@ -441,7 +437,18 @@ export async function testCodingAgentMcpServer(
           })
     await client.connect(transport, { timeout: 5_000 })
     const result = await client.listTools(undefined, { timeout: 5_000, cacheMode: 'refresh' })
-    return { ok: true, tools: result.tools.map(tool => String(tool.name)) }
+    const toolDetails = result.tools.map(tool => ({
+      name: String(tool.name),
+      description: typeof tool.description === 'string' ? tool.description : '',
+      input_schema: isRecord(tool.inputSchema)
+        ? tool.inputSchema
+        : { type: 'object', properties: {} },
+    }))
+    return {
+      ok: true,
+      tools: toolDetails.map(tool => tool.name),
+      tool_details: toolDetails,
+    }
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) }
   } finally {

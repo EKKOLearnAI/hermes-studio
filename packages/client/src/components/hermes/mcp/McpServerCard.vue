@@ -13,6 +13,8 @@ const props = defineProps<{
   contextLabel?: string
   testing?: boolean
   allowReadonlyToggle?: boolean
+  allowReadonlyRemove?: boolean
+  readonlyToolsView?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -88,10 +90,12 @@ const MAX_VISIBLE_TOOLS = 20
     <div class="card-footer">
       <div class="card-actions">
         <NButton v-if="!readonly" size="tiny" quaternary @click="emit('edit', server)">{{ t('mcp.edit') }}</NButton>
-        <NButton v-if="showManageTools !== false" size="tiny" quaternary :disabled="!server.connected" @click="emit('manageTools', server)">{{ t('mcp.manageTools') }}</NButton>
+        <NButton v-if="showManageTools !== false" size="tiny" quaternary @click="emit('manageTools', server)">
+          {{ readonlyToolsView ? t('mcp.toolList') : t('mcp.manageTools') }}
+        </NButton>
         <NButton size="tiny" quaternary :loading="testing" @click="emit('test', server)">{{ t('mcp.test') }}</NButton>
         <NButton v-if="showReload !== false" size="tiny" quaternary @click="emit('reload', server.name)">{{ t('mcp.reload') }}</NButton>
-        <NPopconfirm v-if="!readonly" @positive-click="emit('remove', server)">
+        <NPopconfirm v-if="!readonly || allowReadonlyRemove" @positive-click="emit('remove', server)">
           <template #trigger>
             <NButton size="tiny" quaternary type="error">{{ t('mcp.remove') }}</NButton>
           </template>

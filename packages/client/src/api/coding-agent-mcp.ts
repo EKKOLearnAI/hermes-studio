@@ -53,6 +53,11 @@ export async function removeCodingAgentMcpServer(
 export async function testCodingAgentMcpServer(
   agentId: CodingAgentId,
   name: string,
-): Promise<{ ok: boolean; tools?: string[]; error?: string }> {
+): Promise<{
+  ok: boolean
+  tools?: string[]
+  tool_details?: Array<{ name: string; description?: string; input_schema?: Record<string, unknown> }>
+  error?: string
+}> {
   return request(`${basePath(agentId)}/${encodeURIComponent(name)}/test`, { method: 'POST' })
 }

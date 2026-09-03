@@ -4,29 +4,6 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { configureProfileConfig } from '../../packages/server/src/modules/studio/public/profile-config'
 
-const bridgeMcpAction = vi.hoisted(() => vi.fn(async (action: string) => {
-  if (action === 'mcp_list') {
-    return {
-      ok: true,
-      total_tools: 2,
-      servers: [{
-        name: 'hermes-studio-api',
-        transport: 'stdio',
-        connected: true,
-        tools: 2,
-        tools_registered: 2,
-        tool_names: ['hermes_studio_api_openapi_get', 'hermes_studio_api_request'],
-        tool_names_registered: ['hermes_studio_api_openapi_get', 'hermes_studio_api_request'],
-      }],
-    }
-  }
-  return { ok: true, tools: ['tool_a'] }
-}))
-
-vi.mock('../../packages/server/src/modules/hermes/services/mcp/bridge-actions', () => ({
-  bridgeMcpAction,
-}))
-
 vi.mock('@modelcontextprotocol/client', () => ({
   Client: class {
     async connect() {}
@@ -56,6 +33,7 @@ function makeHome(): string {
   const home = mkdtempSync(join(tmpdir(), 'hermes-coding-agent-mcp-'))
   homes.push(home)
   process.env.HERMES_CODING_AGENT_GLOBAL_HOME = home
+  process.env.HERMES_WEB_UI_HOME = home
   configureProfileConfig({
     buildModelGroups: () => ({ default: '', groups: [] }),
     getProfilesBaseDir: () => join(home, 'profiles'),
@@ -75,8 +53,8 @@ function makeHome(): string {
 }
 
 afterEach(() => {
-  bridgeMcpAction.mockClear()
   delete process.env.HERMES_CODING_AGENT_GLOBAL_HOME
+  delete process.env.HERMES_WEB_UI_HOME
   for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true })
 })
 
@@ -102,8 +80,8 @@ describe('coding Agent MCP manager', () => {
     ]))
     expect(initial.servers.find(server => server.name === 'hermes-studio-api')).toMatchObject({
       managed: true,
-      connected: true,
-      tools_registered: 2,
+      connected: false,
+      tools_registered: 0,
     })
 
     await upsertCodingAgentMcpServer('claude-code', 'search', {
@@ -184,19 +162,27 @@ describe('coding Agent MCP manager', () => {
     expect(persisted).not.toContain('[mcp_servers.hermes-studio-api]')
   })
 
-  it('keeps Studio-managed servers read-only and directly tests custom servers', async () => {
+  it('uses per-Agent enable overrides for Studio-managed servers and directly tests custom servers', async () => {
     const home = makeHome()
     expect(existsSync(join(home, '.claude', 'mcp.json'))).toBe(false)
 
-    await expect(removeCodingAgentMcpServer('claude-code', 'hermes-studio-api'))
-      .rejects.toThrow('read-only')
-    await expect(upsertCodingAgentMcpServer('claude-code', 'hermes-studio-api', { command: 'replacement' }))
-      .rejects.toThrow('read-only')
+    await removeCodingAgentMcpServer('claude-code', 'hermes-studio-api')
+    expect((await listCodingAgentMcpServers('claude-code')).servers
+      .find(server => server.name === 'hermes-studio-api')?.raw_config.enabled).toBe(false)
+    await upsertCodingAgentMcpServer('claude-code', 'hermes-studio-api', { enabled: true })
+    expect((await listCodingAgentMcpServers('claude-code')).servers
+      .find(server => server.name === 'hermes-studio-api')?.raw_config.enabled).not.toBe(false)
+    expect(existsSync(join(home, '.claude', 'mcp.json'))).toBe(false)
 
     await upsertCodingAgentMcpServer('claude-code', 'custom', { command: 'custom-mcp' })
     await expect(testCodingAgentMcpServer('claude-code', 'custom')).resolves.toEqual({
       ok: true,
       tools: ['custom_tool'],
+      tool_details: [{
+        name: 'custom_tool',
+        description: '',
+        input_schema: { type: 'object', properties: {} },
+      }],
     })
   })
 })
