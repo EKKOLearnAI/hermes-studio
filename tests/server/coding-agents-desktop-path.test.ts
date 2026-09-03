@@ -25,8 +25,26 @@ const execState = vi.hoisted(() => {
       return { stdout: '/Users/example/.npm-global/bin/claude\n', stderr: '' }
     }
 
-    if (command === 'claude' && args[0] === '--version') {
+    if (command === '/Users/example/.npm-global/bin/claude' && args[0] === '--version') {
       return { stdout: '1.2.3\n', stderr: '' }
+    }
+
+    if (command === 'which' && args[0] === '-a' && args[1] === 'codex') {
+      return {
+        stdout: [
+          '/Users/example/.nvm/versions/node/v20.0.0/bin/codex',
+          '/Users/example/.local/bin/codex',
+        ].join('\n'),
+        stderr: '',
+      }
+    }
+
+    if (command === '/Users/example/.nvm/versions/node/v20.0.0/bin/codex') {
+      throw Object.assign(new Error('native package binary not found'), { code: 'ENOENT' })
+    }
+
+    if (command === '/Users/example/.local/bin/codex' && args[0] === '--version') {
+      return { stdout: 'codex-cli 0.151.0-alpha.7.2\n', stderr: '' }
     }
 
     throw new Error(`unexpected command: ${command} ${args.join(' ')}`)
@@ -87,7 +105,28 @@ describe('coding agent desktop PATH detection', () => {
     expect(status.installed).toBe(true)
     expect(status.version).toBe('1.2.3')
 
-    const versionCall = execState.calls.find(call => call.command === 'claude' && call.args[0] === '--version')
+    const versionCall = execState.calls.find(call => call.command === '/Users/example/.npm-global/bin/claude' && call.args[0] === '--version')
     expect(versionCall?.options.env.PATH.split(delimiter)).toContain('/Users/example/.npm-global/bin')
+  })
+
+  it('falls back to a later Codex installation when an earlier PATH entry is broken', async () => {
+    const { getCodingAgentStatus } = await import('../../packages/server/src/bootstrap/coding-agents')
+    const status = await getCodingAgentStatus({
+      id: 'codex',
+      name: 'Codex',
+      provider: 'OpenAI',
+      command: 'codex',
+      packageName: '@openai/codex',
+    })
+
+    expect(status).toMatchObject({
+      installed: true,
+      version: '0.151.0-alpha.7.2',
+      path: '/Users/example/.local/bin/codex',
+    })
+    expect(execState.calls).toEqual(expect.arrayContaining([
+      expect.objectContaining({ command: '/Users/example/.nvm/versions/node/v20.0.0/bin/codex' }),
+      expect.objectContaining({ command: '/Users/example/.local/bin/codex' }),
+    ]))
   })
 })

@@ -119,9 +119,6 @@ function pythonCandidates(
   const binDir = dirname(hermesBin)
   const candidates: string[] = [
     pythonFromLauncher(hermesBin, env) || '',
-    ...(process.platform === 'win32'
-      ? [join(binDir, 'python.exe'), join(binDir, 'python3.exe'), join(binDir, '..', 'python.exe')]
-      : [join(binDir, 'python3'), join(binDir, 'python')]),
   ]
   if (agentRoot) {
     candidates.push(...(process.platform === 'win32'
@@ -137,6 +134,9 @@ function pythonCandidates(
           join(agentRoot, '.venv', 'bin', 'python'),
         ]))
   }
+  candidates.push(...(process.platform === 'win32'
+    ? [join(binDir, 'python.exe'), join(binDir, 'python3.exe'), join(binDir, '..', 'python.exe')]
+    : [join(binDir, 'python3'), join(binDir, 'python')]))
 
   return candidates
 }
@@ -172,7 +172,9 @@ export function resolveHermesInstallationEnvironment(
     ...agentRootCandidates(hermesBin, hermesHome),
   ]
     .find(candidate => existsSync(join(candidate, 'run_agent.py')))
-  const python = launcherPython || firstExisting(pythonCandidates(agentRoot, hermesBin, env))
+  const python = agentRoot
+    ? firstExisting(pythonCandidates(agentRoot, hermesBin, env))
+    : launcherPython
   return {
     ...(python ? { python, environmentRoot: environmentRootFromPython(python) } : {}),
     ...(agentRoot ? { agentRoot } : {}),
