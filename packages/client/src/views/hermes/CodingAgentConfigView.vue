@@ -11,10 +11,12 @@ import {
 } from '@/api/coding-agents'
 import type { SkillTarget } from '@/api/hermes/skills'
 import SkillsView from '@/views/hermes/SkillsView.vue'
+import { useAppStore } from '@/stores/hermes/app'
 
 const route = useRoute()
 const { t } = useI18n()
 const message = useMessage()
+const appStore = useAppStore()
 
 const agentNames: Record<string, string> = {
   'claude-code': 'Claude',
@@ -41,7 +43,7 @@ const configKeys: Record<CodingAgentId, Record<EditableSection, string>> = {
   'claude-code': { memory: 'memory', mcp: 'mcp', settings: 'settings' },
   codex: { memory: 'agents', mcp: 'config', settings: 'config' },
   pi: { memory: 'agents', mcp: 'mcp', settings: 'settings' },
-  grok: { memory: 'agents', mcp: 'config', settings: 'config' },
+  grok: { memory: 'agents', mcp: 'mcp', settings: 'settings' },
 }
 
 const skillTargets: Record<CodingAgentId, SkillTarget> = {
@@ -73,6 +75,11 @@ const skillTarget = computed<SkillTarget>(() =>
   validAgentId.value ? skillTargets[validAgentId.value] : 'hermes',
 )
 const dirty = computed(() => content.value !== (configFile.value?.content || ''))
+const configScope = computed(() => (
+  agentId.value === 'grok' && section.value === 'mcp'
+    ? { provider: appStore.selectedProvider || undefined }
+    : {}
+))
 
 async function loadConfigFile() {
   configFile.value = null
@@ -82,7 +89,7 @@ async function loadConfigFile() {
 
   loading.value = true
   try {
-    const file = await readCodingAgentConfigFile(validAgentId.value, configKey.value)
+    const file = await readCodingAgentConfigFile(validAgentId.value, configKey.value, configScope.value)
     configFile.value = file
     content.value = file.content
   } catch (err: any) {
@@ -96,7 +103,7 @@ async function saveConfigFile() {
   if (!validAgentId.value || !configKey.value || saving.value) return
   saving.value = true
   try {
-    const file = await writeCodingAgentConfigFile(validAgentId.value, configKey.value, content.value)
+    const file = await writeCodingAgentConfigFile(validAgentId.value, configKey.value, content.value, configScope.value)
     configFile.value = file
     content.value = file.content
     message.success(t('files.saveFile'))

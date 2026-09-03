@@ -55,7 +55,7 @@ function mcpServerName(header: string): string {
   return String(match?.[1] || match?.[2] || '').trim()
 }
 
-export function stripManagedGrokMcp(content: string): string {
+function grokConfigBlocks(content: string): string[][] {
   const blocks: string[][] = []
   let current: string[] = []
   for (const line of String(content || '').split(/\r?\n/)) {
@@ -66,17 +66,58 @@ export function stripManagedGrokMcp(content: string): string {
     current.push(line)
   }
   if (current.length > 0) blocks.push(current)
-
   return blocks
+}
+
+function joinGrokConfigBlocks(blocks: string[][]): string {
+  return blocks
+    .map(block => block.join('\n').trimEnd())
+    .filter(block => block.trim())
+    .join('\n\n')
+    .trim()
+}
+
+function isManagedMcpBlock(block: string[]): boolean {
+  const name = mcpServerName(block[0] || '')
+  return Boolean(name) && (
+    MANAGED_MCP_NAMES.has(name) ||
+    block.join('\n').includes(MANAGED_MCP_MARKER)
+  )
+}
+
+export function grokSettingsConfig(content: string): string {
+  const value = joinGrokConfigBlocks(
+    grokConfigBlocks(content).filter(block => !mcpServerName(block[0] || '')),
+  )
+  return value ? `${value}\n` : ''
+}
+
+export function grokUserMcpConfig(content: string): string {
+  const value = joinGrokConfigBlocks(
+    grokConfigBlocks(content).filter(block => (
+      Boolean(mcpServerName(block[0] || '')) && !isManagedMcpBlock(block)
+    )),
+  )
+  return value ? `${value}\n` : ''
+}
+
+export function stripManagedGrokMcp(content: string): string {
+  return joinGrokConfigBlocks(grokConfigBlocks(content)
     .filter((block) => {
       const name = mcpServerName(block[0] || '')
       if (!name) return true
-      return !MANAGED_MCP_NAMES.has(name) && !block.join('\n').includes(MANAGED_MCP_MARKER)
-    })
-    .map(block => block.join('\n').trimEnd())
-    .filter(Boolean)
-    .join('\n\n')
-    .trim()
+      return !isManagedMcpBlock(block)
+    }))
+}
+
+export function mergeGrokSettingsConfig(existingContent: string, settingsContent: string): string {
+  return [grokSettingsConfig(settingsContent).trim(), grokUserMcpConfig(existingContent).trim()]
+    .filter(Boolean).join('\n\n').concat('\n')
+}
+
+export function mergeGrokUserMcpConfig(existingContent: string, mcpContent: string): string {
+  return [grokSettingsConfig(existingContent).trim(), grokUserMcpConfig(mcpContent).trim()]
+    .filter(Boolean).join('\n\n').concat('\n')
 }
 
 export function mergeGrokConfigWithManagedMcp(content: string, managedMcpToml: string): string {
@@ -93,6 +134,18 @@ async function copyGlobalDirectory(source: string, target: string): Promise<void
     dereference: true,
     errorOnExist: false,
     force: false,
+    preserveTimestamps: true,
+  })
+}
+
+async function syncGlobalSkillsDirectory(sourceHome: string, rootDir: string): Promise<void> {
+  const source = join(sourceHome, 'skills')
+  if (!existsSync(source)) return
+  await cp(source, join(rootDir, 'skills'), {
+    recursive: true,
+    dereference: true,
+    errorOnExist: false,
+    force: true,
     preserveTimestamps: true,
   })
 }
@@ -168,6 +221,7 @@ export function scopedGrokIdentityPrompt(provider: string, model: string): strin
 }
 
 export async function prepareScopedGrokRuntime(input: {
+  sourceHome?: string
   rootDir: string
   provider: string
   model: string
@@ -181,6 +235,7 @@ export async function prepareScopedGrokRuntime(input: {
   managedMcpToml: string
 }): Promise<GrokRuntimeFiles> {
   await mkdir(input.rootDir, { recursive: true, mode: 0o700 })
+  if (input.sourceHome) await syncGlobalSkillsDirectory(input.sourceHome, input.rootDir)
   const configPath = join(input.rootDir, 'config.toml')
   const promptFile = join(input.rootDir, 'AGENTS.md')
   const config = [

@@ -19,7 +19,15 @@ import { getSystemPrompt } from '../../studio/public/runs/prompt'
 import { codingAgentRunManager } from './runtime/run-manager'
 import { PI_EXTENDED_THINKING_LEVEL_MAP, piModelSupportsThinking } from './pi/thinking'
 import { GROK_API_KEY_ENV, GROK_CODING_AGENT_DEFINITION, GROK_PROVIDER_ID } from './grok/definition'
-import { prepareGlobalGrokRuntime, prepareScopedGrokRuntime } from './grok/config'
+import {
+  grokSettingsConfig,
+  grokUserMcpConfig,
+  mergeGrokConfigWithManagedMcp,
+  mergeGrokSettingsConfig,
+  mergeGrokUserMcpConfig,
+  prepareGlobalGrokRuntime,
+  prepareScopedGrokRuntime,
+} from './grok/config'
 import { getSession, updateSession, type HermesSessionRow } from '../../studio/public/sessions'
 import type { SessionState } from '../../studio/contracts/runs/session'
 import { normalizeWindowsCommandPath, windowsCmdShimExecution, windowsCommandNeedsShell, type WindowsCommandExecution } from '../../studio/public/windows-command'
@@ -355,6 +363,8 @@ const CONFIG_FILE_DEFINITIONS: Record<CodingAgentId, Array<Omit<CodingAgentConfi
   grok: [
     { key: 'auth', path: '~/.grok/auth.json', scopedPath: 'auth.json', language: 'json' },
     { key: 'config', path: '~/.grok/config.toml', scopedPath: 'config.toml', language: 'ini' },
+    { key: 'mcp', path: '~/.grok/config.toml', scopedPath: 'config.toml', language: 'ini' },
+    { key: 'settings', path: '~/.grok/config.toml', scopedPath: 'config.toml', language: 'ini' },
     { key: 'agents', path: '~/.grok/AGENTS.md', scopedPath: 'AGENTS.md', language: 'markdown' },
   ],
 }
@@ -2285,13 +2295,16 @@ export async function deleteCodingAgent(id: string): Promise<CodingAgentMutation
 }
 
 export async function readCodingAgentConfigFile(id: string, key: string, scope: CodingAgentConfigScope = {}): Promise<CodingAgentConfigFileContent> {
-  const definition = getLiveConfigFileDefinition(id, key)
+  const normalizedScope = normalizeConfigScope(scope)
+  const liveDefinition = getLiveConfigFileDefinition(id, key)
+  const definition = id === 'grok' && key === 'mcp' && normalizedScope.provider !== 'default'
+    ? getScopedConfigFileDefinition(id, key, normalizedScope)
+    : liveDefinition
   if (!definition) {
     const err = new Error('Unknown coding agent config file')
     ;(err as any).status = 404
     throw err
   }
-  const normalizedScope = normalizeConfigScope(scope)
 
   try {
     const info = await stat(definition.absolutePath)
@@ -2305,7 +2318,18 @@ export async function readCodingAgentConfigFile(id: string, key: string, scope: 
       ;(err as any).status = 413
       throw err
     }
-    const content = await readFile(definition.absolutePath, 'utf-8')
+    const sourceContent = await readFile(definition.absolutePath, 'utf-8')
+    const globalGrokConfig = id === 'grok' && key === 'mcp' && liveDefinition
+      ? await safeReadFile(liveDefinition.absolutePath) || ''
+      : ''
+    const content = id === 'grok' && key === 'mcp'
+      ? mergeGrokConfigWithManagedMcp(
+          grokUserMcpConfig(`${globalGrokConfig}\n${sourceContent}`),
+          codexMcpConfigToml(normalizedScope.profile),
+        )
+      : id === 'grok' && key === 'settings'
+        ? grokSettingsConfig(sourceContent)
+        : sourceContent
     return {
       ...definition,
       ...normalizedScope,
@@ -2316,9 +2340,11 @@ export async function readCodingAgentConfigFile(id: string, key: string, scope: 
     }
   } catch (err: any) {
     if (err?.code !== 'ENOENT') throw err
-    const defaultContent = id === 'pi'
-      ? piLiveConfigDefault(key, normalizedScope.profile) || ''
-      : ''
+    const defaultContent = id === 'grok' && key === 'mcp'
+      ? mergeGrokConfigWithManagedMcp('', codexMcpConfigToml(normalizedScope.profile))
+      : id === 'pi'
+        ? piLiveConfigDefault(key, normalizedScope.profile) || ''
+        : ''
     return {
       ...definition,
       ...normalizedScope,
@@ -2331,15 +2357,23 @@ export async function readCodingAgentConfigFile(id: string, key: string, scope: 
 }
 
 export async function writeCodingAgentConfigFile(id: string, key: string, content: string, scope: CodingAgentConfigScope = {}): Promise<CodingAgentConfigFileContent> {
-  const definition = getLiveConfigFileDefinition(id, key)
+  const normalizedScope = normalizeConfigScope(scope)
+  const definition = id === 'grok' && key === 'mcp' && normalizedScope.provider !== 'default'
+    ? getScopedConfigFileDefinition(id, key, normalizedScope)
+    : getLiveConfigFileDefinition(id, key)
   if (!definition) {
     const err = new Error('Unknown coding agent config file')
     ;(err as any).status = 404
     throw err
   }
-  const normalizedScope = normalizeConfigScope(scope)
-
-  const buffer = Buffer.from(content || '', 'utf-8')
+  let persistedContent = content || ''
+  if (id === 'grok' && (key === 'mcp' || key === 'settings')) {
+    const existingContent = await safeReadFile(definition.absolutePath) || ''
+    persistedContent = key === 'mcp'
+      ? mergeGrokUserMcpConfig(existingContent, persistedContent)
+      : mergeGrokSettingsConfig(existingContent, persistedContent)
+  }
+  const buffer = Buffer.from(persistedContent, 'utf-8')
   if (buffer.length > MAX_CONFIG_FILE_SIZE) {
     const err = new Error('Config file content is too large')
     ;(err as any).status = 413
@@ -2357,7 +2391,14 @@ export async function writeCodingAgentConfigFile(id: string, key: string, conten
     ...definition,
     ...normalizedScope,
     rootDir: dirname(definition.absolutePath),
-    content,
+    content: id === 'grok' && key === 'mcp'
+      ? mergeGrokConfigWithManagedMcp(
+          grokUserMcpConfig(persistedContent),
+          codexMcpConfigToml(normalizedScope.profile),
+        )
+      : id === 'grok' && key === 'settings'
+        ? grokSettingsConfig(persistedContent)
+        : content,
     exists: true,
     size: buffer.length,
   }
@@ -2763,7 +2804,11 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       : null
     const capabilities = getModelRuntimeCapabilities({ profile: scope.profile, provider, model })
     const baseConfigRoot = getScopedConfigRoot(tool.id, scope)
+    const globalGrokHome = process.env.GROK_HOME?.trim() || join(getGlobalConfigHome(), '.grok')
+    const globalInstructions = await safeReadFile(join(globalGrokHome, 'AGENTS.md')) || ''
+    const scopedInstructions = await safeReadFile(join(baseConfigRoot, 'AGENTS.md')) || ''
     const prepared = await prepareScopedGrokRuntime({
+      sourceHome: globalGrokHome,
       rootDir,
       provider,
       model,
@@ -2773,7 +2818,9 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       outputLimit: capabilities.outputLimit,
       reasoningEffort,
       systemPrompt: scopedSystemPrompt,
-      userInstructions: await safeReadFile(join(baseConfigRoot, 'AGENTS.md')) || '',
+      userInstructions: [globalInstructions.trim(), scopedInstructions.trim()]
+        .filter((value, index, values) => value && values.indexOf(value) === index)
+        .join('\n\n'),
       managedMcpToml: codexMcpConfigToml(
         scope.profile,
         await safeReadFile(getLiveConfigFileDefinition(tool.id, 'config')?.absolutePath || ''),

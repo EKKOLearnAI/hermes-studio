@@ -42,7 +42,7 @@ describe('coding Agent configuration navigation', () => {
     expect(view).toContain("'claude-code': { memory: 'memory', mcp: 'mcp', settings: 'settings' }")
     expect(view).toContain("codex: { memory: 'agents', mcp: 'config', settings: 'config' }")
     expect(view).toContain("pi: { memory: 'agents', mcp: 'mcp', settings: 'settings' }")
-    expect(view).toContain("grok: { memory: 'agents', mcp: 'config', settings: 'config' }")
+    expect(view).toContain("grok: { memory: 'agents', mcp: 'mcp', settings: 'settings' }")
     expect(skills).toContain('target?: SkillTarget')
   })
 })

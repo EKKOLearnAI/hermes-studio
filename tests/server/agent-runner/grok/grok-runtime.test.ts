@@ -4,6 +4,10 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  grokSettingsConfig,
+  grokUserMcpConfig,
+  mergeGrokSettingsConfig,
+  mergeGrokUserMcpConfig,
   prepareGlobalGrokRuntime,
   prepareScopedGrokRuntime,
   stripManagedGrokMcp,
@@ -93,6 +97,31 @@ describe('Grok runtime isolation', () => {
     expect(updatedPrompt).toContain('Updated workflow instructions.')
   })
 
+  it('copies global Grok skills into scoped runtimes', async () => {
+    const root = makeRoot()
+    const sourceHome = join(root, 'user-grok')
+    const rootDir = join(root, 'runtime')
+    await mkdir(join(sourceHome, 'skills', 'review'), { recursive: true })
+    writeFileSync(join(sourceHome, 'skills', 'review', 'SKILL.md'), 'Review skill.\n')
+
+    await prepareScopedGrokRuntime({
+      sourceHome,
+      rootDir,
+      provider: 'custom-provider',
+      model: 'custom-model',
+      displayName: 'Custom Model',
+      proxyBaseUrl: 'http://127.0.0.1:8647/v1',
+      contextWindow: 128_000,
+      outputLimit: 8192,
+      reasoningEffort: '',
+      systemPrompt: 'Studio instructions.',
+      userInstructions: 'User instructions.',
+      managedMcpToml: '',
+    })
+
+    expect(readFileSync(join(rootDir, 'skills', 'review', 'SKILL.md'), 'utf-8')).toBe('Review skill.\n')
+  })
+
   it('removes only Studio-managed MCP blocks', () => {
     const config = [
       '[mcp_servers.user-tools]',
@@ -104,6 +133,27 @@ describe('Grok runtime isolation', () => {
 
     expect(stripManagedGrokMcp(config)).toContain('[mcp_servers.user-tools]')
     expect(stripManagedGrokMcp(config)).not.toContain('hermes-studio-api')
+  })
+
+  it('separates Grok settings and user MCP without persisting managed MCP', () => {
+    const config = [
+      '[cli]',
+      'installer = "npm"',
+      '',
+      '[mcp_servers.user-tools]',
+      'command = "user-mcp"',
+      '',
+      '[mcp_servers.hermes-studio-api]',
+      'command = "studio-mcp"',
+    ].join('\n')
+
+    expect(grokSettingsConfig(config)).toContain('[cli]')
+    expect(grokSettingsConfig(config)).not.toContain('mcp_servers')
+    expect(grokUserMcpConfig(config)).toContain('user-tools')
+    expect(grokUserMcpConfig(config)).not.toContain('hermes-studio-api')
+    expect(mergeGrokUserMcpConfig(config, '[mcp_servers.next]\ncommand = "next"')).toContain('[cli]')
+    expect(mergeGrokUserMcpConfig(config, '[mcp_servers.next]\ncommand = "next"')).not.toContain('user-tools')
+    expect(mergeGrokSettingsConfig(config, '[cli]\ninstaller = "brew"')).toContain('user-tools')
   })
 })
 
