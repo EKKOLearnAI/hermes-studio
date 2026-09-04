@@ -8,6 +8,8 @@ export interface EkkoSettingsConfig {
   runtime: {
     maxSteps: number
     maxModelRetries: number
+    toolFailureRecoveryThreshold: number
+    /** @deprecated Retained for older Ekko config files. */
     maxConsecutiveToolFailures: number
   }
   model: {

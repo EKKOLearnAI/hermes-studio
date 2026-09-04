@@ -49,6 +49,7 @@ export interface EkkoSettingsSnapshot {
 const RUNTIME_KEYS = [
   'maxSteps',
   'maxModelRetries',
+  'toolFailureRecoveryThreshold',
   'maxConsecutiveToolFailures',
 ] as const
 const MODEL_KEYS = [

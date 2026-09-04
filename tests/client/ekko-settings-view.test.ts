@@ -64,7 +64,12 @@ vi.mock('naive-ui', () => ({
 import SettingsView from '@/views/ekko/SettingsView.vue'
 
 const config = {
-  runtime: { maxSteps: 80, maxModelRetries: 2, maxConsecutiveToolFailures: 3 },
+  runtime: {
+    maxSteps: 80,
+    maxModelRetries: 2,
+    toolFailureRecoveryThreshold: 3,
+    maxConsecutiveToolFailures: 6,
+  },
   model: {
     defaultProvider: '',
     defaultModel: '',
