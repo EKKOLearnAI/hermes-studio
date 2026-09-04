@@ -381,8 +381,11 @@ const CONFIG_FILE_DEFINITIONS: Record<CodingAgentId, Array<Omit<CodingAgentConfi
     { key: 'agents', path: '~/.grok/AGENTS.md', scopedPath: 'AGENTS.md', language: 'markdown' },
   ],
   opencode: [
-    { key: 'config', path: '~/.config/opencode/opencode.json', scopedPath: OPENCODE_CONFIG_FILE, language: 'json' },
+    { key: 'settings', path: '~/.config/opencode/opencode.json', scopedPath: OPENCODE_CONFIG_FILE, language: 'json' },
+    { key: 'memory', path: '~/.config/opencode/AGENTS.md', scopedPath: 'AGENTS.md', language: 'markdown' },
     { key: 'mcp', path: '~/.config/opencode/opencode.json', scopedPath: OPENCODE_CONFIG_FILE, language: 'json' },
+    // Keep the native names as compatibility aliases for older clients.
+    { key: 'config', path: '~/.config/opencode/opencode.json', scopedPath: OPENCODE_CONFIG_FILE, language: 'json' },
     { key: 'agents', path: '~/.config/opencode/AGENTS.md', scopedPath: 'AGENTS.md', language: 'markdown' },
   ],
 }
@@ -1547,6 +1550,32 @@ function parseOpenCodeConfig(...contents: Array<string | null | undefined>): Rec
     }
   }
   return config
+}
+
+function parseEditableOpenCodeConfig(content: string): Record<string, any> {
+  try {
+    const parsed = JSON.parse(content || '{}')
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed
+  } catch {}
+  const err = new Error('OpenCode configuration contains invalid JSON')
+  ;(err as any).status = 400
+  throw err
+}
+
+function openCodeSettingsConfig(content: string): string {
+  const config = parseEditableOpenCodeConfig(content)
+  delete config.mcp
+  return `${JSON.stringify(config, null, 2)}\n`
+}
+
+function mergeOpenCodeSettingsConfig(existingContent: string, settingsContent: string): string {
+  const existing = parseEditableOpenCodeConfig(existingContent)
+  const settings = parseEditableOpenCodeConfig(settingsContent)
+  delete settings.mcp
+  const merged: Record<string, any> = { ...settings }
+  if (Object.prototype.hasOwnProperty.call(existing, 'mcp')) merged.mcp = existing.mcp
+  else delete merged.mcp
+  return `${JSON.stringify(merged, null, 2)}\n`
 }
 
 function opencodeRuntimeConfig(
@@ -2717,6 +2746,8 @@ export async function readCodingAgentConfigFile(id: string, key: string, scope: 
       )
       : id === 'grok' && key === 'settings'
         ? grokSettingsConfig(sourceContent)
+        : id === 'opencode' && key === 'settings'
+          ? openCodeSettingsConfig(sourceContent)
         : sourceContent
     return {
       ...definition,
@@ -2732,6 +2763,8 @@ export async function readCodingAgentConfigFile(id: string, key: string, scope: 
       ? mergeGrokConfigWithManagedMcp('', codexMcpConfigToml(normalizedScope.profile, 'grok'))
       : id === 'pi'
         ? piLiveConfigDefault(key, normalizedScope.profile) || ''
+        : id === 'opencode' && key === 'settings'
+          ? '{}\n'
         : ''
     return {
       ...definition,
@@ -2761,6 +2794,9 @@ export async function writeCodingAgentConfigFile(id: string, key: string, conten
     persistedContent = key === 'mcp'
       ? mergeGrokUserMcpConfig(existingContent, persistedContent)
       : mergeGrokSettingsConfig(existingContent, persistedContent)
+  } else if (id === 'opencode' && key === 'settings') {
+    const existingContent = await safeReadFile(definition.absolutePath) || '{}'
+    persistedContent = mergeOpenCodeSettingsConfig(existingContent, persistedContent)
   }
   const buffer = Buffer.from(persistedContent, 'utf-8')
   if (buffer.length > MAX_CONFIG_FILE_SIZE) {
@@ -2786,6 +2822,8 @@ export async function writeCodingAgentConfigFile(id: string, key: string, conten
         )
       : id === 'grok' && key === 'settings'
         ? grokSettingsConfig(persistedContent)
+        : id === 'opencode' && key === 'settings'
+          ? openCodeSettingsConfig(persistedContent)
         : content,
     exists: true,
     size: buffer.length,

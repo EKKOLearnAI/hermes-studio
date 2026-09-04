@@ -51,7 +51,7 @@ function assertAgentId(id: string): void {
 }
 
 function configKey(id: string): string {
-  return id === 'codex' || id === 'opencode' ? 'config' : 'mcp'
+  return id === 'codex' ? 'config' : 'mcp'
 }
 
 function isRecord(value: unknown): value is Record<string, any> {
@@ -73,10 +73,45 @@ function normalizeTransport(config: Record<string, any>): 'stdio' | 'http' | 'ss
 function normalizeConfig(value: unknown): Record<string, any> {
   if (!isRecord(value)) return {}
   const config = { ...value }
+  if (Array.isArray(config.command)) {
+    const [command, ...args] = config.command.map(String)
+    config.command = command || ''
+    if (!Array.isArray(config.args)) config.args = args
+  }
+  if (isRecord(config.environment) && !isRecord(config.env)) config.env = config.environment
+  delete config.environment
   if (config.type === 'streamableHttp') config.type = 'http'
+  if (config.type === 'local') config.type = 'stdio'
+  if (config.type === 'remote') config.type = 'http'
   if (isRecord(config.http_headers) && !isRecord(config.headers)) config.headers = config.http_headers
   delete config.http_headers
   return config
+}
+
+function serializeOpenCodeConfig(value: Record<string, any>): Record<string, any> {
+  const config = normalizeConfig(value)
+  const native = { ...config }
+  delete native.transport
+  if (String(config.command || '').trim()) {
+    native.type = 'local'
+    native.command = [
+      String(config.command),
+      ...(Array.isArray(config.args) ? config.args.map(String) : []),
+    ]
+    delete native.args
+    if (isRecord(config.env) && Object.keys(config.env).length) native.environment = config.env
+    delete native.env
+    delete native.url
+    delete native.headers
+    return native
+  }
+  native.type = 'remote'
+  native.url = String(config.url || '')
+  delete native.command
+  delete native.args
+  delete native.env
+  delete native.environment
+  return native
 }
 
 function parseJsonDocument(content: string): { root: Record<string, any>; servers: Map<string, Record<string, any>> } {
@@ -283,7 +318,7 @@ async function writeServer(
     const { root } = parseOpenCodeDocument(originalContent)
     const persistedServers = isRecord(root.mcp) ? { ...root.mcp } : {}
     for (const managedName of STUDIO_MANAGED_NAMES) delete persistedServers[managedName]
-    if (config) persistedServers[name] = config
+    if (config) persistedServers[name] = serializeOpenCodeConfig(config)
     else delete persistedServers[name]
     root.mcp = persistedServers
     await writeCodingAgentConfigFile(id, configKey(id), `${JSON.stringify(root, null, 2)}\n`, scope)

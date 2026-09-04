@@ -42,6 +42,8 @@ function globalSkillsDir(target: Exclude<SkillTarget, 'hermes'>): string {
     ? join(homedir(), '.claude', 'skills')
     : target === 'grok'
       ? join(homedir(), '.grok', 'skills')
+      : target === 'opencode'
+        ? join(homedir(), '.config', 'opencode', 'skills')
       : join(homedir(), '.agents', 'skills')
 }
 

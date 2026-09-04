@@ -179,6 +179,55 @@ describe('coding Agent MCP manager', () => {
     expect(persisted).not.toContain('[mcp_servers.hermes-studio-api]')
   })
 
+  it('manages and probes OpenCode MCP using its native config shape', async () => {
+    const home = makeHome()
+    const path = join(home, '.config', 'opencode', 'opencode.json')
+    mkdirSync(join(home, '.config', 'opencode'), { recursive: true })
+    writeFileSync(path, `${JSON.stringify({
+      theme: 'system',
+      mcp: {
+        docs: {
+          type: 'local',
+          command: ['node', 'docs.mjs'],
+          environment: { DOCS_MODE: 'safe' },
+          enabled: true,
+        },
+      },
+    }, null, 2)}\n`)
+
+    const listed = await listCodingAgentMcpServers('opencode')
+    expect(listed.servers.find(server => server.name === 'docs')?.raw_config).toMatchObject({
+      type: 'stdio',
+      command: 'node',
+      args: ['docs.mjs'],
+      env: { DOCS_MODE: 'safe' },
+    })
+
+    const tested = await testCodingAgentMcpServer('opencode', 'docs')
+    expect(tested).toMatchObject({ ok: true, tools: ['custom_tool'] })
+    expect(stdioOptions.at(-1)).toMatchObject({
+      command: 'node',
+      args: ['docs.mjs'],
+    })
+
+    await upsertCodingAgentMcpServer('opencode', 'search', {
+      command: 'search-mcp',
+      args: ['--stdio'],
+      env: { SEARCH_MODE: 'local' },
+      enabled: true,
+    })
+
+    const persisted = JSON.parse(readFileSync(path, 'utf8'))
+    expect(persisted.theme).toBe('system')
+    expect(persisted.mcp.search).toEqual({
+      type: 'local',
+      command: ['search-mcp', '--stdio'],
+      enabled: true,
+      environment: { SEARCH_MODE: 'local' },
+    })
+    expect(persisted.mcp['hermes-studio-api']).toBeUndefined()
+  })
+
   it('prunes a manually removed Codex MCP server from persisted scoped runtimes', async () => {
     const home = makeHome()
     const globalPath = join(home, '.codex', 'config.toml')

@@ -52,6 +52,7 @@ describe('coding Agent configuration navigation', () => {
     expect(view).toContain("codex: { preference: 'agents', configuration: 'config' }")
     expect(view).toContain("pi: { preference: 'agents', configuration: 'settings' }")
     expect(view).toContain("grok: { preference: 'agents', configuration: 'settings' }")
+    expect(view).toContain("opencode: { preference: 'memory', configuration: 'settings' }")
     expect(view).toContain("const editorKinds: SettingsEditor[] = ['preference', 'configuration']")
     expect(view).toContain('Promise.allSettled')
     expect(view).toContain("v-if=\"section === 'settings'\" class=\"page-header\"")
