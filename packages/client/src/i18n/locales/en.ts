@@ -288,7 +288,6 @@ export default {
     testFailed: 'Test failed',
     edit: 'Edit',
     test: 'Test',
-    ignoreTemporarily: 'Ignore for now',
     reload: 'Reload',
     remove: 'Remove',
     confirmRemove: 'Remove server "{name}"?',

@@ -118,23 +118,4 @@ describe('CodingAgentMcpPanel Agent changes', () => {
     expect(api.test).toHaveBeenCalledWith('claude-code', 'claude-server')
     expect(api.test).not.toHaveBeenCalledWith('claude-code', 'codex-server')
   })
-
-  it('temporarily hides a probe error until the user tests the server again', async () => {
-    api.fetch.mockResolvedValue(response('docs'))
-    api.test.mockResolvedValue({ ok: false, error: 'HTTP 401' })
-    const wrapper = shallowMount(CodingAgentMcpPanel, {
-      props: { agentId: 'codex' },
-    })
-    await flushPromises()
-
-    expect(wrapper.getComponent(McpServerCard).props('server').error).toBe('HTTP 401')
-
-    wrapper.getComponent(McpServerCard).vm.$emit('ignore-error')
-    await flushPromises()
-    expect(wrapper.getComponent(McpServerCard).props('server').error).toBeNull()
-
-    wrapper.getComponent(McpServerCard).vm.$emit('test')
-    await flushPromises()
-    expect(wrapper.getComponent(McpServerCard).props('server').error).toBe('HTTP 401')
-  })
 })

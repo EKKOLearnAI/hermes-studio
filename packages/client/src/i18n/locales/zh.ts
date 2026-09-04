@@ -289,7 +289,6 @@ export default {
     testFailed: '测试失败',
     edit: '编辑',
     test: '测试',
-    ignoreTemporarily: '暂时忽略',
     reload: '重载',
     remove: '移除',
     confirmRemove: '确认删除服务器 "{name}"？',

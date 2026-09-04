@@ -130,9 +130,6 @@ export default {
     "serverConfigHint": "Для stdio используйте command/args/env, для удалённого MCP — type: streamable_http с url/headers.",
     "missingCommand": "Требуется непустой command"
   },
-  mcp: {
-    ignoreTemporarily: 'Пока игнорировать',
-  },
   socialMessages: socialMessagesRu,
   browser: {
     title: 'Браузер', settings: 'Настройки браузера', desktopOnly: 'Встроенный браузер доступен только в Hermes Studio Desktop.', newTab: 'Новая вкладка',

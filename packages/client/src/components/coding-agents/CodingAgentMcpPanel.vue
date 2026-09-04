@@ -29,7 +29,6 @@ const searchQuery = ref('')
 const servers = ref<CodingAgentMcpServerInfo[]>([])
 const testedTools = ref<Record<string, Array<{ name: string; description?: string }>>>({})
 const testErrors = ref<Record<string, string>>({})
-const ignoredTestErrors = ref<Record<string, string>>({})
 const testingServers = ref<Set<string>>(new Set())
 const showModal = ref(false)
 const modalMode = ref<'add' | 'edit'>('add')
@@ -81,7 +80,6 @@ const displayedServers = computed<CodingAgentMcpServerInfo[]>(() =>
     const tools = toolsByServer.value[server.name] || []
     const tested = Object.prototype.hasOwnProperty.call(testedTools.value, server.name)
     const testError = testErrors.value[server.name]
-    const visibleTestError = ignoredTestErrors.value[server.name] === testError ? '' : testError
     return {
       ...server,
       connected: server.raw_config.enabled !== false && tested && !testError,
@@ -90,7 +88,7 @@ const displayedServers = computed<CodingAgentMcpServerInfo[]>(() =>
       tool_names: tools.map(tool => tool.name),
       tool_names_registered: tools.map(tool => tool.name),
       tool_details: tools,
-      error: visibleTestError || null,
+      error: testError || null,
     }
   }),
 )
@@ -138,11 +136,8 @@ function invalidateServerProbe(name: string) {
   const nextErrors = { ...testErrors.value }
   delete nextTools[name]
   delete nextErrors[name]
-  const nextIgnoredErrors = { ...ignoredTestErrors.value }
-  delete nextIgnoredErrors[name]
   testedTools.value = nextTools
   testErrors.value = nextErrors
-  ignoredTestErrors.value = nextIgnoredErrors
 }
 
 function isCurrentAgent(agentId: CodingAgentId, generation: number): boolean {
@@ -162,11 +157,6 @@ async function probeServer(
   delete nextErrors[server.name]
   testErrors.value = nextErrors
   try {
-    if (notify) {
-      const nextIgnoredErrors = { ...ignoredTestErrors.value }
-      delete nextIgnoredErrors[server.name]
-      ignoredTestErrors.value = nextIgnoredErrors
-    }
     const response = await testCodingAgentMcpServer(requestedAgentId, server.name)
     if (!isCurrentAgent(requestedAgentId, generation) || probeVersions.get(server.name) !== version) return
     if (!response.ok) throw new Error(response.error || t('mcp.testEmpty'))
@@ -184,12 +174,6 @@ async function probeServer(
       setServerTesting(server.name, false)
     }
   }
-}
-
-function ignoreServerError(server: CodingAgentMcpServerInfo) {
-  const error = testErrors.value[server.name]
-  if (!error) return
-  ignoredTestErrors.value = { ...ignoredTestErrors.value, [server.name]: error }
 }
 
 async function probeEnabledServers(
@@ -434,12 +418,10 @@ watch(() => props.agentId, changeAgent)
             :allow-readonly-edit="true"
             :allow-readonly-toggle="true"
             :allow-readonly-remove="true"
-            :allow-ignore-error="true"
             :context-label="server.managed ? t('ekkoConfig.managed') : t('ekkoConfig.custom')"
             :testing="testingServers.has(server.name)"
             @edit="openEdit(server)"
             @test="testServer(server)"
-            @ignore-error="ignoreServerError(server)"
             @remove="removeServer(server)"
             @toggle-enabled="toggleServer(server)"
           />

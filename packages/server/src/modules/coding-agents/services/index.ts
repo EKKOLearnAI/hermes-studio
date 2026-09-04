@@ -33,9 +33,11 @@ import { getSession, updateSession, type HermesSessionRow } from '../../studio/p
 import type { SessionState } from '../../studio/contracts/runs/session'
 import { normalizeWindowsCommandPath, windowsCmdShimExecution, windowsCommandNeedsShell, type WindowsCommandExecution } from '../../studio/public/windows-command'
 import { updateAgentStatus } from '../../studio/public/agent-status-registry'
+import { logger } from '../../studio/public/logging'
 import { assertScopedCodingAgentProviderAllowed } from '../protocol/provider-policy'
 import type { CodingAgentRuntime } from '../../studio/contracts/agents/runtime'
 import { defaultCodingAgentWorkspace } from '../../studio/public/workspace-manager'
+import { isolateUnhealthyRuntimeMcpServers } from './mcp-runtime-isolation'
 
 const execFileAsync = promisify(execFile)
 const LAUNCH_API_MODES = new Set<ApiMode>(['chat_completions', 'codex_responses', 'anthropic_messages'])
@@ -3233,6 +3235,20 @@ export async function startCodingAgentRun(
     isolateSettings: true,
     piOutputMode: id === 'pi' ? 'rpc' : undefined,
   })
+  const runtimeMcpFile = launch.files.find(file => file.key === (id === 'codex' || id === 'grok' ? 'config' : 'mcp'))
+  const runtimeMcpPath = runtimeMcpFile?.absolutePath
+    || (id === 'codex' || id === 'grok'
+      ? join(launch.rootDir, 'config.toml')
+      : id === 'pi'
+        ? join(launch.rootDir, 'mcp.json')
+        : '')
+  if (runtimeMcpPath) {
+    try {
+      await isolateUnhealthyRuntimeMcpServers(id, runtimeMcpPath)
+    } catch (err) {
+      logger.warn({ err, agentId: id, runtimeMcpPath }, '[coding-agent-mcp] runtime isolation failed open')
+    }
+  }
   const commandExecutionEnv = process.platform === 'win32'
     ? {
         ...(await commandEnv()),
