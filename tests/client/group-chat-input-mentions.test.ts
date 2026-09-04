@@ -59,6 +59,26 @@ describe('GroupChatInput mentions', () => {
     expect(wrapper.get('.attachment-file').text()).toContain('group-notes.txt')
   })
 
+  it('opens an uploaded image preview before sending', async () => {
+    const pinia = createTestingPinia({ stubActions: false, createSpy: vi.fn })
+    const settingsStore = useSettingsStore()
+    settingsStore.display = {}
+    const wrapper = mount(GroupChatInput, {
+      global: { plugins: [pinia], stubs: { Transition: false } },
+    })
+    const image = new File(['image'], 'group-screenshot.png', { type: 'image/png' })
+    const input = wrapper.get('input[type="file"]')
+    Object.defineProperty(input.element, 'files', { configurable: true, value: [image] })
+
+    await input.trigger('change')
+    await nextTick()
+    await wrapper.get('.attachment-thumb-button').trigger('click')
+    await nextTick()
+
+    expect(document.body.querySelector('.image-preview-overlay img')?.getAttribute('src'))
+      .toBe('blob:group-attachment')
+  })
+
   it('updates mention suggestions after the textarea has a custom height', async () => {
     const pinia = createTestingPinia({ stubActions: false, createSpy: vi.fn })
     const settingsStore = useSettingsStore()

@@ -33,6 +33,7 @@ import { isServerTtsProvider } from '@/api/studio/tts'
 import { groupAgentAvatar, groupMessageAgent, parseStoredAvatar } from '@/utils/group-agent-avatar'
 import GroupAgentMessageAvatar from './GroupAgentMessageAvatar.vue'
 import GroupAgentRobotIcon from './GroupAgentRobotIcon.vue'
+import ImagePreviewOverlay from '@/components/hermes/chat/ImagePreviewOverlay.vue'
 
 const MarkdownRenderer = defineAsyncComponent(async () => (await import('../chat/MarkdownRenderer.vue')).default)
 
@@ -876,9 +877,12 @@ onBeforeUnmount(() => {
             </div>
         </div>
     </div>
-    <div v-if="previewUrl" class="image-preview-overlay" @click.self="previewUrl = null">
-        <img :src="previewUrl" class="image-preview-img" @click="previewUrl = null" />
-    </div>
+    <ImagePreviewOverlay
+        v-if="previewUrl"
+        :src="previewUrl"
+        alt=""
+        @close="previewUrl = null"
+    />
 </template>
 
 <style scoped lang="scss">
@@ -1399,26 +1403,6 @@ onBeforeUnmount(() => {
         font-size: 11px;
         color: $text-muted;
     }
-}
-
-.image-preview-overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 9999;
-    background: rgba(0, 0, 0, 0.82);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 24px;
-}
-
-.image-preview-img {
-    max-width: min(96vw, 1400px);
-    max-height: 92vh;
-    object-fit: contain;
-    border-radius: 6px;
-    cursor: zoom-out;
-    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
 }
 
 .thinking-block {

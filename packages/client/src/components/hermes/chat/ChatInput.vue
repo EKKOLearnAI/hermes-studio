@@ -20,6 +20,7 @@ import { BRIDGE_SESSION_COMMAND_DEFINITIONS } from '@/utils/hermes/bridge-sessio
 import { clampChatInputHeight, isMobileChatInputViewport } from '@/utils/chat-input-height'
 import { normalizeComposerVoiceTranscript, useComposerVoiceInput } from '@/composables/useComposerVoiceInput'
 import { extractRepresentativeVideoFrames, isVideoFile } from '@/utils/video-frame-extraction'
+import ImagePreviewOverlay from './ImagePreviewOverlay.vue'
 
 const chatStore = useChatStore()
 const appStore = useAppStore()
@@ -120,6 +121,7 @@ const textareaRef = ref<HTMLTextAreaElement>()
 const commandDropdownRef = ref<HTMLDivElement>()
 const fileInputRef = ref<HTMLInputElement>()
 const attachments = ref<Attachment[]>([])
+const previewAttachment = ref<Attachment | null>(null)
 const pendingVideoFrameJobs = new Set<Promise<void>>()
 const isPreparingAttachments = ref(false)
 let sendAwaitingAttachments = false
@@ -1005,6 +1007,7 @@ async function handleSend() {
   chatStore.sendMessage(text, attachments.value.length > 0 ? attachments.value : undefined)
   inputText.value = ''
   saveDraftForActiveSession('')
+  previewAttachment.value = null
   attachments.value = []
   slashActive.value = false
 
@@ -1096,6 +1099,9 @@ function removeAttachment(id: string) {
     if (attachment.videoFrameFor === id) removedIds.add(attachment.id)
   }
   const removed = attachments.value.filter(attachment => removedIds.has(attachment.id))
+  if (previewAttachment.value && removedIds.has(previewAttachment.value.id)) {
+    previewAttachment.value = null
+  }
   for (const attachment of removed) URL.revokeObjectURL(attachment.url)
   attachments.value = attachments.value.filter(attachment => !removedIds.has(attachment.id))
 }
@@ -1108,6 +1114,11 @@ function formatSize(bytes: number): string {
 
 function isImage(type: string): boolean {
   return type.startsWith('image/')
+}
+
+function openAttachmentPreview(attachment: Attachment) {
+  if (!isImage(attachment.type)) return
+  previewAttachment.value = attachment
 }
 </script>
 
@@ -1122,7 +1133,14 @@ function isImage(type: string): boolean {
         :class="{ image: isImage(att.type), 'has-context': !!att.context }"
       >
         <template v-if="isImage(att.type)">
-          <img :src="att.url" :alt="att.name" class="attachment-thumb" />
+          <button
+            type="button"
+            class="attachment-thumb-button"
+            :aria-label="att.name"
+            @click="openAttachmentPreview(att)"
+          >
+            <img :src="att.url" :alt="att.name" class="attachment-thumb" />
+          </button>
         </template>
         <template v-else>
           <div class="attachment-file">
@@ -1140,6 +1158,12 @@ function isImage(type: string): boolean {
         </button>
       </div>
     </div>
+    <ImagePreviewOverlay
+      v-if="previewAttachment"
+      :src="previewAttachment.url"
+      :alt="previewAttachment.name"
+      @close="previewAttachment = null"
+    />
 
     <div v-if="activeMessageReference" class="message-reference-preview">
       <span class="message-reference-text">{{ messageReferencePreview }}</span>
@@ -2044,8 +2068,8 @@ function isImage(type: string): boolean {
   border: 1px solid $border-color;
 
   &.image {
-    width: 64px;
-    height: 64px;
+    width: 112px;
+    height: 72px;
   }
 
   &.image.has-context {
@@ -2055,9 +2079,26 @@ function isImage(type: string): boolean {
 }
 
 .attachment-thumb {
+  display: block;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
+}
+
+.attachment-thumb-button {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background:
+    linear-gradient(45deg, rgba(127, 127, 127, 0.08) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(127, 127, 127, 0.08) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(127, 127, 127, 0.08) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(127, 127, 127, 0.08) 75%);
+  background-position: 0 0, 0 6px, 6px -6px, -6px 0;
+  background-size: 12px 12px;
+  cursor: zoom-in;
 }
 
 .attachment-preview.has-context .attachment-thumb {
@@ -2067,6 +2108,10 @@ function isImage(type: string): boolean {
   max-height: 220px;
   object-fit: contain;
   background: #fff;
+}
+
+.attachment-preview.has-context .attachment-thumb-button {
+  height: auto;
 }
 
 .attachment-context {
