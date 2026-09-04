@@ -1,5 +1,5 @@
 export interface ChatAgentAvatar {
-  label: 'Hermes' | 'Ekko' | 'Claude' | 'Codex' | 'Pi' | 'Grok'
+  label: 'Hermes' | 'Ekko' | 'Claude' | 'Codex' | 'Pi' | 'Grok' | 'OpenCode'
   src: string
 }
 
@@ -16,6 +16,7 @@ const AGENT_AVATARS = {
   codex: { label: 'Codex', src: '/coding-agents/codex-openai.png' },
   pi: { label: 'Pi', src: '/coding-agents/pi.svg' },
   grok: { label: 'Grok', src: '/coding-agents/grok.svg' },
+  opencode: { label: 'OpenCode', src: '/coding-agents/opencode.svg' },
 } as const satisfies Record<string, ChatAgentAvatar>
 
 export function chatSessionAgentAvatar(session?: ChatAgentSessionIdentity | null): ChatAgentAvatar {
@@ -25,6 +26,7 @@ export function chatSessionAgentAvatar(session?: ChatAgentSessionIdentity | null
   if (runtime === 'codex') return AGENT_AVATARS.codex
   if (runtime === 'pi') return AGENT_AVATARS.pi
   if (runtime === 'grok') return AGENT_AVATARS.grok
+  if (runtime === 'opencode') return AGENT_AVATARS.opencode
   if (session?.source === 'coding_agent') return AGENT_AVATARS['claude-code']
   return AGENT_AVATARS.hermes
 }

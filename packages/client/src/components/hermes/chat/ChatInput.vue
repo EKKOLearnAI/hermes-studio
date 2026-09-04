@@ -241,6 +241,7 @@ const isCodingAgentSession = computed(() => {
     || session.agent === 'claude-code'
     || session.agent === 'pi'
     || session.agent === 'grok'
+    || session.agent === 'opencode'
   )
 })
 const isForkCommandSession = computed(() => !!chatStore.activeSession && chatStore.activeSession.source !== 'coding_agent')

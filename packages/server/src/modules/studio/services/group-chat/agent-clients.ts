@@ -35,7 +35,7 @@ export const GROUP_CHAT_AGENT_SOCKET_SECRET = randomBytes(32).toString('hex')
 
 export interface AgentConfig {
     agentId?: string
-    agent?: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi' | 'grok'
+    agent?: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi' | 'grok' | 'opencode'
     agentMode?: 'scoped' | 'global'
     profile: string
     provider?: string
@@ -102,7 +102,7 @@ export function mentionMessageToStoredContextMessage(roomId: string, msg: Mentio
 type GroupEstimateMessage = { role: 'user' | 'assistant'; content: string }
 export type GroupModelContext = { model: string; provider: string }
 export type GroupAgentSessionConfig = {
-    agent?: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi' | 'grok'
+    agent?: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi' | 'grok' | 'opencode'
     agentMode?: 'scoped' | 'global'
     provider?: string
     model?: string
@@ -230,7 +230,7 @@ export interface GroupAgentEventSink {
 
 export interface GroupAgentExecutor {
     readonly agentId: string
-    readonly agent: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi' | 'grok'
+    readonly agent: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi' | 'grok' | 'opencode'
     readonly agentMode: 'scoped' | 'global'
     readonly profile: string
     readonly provider: string
@@ -288,7 +288,7 @@ export interface GroupChatRunService {
             workspace?: string | null
             source?: string
             session_source?: 'group_chat'
-            coding_agent_id?: 'claude-code' | 'codex' | 'pi' | 'grok' | 'ekko-agent'
+            coding_agent_id?: 'claude-code' | 'codex' | 'pi' | 'grok' | 'opencode' | 'ekko-agent'
             mode?: 'scoped' | 'global'
             profile?: string
             reasoning_effort?: string
@@ -329,7 +329,7 @@ export interface GroupChatRunService {
 
 export class AgentClient implements GroupAgentExecutor {
     readonly agentId: string
-    readonly agent: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi' | 'grok'
+    readonly agent: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi' | 'grok' | 'opencode'
     readonly agentMode: 'scoped' | 'global'
     readonly profile: string
     readonly provider: string
@@ -364,7 +364,7 @@ export class AgentClient implements GroupAgentExecutor {
     constructor(config: AgentConfig, handlers: AgentEventHandler = {}, eventSink: GroupAgentEventSink | null = null) {
         this.agentId = config.agentId || Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
         this.agent = config.agent || 'hermes'
-        this.agentMode = config.agentMode === 'global' && (this.agent === 'claude' || this.agent === 'codex' || this.agent === 'pi' || this.agent === 'grok')
+        this.agentMode = config.agentMode === 'global' && (this.agent === 'claude' || this.agent === 'codex' || this.agent === 'pi' || this.agent === 'grok' || this.agent === 'opencode')
             ? 'global'
             : 'scoped'
         this.profile = config.profile
@@ -1182,7 +1182,9 @@ export class AgentClient implements GroupAgentExecutor {
                         ? 'pi'
                         : this.agent === 'grok'
                             ? 'grok'
-                            : 'codex'
+                            : this.agent === 'opencode'
+                                ? 'opencode'
+                                : 'codex'
             const usesGlobalCodingAgent = this.agentMode === 'global' && codingAgentId !== 'ekko-agent'
             const groupSystemPrompt = this.groupSystemPrompt(roomId, msg)
             const result = await this.chatRunService.runAndWait({

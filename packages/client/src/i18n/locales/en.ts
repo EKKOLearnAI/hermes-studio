@@ -3369,7 +3369,7 @@ export default {
     cacheHitRate: 'Cache Hit Rate',
     modelBreakdown: 'Model Breakdown',
     agentBreakdown: 'Agent Breakdown',
-    agents: { hermes: 'Hermes Agent', claudeCode: 'Claude', codex: 'Codex', pi: 'Pi', grok: 'Grok', ekkoAgent: 'Ekko', unknown: 'Unknown' },
+    agents: { hermes: 'Hermes Agent', claudeCode: 'Claude', codex: 'Codex', pi: 'Pi', grok: 'Grok', opencode: 'OpenCode', ekkoAgent: 'Ekko', unknown: 'Unknown' },
     dailyTrend: 'Daily Usage',
     date: 'Date',
     tokens: 'Tokens',

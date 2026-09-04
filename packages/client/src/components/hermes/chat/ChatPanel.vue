@@ -926,6 +926,7 @@ const newChatAgentOptions = computed(() => [
   { label: "Codex", value: "codex" },
   { label: "Pi", value: "pi" },
   { label: "Grok", value: "grok" },
+  { label: "OpenCode", value: "opencode" },
 ]);
 
 const newChatApiModeOptions = computed(() => [
@@ -1042,7 +1043,7 @@ const selectedNewChatProviderGroup = computed(() =>
 );
 
 const isNewChatCodingAgent = computed(() => newChatAgent.value !== "hermes");
-const isNewChatExternalCodingAgent = computed(() => newChatAgent.value === "claude-code" || newChatAgent.value === "codex" || newChatAgent.value === "pi" || newChatAgent.value === "grok");
+const isNewChatExternalCodingAgent = computed(() => newChatAgent.value === "claude-code" || newChatAgent.value === "codex" || newChatAgent.value === "pi" || newChatAgent.value === "grok" || newChatAgent.value === "opencode");
 const effectiveNewChatAgentMode = computed(() =>
   effectiveNewChatMode(newChatAgent.value, newChatAgentMode.value),
 );
@@ -1248,6 +1249,8 @@ async function confirmNewChat() {
         ? "pi"
       : newChatAgent.value === "grok"
         ? "grok"
+      : newChatAgent.value === "opencode"
+        ? "opencode"
       : newChatAgent.value === "ekko-agent"
         ? "ekko-agent"
       : "hermes";
@@ -1773,8 +1776,14 @@ const sessionModelCodingAgentId = computed<ChatCodingAgentId | undefined>(() =>
   sessionModelSession.value?.codingAgentId ||
   (sessionModelSession.value?.agent === "claude"
     ? "claude-code"
-    : sessionModelSession.value?.agent === "codex"
-      ? "codex"
+      : sessionModelSession.value?.agent === "codex"
+        ? "codex"
+      : sessionModelSession.value?.agent === "pi"
+        ? "pi"
+      : sessionModelSession.value?.agent === "grok"
+        ? "grok"
+      : sessionModelSession.value?.agent === "opencode"
+        ? "opencode"
       : sessionModelSession.value?.agent === "ekko-agent"
         ? "ekko-agent"
         : undefined),

@@ -353,7 +353,7 @@ function sameRemoteAgent(
 
 class RelayGroupAgentExecutor implements GroupAgentExecutor {
   readonly agentId: string
-  agent: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi' | 'grok'
+  agent: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi' | 'grok' | 'opencode'
   agentMode: 'scoped' | 'global'
   profile: string
   provider: string

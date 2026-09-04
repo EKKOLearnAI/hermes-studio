@@ -2635,7 +2635,7 @@ export default {
     cacheHitRate: '캐시 적중률',
     modelBreakdown: '모델별 분포',
     agentBreakdown: 'Agent별 분포',
-    agents: { hermes: 'Hermes Agent', claudeCode: 'Claude', codex: 'Codex', pi: 'Pi', grok: 'Grok', ekkoAgent: 'Ekko', unknown: '알 수 없음' },
+    agents: { hermes: 'Hermes Agent', claudeCode: 'Claude', codex: 'Codex', pi: 'Pi', grok: 'Grok', opencode: 'OpenCode', ekkoAgent: 'Ekko', unknown: '알 수 없음' },
     dailyTrend: '일별 사용량',
     date: '날짜',
     tokens: '토큰',

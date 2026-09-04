@@ -37,7 +37,14 @@ function stringRecord(value: unknown): Record<string, string> {
 function normalizeConfig(value: unknown): Record<string, any> {
   if (!isRecord(value)) return {}
   const config = { ...value }
+  if (Array.isArray(config.command)) {
+    const [command, ...args] = config.command.map(String)
+    config.command = command || ''
+    if (!Array.isArray(config.args)) config.args = args
+  }
+  if (isRecord(config.environment) && !isRecord(config.env)) config.env = config.environment
   if (config.type === 'streamableHttp') config.type = 'http'
+  if (config.type === 'remote') config.type = 'http'
   if (isRecord(config.http_headers) && !isRecord(config.headers)) config.headers = config.http_headers
   delete config.http_headers
   return config
@@ -107,6 +114,16 @@ function jsonMcpServers(content: string): Record<string, Record<string, any>> {
   if (!isRecord(parsed) || !isRecord(parsed.mcpServers)) return {}
   return Object.fromEntries(
     Object.entries(parsed.mcpServers)
+      .filter((entry): entry is [string, Record<string, any>] => isRecord(entry[1]))
+      .map(([name, config]) => [name, normalizeConfig(config)]),
+  )
+}
+
+function openCodeMcpServers(content: string): Record<string, Record<string, any>> {
+  const parsed: unknown = JSON.parse(content || '{}')
+  if (!isRecord(parsed) || !isRecord(parsed.mcp)) return {}
+  return Object.fromEntries(
+    Object.entries(parsed.mcp)
       .filter((entry): entry is [string, Record<string, any>] => isRecord(entry[1]))
       .map(([name, config]) => [name, normalizeConfig(config)]),
   )
@@ -212,7 +229,7 @@ export async function isolateUnhealthyRuntimeMcpServers(
   configPath: string,
   options: { probe?: typeof probeCodingAgentMcpConfig } = {},
 ): Promise<string[]> {
-  if (!['claude-code', 'codex', 'pi', 'grok'].includes(agentId)) return []
+  if (!['claude-code', 'codex', 'pi', 'grok', 'opencode'].includes(agentId)) return []
   let content: string
   try {
     content = await readFile(configPath, 'utf-8')
@@ -224,7 +241,9 @@ export async function isolateUnhealthyRuntimeMcpServers(
   try {
     servers = agentId === 'claude-code' || agentId === 'pi'
       ? jsonMcpServers(content)
-      : tomlMcpServers(content)
+      : agentId === 'opencode'
+        ? openCodeMcpServers(content)
+        : tomlMcpServers(content)
   } catch (err) {
     logger.warn({ err, agentId, configPath }, '[coding-agent-mcp] skipped runtime isolation for invalid config')
     return []
@@ -239,6 +258,12 @@ export async function isolateUnhealthyRuntimeMcpServers(
     const mcpServers = isRecord(parsed.mcpServers) ? { ...parsed.mcpServers } : {}
     for (const name of unhealthy.keys()) delete mcpServers[name]
     parsed.mcpServers = mcpServers
+    updated = `${JSON.stringify(parsed, null, 2)}\n`
+  } else if (agentId === 'opencode') {
+    const parsed = JSON.parse(content || '{}') as Record<string, any>
+    const mcp = isRecord(parsed.mcp) ? { ...parsed.mcp } : {}
+    for (const name of unhealthy.keys()) delete mcp[name]
+    parsed.mcp = mcp
     updated = `${JSON.stringify(parsed, null, 2)}\n`
   } else {
     updated = disableTomlMcpServers(content, new Set(unhealthy.keys()))

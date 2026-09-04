@@ -198,6 +198,7 @@ describe('MessageList session scroll position', () => {
     ['Codex', { source: 'coding_agent', agent: 'codex', codingAgentId: 'codex' }, '/coding-agents/codex-openai.png'],
     ['Pi', { source: 'coding_agent', agent: 'pi', codingAgentId: 'pi' }, '/coding-agents/pi.svg'],
     ['Grok', { source: 'coding_agent', agent: 'grok', codingAgentId: 'grok' }, '/coding-agents/grok.svg'],
+    ['OpenCode', { source: 'coding_agent', agent: 'opencode', codingAgentId: 'opencode' }, '/coding-agents/opencode.svg'],
   ])('passes the $runtime avatar to Assistant message bubbles', async (label, identity, src) => {
     const chatStore = useChatStore()
     const activeSession = { ...makeSession(`avatar-${label}`), ...identity } as Session

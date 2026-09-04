@@ -750,6 +750,69 @@ describe('coding agent launch preparation', () => {
     expect(readFileSync(join(globalGrokHome, 'AGENTS.md'), 'utf8')).toBe('User global Grok instructions.\n')
   })
 
+  it('launches global OpenCode with native provider settings plus managed MCP', async () => {
+    const home = makeHome()
+    const globalOpenCodeHome = join(home, 'global-home', '.config', 'opencode')
+    mkdirSync(globalOpenCodeHome, { recursive: true })
+    writeFileSync(join(globalOpenCodeHome, 'opencode.json'), `${JSON.stringify({
+      model: 'native/model',
+      provider: { native: { npm: '@ai-sdk/openai-compatible' } },
+      instructions: ['USER.md'],
+      mcp: { local: { type: 'local', command: ['local-mcp'], enabled: true } },
+    }, null, 2)}\n`)
+
+    const result = await prepareCodingAgentLaunch('opencode', {
+      mode: 'global',
+      profile: 'default',
+    })
+    const config = JSON.parse(readFileSync(join(result.rootDir, 'opencode.json'), 'utf8'))
+
+    expect(result).toMatchObject({
+      agentId: 'opencode',
+      mode: 'global',
+      provider: 'global',
+      model: '',
+      command: 'opencode',
+      args: [],
+      env: {
+        OPENCODE_CONFIG: join(result.rootDir, 'opencode.json'),
+        OPENCODE_CONFIG_DIR: result.rootDir,
+      },
+      promptFile: join(result.rootDir, 'AGENTS.md'),
+    })
+    expect(config.model).toBe('native/model')
+    expect(config.provider.native).toEqual({ npm: '@ai-sdk/openai-compatible' })
+    expect(config.instructions).toEqual(['USER.md', join(result.rootDir, 'AGENTS.md')])
+    expect(config.mcp.local).toEqual({ type: 'local', command: ['local-mcp'], enabled: true })
+    expect(config.mcp['hermes-studio-api']).toMatchObject({ type: 'local', enabled: true })
+  })
+
+  it('launches scoped OpenCode through the Responses proxy without writing the upstream key', async () => {
+    const home = makeHome()
+    const result = await prepareCodingAgentLaunch('opencode', {
+      mode: 'scoped',
+      profile: 'default',
+      sessionId: 'opencode-chat',
+      agentSessionId: 'opencode-run',
+      provider: 'test',
+      model: 'test-model',
+      baseUrl: 'https://api.example.com/v1',
+      apiKey: 'sk-opencode-upstream',
+      apiMode: 'codex_responses',
+    })
+    const configText = readFileSync(join(result.rootDir, 'opencode.json'), 'utf8')
+    const config = JSON.parse(configText)
+
+    expect(result.args).toEqual(['--model', 'hermes-studio/test-model'])
+    expect(result.env.HERMES_OPENCODE_API_KEY).toBeTruthy()
+    expect(result.env.HERMES_OPENCODE_API_KEY).not.toBe('sk-opencode-upstream')
+    expect(config.model).toBe('hermes-studio/test-model')
+    expect(config.provider['hermes-studio'].npm).toBe('@ai-sdk/openai')
+    expect(config.provider['hermes-studio'].options.baseURL).toContain('/api/codex-proxy/')
+    expect(config.provider['hermes-studio'].options.apiKey).toBe('{env:HERMES_OPENCODE_API_KEY}')
+    expect(configText).not.toContain('sk-opencode-upstream')
+  })
+
   it('launches interactive Pi with its global config when requested', async () => {
     const home = makeHome()
 

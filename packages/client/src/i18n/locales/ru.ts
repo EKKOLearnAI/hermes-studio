@@ -3005,7 +3005,7 @@ export default {
     cacheHitRate: 'Попадания в кэш',
     modelBreakdown: 'Распределение по моделям',
     agentBreakdown: 'Распределение по агентам',
-    agents: { hermes: 'Hermes Agent', claudeCode: 'Claude', codex: 'Codex', pi: 'Pi', grok: 'Grok', ekkoAgent: 'Ekko', unknown: 'Неизвестно' },
+    agents: { hermes: 'Hermes Agent', claudeCode: 'Claude', codex: 'Codex', pi: 'Pi', grok: 'Grok', opencode: 'OpenCode', ekkoAgent: 'Ekko', unknown: 'Неизвестно' },
     dailyTrend: 'Ежедневная динамика',
     date: 'Дата',
     tokens: 'Токены',

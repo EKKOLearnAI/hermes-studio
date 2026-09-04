@@ -11,6 +11,7 @@ describe('single chat Agent avatars', () => {
     ['Codex', { codingAgentId: 'codex' }, '/coding-agents/codex-openai.png'],
     ['Pi', { codingAgentId: 'pi' }, '/coding-agents/pi.svg'],
     ['Grok', { codingAgentId: 'grok' }, '/coding-agents/grok.svg'],
+    ['OpenCode', { codingAgentId: 'opencode' }, '/coding-agents/opencode.svg'],
   ])('maps session identity to the $label avatar', (label, session, src) => {
     expect(chatSessionAgentAvatar(session)).toEqual({ label, src })
   })

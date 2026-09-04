@@ -13,7 +13,7 @@ import { setManagedMcpServerEnabled, setManagedMcpServerOverride } from './mcp-o
 import { getWebUiHome } from '../../studio/public/config'
 import { probeCodingAgentMcpConfig } from './mcp-runtime-isolation'
 
-const CODING_AGENT_IDS = new Set(['claude-code', 'codex', 'pi', 'grok'])
+const CODING_AGENT_IDS = new Set(['claude-code', 'codex', 'pi', 'grok', 'opencode'])
 const STUDIO_MANAGED_NAMES = new Set([
   'hermes-studio-api',
   'hermes-studio-browser',
@@ -51,7 +51,7 @@ function assertAgentId(id: string): void {
 }
 
 function configKey(id: string): string {
-  return id === 'codex' ? 'config' : 'mcp'
+  return id === 'codex' || id === 'opencode' ? 'config' : 'mcp'
 }
 
 function isRecord(value: unknown): value is Record<string, any> {
@@ -90,6 +90,23 @@ function parseJsonDocument(content: string): { root: Record<string, any>; server
     throw error
   }
   const source = isRecord(root.mcpServers) ? root.mcpServers : {}
+  return {
+    root,
+    servers: new Map(Object.entries(source).map(([name, value]) => [name, normalizeConfig(value)])),
+  }
+}
+
+function parseOpenCodeDocument(content: string): { root: Record<string, any>; servers: Map<string, Record<string, any>> } {
+  let root: Record<string, any> = {}
+  try {
+    const parsed = JSON.parse(content || '{}')
+    if (isRecord(parsed)) root = parsed
+  } catch {
+    const error = new Error('Cannot manage MCP servers while the configuration contains invalid JSON')
+    ;(error as any).status = 400
+    throw error
+  }
+  const source = isRecord(root.mcp) ? root.mcp : {}
   return {
     root,
     servers: new Map(Object.entries(source).map(([name, value]) => [name, normalizeConfig(value)])),
@@ -229,6 +246,8 @@ async function readServers(id: string, scope: CodingAgentConfigScope): Promise<{
   let servers: Map<string, Record<string, any>>
   if (id === 'claude-code' || id === 'pi') {
     servers = parseJsonDocument(file.content).servers
+  } else if (id === 'opencode') {
+    servers = parseOpenCodeDocument(file.content).servers
   } else {
     servers = parseTomlServers(file.content)
   }
@@ -260,6 +279,16 @@ async function writeServer(
     await writeCodingAgentConfigFile(id, configKey(id), `${JSON.stringify(root, null, 2)}\n`, scope)
     return
   }
+  if (id === 'opencode') {
+    const { root } = parseOpenCodeDocument(originalContent)
+    const persistedServers = isRecord(root.mcp) ? { ...root.mcp } : {}
+    for (const managedName of STUDIO_MANAGED_NAMES) delete persistedServers[managedName]
+    if (config) persistedServers[name] = config
+    else delete persistedServers[name]
+    root.mcp = persistedServers
+    await writeCodingAgentConfigFile(id, configKey(id), `${JSON.stringify(root, null, 2)}\n`, scope)
+    return
+  }
   const { other, blocks } = splitTomlDocument(originalContent)
   for (const managedName of STUDIO_MANAGED_NAMES) blocks.delete(managedName)
   if (config) blocks.set(name, serializeTomlServer(name, config))
@@ -278,6 +307,14 @@ function removeServerFromContent(id: string, content: string, name: string): str
     root.mcpServers = persistedServers
     return `${JSON.stringify(root, null, 2)}\n`
   }
+  if (id === 'opencode') {
+    const { root } = parseOpenCodeDocument(content)
+    const persistedServers = isRecord(root.mcp) ? { ...root.mcp } : {}
+    if (!Object.prototype.hasOwnProperty.call(persistedServers, name)) return null
+    delete persistedServers[name]
+    root.mcp = persistedServers
+    return `${JSON.stringify(root, null, 2)}\n`
+  }
 
   const { other, blocks } = splitTomlDocument(content)
   if (!blocks.delete(name)) return null
@@ -287,7 +324,11 @@ function removeServerFromContent(id: string, content: string, name: string): str
 
 async function pruneScopedServerCopies(id: string, name: string): Promise<number> {
   const modelRoot = join(getWebUiHome(), 'coding-agent', 'model')
-  const fileName = id === 'claude-code' || id === 'pi' ? 'mcp.json' : 'config.toml'
+  const fileName = id === 'claude-code' || id === 'pi'
+    ? 'mcp.json'
+    : id === 'opencode'
+      ? 'opencode.json'
+      : 'config.toml'
   const candidates: string[] = []
 
   const directories = async (path: string) => {

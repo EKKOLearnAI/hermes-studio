@@ -1,6 +1,6 @@
 import { request } from './client'
 
-export type AgentStatusId = 'hermes' | 'ekko-agent' | 'claude-code' | 'codex' | 'pi' | 'grok'
+export type AgentStatusId = 'hermes' | 'ekko-agent' | 'claude-code' | 'codex' | 'pi' | 'grok' | 'opencode'
 export type AgentStatusSource = 'managed-runtime' | 'user-cli' | 'built-in' | 'not-installed'
 
 export interface AgentStatusRecord {

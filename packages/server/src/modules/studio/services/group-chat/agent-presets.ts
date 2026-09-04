@@ -22,11 +22,11 @@ const ALLOWED_FIELDS = new Set([
   'agent', 'agentMode', 'profile', 'provider', 'model', 'apiMode', 'reasoningEffort',
   'name', 'description', 'avatar',
 ])
-const AGENTS = new Set<GroupAgentPresetAgent>(['hermes', 'ekko', 'codex', 'claude', 'pi', 'grok'])
+const AGENTS = new Set<GroupAgentPresetAgent>(['hermes', 'ekko', 'codex', 'claude', 'pi', 'grok', 'opencode'])
 const API_MODES = new Set(['chat_completions', 'codex_responses', 'anthropic_messages'])
 const REASONING_EFFORTS = new Set(['', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
 const AVATAR_MAX_LENGTH = 1_500_000
-const GLOBAL_MODE_AGENTS = new Set<GroupAgentPresetAgent>(['codex', 'claude', 'pi', 'grok'])
+const GLOBAL_MODE_AGENTS = new Set<GroupAgentPresetAgent>(['codex', 'claude', 'pi', 'grok', 'opencode'])
 
 function requiredText(value: unknown, field: string, max = 200): string {
   const normalized = typeof value === 'string' ? value.trim() : ''

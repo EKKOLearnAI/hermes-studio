@@ -76,6 +76,14 @@ const codingAgents: CodingAgentCard[] = [
     command: 'grok',
     packageName: '@xai-official/grok',
   },
+  {
+    id: 'opencode',
+    name: 'OpenCode',
+    provider: 'OpenCode',
+    logo: '/coding-agents/opencode.svg',
+    command: 'opencode',
+    packageName: 'opencode-ai',
+  },
 ]
 
 const { t } = useI18n()
@@ -97,14 +105,15 @@ const hermesRuntimeStatus = ref<RuntimeVersionStatus | null>(null)
 const aiHelpDrawerVisible = ref(false)
 const aiHelpPrompt = ref('')
 const legacyDataMigrationChecked = ref(false)
-const installing = ref<Record<CodingAgentId, boolean>>({ 'claude-code': false, codex: false, pi: false, grok: false })
-const deleting = ref<Record<CodingAgentId, boolean>>({ 'claude-code': false, codex: false, pi: false, grok: false })
-const checkingUpdate = ref<Record<CodingAgentId, boolean>>({ 'claude-code': false, codex: false, pi: false, grok: false })
+const installing = ref<Record<CodingAgentId, boolean>>({ 'claude-code': false, codex: false, pi: false, grok: false, opencode: false })
+const deleting = ref<Record<CodingAgentId, boolean>>({ 'claude-code': false, codex: false, pi: false, grok: false, opencode: false })
+const checkingUpdate = ref<Record<CodingAgentId, boolean>>({ 'claude-code': false, codex: false, pi: false, grok: false, opencode: false })
 const updateInfo = ref<Record<CodingAgentId, CodingAgentUpdateResult | null>>({
   'claude-code': null,
   codex: null,
   pi: null,
   grok: null,
+  opencode: null,
 })
 
 const hermesStatus = computed(() => agentStatusSnapshot.value?.agents.find(agent => agent.id === 'hermes'))
