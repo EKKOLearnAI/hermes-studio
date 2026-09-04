@@ -6,6 +6,7 @@ import { createSession, addMessage, getSession, updateSession, updateSessionStat
 import type { ApiMode, CodingAgentImageInput } from '../../protocol/types'
 import { logger } from '../../../studio/public/logging'
 import { normalizeTokenUsage, recordSessionUsage } from '../../../studio/public/usage'
+import { getRecordedUsageByRun } from '../../../studio/public/sessions'
 import {
   applyResponseStreamEvent,
   calcAndUpdateUsage,
@@ -1109,8 +1110,8 @@ export class CodingAgentRunManager {
       this.emitToChat(run.launch.sessionId, mapped.event, mapped.payload)
     }
     if (isTerminalEvent) {
-      run.assistantMessageId = this.persistTerminalResponse(run)
       const final = (storageSafeResponseEvent.data as any).response || storageSafeResponseEvent.data
+      run.assistantMessageId = this.persistTerminalResponse(run, final?.id || undefined)
       if (run.launch.mode !== 'scoped' && final?.usage) {
         const usage = normalizeTokenUsage(final.usage)
         if (!usage.isEstimated) {
@@ -1157,8 +1158,8 @@ export class CodingAgentRunManager {
     }
   }
 
-  private persistTerminalResponse(run: ManagedCodingAgentRun): string | undefined {
-    const assistantMessageId = flushResponseRunToDb(run.state, run.launch.sessionId)
+  private persistTerminalResponse(run: ManagedCodingAgentRun, runId?: string): string | undefined {
+      const assistantMessageId = flushResponseRunToDb(run.state, run.launch.sessionId, runId)
     run.state.responseRun = undefined
     updateSessionStats(run.launch.sessionId)
     return assistantMessageId
@@ -2993,11 +2994,21 @@ export class CodingAgentRunManager {
     run.pendingChatCompletionPayload = undefined
     const queueRemaining = run.state.queue.length
     const workspaceRunChange = this.completeWorkspaceRunDiff(run)
+    const runId = String((payload as any)?.run_id || run.id || '')
+    const recordedRunUsage = getRecordedUsageByRun(run.launch.sessionId, 'coding_agent', runId)
     this.emitToChat(run.launch.sessionId, event, {
       ...(payload || { event }),
       ...(run.assistantMessageId ? { message_id: run.assistantMessageId } : {}),
       ...(queueRemaining > 0 ? { queue_remaining: queueRemaining } : {}),
       workspace_run_change: workspaceRunChange,
+      runUsage: {
+        input: recordedRunUsage.inputTokens,
+        output: recordedRunUsage.outputTokens,
+        cacheRead: recordedRunUsage.cacheReadTokens,
+        cacheWrite: recordedRunUsage.cacheWriteTokens,
+        reasoning: recordedRunUsage.reasoningTokens,
+        apiCalls: recordedRunUsage.apiCalls,
+      },
     })
     if (queueRemaining === 0) {
       try {

@@ -38,6 +38,7 @@ import {
 import type { ChatMessage } from '../context-compressor'
 import { logger } from '../../public/logging'
 import { recordSessionUsage } from '../usage/usage-recorder'
+import { getRecordedUsageByRun } from '../../repositories/usage-store'
 import { observeRunChatPetEvent } from '../../public/pet-events'
 import { contentBlocksToString, convertContentBlocksForAgent, extractTextForPreview } from './content-blocks'
 import { buildCompressedHistory, getOrCreateSession } from './compression'
@@ -1441,6 +1442,7 @@ export async function handleEkkoAgentRun(
           reasoning: reasoningText || null,
           reasoning_details: reasoningDetails,
           reasoning_content: reasoningText || null,
+          run_id: runId || undefined,
         })
       } else if (step.type === 'tool') {
         if (persistedToolCallIds.has(step.toolCallId)) continue
@@ -1452,6 +1454,7 @@ export async function handleEkkoAgentRun(
           tool_name: step.toolName,
           timestamp,
           finish_reason: step.result.ok ? null : 'error',
+          run_id: runId || undefined,
         })
       }
     }
@@ -1516,6 +1519,7 @@ export async function handleEkkoAgentRun(
           reasoning: assistantReasoning || null,
           reasoning_details: reasoningDetails,
           reasoning_content: assistantReasoning || null,
+          run_id: runId || result.runId || undefined,
         }],
       })
       if (assistantId != null) assistantMessageId = String(assistantId)
@@ -1553,6 +1557,7 @@ export async function handleEkkoAgentRun(
       context_tokens: contextEstimate?.contextTokens ?? state.contextTokens,
     })
     const workspaceRunChange = completeWorkspaceRunDiff()
+    const recordedRunUsage = getRecordedUsageByRun(sessionId, 'ekko_agent', String(runId || result.runId || ''))
     emit('run.completed', {
       event: 'run.completed',
       run_id: runId || result.runId,
@@ -1566,6 +1571,14 @@ export async function handleEkkoAgentRun(
         input_tokens: usageInput,
         output_tokens: usageOutput,
         total_tokens: usageInput + usageOutput,
+      },
+      runUsage: {
+        input: recordedRunUsage.inputTokens || usageInput,
+        output: recordedRunUsage.outputTokens || usageOutput,
+        cacheRead: recordedRunUsage.cacheReadTokens,
+        cacheWrite: recordedRunUsage.cacheWriteTokens,
+        reasoning: recordedRunUsage.reasoningTokens,
+        apiCalls: recordedRunUsage.apiCalls,
       },
       queue_remaining: state.queue.length,
       background_pending: ekkoBackgroundPendingCount(state),
