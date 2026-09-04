@@ -684,7 +684,7 @@ describe('hermes-web-ui MCP server', () => {
     expect(list.result.tools[0].description).toContain('internal delegation')
 
     const catalog = JSON.parse((await waitForRpc(responses, 32)).result.content[0].text)
-    expect(catalog).toMatchObject({ toolset: 'use', operation_count: 25 })
+    expect(catalog).toMatchObject({ toolset: 'use', operation_count: 27 })
     expect(catalog.operations.map((tool: any) => tool.name)).toEqual(expect.arrayContaining([
       'hermes_studio_use_chat_run',
       'hermes_studio_use_sessions_count',
@@ -692,6 +692,8 @@ describe('hermes-web-ui MCP server', () => {
       'hermes_studio_use_session_context',
       'hermes_studio_use_provider_add',
       'hermes_studio_use_worker_status',
+      'hermes_studio_use_mobile_calendar',
+      'hermes_studio_use_mobile_reminders',
       'hermes_studio_use_workflows_list',
       'hermes_studio_use_workflow_rerun_node',
     ]))

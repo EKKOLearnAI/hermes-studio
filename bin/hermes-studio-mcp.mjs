@@ -1264,6 +1264,37 @@ const tools = [
     inputSchema: inputSchema(),
   },
   {
+    name: 'hermes_studio_use_mobile_calendar',
+    toolset: 'use',
+    description: 'With the user’s explicit request, ask their mobile App to list, create, or update calendar events in the current direct chat. The App always requires one-time confirmation. Delete and background access are not supported.',
+    inputSchema: inputSchema({
+      session_id: { type: 'string', description: 'Exact current Hermes Studio direct-chat session id supplied in the run context.' },
+      action: { type: 'string', enum: ['list', 'create', 'update'], description: 'Calendar operation.' },
+      purpose: { type: 'string', description: 'Short user-visible reason for the request.' },
+      start_ms: { type: 'number', description: 'List range start as Unix milliseconds.' },
+      end_ms: { type: 'number', description: 'List range end as Unix milliseconds; maximum range is 31 days.' },
+      limit: { type: 'number', description: 'Maximum list result count, from 1 to 100.' },
+      item: { type: 'object', additionalProperties: true, description: 'Event fields for create/update: id (update), title, start_ms, end_ms, all_day, location, notes, reminder_minutes.' },
+      timeout_ms: { type: 'number', description: 'Wait time for user confirmation, from 3000 to 60000 milliseconds.' },
+    }, ['session_id', 'action', 'purpose']),
+  },
+  {
+    name: 'hermes_studio_use_mobile_reminders',
+    toolset: 'use',
+    description: 'With the user’s explicit request, ask their mobile App to list, create, update, or complete reminders in the current direct chat. The App always requires one-time confirmation. Delete and background access are not supported.',
+    inputSchema: inputSchema({
+      session_id: { type: 'string', description: 'Exact current Hermes Studio direct-chat session id supplied in the run context.' },
+      action: { type: 'string', enum: ['list', 'create', 'update', 'complete'], description: 'Reminder operation.' },
+      purpose: { type: 'string', description: 'Short user-visible reason for the request.' },
+      start_ms: { type: 'number', description: 'List range start as Unix milliseconds.' },
+      end_ms: { type: 'number', description: 'List range end as Unix milliseconds; maximum range is 31 days.' },
+      include_completed: { type: 'boolean', description: 'Include completed reminders when listing.' },
+      limit: { type: 'number', description: 'Maximum list result count, from 1 to 100.' },
+      item: { type: 'object', additionalProperties: true, description: 'Reminder fields: id (update/complete), title, due_ms, notes, priority, completed.' },
+      timeout_ms: { type: 'number', description: 'Wait time for user confirmation, from 3000 to 60000 milliseconds.' },
+    }, ['session_id', 'action', 'purpose']),
+  },
+  {
     name: 'hermes_studio_use_workflows_list',
     toolset: 'use',
     description: 'List Hermes Studio workflows for the selected or requested profile.',
@@ -1621,8 +1652,8 @@ const CATEGORY_TOOLSETS = {
   },
   use: {
     name: 'hermes_studio_use_toolset',
-    coverage: 'Explicit user-requested Studio chat/coding runs; session list/count/detail/messages/context/rename/delete; usage statistics; profiles and available models; provider add/delete; worker status; workflow CRUD and workflow run list/start/stop/rerun/delete.',
-    description: 'Discover and invoke high-level Hermes Studio operations without loading every Studio-use tool schema into the model context. Covers explicit user-requested chat or coding runs, session management and clean context, usage statistics, profiles/models/providers, worker status, workflow CRUD, and workflow run lifecycle. Never use chat/session operations as an internal delegation mechanism. Use action=list for the compact operation catalog, action=describe for one full input schema, then action=call with that exact tool name and arguments.',
+    coverage: 'Explicit user-requested Studio chat/coding runs; one-time confirmed mobile calendar and reminder operations; session list/count/detail/messages/context/rename/delete; usage statistics; profiles and available models; provider add/delete; worker status; workflow CRUD and workflow run list/start/stop/rerun/delete.',
+    description: 'Discover and invoke high-level Hermes Studio operations without loading every Studio-use tool schema into the model context. Covers explicit user-requested chat or coding runs, one-time confirmed mobile calendar/reminder operations, session management and clean context, usage statistics, profiles/models/providers, worker status, workflow CRUD, and workflow run lifecycle. Never use chat/session or mobile-device operations as an internal delegation mechanism. Use action=list for the compact operation catalog, action=describe for one full input schema, then action=call with that exact tool name and arguments.',
   },
 }
 
@@ -1903,6 +1934,22 @@ async function callTool(name, args = {}) {
       return jsonText(summarizeWorkerRuntime(
         await request('/api/studio/performance/runtime', withAuthArgs(args)),
       ))
+    case 'hermes_studio_use_mobile_calendar':
+      return jsonText(await request('/api/studio/mobile-calendar/request', withAuthArgs(args, {
+        method: 'POST',
+        body: {
+          capability: 'calendar',
+          ...pickDefined(args, ['session_id', 'action', 'purpose', 'start_ms', 'end_ms', 'limit', 'item', 'timeout_ms']),
+        },
+      })))
+    case 'hermes_studio_use_mobile_reminders':
+      return jsonText(await request('/api/studio/mobile-calendar/request', withAuthArgs(args, {
+        method: 'POST',
+        body: {
+          capability: 'reminder',
+          ...pickDefined(args, ['session_id', 'action', 'purpose', 'start_ms', 'end_ms', 'include_completed', 'limit', 'item', 'timeout_ms']),
+        },
+      })))
     case 'hermes_studio_use_workflows_list':
       return jsonText(await request('/api/studio/workflows', withAuthArgs(args, {
         query: pickDefined(args, ['profile']),
