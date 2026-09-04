@@ -8,6 +8,7 @@ interface CategoryOption {
 interface BuildSessionCategoryMenuChildrenOptions {
   categories: readonly CategoryOption[]
   currentCategoryId: number | null | undefined
+  createCategoryLabel: string
   uncategorizedLabel: string
   loadFailedLabel: string
   retryLabel: string
@@ -18,6 +19,7 @@ interface BuildSessionCategoryMenuChildrenOptions {
 export function buildSessionCategoryMenuChildren({
   categories,
   currentCategoryId,
+  createCategoryLabel,
   uncategorizedLabel,
   loadFailedLabel,
   retryLabel,
@@ -32,6 +34,15 @@ export function buildSessionCategoryMenuChildren({
   }
 
   return [
+    {
+      label: createCategoryLabel,
+      key: 'category:create',
+      disabled: loading,
+    },
+    {
+      type: 'divider',
+      key: 'category:create-divider',
+    },
     {
       label: uncategorizedLabel,
       key: 'category:none',
