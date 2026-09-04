@@ -1071,6 +1071,13 @@ export class CodingAgentRunManager {
       // for transport and usage accounting only.
       return
     }
+    if (run.launch.agentId === 'opencode' && !run.acceptingPrintEvent) {
+      // OpenCode's JSON stdout is the authoritative turn stream. A single
+      // OpenCode turn can contain several provider requests, so treating each
+      // proxy response.completed event as the turn boundary duplicates output
+      // and can repeatedly persist partial assistant responses.
+      return
+    }
     if (run.launch.agentId === 'claude-code' && !run.acceptingPrintEvent) {
       if (run.terminalEventHandled) return
       // Claude's stream-json process reports tool_use/tool_result itself.

@@ -220,10 +220,10 @@ async function* observe() {
     for await (const event of normalizeResponsesSseEvents(events)) {
       codingAgentRunManager.handleProxyUsageEvent(target.agentSessionId, event)
       const clientEvent = responseEventForCodexClient(target, event)
-      // Grok prints the same streamed text through its `streaming-json`
-      // stdout. Feeding proxy events directly into the run as well would
-      // append every model delta twice.
-      if (target.agentId !== 'grok') {
+      // Grok and OpenCode print the same model activity through their native
+      // stdout streams. The proxy remains responsible for transport and usage
+      // accounting, but must not become a second chat lifecycle source.
+      if (target.agentId !== 'grok' && target.agentId !== 'opencode') {
         codingAgentRunManager.handleResponseEvent(target.agentSessionId, clientEvent)
       }
       yield clientEvent

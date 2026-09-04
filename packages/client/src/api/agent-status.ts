@@ -41,6 +41,7 @@ const AGENT_STATUS_ALIASES: Record<string, AgentStatusId> = {
   codex: 'codex',
   pi: 'pi',
   grok: 'grok',
+  opencode: 'opencode',
 }
 
 export function resolveAgentStatusId(agent: string): AgentStatusId | null {

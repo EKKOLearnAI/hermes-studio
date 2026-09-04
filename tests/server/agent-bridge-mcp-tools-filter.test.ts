@@ -20,6 +20,43 @@ function runPython(script: string): any {
 }
 
 describe('agent bridge MCP tools filtering', () => {
+  it('lists configured servers when the Hermes runtime has no MCP module', () => {
+    const result = runPython(String.raw`
+import importlib.util
+import json
+import sys
+from pathlib import Path
+
+path = Path("packages/server/src/modules/hermes/services/bridge/python/hermes_bridge.py")
+spec = importlib.util.spec_from_file_location("hermes_bridge", path)
+bridge = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = bridge
+spec.loader.exec_module(bridge)
+
+server = bridge.BridgeServer("tcp://127.0.0.1:0")
+server._read_mcp_config = lambda profile: {
+    "mcp_servers": {
+        "filesystem": {"command": "mcp-server", "enabled": True},
+    },
+}
+
+print(json.dumps(server._handle_mcp_action("mcp_list", {}, "default")))
+`)
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      runtime_available: false,
+      total_tools: 0,
+      servers: [
+        expect.objectContaining({
+          name: 'filesystem',
+          connected: false,
+          error: 'Hermes Runtime MCP module is unavailable; update Hermes Runtime',
+        }),
+      ],
+    }))
+  })
+
   it('treats an empty include list as an active filter and keeps raw listing unfiltered', () => {
     const result = runPython(String.raw`
 import importlib.util

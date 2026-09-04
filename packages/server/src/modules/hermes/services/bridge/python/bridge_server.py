@@ -377,7 +377,21 @@ class BridgeServer:
         try:
             from tools.mcp_tool import discover_mcp_tools, register_mcp_servers, _run_on_mcp_loop, _servers, _lock
         except ImportError:
-            return {"error": "MCP tool module not available", "ok": False}
+            # Older/minimal Hermes runtimes may not ship the live MCP module.
+            # Keep config listing usable so Studio clients can render the MCP
+            # page instead of failing during initial load.
+            if profile is None:
+                profile = _worker_profile() or "default"
+            if action == "mcp_list":
+                result = self._mcp_list(profile, {}, threading.RLock())
+                for server in result["servers"]:
+                    server["error"] = "Hermes Runtime MCP module is unavailable; update Hermes Runtime"
+                result["runtime_available"] = False
+                return result
+            return {
+                "error": "Hermes Runtime MCP module is unavailable; update Hermes Runtime",
+                "ok": False,
+            }
 
         if profile is None:
             profile = _worker_profile() or "default"
