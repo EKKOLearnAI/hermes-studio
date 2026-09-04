@@ -2045,6 +2045,7 @@ describe('coding agent run state', () => {
     ;(manager as any).cleanupRun(run, { kill: true })
 
     expect(emitted).toEqual([])
+    expect(getSession(chatSessionId)?.ended_at).toEqual(expect.any(Number))
   })
 
   it('does not emit run.failed when a print coding-agent session is stopped by abort', () => {

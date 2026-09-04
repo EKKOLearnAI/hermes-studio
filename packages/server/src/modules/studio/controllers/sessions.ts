@@ -63,6 +63,7 @@ import { getChatRunServer } from '../services/chat-run/server-registry'
 import { isSensitivePath, MAX_DOWNLOAD_SIZE, MAX_EDIT_SIZE } from '../services/files/file-policy'
 import { buildFileContentHeaders, getFilePreviewDescriptor } from '../services/files/file-preview'
 import { decorateWorkspaceEntries, getWorkspaceFileGitDiff } from '../services/files/workspace-git-status'
+import { createHermesHandoffSession } from '../services/session-handoff'
 import { copyFile, mkdir, readFile, readdir, rename as fsRename, rm as fsRm, stat as fsStat, writeFile } from 'fs/promises'
 import { normalize as pathNormalize, resolve as pathResolve } from 'path'
 
@@ -1219,6 +1220,28 @@ export async function importHermesSession(ctx: any) {
   })
 
   ctx.body = { ok: true, imported: true, session: localGetSessionDetail(detail.id) }
+}
+
+export async function createHermesHandoff(ctx: any) {
+  const sourceId = ctx.params.id
+  const source = localGetSession(sourceId)
+  if (denySessionAccess(ctx, source)) return
+
+  const profile = requestedProfile(ctx) || source?.profile || getActiveProfileName()
+  if (!canAccessProfile(ctx, profile)) {
+    ctx.status = 403
+    ctx.body = { error: `Profile "${profile || 'default'}" is not available for this user` }
+    return
+  }
+
+  const result = createHermesHandoffSession(sourceId, { profile })
+  if (!result.ok) {
+    ctx.status = result.status
+    ctx.body = { error: result.error }
+    return
+  }
+
+  ctx.body = { ok: true, session: localGetSessionDetail(result.session.id) }
 }
 
 export async function remove(ctx: any) {

@@ -5278,6 +5278,34 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  function openHandoffSession(input: {
+    id: string
+    title: string
+    source: string
+    agent?: string
+    workspace?: string | null
+    profile?: string
+  }) {
+    const existing = sessions.value.find(s => s.id === input.id)
+    if (existing) {
+      void switchSession(input.id)
+      return
+    }
+    sessions.value.unshift({
+      id: input.id,
+      profile: input.profile || useProfilesStore().activeProfileName || 'default',
+      title: input.title || '',
+      source: input.source || 'cli',
+      agent: input.agent || 'hermes',
+      messages: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      workspace: input.workspace || null,
+      isLocalOnly: false,
+    })
+    void switchSession(input.id)
+  }
+
   async function setSessionReasoningEffort(sessionId: string, effort: string): Promise<boolean> {
     const target = sessions.value.find(s => s.id === sessionId)
     const activeTarget = activeSession.value?.id === sessionId ? activeSession.value : null
@@ -5438,5 +5466,6 @@ export const useChatStore = defineStore('chat', () => {
     setSessionReasoningEffort,
     setSessionPushEnabled,
     setRuntimeMode,
+    openHandoffSession,
   }
 })

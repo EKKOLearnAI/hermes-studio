@@ -365,6 +365,103 @@ export function createBranchedSession(data: {
   return getSession(data.id)
 }
 
+export function createHandoffSession(data: {
+  parent_session_id: string
+  id: string
+  profile?: string
+  source?: string
+  agent?: string
+  agent_mode?: string
+  agent_session_id?: string
+  agent_native_session_id?: string
+  model?: string
+  provider?: string
+  api_mode?: string
+  title?: string
+  workspace?: string | null
+  category_id?: number | null
+  started_at?: number
+  last_active?: number
+  messages: Array<{
+    role: string
+    content: string
+    display_role?: string | null
+    display_content?: string | null
+    timestamp?: number
+    token_count?: number | null
+    finish_reason?: string | null
+    reasoning?: string | null
+    reasoning_details?: string | null
+    reasoning_content?: string | null
+  }>
+}): HermesSessionRow | null {
+  if (!isSqliteAvailable()) return null
+  const db = getDb()!
+  const now = Math.floor(Date.now() / 1000)
+  const source = data.source || 'cli'
+  const agent = data.agent || 'hermes'
+  const insertMessage = db.prepare(
+    `INSERT INTO ${MESSAGES_TABLE} (session_id, role, content, display_role, display_content, timestamp, token_count, finish_reason, reasoning, reasoning_details, reasoning_content)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  )
+
+  db.exec('BEGIN')
+  try {
+    db.prepare(
+      `INSERT INTO ${SESSIONS_TABLE} (id, profile, source, agent, agent_mode, agent_session_id, agent_native_session_id, model, provider, api_mode, title, parent_session_id, started_at, last_active, workspace, category_id, message_count)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      data.id,
+      data.profile || 'default',
+      source,
+      agent,
+      data.agent_mode || '',
+      data.agent_session_id || '',
+      data.agent_native_session_id || '',
+      data.model || '',
+      data.provider || '',
+      data.api_mode || '',
+      data.title || null,
+      data.parent_session_id,
+      data.started_at ?? now,
+      data.last_active ?? now,
+      data.workspace || null,
+      data.category_id ?? null,
+      data.messages.length,
+    )
+
+    let forkPointMessageId: string | null = null
+    for (const msg of data.messages) {
+      const result = insertMessage.run(
+        data.id,
+        msg.role,
+        normalizeMessageContentForStorageRole(msg.role, msg.content),
+        msg.display_role ?? null,
+        msg.display_content ?? null,
+        msg.timestamp ?? now,
+        msg.token_count ?? null,
+        msg.finish_reason ?? null,
+        msg.reasoning ?? null,
+        msg.reasoning_details ?? null,
+        msg.reasoning_content ?? null,
+      )
+      if (result.lastInsertRowid != null) forkPointMessageId = String(result.lastInsertRowid)
+    }
+
+    if (forkPointMessageId) {
+      db.prepare(
+        `UPDATE ${SESSIONS_TABLE} SET fork_point_message_id = ? WHERE id = ?`,
+      ).run(forkPointMessageId, data.id)
+    }
+    db.exec('COMMIT')
+  } catch (e) {
+    db.exec('ROLLBACK')
+    throw e
+  }
+
+  return getSession(data.id)
+}
+
 export function getSession(id: string): HermesSessionRow | null {
   if (!isSqliteAvailable()) return null
   const db = getDb()!

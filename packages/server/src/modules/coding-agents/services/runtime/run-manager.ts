@@ -1334,6 +1334,17 @@ export class CodingAgentRunManager {
     run.exited = true
     run.state.isWorking = false
     run.turnActive = false
+    try {
+      const stored = getSession(run.launch.sessionId)
+      if (stored && stored.ended_at == null) {
+        updateSession(run.launch.sessionId, {
+          ended_at: nowSeconds(),
+          end_reason: shouldReportClosed ? 'error' : 'complete',
+        })
+      }
+    } catch (err) {
+      logger.warn({ err, runId: run.id, sessionId: run.launch.sessionId }, '[coding-agent-run] failed to write coding-agent session cleanup end marker')
+    }
     if (shouldReportClosed) {
       const workspaceRunChange = this.completeWorkspaceRunDiff(run)
       this.emitToChat(run.launch.sessionId, 'run.failed', {
