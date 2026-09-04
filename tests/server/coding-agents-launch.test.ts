@@ -2245,6 +2245,56 @@ describe('coding agent launch preparation', () => {
     expect(sse).not.toContain('"usage"')
   })
 
+  it('keeps OpenCode response.completed valid when Chat Completions omits usage', async () => {
+    const target = registerCodexProxyTarget({
+      profile: 'default',
+      provider: 'openai-compatible',
+      model: 'gpt-5.6-sol',
+      baseUrl: 'https://api.example.com/v1',
+      apiKey: 'sk-upstream',
+      apiMode: 'chat_completions',
+      agentId: 'opencode',
+      agentSessionId: 'opencode-terminal-run',
+      chatSessionId: 'opencode-terminal-chat',
+    })
+    const encoder = new TextEncoder()
+    const fetchMock = vi.fn(async () => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"hello"}}]}\n\n'))
+        controller.enqueue(encoder.encode('data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'))
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+        controller.close()
+      },
+    }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const ctx = makeProxyContext(target.routeKey, target.token, {
+      stream: true,
+      input: [{ role: 'user', content: [{ type: 'input_text', text: 'ping' }] }],
+    })
+
+    await codexProxyResponses(ctx)
+
+    const chunks: string[] = []
+    for await (const chunk of ctx.body) chunks.push(String(chunk))
+    const completed = chunks.join('')
+      .split('\n\n')
+      .find(frame => frame.startsWith('event: response.completed'))
+    expect(completed).toBeTruthy()
+    const payload = JSON.parse(completed!.split('\ndata: ')[1])
+    expect(payload).toMatchObject({
+      type: 'response.completed',
+      response: {
+        status: 'completed',
+        usage: {
+          input_tokens: 0,
+          output_tokens: 0,
+          total_tokens: 0,
+        },
+      },
+    })
+  })
+
   it('keeps the selected Chat Completions protocol and emits Pi-compatible Responses reasoning events', async () => {
     const target = registerCodexProxyTarget({
       profile: 'default',

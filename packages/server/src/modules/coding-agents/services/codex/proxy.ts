@@ -202,8 +202,30 @@ function responsesEventStream(events: AsyncIterable<CanonicalResponsesEvent>): R
 }
 
 function responseEventForCodexClient(target: CodexProxyTarget, event: CanonicalResponsesEvent): CanonicalResponsesEvent {
-  if (target.apiMode === 'codex_responses' || event.type !== 'response.completed') return event
+  if (event.type !== 'response.completed') return event
   const response = (event.data as any).response
+  if (target.agentId === 'opencode') {
+    // OpenCode's OpenAI Responses provider validates `response.completed`
+    // usage before it accepts the terminal event. Chat-compatible upstreams
+    // are allowed to omit usage, so keep real usage when available and emit
+    // the minimum valid shape otherwise. Without this terminal frame OpenCode
+    // reports an `unknown` finish reason and starts another agent step forever.
+    return {
+      ...event,
+      data: {
+        ...event.data,
+        response: {
+          ...response,
+          usage: response?.usage || {
+            input_tokens: 0,
+            output_tokens: 0,
+            total_tokens: 0,
+          },
+        },
+      },
+    }
+  }
+  if (target.apiMode === 'codex_responses') return event
   if (!response?.usage) return event
   const { usage: _usage, ...responseWithoutUsage } = response
   return {
