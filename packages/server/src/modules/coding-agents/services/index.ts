@@ -54,7 +54,7 @@ const PI_MCP_ADAPTER_VERSION = '2.24.0'
 const PI_MCP_ADAPTER_PACKAGE = `pi-mcp-adapter@${PI_MCP_ADAPTER_VERSION}`
 const PI_CODING_AGENT_VERSION = '0.84.1'
 const PI_CODING_AGENT_PACKAGE = `@earendil-works/pi-coding-agent@${PI_CODING_AGENT_VERSION}`
-const GROK_NPM_REGISTRY = 'https://registry.npmjs.org'
+const OFFICIAL_NPM_REGISTRY = 'https://registry.npmjs.org'
 const PI_PROVIDER_ID = 'hermes-studio'
 const PI_PROXY_TARGET_FILE = 'proxy-target.json'
 const PI_DYNAMIC_PROMPT_FILE = 'dynamic-system-prompt.md'
@@ -2018,8 +2018,8 @@ export function getCodingAgentDefinition(id: string): CodingAgentDefinition | nu
 }
 
 export function withCodingAgentRegistry(id: CodingAgentId, args: string[]): string[] {
-  return id === 'grok'
-    ? [...args, `--registry=${GROK_NPM_REGISTRY}`]
+  return id === 'codex' || id === 'grok'
+    ? [...args, `--registry=${OFFICIAL_NPM_REGISTRY}`]
     : [...args]
 }
 

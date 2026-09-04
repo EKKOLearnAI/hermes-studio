@@ -2,22 +2,25 @@ import { describe, expect, it } from 'vitest'
 import { withCodingAgentRegistry } from '../../packages/server/src/modules/coding-agents/services'
 
 describe('coding Agent npm registry policy', () => {
-  it('uses the official npm Registry for Grok package operations', () => {
-    expect(withCodingAgentRegistry('grok', ['install', '-g', '@xai-official/grok'])).toEqual([
+  it.each([
+    ['codex', '@openai/codex'],
+    ['grok', '@xai-official/grok'],
+  ] as const)('uses the official npm Registry for %s package operations', (agentId, packageName) => {
+    expect(withCodingAgentRegistry(agentId, ['install', '-g', packageName])).toEqual([
       'install',
       '-g',
-      '@xai-official/grok',
+      packageName,
       '--registry=https://registry.npmjs.org',
     ])
-    expect(withCodingAgentRegistry('grok', ['view', '@xai-official/grok', 'version'])).toEqual([
+    expect(withCodingAgentRegistry(agentId, ['view', packageName, 'version'])).toEqual([
       'view',
-      '@xai-official/grok',
+      packageName,
       'version',
       '--registry=https://registry.npmjs.org',
     ])
   })
 
-  it.each(['claude-code', 'codex', 'pi'] as const)(
+  it.each(['claude-code', 'pi'] as const)(
     'keeps the configured npm Registry for %s',
     (agentId) => {
       expect(withCodingAgentRegistry(agentId, ['install', '-g', 'package'])).toEqual([

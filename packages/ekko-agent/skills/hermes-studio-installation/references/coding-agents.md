@@ -37,7 +37,7 @@ The Agents page install action effectively performs the following. The Pi adapte
 
 ```bash
 npm install -g @anthropic-ai/claude-code
-npm install -g @openai/codex
+npm install -g @openai/codex --registry=https://registry.npmjs.org
 npm install -g @earendil-works/pi-coding-agent@0.84.1
 npm install -g @xai-official/grok --registry=https://registry.npmjs.org
 studio_home="${HERMES_WEB_UI_HOME:-$HOME/.hermes-web-ui}"
@@ -74,14 +74,16 @@ Pi deliberately reports **not installed** when its CLI exists but that adapter e
 The Agents page **Check update** action behaves as follows:
 
 - Claude Code: compares the detected version with `npm view @anthropic-ai/claude-code version`.
-- Codex: compares the detected version with `npm view @openai/codex version`.
+- Codex: compares the detected version with `npm view @openai/codex version --registry=https://registry.npmjs.org`.
 - Pi: compares the detected version with Studio's pinned Pi version; it does not chase npm latest independently.
 - Grok: compares the detected version with `npm view @xai-official/grok version --registry=https://registry.npmjs.org`.
 
-Studio uses the official npm Registry only for Grok installation and update
-checks. This avoids stale third-party mirror metadata selecting a
-platform-incompatible historical release. It does not modify the user's npm
-configuration or the registry used for other coding Agents.
+Studio uses the official npm Registry only for Codex and Grok installation and
+update checks. Codex depends on platform-specific optional packages that may be
+missing from third-party mirrors even when the main package is present; Grok
+mirrors can also expose stale, platform-incompatible releases. Per-command
+registry arguments avoid modifying the user's npm configuration or the registry
+used for other coding Agents.
 
 When an update is available, the update action reruns the same install operation. Revalidate the executable path and version afterward. For Pi, revalidate the adapter too.
 
