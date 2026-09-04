@@ -3486,6 +3486,13 @@ export default {
 
   // Changelog
   changelog: {
+    new_0_7_17_1: 'Coding Agent settings now give Claude, Codex, Pi, and Grok consistent navigation and full-height Preferences and Configuration editors, while Skills and MCP share the Studio card layout and controls (#2854, #2870, #2871)',
+    new_0_7_17_2: 'Grok now resumes failed turns, displays its effective Runtime configuration, and installs from the official npm registry; Codex installation also uses the official registry (#2855, #2857, #2868, #2881)',
+    new_0_7_17_3: 'Ekko now bounds oversized tool output, protects memory and workspace handling, and proxies MCP tool names that are unsafe for model providers (#2846, #2847, #2849)',
+    new_0_7_17_4: 'App connections now restore production relay endpoints, surface entitlement failures, provide purchase links, and localize connection errors (#2872, #2873, #2874)',
+    new_0_7_17_5: 'Profile avatars now use deterministic Boring Avatars instead of generated assets, keeping identities consistent without bundled image files (#2875)',
+    new_0_7_17_6: 'Quitting from the Desktop tray now cancels pending relaunches, and handled Runtime restart prompts remain dismissed across refreshes (#2842, #2852)',
+    new_0_7_17_7: 'Mobile channels now report versions correctly, TTS restores the active provider at startup, and Skills safely handle reserved URL characters (#2839, #2843, #2845)',
     new_0_7_16_1: 'Desktop now handles Runtime restart requests from its bundled Web UI through Electron, using a clean relaunch with duplicate protection while standalone Web UI restarts continue to work (#2827)',
     new_0_7_16_2: 'Workflows and group chats can now launch Claude, Codex, and Pi Agents in scoped or global mode; global runs keep Studio-managed prompts and environments isolated while preserving user configuration (#2828)',
     new_0_7_16_3: 'Grok CLI is now a first-class Coding Agent with scoped proxy models, isolated global mode, native session resume, usage tracking, Skills, workflows, and group chat support (#2832)',

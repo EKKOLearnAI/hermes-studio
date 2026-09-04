@@ -3069,6 +3069,13 @@ jobTriggered: 'Job declenche',
   },
 
   changelog: {
+    new_0_7_17_1: 'Les réglages des Coding Agents proposent désormais une navigation cohérente et des éditeurs Préférences et Configuration en pleine hauteur pour Claude, Codex, Pi et Grok ; Skills et MCP partagent aussi les cartes et commandes de Studio (#2854, #2870, #2871)',
+    new_0_7_17_2: 'Grok reprend désormais les tours ayant échoué, affiche la configuration Runtime réellement appliquée et s’installe depuis le registre npm officiel ; l’installation de Codex utilise également ce registre (#2855, #2857, #2868, #2881)',
+    new_0_7_17_3: 'Ekko limite maintenant les sorties d’outils trop volumineuses, renforce la gestion de la mémoire et de l’espace de travail, et relaie les noms d’outils MCP incompatibles avec certains fournisseurs de modèles (#2846, #2847, #2849)',
+    new_0_7_17_4: 'Les connexions App rétablissent les relais de production, affichent clairement les erreurs d’autorisation, proposent des liens d’achat et localisent les erreurs de connexion (#2872, #2873, #2874)',
+    new_0_7_17_5: 'Les avatars de Profile utilisent désormais des Boring Avatars déterministes à la place d’images générées, pour conserver des identités cohérentes sans fichiers d’image intégrés (#2875)',
+    new_0_7_17_6: 'Quitter depuis la zone de notification Desktop annule désormais les relances en attente, et les demandes de redémarrage Runtime déjà traitées restent fermées après actualisation (#2842, #2852)',
+    new_0_7_17_7: 'Les canaux mobiles signalent maintenant correctement leur version, TTS restaure le fournisseur actif au démarrage et Skills traite en toute sécurité les caractères URL réservés (#2839, #2843, #2845)',
     new_0_7_16_1: 'Desktop traite désormais via Electron les demandes de redémarrage du Runtime émises par la Web UI intégrée, avec une relance propre et une protection contre les doublons, tout en conservant le redémarrage de la Web UI autonome (#2827)',
     new_0_7_16_2: 'Les workflows et chats de groupe peuvent désormais lancer les Agents Claude, Codex et Pi en mode scoped ou global ; le mode global isole les prompts et environnements gérés par Studio tout en préservant la configuration utilisateur (#2828)',
     new_0_7_16_3: 'Grok CLI est désormais un Coding Agent de premier plan avec modèles proxy scoped, mode global isolé, reprise native des sessions, suivi de l’usage, Skills, workflows et chats de groupe (#2832)',

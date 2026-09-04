@@ -3069,6 +3069,13 @@ jobTriggered: 'Job ejecutado',
   },
 
   changelog: {
+    new_0_7_17_1: 'La configuración de Coding Agents ofrece ahora una navegación coherente y editores de Preferencias y Configuración a toda altura para Claude, Codex, Pi y Grok; Skills y MCP también comparten las tarjetas y controles de Studio (#2854, #2870, #2871)',
+    new_0_7_17_2: 'Grok ahora reanuda turnos fallidos, muestra la configuración Runtime realmente aplicada y se instala desde el registro oficial de npm; la instalación de Codex también usa el registro oficial (#2855, #2857, #2868, #2881)',
+    new_0_7_17_3: 'Ekko limita las salidas de herramientas demasiado grandes, refuerza el manejo de memoria y espacios de trabajo, y representa nombres de herramientas MCP incompatibles con proveedores de modelos (#2846, #2847, #2849)',
+    new_0_7_17_4: 'Las conexiones de App recuperan los endpoints de relay de producción, muestran los errores de permisos, ofrecen enlaces de compra y localizan los errores de conexión (#2872, #2873, #2874)',
+    new_0_7_17_5: 'Los avatares de Profile usan ahora Boring Avatars deterministas en lugar de imágenes generadas, manteniendo identidades coherentes sin archivos de imagen incluidos (#2875)',
+    new_0_7_17_6: 'Salir desde la bandeja de Desktop cancela los reinicios pendientes, y las solicitudes de reinicio del Runtime ya atendidas permanecen cerradas tras actualizar (#2842, #2852)',
+    new_0_7_17_7: 'Los canales móviles ahora informan correctamente sus versiones, TTS restaura el proveedor activo al iniciar y Skills maneja con seguridad los caracteres reservados de URL (#2839, #2843, #2845)',
     new_0_7_16_1: 'Desktop ahora procesa mediante Electron las solicitudes de reinicio del Runtime de la Web UI incluida, con un reinicio limpio y protección contra duplicados, mientras mantiene el reinicio de la Web UI independiente (#2827)',
     new_0_7_16_2: 'Los flujos de trabajo y chats grupales ahora pueden iniciar Agents de Claude, Codex y Pi en modo scoped o global; el modo global aísla los prompts y entornos administrados por Studio sin alterar la configuración del usuario (#2828)',
     new_0_7_16_3: 'Grok CLI ya es un Coding Agent de primera clase con modelos proxy scoped, modo global aislado, reanudación nativa de sesiones, seguimiento de uso, Skills, flujos de trabajo y chats grupales (#2832)',
