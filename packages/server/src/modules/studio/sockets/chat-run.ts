@@ -173,8 +173,8 @@ function mobileCalendarRunInstruction(sessionId: string | undefined, source: str
   if (!sessionId || source === 'workflow' || source === 'group_chat') return ''
   return [
     `The current Hermes Studio direct-chat session id is ${JSON.stringify(sessionId)}.`,
-    'Only when the user explicitly asks to read or change calendar events, use hermes_studio_use_mobile_calendar with this exact session_id.',
-    'Only when the user explicitly asks to read or change reminders, use hermes_studio_use_mobile_reminders with this exact session_id.',
+    'Only when the user explicitly asks to read or change calendar events, use hermes_studio_use_toolset to describe and call hermes_studio_use_mobile_calendar with this exact session_id.',
+    'Only when the user explicitly asks to read or change reminders, use hermes_studio_use_toolset to describe and call hermes_studio_use_mobile_reminders with this exact session_id.',
     'The App always asks the user to share once or confirm the write. Never use these tools proactively, in delegated/workflow/group tasks, for background access, or for delete operations.',
   ].join(' ')
 }

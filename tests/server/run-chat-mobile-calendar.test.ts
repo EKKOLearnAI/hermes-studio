@@ -63,7 +63,12 @@ describe('ChatRunSocket mobile calendar and reminders', () => {
   beforeEach(() => {
     vi.resetModules()
     vi.clearAllMocks()
-    sessionStoreMock.getSession.mockReturnValue({ id: 'session-1', profile: 'default', source: 'cli' })
+    sessionStoreMock.getSession.mockReturnValue({
+      id: 'session-1',
+      profile: 'default',
+      source: 'coding_agent',
+      agent: 'codex',
+    })
   })
 
   it('requests a calendar list and sanitizes the App response', async () => {
@@ -71,7 +76,7 @@ describe('ChatRunSocket mobile calendar and reminders', () => {
     const { emitted, handlers, io, socket } = harness()
     const server = new ChatRunSocket(io as any)
     ;(server as any).sessionMap.set('session-1', {
-      messages: [], events: [], queue: [], isWorking: true, profile: 'default', source: 'cli',
+      messages: [], events: [], queue: [], isWorking: true, profile: 'default', source: 'coding_agent',
     })
     ;(server as any).onConnection(socket)
     const resultPromise = server.requestMobileCalendar({

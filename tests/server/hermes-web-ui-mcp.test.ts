@@ -440,6 +440,18 @@ describe('hermes-web-ui MCP server', () => {
         }))
         return
       }
+      if (req.url === '/api/studio/mobile-calendar/request' && req.method === 'POST') {
+        let raw = ''
+        req.on('data', chunk => { raw += chunk })
+        req.on('end', () => {
+          res.end(JSON.stringify({
+            ok: true,
+            status: 'success',
+            body: raw ? JSON.parse(raw) : null,
+          }))
+        })
+        return
+      }
       if (req.url === '/api/studio/workflows?profile=default') {
         res.end(JSON.stringify({ workflows: [{ id: 'workflow-1', name: 'Demo workflow', profile: 'default' }] }))
         return
@@ -509,6 +521,7 @@ describe('hermes-web-ui MCP server', () => {
       env: {
         ...process.env,
         HERMES_WEB_UI_URL: `http://127.0.0.1:${address.port}`,
+        HERMES_STUDIO_SESSION_ID: 'studio-codex-session',
       },
     })
     child.stdout.on('data', (chunk) => {
@@ -539,6 +552,19 @@ describe('hermes-web-ui MCP server', () => {
         action: 'call',
         tool: 'hermes_studio_use_sessions_count',
         arguments: { source: 'coding_agent' },
+      },
+    })
+    writeRpc(child, 36, 'tools/call', {
+      name: 'hermes_studio_use_toolset',
+      arguments: {
+        action: 'call',
+        tool: 'hermes_studio_use_mobile_calendar',
+        arguments: {
+          session_id: 'codex-runtime-thread-id',
+          action: 'list',
+          purpose: 'Verify calendar access',
+          limit: 20,
+        },
       },
     })
     writeRpc(child, 3, 'tools/call', {
@@ -708,6 +734,18 @@ describe('hermes-web-ui MCP server', () => {
     }
     const gatewaySessionCount = JSON.parse((await waitForRpc(responses, 35)).result.content[0].text)
     expect(gatewaySessionCount.count).toBe(7)
+    const mobileCalendar = JSON.parse((await waitForRpc(responses, 36)).result.content[0].text)
+    expect(mobileCalendar).toMatchObject({
+      ok: true,
+      status: 'success',
+      body: {
+        capability: 'calendar',
+        session_id: 'studio-codex-session',
+        action: 'list',
+        purpose: 'Verify calendar access',
+        limit: 20,
+      },
+    })
 
     const chatRun = JSON.parse((await waitForRpc(responses, 3)).result.content[0].text)
     expect(chatRun.body).toMatchObject({ input: 'hello', session_id: 'session-1', include_events: true })

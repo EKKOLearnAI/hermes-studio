@@ -1509,6 +1509,23 @@ describe('coding agent launch preparation', () => {
     ]))
   })
 
+  it('binds managed mobile MCP calls to the current Studio chat session for Codex', async () => {
+    makeHome()
+
+    const result = await prepareCodingAgentLaunch('codex', {
+      profile: 'default',
+      provider: 'openrouter',
+      model: 'openai/gpt-oss-20b:free',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      apiKey: 'sk-test',
+      sessionId: 'studio-chat-session',
+    })
+
+    expect(result.env.HERMES_STUDIO_SESSION_ID).toBe('studio-chat-session')
+    expect(readFileSync(join(result.rootDir, 'launch.sh'), 'utf-8'))
+      .toContain('export HERMES_STUDIO_SESSION_ID=studio-chat-session')
+  })
+
   it('runs scoped Grok through the local proxy without writing the upstream secret to disk', async () => {
     const home = makeHome()
 
