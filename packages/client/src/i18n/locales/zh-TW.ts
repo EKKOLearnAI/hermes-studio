@@ -289,6 +289,7 @@ export default {
     testFailed: '測試失敗',
     edit: '編輯',
     test: '測試',
+    ignoreTemporarily: '暫時忽略',
     reload: '重載',
     remove: '移除',
     confirmRemove: '確認刪除伺服器 "{name}"？',

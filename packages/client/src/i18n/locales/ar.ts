@@ -288,6 +288,7 @@ export default {
     testFailed: 'فشل الاختبار',
     edit: 'تعديل',
     test: 'اختبار',
+    ignoreTemporarily: 'تجاهل مؤقتًا',
     reload: 'إعادة تحميل',
     remove: 'إزالة',
     confirmRemove: 'إزالة السيرفر "{name}"؟',

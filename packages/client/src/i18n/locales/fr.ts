@@ -300,6 +300,7 @@ export default {
     testFailed: 'Echec du test',
     edit: 'Modifier',
     test: 'Tester',
+    ignoreTemporarily: 'Ignorer pour l’instant',
     reload: 'Recharger',
     remove: 'Supprimer',
     confirmRemove: 'Supprimer le serveur "{name}" ?',

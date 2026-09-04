@@ -179,6 +179,45 @@ describe('coding Agent MCP manager', () => {
     expect(persisted).not.toContain('[mcp_servers.hermes-studio-api]')
   })
 
+  it('prunes a manually removed Codex MCP server from persisted scoped runtimes', async () => {
+    const home = makeHome()
+    const globalPath = join(home, '.codex', 'config.toml')
+    const scopedRoot = join(home, 'coding-agent', 'model', 'default', 'openrouter', 'codex')
+    const runPath = join(scopedRoot, 'runs', 'run-1', 'config.toml')
+    mkdirSync(join(home, '.codex'), { recursive: true })
+    mkdirSync(join(scopedRoot, 'runs', 'run-1'), { recursive: true })
+    const globalConfig = [
+      '[mcp_servers.stale]',
+      'url = "https://stale.example/mcp"',
+      '',
+      '[mcp_servers.keep]',
+      'url = "https://keep.example/mcp"',
+      '',
+    ].join('\n')
+    const scopedConfig = [
+      'model = "test-model"',
+      '',
+      '[mcp_servers.stale]',
+      'url = "https://stale.example/mcp"',
+      '',
+      '[mcp_servers.keep]',
+      'url = "https://keep.example/mcp"',
+      '',
+    ].join('\n')
+    writeFileSync(globalPath, globalConfig)
+    writeFileSync(join(scopedRoot, 'config.toml'), scopedConfig)
+    writeFileSync(runPath, scopedConfig)
+
+    await removeCodingAgentMcpServer('codex', 'stale')
+
+    for (const path of [globalPath, join(scopedRoot, 'config.toml'), runPath]) {
+      const persisted = readFileSync(path, 'utf-8')
+      expect(persisted).not.toContain('[mcp_servers.stale]')
+      expect(persisted).toContain('[mcp_servers.keep]')
+    }
+    expect(readFileSync(runPath, 'utf-8')).toContain('model = "test-model"')
+  })
+
   it('reads and preserves quoted TOML header keys when an MCP server is edited', async () => {
     const home = makeHome()
     const path = join(home, '.codex', 'config.toml')

@@ -301,6 +301,7 @@ export default {
     testFailed: 'テストに失敗しました',
     edit: '編集',
     test: 'テスト',
+    ignoreTemporarily: '今は無視',
     reload: '再読み込み',
     remove: '削除',
     confirmRemove: 'サーバー "{name}" を削除しますか？',

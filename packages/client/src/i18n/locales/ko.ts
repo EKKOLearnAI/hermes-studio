@@ -301,6 +301,7 @@ export default {
     testFailed: '테스트 실패',
     edit: '편집',
     test: '테스트',
+    ignoreTemporarily: '지금은 무시',
     reload: '다시 로드',
     remove: '제거',
     confirmRemove: '서버 "{name}"을(를) 제거하시겠습니까?',
