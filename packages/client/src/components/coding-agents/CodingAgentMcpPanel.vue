@@ -22,6 +22,7 @@ const props = defineProps<{
 const { t } = useI18n()
 const message = useMessage()
 const loading = ref(false)
+const reloadingAll = ref(false)
 const saving = ref(false)
 const error = ref('')
 const searchQuery = ref('')
@@ -169,7 +170,7 @@ async function probeEnabledServers(candidates: CodingAgentMcpServerInfo[]) {
   )
 }
 
-async function loadServers() {
+async function refreshServers(probe: boolean) {
   loading.value = true
   error.value = ''
   try {
@@ -179,11 +180,27 @@ async function loadServers() {
     for (const name of probeVersions.keys()) {
       if (!loadedNames.has(name)) invalidateServerProbe(name)
     }
-    void probeEnabledServers(servers.value)
+    if (probe) void probeEnabledServers(servers.value)
   } catch (loadError) {
     error.value = errorMessage(loadError)
   } finally {
     loading.value = false
+  }
+}
+
+async function loadServers() {
+  await refreshServers(true)
+}
+
+async function reloadAllServers() {
+  reloadingAll.value = true
+  try {
+    await refreshServers(false)
+    if (error.value) return
+    await probeEnabledServers(servers.value)
+    message.success(t('mcp.reloadedAll'))
+  } finally {
+    reloadingAll.value = false
   }
 }
 
@@ -323,6 +340,9 @@ watch(() => props.agentId, changeAgent)
             class="search-input"
           />
           <div class="btn-group">
+            <NButton size="small" type="primary" :loading="reloadingAll" @click="reloadAllServers">
+              {{ t('mcp.reloadAll') }}
+            </NButton>
             <NButton type="primary" size="small" @click="openAdd">{{ t('mcp.addServer') }}</NButton>
           </div>
         </div>
