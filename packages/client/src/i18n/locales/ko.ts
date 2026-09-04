@@ -2431,6 +2431,8 @@ export default {
     deleteSuccess: "삭제됨",
     deleteFailed: "삭제 실패",
     configFiles: "설정 파일",
+    preference: "선호 설정",
+    configuration: "구성",
     profileScope: "프로필",
     providerScope: "제공업체",
     providerPlaceholder: "예: custom:glm",

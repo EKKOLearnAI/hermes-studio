@@ -445,6 +445,8 @@ export default {
   codingAgents: {
     installFailedHermesHint: 'Installation failed. Ask Hermes to install it for you.',
     installFailureReason: 'Reason',
+    preference: 'Предпочтения',
+    configuration: 'Конфигурация',
   },
 
   mcuDevices: {

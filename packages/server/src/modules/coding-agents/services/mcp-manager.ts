@@ -1,5 +1,6 @@
 import { Client, SSEClientTransport, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
+import { parse as parseToml } from 'smol-toml'
 import {
   getCodingAgentManagedMcpServerConfigs,
   invalidateCodingAgentConfigRuntime,
@@ -8,13 +9,9 @@ import {
   type CodingAgentId,
   type CodingAgentConfigScope,
 } from './index'
-import {
-  getDisabledManagedMcpServers,
-  getManagedMcpServerOverride,
-  setManagedMcpServerEnabled,
-  setManagedMcpServerOverride,
-} from './mcp-overrides'
+import { setManagedMcpServerEnabled, setManagedMcpServerOverride } from './mcp-overrides'
 import { isolatedCodingAgentChildEnv } from './runtime/child-env'
+import { killOwnedProcessTree } from '../../studio/public/process-tree'
 
 const CODING_AGENT_IDS = new Set(['claude-code', 'codex', 'pi', 'grok'])
 const STUDIO_MANAGED_NAMES = new Set([
@@ -77,6 +74,8 @@ function normalizeConfig(value: unknown): Record<string, any> {
   if (!isRecord(value)) return {}
   const config = { ...value }
   if (config.type === 'streamableHttp') config.type = 'http'
+  if (isRecord(config.http_headers) && !isRecord(config.headers)) config.headers = config.http_headers
+  delete config.http_headers
   return config
 }
 
@@ -141,122 +140,40 @@ function splitTomlDocument(content: string): { other: string; blocks: Map<string
   }
 }
 
-function splitTomlItems(value: string): string[] {
-  const items: string[] = []
-  let current = ''
-  let quote = ''
-  let depth = 0
-  for (let index = 0; index < value.length; index += 1) {
-    const char = value[index]
-    if (quote) {
-      current += char
-      if (char === quote && value[index - 1] !== '\\') quote = ''
-      continue
-    }
-    if (char === '"' || char === '\'') {
-      quote = char
-      current += char
-      continue
-    }
-    if (char === '[' || char === '{') depth += 1
-    if (char === ']' || char === '}') depth -= 1
-    if (char === ',' && depth === 0) {
-      items.push(current.trim())
-      current = ''
-      continue
-    }
-    current += char
+function parseTomlServers(content: string): Map<string, Record<string, any>> {
+  let root: Record<string, any>
+  try {
+    const parsed: unknown = parseToml(content || '')
+    root = isRecord(parsed) ? parsed : {}
+  } catch {
+    const error = new Error('Cannot manage MCP servers while the configuration contains invalid TOML')
+    ;(error as any).status = 400
+    throw error
   }
-  if (current.trim()) items.push(current.trim())
-  return items
+  const source = isRecord(root.mcp_servers) ? root.mcp_servers : {}
+  return new Map(Object.entries(source).map(([name, value]) => [name, normalizeConfig(value)]))
 }
 
-function parseTomlValue(raw: string): any {
-  const value = raw.trim()
-  if (value.startsWith('"') && value.endsWith('"')) {
-    try { return JSON.parse(value) } catch { return value.slice(1, -1) }
+function configValuesEqual(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left)
+      && Array.isArray(right)
+      && left.length === right.length
+      && left.every((value, index) => configValuesEqual(value, right[index]))
   }
-  if (value.startsWith('\'') && value.endsWith('\'')) return value.slice(1, -1)
-  if (value === 'true') return true
-  if (value === 'false') return false
-  if (/^-?\d+(?:\.\d+)?$/.test(value)) return Number(value)
-  if (value.startsWith('[') && value.endsWith(']')) {
-    return splitTomlItems(value.slice(1, -1)).map(parseTomlValue)
-  }
-  if (value.startsWith('{') && value.endsWith('}')) {
-    const result: Record<string, any> = {}
-    for (const item of splitTomlItems(value.slice(1, -1))) {
-      const equals = item.indexOf('=')
-      if (equals < 0) continue
-      const key = item.slice(0, equals).trim().replace(/^["']|["']$/g, '')
-      result[key] = parseTomlValue(item.slice(equals + 1))
-    }
-    return result
-  }
-  return value
+  if (!isRecord(left) || !isRecord(right)) return false
+  const leftKeys = Object.keys(left)
+  const rightKeys = Object.keys(right)
+  return leftKeys.length === rightKeys.length
+    && leftKeys.every(key => Object.prototype.hasOwnProperty.call(right, key)
+      && configValuesEqual(left[key], right[key]))
 }
 
-function stripTomlInlineComment(value: string): string {
-  let quote = ''
-  let escaped = false
-  for (let index = 0; index < value.length; index += 1) {
-    const char = value[index]
-    if (quote) {
-      if (quote === '"' && char === '\\' && !escaped) {
-        escaped = true
-        continue
-      }
-      if (char === quote && !escaped) quote = ''
-      escaped = false
-      continue
-    }
-    if (char === '"' || char === '\'') {
-      quote = char
-      continue
-    }
-    if (char === '#' && (index === 0 || /\s/.test(value[index - 1]))) {
-      return value.slice(0, index).trimEnd()
-    }
-  }
-  return value.trimEnd()
-}
-
-function parseTomlAssignment(line: string): { key: string; value: any } | null {
-  const match = line.match(/^\s*(?:"((?:[^"\\]|\\.)*)"|'([^']*)'|([A-Za-z0-9_.-]+))\s*=\s*(.*)$/)
-  if (!match) return null
-  let key = match[1] ?? match[2] ?? match[3] ?? ''
-  if (match[1] != null) {
-    try { key = JSON.parse(`"${match[1]}"`) } catch {}
-  }
-  return {
-    key,
-    value: parseTomlValue(stripTomlInlineComment(match[4])),
-  }
-}
-
-function parseTomlServer(name: string, block: string): Record<string, any> {
-  const config: Record<string, any> = {}
-  let subtable = ''
-  for (const line of block.split(/\r?\n/)) {
-    const header = tomlServerHeader(line)
-    if (header) {
-      subtable = header.name === name ? header.subtable : ''
-      continue
-    }
-    const assignment = parseTomlAssignment(line)
-    if (!assignment) continue
-    const { key, value } = assignment
-    if (subtable) {
-      const targetKey = subtable === 'http_headers' ? 'headers' : subtable
-      if (!isRecord(config[targetKey])) config[targetKey] = {}
-      config[targetKey][key] = value
-    } else {
-      config[key] = value
-    }
-  }
-  if (config.http_headers && !config.headers) config.headers = config.http_headers
-  delete config.http_headers
-  return config
+function configWithoutEnabled(config: Record<string, any>): Record<string, any> {
+  const normalized = { ...config }
+  delete normalized.enabled
+  return normalized
 }
 
 function tomlString(value: string): string {
@@ -321,18 +238,12 @@ async function readServers(id: string, scope: CodingAgentConfigScope): Promise<{
   if (id === 'claude-code' || id === 'pi') {
     servers = parseJsonDocument(file.content).servers
   } else {
-    const document = splitTomlDocument(file.content)
-    servers = new Map([...document.blocks].map(([name, block]) => [name, parseTomlServer(name, block)]))
+    servers = parseTomlServers(file.content)
   }
 
   const managed = getCodingAgentManagedMcpServerConfigs(id as CodingAgentId, scope.profile)
-  const disabledManaged = getDisabledManagedMcpServers(id, scope.profile || 'default')
   for (const [name, config] of Object.entries(managed)) {
-    servers.set(name, normalizeConfig({
-      ...config,
-      ...getManagedMcpServerOverride(id, scope.profile || 'default', name),
-      ...(disabledManaged.has(name) ? { enabled: false } : {}),
-    }))
+    servers.set(name, normalizeConfig(config))
   }
   return {
     content: file.content,
@@ -406,31 +317,40 @@ export async function upsertCodingAgentMcpServer(
     throw error
   }
   if (STUDIO_MANAGED_NAMES.has(normalizedName)) {
-    const managedConfig = getCodingAgentManagedMcpServerConfigs(
+    const profile = scope.profile || 'default'
+    const managedConfig = normalizeConfig(getCodingAgentManagedMcpServerConfigs(
       id as CodingAgentId,
-      scope.profile || 'default',
-    )[normalizedName] || {}
-    const suppliedConfig = isRecord(config) ? config : {}
-    const changesConfiguration = Object.keys(suppliedConfig).some(key => key !== 'enabled')
-    const updatedConfig = normalizeConfig(changesConfiguration
-      ? suppliedConfig
-      : { ...managedConfig, ...suppliedConfig })
-    if (!String(updatedConfig.command || '').trim() && !String(updatedConfig.url || '').trim()) {
+      profile,
+    )[normalizedName] || {})
+    const suppliedConfig = normalizeConfig(config)
+    const suppliedConfiguration = configWithoutEnabled(suppliedConfig)
+    const changesConfiguration = Object.keys(suppliedConfiguration).length > 0
+      && !configValuesEqual(suppliedConfiguration, configWithoutEnabled(managedConfig))
+    if (!changesConfiguration) {
+      if (typeof suppliedConfig.enabled === 'boolean') {
+        setManagedMcpServerEnabled(id, profile, normalizedName, suppliedConfig.enabled)
+        invalidateCodingAgentConfigRuntime(id, scope, { profileScoped: true })
+      }
+      return { ok: true, name: normalizedName }
+    }
+
+    if (!String(suppliedConfiguration.command || '').trim()
+      && !String(suppliedConfiguration.url || '').trim()) {
       const error = new Error('MCP server requires command or url')
       ;(error as any).status = 400
       throw error
     }
     setManagedMcpServerOverride(
       id,
-      scope.profile || 'default',
+      profile,
       normalizedName,
-      updatedConfig,
+      suppliedConfiguration,
     )
     setManagedMcpServerEnabled(
       id,
-      scope.profile || 'default',
+      profile,
       normalizedName,
-      config.enabled !== false,
+      suppliedConfig.enabled !== false,
     )
     invalidateCodingAgentConfigRuntime(id, scope, { profileScoped: true })
     return { ok: true, name: normalizedName }
@@ -478,6 +398,7 @@ export async function testCodingAgentMcpServer(
 
   const transportType = normalizeTransport(config)
   const client = new Client({ name: 'hermes-studio-coding-agent-mcp-test', version: '1.0.0' })
+  let stdioTransport: StdioClientTransport | null = null
   try {
     const transport = transportType === 'sse'
       ? new SSEClientTransport(new URL(String(config.url || '')), {
@@ -487,12 +408,12 @@ export async function testCodingAgentMcpServer(
         ? new StreamableHTTPClientTransport(new URL(String(config.url || '')), {
             requestInit: { headers: stringRecord(config.headers) },
           })
-        : new StdioClientTransport({
-            command: String(config.command || ''),
-            args: Array.isArray(config.args) ? config.args.map(String) : [],
-            env: isolatedCodingAgentChildEnv(stringRecord(config.env)),
-            stderr: 'ignore',
-          })
+        : (stdioTransport = new StdioClientTransport({
+          command: String(config.command || ''),
+          args: Array.isArray(config.args) ? config.args.map(String) : [],
+          env: isolatedCodingAgentChildEnv(stringRecord(config.env)),
+          stderr: 'ignore',
+        }))
     await client.connect(transport, { timeout: 5_000 })
     const result = await client.listTools(undefined, { timeout: 5_000, cacheMode: 'refresh' })
     const toolDetails = result.tools.map(tool => ({
@@ -510,6 +431,9 @@ export async function testCodingAgentMcpServer(
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) }
   } finally {
+    if (process.platform === 'win32' && stdioTransport?.pid) {
+      killOwnedProcessTree(stdioTransport.pid, () => undefined)
+    }
     await client.close().catch(() => undefined)
   }
 }

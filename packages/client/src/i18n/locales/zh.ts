@@ -3000,6 +3000,8 @@ export default {
     newVersionAvailable: "发现新版本",
     checkUpdateFailed: "检查更新失败",
     configFiles: "配置文件",
+    preference: "偏好",
+    configuration: "配置",
     profileScope: "配置",
     providerScope: "提供商",
     providerPlaceholder: "例如 custom:glm",

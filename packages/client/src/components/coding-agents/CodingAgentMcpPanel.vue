@@ -34,6 +34,8 @@ const showModal = ref(false)
 const modalMode = ref<'add' | 'edit'>('add')
 const editingName = ref('')
 const probeVersions = new Map<string, number>()
+let agentGeneration = 0
+let loadVersion = 0
 
 const {
   inputMode,
@@ -138,15 +140,25 @@ function invalidateServerProbe(name: string) {
   testErrors.value = nextErrors
 }
 
-async function probeServer(server: CodingAgentMcpServerInfo, notify: boolean) {
+function isCurrentAgent(agentId: CodingAgentId, generation: number): boolean {
+  return props.agentId === agentId && agentGeneration === generation
+}
+
+async function probeServer(
+  server: CodingAgentMcpServerInfo,
+  notify: boolean,
+  requestedAgentId = props.agentId,
+  generation = agentGeneration,
+) {
+  if (!isCurrentAgent(requestedAgentId, generation)) return
   const version = nextProbeVersion(server.name)
   setServerTesting(server.name, true)
   const nextErrors = { ...testErrors.value }
   delete nextErrors[server.name]
   testErrors.value = nextErrors
   try {
-    const response = await testCodingAgentMcpServer(props.agentId, server.name)
-    if (probeVersions.get(server.name) !== version) return
+    const response = await testCodingAgentMcpServer(requestedAgentId, server.name)
+    if (!isCurrentAgent(requestedAgentId, generation) || probeVersions.get(server.name) !== version) return
     if (!response.ok) throw new Error(response.error || t('mcp.testEmpty'))
     const tools = response.tool_details?.length
       ? response.tool_details
@@ -154,37 +166,52 @@ async function probeServer(server: CodingAgentMcpServerInfo, notify: boolean) {
     testedTools.value = { ...testedTools.value, [server.name]: tools }
     if (notify) message.success(t('mcp.testOk', { count: tools.length }))
   } catch (probeError) {
-    if (probeVersions.get(server.name) !== version) return
+    if (!isCurrentAgent(requestedAgentId, generation) || probeVersions.get(server.name) !== version) return
     testErrors.value = { ...testErrors.value, [server.name]: errorMessage(probeError) }
     if (notify) message.error(`${t('mcp.testFailed')}: ${errorMessage(probeError)}`)
   } finally {
-    if (probeVersions.get(server.name) === version) setServerTesting(server.name, false)
+    if (isCurrentAgent(requestedAgentId, generation) && probeVersions.get(server.name) === version) {
+      setServerTesting(server.name, false)
+    }
   }
 }
 
-async function probeEnabledServers(candidates: CodingAgentMcpServerInfo[]) {
+async function probeEnabledServers(
+  candidates: CodingAgentMcpServerInfo[],
+  requestedAgentId = props.agentId,
+  generation = agentGeneration,
+) {
   await Promise.allSettled(
     candidates
       .filter(server => server.raw_config.enabled !== false)
-      .map(server => probeServer(server, false)),
+      .map(server => probeServer(server, false, requestedAgentId, generation)),
   )
 }
 
-async function refreshServers(probe: boolean) {
+async function refreshServers(probe: boolean): Promise<boolean> {
+  const requestedAgentId = props.agentId
+  const generation = agentGeneration
+  const version = ++loadVersion
   loading.value = true
   error.value = ''
   try {
-    const response = await fetchCodingAgentMcpServers(props.agentId)
+    const response = await fetchCodingAgentMcpServers(requestedAgentId)
+    if (!isCurrentAgent(requestedAgentId, generation) || version !== loadVersion) return false
     servers.value = response.servers || []
     const loadedNames = new Set(servers.value.map(server => server.name))
     for (const name of probeVersions.keys()) {
       if (!loadedNames.has(name)) invalidateServerProbe(name)
     }
-    if (probe) void probeEnabledServers(servers.value)
+    if (probe) void probeEnabledServers(servers.value, requestedAgentId, generation)
+    return true
   } catch (loadError) {
+    if (!isCurrentAgent(requestedAgentId, generation) || version !== loadVersion) return false
     error.value = errorMessage(loadError)
+    return false
   } finally {
-    loading.value = false
+    if (isCurrentAgent(requestedAgentId, generation) && version === loadVersion) {
+      loading.value = false
+    }
   }
 }
 
@@ -193,14 +220,17 @@ async function loadServers() {
 }
 
 async function reloadAllServers() {
+  const requestedAgentId = props.agentId
+  const generation = agentGeneration
   reloadingAll.value = true
   try {
-    await refreshServers(false)
-    if (error.value) return
-    await probeEnabledServers(servers.value)
+    const loaded = await refreshServers(false)
+    if (!loaded || error.value || !isCurrentAgent(requestedAgentId, generation)) return
+    await probeEnabledServers(servers.value, requestedAgentId, generation)
+    if (!isCurrentAgent(requestedAgentId, generation)) return
     message.success(t('mcp.reloadedAll'))
   } finally {
-    reloadingAll.value = false
+    if (isCurrentAgent(requestedAgentId, generation)) reloadingAll.value = false
   }
 }
 
@@ -222,6 +252,8 @@ function openEdit(server: CodingAgentMcpServerInfo) {
 }
 
 async function saveServer() {
+  const requestedAgentId = props.agentId
+  const generation = agentGeneration
   clearFormatTimer()
   const { servers: parsed, error: validationError } = parseAndValidate()
   if (validationError) {
@@ -237,44 +269,60 @@ async function saveServer() {
   try {
     if (modalMode.value === 'edit') {
       const config = entries.find(([name]) => name === editingName.value)?.[1] || entries[0][1]
-      await updateCodingAgentMcpServer(props.agentId, editingName.value, config)
+      await updateCodingAgentMcpServer(requestedAgentId, editingName.value, config)
     } else {
       for (const [name, config] of entries) {
-        await addCodingAgentMcpServer(props.agentId, name, config)
+        await addCodingAgentMcpServer(requestedAgentId, name, config)
       }
     }
+    if (!isCurrentAgent(requestedAgentId, generation)) return
     showModal.value = false
     await loadServers()
+    if (!isCurrentAgent(requestedAgentId, generation)) return
     message.success(t('common.saved'))
   } catch (saveError) {
-    message.error(`${t('common.saveFailed')}: ${errorMessage(saveError)}`)
+    if (isCurrentAgent(requestedAgentId, generation)) {
+      message.error(`${t('common.saveFailed')}: ${errorMessage(saveError)}`)
+    }
   } finally {
-    saving.value = false
+    if (isCurrentAgent(requestedAgentId, generation)) saving.value = false
   }
 }
 
 async function removeServer(server: CodingAgentMcpServerInfo) {
+  const requestedAgentId = props.agentId
+  const generation = agentGeneration
   try {
-    await removeCodingAgentMcpServer(props.agentId, server.name)
+    await removeCodingAgentMcpServer(requestedAgentId, server.name)
+    if (!isCurrentAgent(requestedAgentId, generation)) return
     invalidateServerProbe(server.name)
     await loadServers()
+    if (!isCurrentAgent(requestedAgentId, generation)) return
     message.success(t('mcp.serverRemoved', { name: server.name }))
   } catch (removeError) {
-    message.error(`${t('common.deleteFailed')}: ${errorMessage(removeError)}`)
+    if (isCurrentAgent(requestedAgentId, generation)) {
+      message.error(`${t('common.deleteFailed')}: ${errorMessage(removeError)}`)
+    }
   }
 }
 
 async function toggleServer(server: CodingAgentMcpServerInfo) {
+  const requestedAgentId = props.agentId
+  const generation = agentGeneration
   try {
     const enabled = server.raw_config.enabled === false
-    await updateCodingAgentMcpServer(props.agentId, server.name, {
-      ...server.raw_config,
-      enabled,
-    })
+    await updateCodingAgentMcpServer(
+      requestedAgentId,
+      server.name,
+      server.managed ? { enabled } : { ...server.raw_config, enabled },
+    )
+    if (!isCurrentAgent(requestedAgentId, generation)) return
     invalidateServerProbe(server.name)
     await loadServers()
   } catch (toggleError) {
-    message.error(`${t('common.saveFailed')}: ${errorMessage(toggleError)}`)
+    if (isCurrentAgent(requestedAgentId, generation)) {
+      message.error(`${t('common.saveFailed')}: ${errorMessage(toggleError)}`)
+    }
   }
 }
 
@@ -283,14 +331,23 @@ async function testServer(server: CodingAgentMcpServerInfo) {
 }
 
 async function changeAgent() {
+  agentGeneration += 1
+  loadVersion += 1
   for (const name of probeVersions.keys()) invalidateServerProbe(name)
   probeVersions.clear()
   servers.value = []
+  loading.value = false
+  reloadingAll.value = false
+  saving.value = false
+  showModal.value = false
+  editingName.value = ''
   await loadServers()
 }
 
-onMounted(loadServers)
+onMounted(changeAgent)
 onBeforeUnmount(() => {
+  agentGeneration += 1
+  loadVersion += 1
   for (const name of probeVersions.keys()) invalidateServerProbe(name)
 })
 watch(() => props.agentId, changeAgent)
@@ -300,9 +357,11 @@ watch(() => props.agentId, changeAgent)
   <div class="mcp-view embedded">
     <header class="page-header">
       <h2 class="header-title">{{ t('mcp.title') }}</h2>
-      <NButton size="small" quaternary :loading="loading" @click="loadServers">
-        {{ t('mcp.refresh') }}
-      </NButton>
+      <div class="header-actions">
+        <NButton size="small" quaternary :loading="loading" @click="loadServers">
+          {{ t('mcp.refresh') }}
+        </NButton>
+      </div>
     </header>
 
     <div class="mcp-content" :class="{ 'is-loading': loading && servers.length === 0 }">

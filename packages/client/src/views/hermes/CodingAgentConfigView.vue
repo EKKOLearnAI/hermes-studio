@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { NButton, NInput, NSpin, NTag, useMessage } from 'naive-ui'
@@ -17,32 +17,23 @@ const route = useRoute()
 const { t } = useI18n()
 const message = useMessage()
 
-const agentNames: Record<string, string> = {
-  'claude-code': 'Claude',
-  codex: 'Codex',
-  pi: 'Pi',
-  grok: 'Grok',
-}
-
-const sectionLabels = computed<Record<string, string>>(() => ({
-  memory: t('sidebar.memory'),
-  skills: t('sidebar.skills'),
-  mcp: t('sidebar.mcp'),
-  settings: t('sidebar.settings'),
-}))
-
 const agentId = computed(() => String(route.params.agentId || ''))
 const section = computed(() => String(route.params.section || 'settings'))
-const agentName = computed(() => agentNames[agentId.value] || agentId.value)
-const sectionLabel = computed(() => sectionLabels.value[section.value] || t('sidebar.settings'))
 
-type EditableSection = 'memory' | 'mcp' | 'settings'
+type SettingsEditor = 'preference' | 'configuration'
 
-const configKeys: Record<CodingAgentId, Record<EditableSection, string>> = {
-  'claude-code': { memory: 'memory', mcp: 'mcp', settings: 'settings' },
-  codex: { memory: 'agents', mcp: 'config', settings: 'config' },
-  pi: { memory: 'agents', mcp: 'mcp', settings: 'settings' },
-  grok: { memory: 'agents', mcp: 'mcp', settings: 'settings' },
+interface SettingsEditorState {
+  file: CodingAgentConfigFileContent | null
+  content: string
+  saving: boolean
+  error: string
+}
+
+const settingsKeys: Record<CodingAgentId, Record<SettingsEditor, string>> = {
+  'claude-code': { preference: 'memory', configuration: 'settings' },
+  codex: { preference: 'agents', configuration: 'config' },
+  pi: { preference: 'agents', configuration: 'settings' },
+  grok: { preference: 'agents', configuration: 'settings' },
 }
 
 const skillTargets: Record<CodingAgentId, SkillTarget> = {
@@ -52,74 +43,91 @@ const skillTargets: Record<CodingAgentId, SkillTarget> = {
   grok: 'grok',
 }
 
-const configFile = ref<CodingAgentConfigFileContent | null>(null)
-const content = ref('')
+const editorKinds: SettingsEditor[] = ['preference', 'configuration']
+const editors = reactive<Record<SettingsEditor, SettingsEditorState>>({
+  preference: { file: null, content: '', saving: false, error: '' },
+  configuration: { file: null, content: '', saving: false, error: '' },
+})
 const loading = ref(false)
-const saving = ref(false)
-const error = ref('')
+let loadVersion = 0
 
 const validAgentId = computed<CodingAgentId | null>(() =>
-  agentId.value in configKeys ? agentId.value as CodingAgentId : null,
+  agentId.value in settingsKeys ? agentId.value as CodingAgentId : null,
 )
-const editableSection = computed<EditableSection | null>(() =>
-  section.value === 'memory' || section.value === 'mcp' || section.value === 'settings'
-    ? section.value
-    : null,
-)
-const configKey = computed(() => {
-  if (!validAgentId.value || !editableSection.value) return ''
-  return configKeys[validAgentId.value][editableSection.value]
-})
 const skillTarget = computed<SkillTarget>(() =>
   validAgentId.value ? skillTargets[validAgentId.value] : 'hermes',
 )
-const dirty = computed(() => content.value !== (configFile.value?.content || ''))
+const editorItems = computed(() => editorKinds.map(kind => ({
+  kind,
+  label: t(`codingAgents.${kind}`),
+  state: editors[kind],
+})))
 
-async function loadConfigFile() {
-  configFile.value = null
-  content.value = ''
-  error.value = ''
-  if (!validAgentId.value || !configKey.value || section.value === 'mcp') return
-
-  loading.value = true
-  try {
-    const file = await readCodingAgentConfigFile(validAgentId.value, configKey.value)
-    configFile.value = file
-    content.value = file.content
-  } catch (err: any) {
-    error.value = err?.message || String(err)
-  } finally {
-    loading.value = false
+function resetEditors() {
+  for (const kind of editorKinds) {
+    editors[kind].file = null
+    editors[kind].content = ''
+    editors[kind].error = ''
   }
 }
 
-async function saveConfigFile() {
-  if (!validAgentId.value || !configKey.value || saving.value) return
-  saving.value = true
+async function loadSettingsFiles() {
+  const version = ++loadVersion
+  resetEditors()
+  if (!validAgentId.value || section.value !== 'settings') {
+    loading.value = false
+    return
+  }
+
+  loading.value = true
+  const currentAgentId = validAgentId.value
+  const results = await Promise.allSettled(editorKinds.map(kind =>
+    readCodingAgentConfigFile(currentAgentId, settingsKeys[currentAgentId][kind]),
+  ))
+
+  if (version !== loadVersion) return
+
+  results.forEach((result, index) => {
+    const state = editors[editorKinds[index]]
+    if (result.status === 'fulfilled') {
+      state.file = result.value
+      state.content = result.value.content
+      return
+    }
+    state.error = result.reason?.message || String(result.reason)
+  })
+  loading.value = false
+}
+
+async function saveSettingsFile(kind: SettingsEditor) {
+  const currentAgentId = validAgentId.value
+  const state = editors[kind]
+  if (!currentAgentId || state.saving) return
+
+  state.saving = true
   try {
-    const file = await writeCodingAgentConfigFile(validAgentId.value, configKey.value, content.value)
-    configFile.value = file
-    content.value = file.content
+    const file = await writeCodingAgentConfigFile(
+      currentAgentId,
+      settingsKeys[currentAgentId][kind],
+      state.content,
+    )
+    state.file = file
+    state.content = file.content
     message.success(t('files.saveFile'))
   } catch (err: any) {
     message.error(err?.message || String(err))
   } finally {
-    saving.value = false
+    state.saving = false
   }
 }
 
-watch([agentId, section], loadConfigFile, { immediate: true })
+watch([agentId, section], loadSettingsFiles, { immediate: true })
 </script>
 
 <template>
   <div class="coding-agent-config-view">
-    <header v-if="section !== 'skills' && section !== 'mcp'" class="page-header">
-      <div>
-        <h2 class="header-title">{{ agentName }} · {{ sectionLabel }}</h2>
-        <p v-if="section !== 'skills'" class="header-description">
-          {{ configFile?.path || agentId }}
-        </p>
-      </div>
+    <header v-if="section === 'settings'" class="page-header">
+      <h2 class="header-title">{{ t('sidebar.settings') }}</h2>
     </header>
 
     <div v-if="section === 'skills'" class="coding-agent-skills-content">
@@ -130,40 +138,49 @@ watch([agentId, section], loadConfigFile, { immediate: true })
       <CodingAgentMcpPanel :agent-id="validAgentId" />
     </div>
 
-    <div v-else class="coding-agent-config-content">
-      <NSpin v-if="loading" />
-      <div v-else-if="error" class="config-error">
-        <p>{{ error }}</p>
-        <NButton size="small" @click="loadConfigFile">{{ t('common.retry') }}</NButton>
-      </div>
-      <template v-else-if="configKey">
-        <div class="editor-toolbar">
-          <div class="file-meta">
-            <code>{{ configFile?.absolutePath || configFile?.path }}</code>
-            <NTag v-if="configFile && !configFile.exists" size="small" :bordered="false">
-              {{ t('codingAgents.configFileNotCreated') }}
-            </NTag>
-          </div>
-          <div class="editor-actions">
+    <div v-else-if="section === 'settings' && validAgentId" class="coding-agent-settings-content">
+      <NSpin v-if="loading" class="settings-loading" />
+      <div v-else class="settings-editors">
+        <section
+          v-for="editor in editorItems"
+          :key="editor.kind"
+          class="settings-editor-panel"
+        >
+          <div class="editor-toolbar">
+            <div class="editor-heading">
+              <h3>{{ editor.label }}</h3>
+              <NTag
+                v-if="editor.state.file && !editor.state.file.exists"
+                size="small"
+                :bordered="false"
+              >
+                {{ t('codingAgents.configFileNotCreated') }}
+              </NTag>
+            </div>
             <NButton
               type="primary"
               size="small"
-              :disabled="!dirty"
-              :loading="saving"
-              @click="saveConfigFile"
+              :disabled="editor.state.content === (editor.state.file?.content || '') || !!editor.state.error"
+              :loading="editor.state.saving"
+              @click="saveSettingsFile(editor.kind)"
             >
               {{ t('files.saveFile') }}
             </NButton>
           </div>
-        </div>
-        <NInput
-          v-model:value="content"
-          class="config-editor"
-          type="textarea"
-          :autosize="{ minRows: 18 }"
-          :placeholder="configFile?.path"
-        />
-      </template>
+
+          <div v-if="editor.state.error" class="config-error">
+            <p>{{ editor.state.error }}</p>
+            <NButton size="small" @click="loadSettingsFiles">{{ t('common.retry') }}</NButton>
+          </div>
+          <NInput
+            v-else
+            v-model:value="editor.state.content"
+            class="config-editor"
+            type="textarea"
+            :placeholder="editor.state.file?.path"
+          />
+        </section>
+      </div>
     </div>
   </div>
 </template>
@@ -174,99 +191,116 @@ watch([agentId, section], loadConfigFile, { immediate: true })
 .coding-agent-config-view {
   display: flex;
   height: 100%;
-  min-height: 100%;
+  min-height: 0;
   min-width: 0;
   flex-direction: column;
-  box-sizing: border-box;
-  padding: 20px;
+  overflow: hidden;
   background: $bg-main-surface;
 }
 
-.page-header {
-  display: flex;
-  align-items: flex-start;
+.coding-agent-skills-content,
+.coding-agent-mcp-content {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.coding-agent-settings-content {
+  flex: 1;
+  min-height: 0;
+  padding: 20px;
+  overflow: hidden;
+}
+
+.settings-loading {
+  display: grid;
+  height: 100%;
+  place-content: center;
+}
+
+.settings-editors {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
-  margin-bottom: 20px;
+  height: 100%;
+  min-height: 0;
 }
 
-.header-title {
-  margin: 0;
-  color: $text-primary;
-  font-size: 20px;
-}
-
-.header-description {
-  margin: 6px 0 0;
-  color: $text-muted;
-  font-size: 13px;
-}
-
-.coding-agent-config-content {
-  min-height: 320px;
+.settings-editor-panel {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
   padding: 16px;
   border: 1px solid $border-color;
   border-radius: 10px;
   background: $bg-card;
 }
 
-.coding-agent-config-content > .n-spin {
-  display: block;
-  margin: 120px auto;
-}
-
-.coding-agent-skills-content {
-  min-height: 420px;
-  border: 1px solid $border-color;
-  border-radius: 10px;
-  background: $bg-card;
-  overflow: hidden;
-}
-
-.coding-agent-mcp-content {
-  flex: 1;
-  min-height: 0;
-  border: 1px solid $border-color;
-  border-radius: 10px;
-  background: $bg-card;
-  overflow: hidden;
-}
-
 .editor-toolbar,
-.file-meta,
-.editor-actions {
+.editor-heading {
   display: flex;
   align-items: center;
   gap: 10px;
 }
 
 .editor-toolbar {
+  flex-shrink: 0;
   justify-content: space-between;
   margin-bottom: 12px;
 }
 
-.file-meta {
+.editor-heading {
   min-width: 0;
-  color: $text-muted;
-  font-size: 12px;
 }
 
-.file-meta code {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.editor-heading h3 {
+  margin: 0;
+  color: $text-primary;
+  font-size: 14px;
+  font-weight: 600;
 }
 
 .config-editor {
+  flex: 1;
   width: 100%;
+  min-height: 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.config-editor :deep(.n-input-wrapper),
+.config-editor :deep(.n-input__textarea) {
+  height: 100%;
+}
+
+.config-editor :deep(.n-input__textarea-el) {
+  height: 100% !important;
+  resize: none;
 }
 
 .config-error {
   display: grid;
-  min-height: 280px;
+  flex: 1;
+  min-height: 0;
   place-content: center;
   justify-items: center;
   color: $text-muted;
   text-align: center;
+}
+
+@media (max-width: $breakpoint-mobile) {
+  .coding-agent-settings-content {
+    padding: 12px;
+    overflow-y: auto;
+  }
+
+  .settings-editors {
+    grid-template-columns: 1fr;
+    height: auto;
+  }
+
+  .settings-editor-panel {
+    min-height: 420px;
+  }
 }
 </style>

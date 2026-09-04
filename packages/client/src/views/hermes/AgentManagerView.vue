@@ -480,6 +480,14 @@ onMounted(() => {
 
             <div class="agent-actions">
               <NButton
+                v-if="hermesDetected"
+                secondary
+                size="small"
+                @click="router.push({ name: 'hermes.configSettings' })"
+              >
+                {{ t('sidebar.settings') }}
+              </NButton>
+              <NButton
                 v-if="hermesDetected && hermesType === 'CLI'"
                 data-testid="view-hermes-cli-details"
                 secondary
@@ -497,14 +505,6 @@ onMounted(() => {
                 @click="runtimeManagerVisible = true"
               >
                 {{ hermesDetected ? t('agentManager.manageRuntime') : t('codingAgents.installNow') }}
-              </NButton>
-              <NButton
-                v-if="hermesDetected"
-                secondary
-                size="small"
-                @click="router.push({ name: 'hermes.configSettings' })"
-              >
-                {{ t('sidebar.settings') }}
               </NButton>
             </div>
           </section>

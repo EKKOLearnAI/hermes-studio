@@ -170,7 +170,7 @@ function handleSkillSaved() {
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
         </button>
       </div>
-      <SkillSourceLegend v-model="sourceFilter" />
+      <SkillSourceLegend v-model="sourceFilter" :show-hub="isHermesTarget" />
       <div class="header-actions">
         <NButton
           v-if="isHermesTarget && writeApprovalSupported"
@@ -310,8 +310,8 @@ function handleSkillSaved() {
 }
 
 .skills-view.embedded {
-  height: calc(100 * var(--vh) - 190px);
-  min-height: 420px;
+  height: 100%;
+  min-height: 0;
   padding: 0;
   background: transparent;
 }

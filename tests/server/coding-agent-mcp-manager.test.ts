@@ -5,6 +5,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { configureProfileConfig } from '../../packages/server/src/modules/studio/public/profile-config'
 
 const stdioOptions: any[] = []
+const processTree = vi.hoisted(() => ({ kill: vi.fn() }))
+
+vi.mock('../../packages/server/src/modules/studio/public/process-tree', () => ({
+  killOwnedProcessTree: processTree.kill,
+}))
 
 vi.mock('@modelcontextprotocol/client', () => ({
   Client: class {
@@ -20,6 +25,8 @@ vi.mock('@modelcontextprotocol/client', () => ({
 
 vi.mock('@modelcontextprotocol/client/stdio', () => ({
   StdioClientTransport: class {
+    pid = 4321
+
     constructor(options: any) {
       stdioOptions.push(options)
     }
@@ -64,6 +71,7 @@ afterEach(() => {
   delete process.env.HERMES_WEB_UI_HOME
   delete process.env.HERMES_PROFILE_API_KEY
   stdioOptions.splice(0)
+  processTree.kill.mockClear()
   for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true })
 })
 
@@ -200,17 +208,58 @@ describe('coding Agent MCP manager', () => {
     expect(persisted).toContain('Authorization = "Bearer value#fragment"')
   })
 
+  it.each([
+    ['codex', '.codex'],
+    ['grok', '.grok'],
+  ] as const)('preserves multiline TOML arrays when a %s MCP server is edited', async (agentId, directory) => {
+    const home = makeHome()
+    const path = join(home, directory, 'config.toml')
+    mkdirSync(join(home, directory), { recursive: true })
+    writeFileSync(path, [
+      `[mcp_servers.docs]`,
+      'command = "npx"',
+      'args = [',
+      '  "-y", # package manager confirmation',
+      '  "@example/docs-mcp",',
+      ']',
+      '',
+    ].join('\n'))
+
+    const listed = await listCodingAgentMcpServers(agentId)
+    const docs = listed.servers.find(server => server.name === 'docs')!
+    expect(docs.raw_config.args).toEqual(['-y', '@example/docs-mcp'])
+
+    await upsertCodingAgentMcpServer(agentId, 'docs', {
+      ...docs.raw_config,
+      enabled: false,
+    })
+
+    const persisted = readFileSync(path, 'utf-8')
+    expect(persisted).toContain('args = ["-y", "@example/docs-mcp"]')
+    expect(persisted).not.toContain('args = "["')
+    expect((await listCodingAgentMcpServers(agentId)).servers
+      .find(server => server.name === 'docs')?.raw_config.args)
+      .toEqual(['-y', '@example/docs-mcp'])
+  })
+
   it('uses per-Agent enable overrides for Studio-managed servers and directly tests custom servers', async () => {
     const home = makeHome()
     expect(existsSync(join(home, '.claude', 'mcp.json'))).toBe(false)
 
-    await removeCodingAgentMcpServer('claude-code', 'hermes-studio-api')
+    const managed = (await listCodingAgentMcpServers('claude-code')).servers
+      .find(server => server.name === 'hermes-studio-api')!
+    await upsertCodingAgentMcpServer('claude-code', 'hermes-studio-api', {
+      ...managed.raw_config,
+      enabled: false,
+    })
     expect((await listCodingAgentMcpServers('claude-code')).servers
       .find(server => server.name === 'hermes-studio-api')?.raw_config.enabled).toBe(false)
     await upsertCodingAgentMcpServer('claude-code', 'hermes-studio-api', { enabled: true })
     expect((await listCodingAgentMcpServers('claude-code')).servers
       .find(server => server.name === 'hermes-studio-api')?.raw_config.enabled).not.toBe(false)
     expect(existsSync(join(home, '.claude', 'mcp.json'))).toBe(false)
+    expect(JSON.parse(readFileSync(join(home, 'coding-agent', 'mcp-overrides.json'), 'utf-8')).configs)
+      .toBeUndefined()
 
     await upsertCodingAgentMcpServer('claude-code', 'custom', { command: 'custom-mcp' })
     process.env.HERMES_PROFILE_API_KEY = 'must-not-reach-mcp-probe'
@@ -251,5 +300,18 @@ describe('coding Agent MCP manager', () => {
       'codex/default/custom:first',
       'codex/default/custom:second',
     ])
+  })
+
+  it('cleans up the complete Windows process tree after probing a stdio server', async () => {
+    makeHome()
+    await upsertCodingAgentMcpServer('claude-code', 'custom', { command: 'custom-mcp' })
+    const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+    try {
+      await testCodingAgentMcpServer('claude-code', 'custom')
+    } finally {
+      platform.mockRestore()
+    }
+
+    expect(processTree.kill).toHaveBeenCalledWith(4321, expect.any(Function))
   })
 })

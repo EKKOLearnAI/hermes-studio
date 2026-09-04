@@ -6,6 +6,7 @@ type SkillSourceFilter = SkillSource | 'modified'
 
 const props = defineProps<{
   modelValue: SkillSourceFilter | null
+  showHub?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -24,7 +25,7 @@ function toggle(filter: SkillSourceFilter) {
     <button class="legend-item" :class="{ active: modelValue === 'builtin' }" @click="toggle('builtin')">
       <span class="legend-dot dot-builtin" />{{ t('skills.source.builtin') }}
     </button>
-    <button class="legend-item" :class="{ active: modelValue === 'hub' }" @click="toggle('hub')">
+    <button v-if="showHub !== false" class="legend-item" :class="{ active: modelValue === 'hub' }" @click="toggle('hub')">
       <span class="legend-dot dot-hub" />{{ t('skills.source.hub') }}
     </button>
     <button class="legend-item" :class="{ active: modelValue === 'local' }" @click="toggle('local')">

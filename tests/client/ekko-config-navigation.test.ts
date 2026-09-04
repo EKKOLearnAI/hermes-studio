@@ -89,7 +89,7 @@ describe('Ekko configuration navigation', () => {
     expect(skills).toContain("@/components/hermes/skills/SkillImportModal.vue")
     expect(skills).toContain("@/components/hermes/skills/SkillExternalDirsModal.vue")
     expect(skills).toContain('<SkillSourceLegend v-model="sourceFilter" />')
-    expect(hermesSkills).toContain('<SkillSourceLegend v-model="sourceFilter" />')
+    expect(hermesSkills).toContain('<SkillSourceLegend v-model="sourceFilter" :show-hub="isHermesTarget" />')
     for (const source of ['builtin', 'hub', 'local', 'external', 'modified']) {
       expect(sourceLegend).toContain(`toggle('${source}')`)
     }

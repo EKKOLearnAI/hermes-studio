@@ -200,7 +200,7 @@ const router = createRouter({
       meta: { requiresSuperAdmin: true },
     },
     {
-      path: '/studio/agents/:agentId/:section(memory|skills|mcp|settings)',
+      path: '/studio/agents/:agentId/:section(skills|mcp|settings)',
       name: 'codingAgent.config',
       component: () => import('@/views/hermes/CodingAgentConfigView.vue'),
       meta: { codingAgentConfig: true, requiresSuperAdmin: true },

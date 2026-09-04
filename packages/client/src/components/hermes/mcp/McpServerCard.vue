@@ -31,11 +31,13 @@ const { t } = useI18n()
 
 function statusClass(server: McpServerInfo) {
   if (server.raw_config.enabled === false) return 'disabled'
+  if (props.testing) return 'testing'
   return server.connected ? 'connected' : 'disconnected'
 }
 
 function statusLabel(server: McpServerInfo) {
   if (server.raw_config.enabled === false) return t('mcp.disabledStatus')
+  if (props.testing) return t('mcp.loading')
   return server.connected ? t('mcp.connectedStatus') : t('mcp.disconnectedStatus')
 }
 
@@ -44,7 +46,14 @@ const MAX_VISIBLE_TOOLS = 20
 </script>
 
 <template>
-  <div class="mcp-card" :class="{ disconnected: !server.connected, disabled: server.raw_config.enabled === false }">
+  <div
+    class="mcp-card"
+    :class="{
+      testing,
+      disconnected: !testing && server.raw_config.enabled !== false && !server.connected,
+      disabled: server.raw_config.enabled === false,
+    }"
+  >
     <!-- 第一行：标题 + 标签 -->
     <div class="card-header">
       <h3 class="server-name">{{ server.name }}</h3>
@@ -131,6 +140,10 @@ const MAX_VISIBLE_TOOLS = 20
     border-color: rgba(var(--error-rgb), 0.3);
   }
 
+  &.testing {
+    border-color: rgba(var(--accent-primary-rgb), 0.3);
+  }
+
   &.disabled {
     opacity: 0.7;
   }
@@ -187,6 +200,11 @@ const MAX_VISIBLE_TOOLS = 20
   &.disconnected {
     background: rgba(var(--error-rgb), 0.12);
     color: $error;
+  }
+
+  &.testing {
+    background: rgba(var(--accent-primary-rgb), 0.12);
+    color: $accent-primary;
   }
 
   &.disabled {

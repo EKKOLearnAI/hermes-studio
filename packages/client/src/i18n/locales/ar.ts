@@ -2923,6 +2923,8 @@ export default {
     deleteSuccess: "تم الحذف",
     deleteFailed: "فشل الحذف",
     configFiles: "ملفات الإعداد",
+    preference: "التفضيلات",
+    configuration: "الإعدادات",
     profileScope: "البروفايل",
     providerScope: "المزوّد",
     providerPlaceholder: "مثال: custom:glm",
