@@ -206,6 +206,103 @@ test('opens a Profile-generated package.json even when the session has no explic
   expect(api.unexpectedRequests).toEqual([])
 })
 
+test('opens the reported code-styled local file link in the side preview', async ({ page }) => {
+  const relativePath = 'release-maintainer/SKILL.md'
+  const absolutePath = `${sessionWorkspace}/${relativePath}`
+  await authenticate(page, TEST_ACCESS_KEY, 'research')
+  await page.addInitScript(({ id, label, path }) => {
+    ;(window as any).__PW_CHAT_SOCKET_RESUMES__ = {
+      [id]: {
+        session_id: id,
+        messages: [{
+          id: 1,
+          session_id: id,
+          role: 'assistant',
+          content: `Updated [\`${label}\`](<${path}>)`,
+          timestamp: 1_790_000_001,
+          tool_call_id: null,
+          tool_calls: null,
+          tool_name: null,
+          token_count: null,
+          finish_reason: null,
+          reasoning: null,
+        }],
+        isWorking: false,
+        events: [],
+      },
+    }
+  }, { id: sessionId, label: relativePath, path: absolutePath })
+
+  const api = await mockHermesApi(page, { sessions: [session] })
+  let previewRequestUrl = ''
+  let downloadRequests = 0
+  let releaseFirstPreview!: () => void
+  let releaseSecondPreview!: () => void
+  let markFirstPreviewStarted!: () => void
+  let markSecondPreviewStarted!: () => void
+  const firstPreviewGate = new Promise<void>(resolve => { releaseFirstPreview = resolve })
+  const secondPreviewGate = new Promise<void>(resolve => { releaseSecondPreview = resolve })
+  const firstPreviewStarted = new Promise<void>(resolve => { markFirstPreviewStarted = resolve })
+  const secondPreviewStarted = new Promise<void>(resolve => { markSecondPreviewStarted = resolve })
+  let previewRequestCount = 0
+  await page.route(`**/api/studio/sessions/${sessionId}/workspace-file/content**`, async route => {
+    previewRequestUrl = route.request().url()
+    if (previewRequestCount++ === 0) {
+      markFirstPreviewStarted()
+      await firstPreviewGate
+    } else {
+      markSecondPreviewStarted()
+      await secondPreviewGate
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/plain; charset=utf-8',
+      body: '# Release Maintainer\n\nOpened from the exact reported link shape.\n',
+    })
+  })
+  await page.route('**/api/studio/files/download**', async route => {
+    downloadRequests += 1
+    await route.fulfill({ status: 200, contentType: 'text/markdown', body: '# downloaded' })
+  })
+  await mockChatSocket(page)
+
+  await page.goto(`/#/hermes/session/${sessionId}`)
+  const fileLink = page.locator('.markdown-body a', { hasText: relativePath })
+  await expect(fileLink).toBeVisible({ timeout: 15_000 })
+  await expect(fileLink.locator('code')).toHaveText(relativePath)
+  await expect(page.locator('.markdown-file-card', { hasText: relativePath })).toHaveCount(0)
+  const toolPanel = page.locator('.chat-tool-panel')
+  await expect(toolPanel).toHaveCount(0)
+
+  await fileLink.click()
+  await firstPreviewStarted
+  await expect(toolPanel).toBeVisible()
+  await expect(toolPanel.locator('.chat-file-preview-loading')).toBeVisible()
+  await expect(toolPanel.locator('.files-tree-panel')).toHaveCount(0)
+  await expect(toolPanel.locator('.chat-tool-tabs')).toHaveCount(0)
+  releaseFirstPreview()
+  await expect(toolPanel.locator('.file-preview')).toBeVisible()
+  await toolPanel.getByRole('button', { name: 'Close', exact: true }).click()
+  await expect(toolPanel).toHaveCount(0)
+
+  await page.locator('.header-tool-toggle').click()
+  await expect(toolPanel.locator('.files-tree-panel')).toBeVisible()
+  await fileLink.click()
+  await secondPreviewStarted
+  await expect(toolPanel.locator('.chat-file-preview-loading')).toBeVisible()
+  await expect(toolPanel.locator('.files-tree-panel')).toHaveCount(0)
+  await expect(toolPanel.locator('.chat-tool-tabs')).toHaveCount(0)
+  releaseSecondPreview()
+  await expect(toolPanel.locator('.file-preview')).toBeVisible()
+  await expect(toolPanel.locator('.files-tree-panel')).toHaveCount(0)
+  await expect(toolPanel.locator('.chat-tool-tabs')).toHaveCount(0)
+  await expect(toolPanel.locator('.preview-filename')).toHaveText(relativePath)
+  await expect(toolPanel.locator('.preview-markdown')).toContainText('Opened from the exact reported link shape.')
+  expect(new URL(previewRequestUrl).searchParams.get('path')).toBe(relativePath)
+  expect(downloadRequests).toBe(0)
+  expect(api.unexpectedRequests).toEqual([])
+})
+
 test('HTML source mode remains scrollable while its scrollbar is hidden', async ({ page }) => {
   const htmlPath = `${sessionWorkspace}/long-preview.html`
   await authenticate(page, TEST_ACCESS_KEY, 'research')

@@ -209,6 +209,38 @@ describe('files store', () => {
     })
   })
 
+  it('does not let an older session preview overwrite a newer file', async () => {
+    const olderPreview = deferred<{ content: string; size: number }>()
+    const newerPreview = deferred<{ content: string; size: number }>()
+    mockSessionsApi.fetchSessionWorkspaceFileText.mockImplementation((_sessionId: string, path: string) => {
+      return path === 'older.md' ? olderPreview.promise : newerPreview.promise
+    })
+    const store = useFilesStore()
+
+    const olderRequest = store.openSessionWorkspacePreview('session-1', 'older.md')
+    const newerRequest = store.openSessionWorkspacePreview('session-1', 'newer.md')
+    newerPreview.resolve({ content: '# Newer', size: 7 })
+    await newerRequest
+    expect(store.previewFile).toMatchObject({ path: 'newer.md', content: '# Newer' })
+
+    olderPreview.resolve({ content: '# Older', size: 7 })
+    await olderRequest
+    expect(store.previewFile).toMatchObject({ path: 'newer.md', content: '# Newer' })
+  })
+
+  it('does not reopen a pending session preview after it is closed', async () => {
+    const pendingPreview = deferred<{ content: string; size: number }>()
+    mockSessionsApi.fetchSessionWorkspaceFileText.mockReturnValue(pendingPreview.promise)
+    const store = useFilesStore()
+
+    const request = store.openSessionWorkspacePreview('session-1', 'pending.md')
+    store.closePreview()
+    pendingPreview.resolve({ content: '# Too late', size: 10 })
+    await request
+
+    expect(store.previewFile).toBeNull()
+  })
+
   it('opens image previews without reading file contents', async () => {
     const store = useFilesStore()
     const entry: FileEntry = {

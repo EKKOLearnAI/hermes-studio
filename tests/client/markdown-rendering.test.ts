@@ -458,6 +458,58 @@ describe('MarkdownRenderer', () => {
     }
   })
 
+  it('keeps code-styled local file links as markdown while previewing them', async () => {
+    const previewRequests: Array<{ path: string; fileName: string; previewOnly?: boolean }> = []
+    const handlePreview = (event: Event) => {
+      const customEvent = event as CustomEvent<{ path: string; fileName: string; previewOnly?: boolean }>
+      previewRequests.push(customEvent.detail)
+      customEvent.preventDefault()
+    }
+    window.addEventListener('hermes:preview-workspace-file', handlePreview)
+    const wrapper = mount(MarkdownRenderer, {
+      props: {
+        content: '[`release-maintainer/SKILL.md`](</Users/zeeland/.hermes/skills/release-maintainer/SKILL.md>)',
+      },
+    })
+
+    try {
+      expect(wrapper.find('.markdown-file-card').exists()).toBe(false)
+      const link = wrapper.get('a')
+      expect(link.attributes('href')).toBe('/Users/zeeland/.hermes/skills/release-maintainer/SKILL.md')
+      expect(link.get('code').text()).toBe('release-maintainer/SKILL.md')
+      const clickEvent = new MouseEvent('click', { bubbles: true, cancelable: true })
+      link.element.dispatchEvent(clickEvent)
+      expect(clickEvent.defaultPrevented).toBe(true)
+      await vi.waitFor(() => {
+        expect(previewRequests).toEqual([{
+          path: '/Users/zeeland/.hermes/skills/release-maintainer/SKILL.md',
+          fileName: 'release-maintainer/SKILL.md',
+          previewOnly: true,
+        }])
+      })
+      expect(downloadApiMock.downloadFile).not.toHaveBeenCalled()
+    } finally {
+      wrapper.unmount()
+      window.removeEventListener('hermes:preview-workspace-file', handlePreview)
+    }
+  })
+
+  it('does not download a previewable code-styled link when no preview host accepts it', async () => {
+    const wrapper = mount(MarkdownRenderer, {
+      props: {
+        content: '[`release-maintainer/SKILL.md`](</tmp/release-maintainer/SKILL.md>)',
+      },
+    })
+    const link = wrapper.get('a')
+    const clickEvent = new MouseEvent('click', { bubbles: true, cancelable: true })
+
+    link.element.dispatchEvent(clickEvent)
+    await vi.waitFor(() => expect(clickEvent.defaultPrevented).toBe(true))
+
+    expect(downloadApiMock.downloadFile).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
   it('removes line and column suffixes before previewing local workspace files', async () => {
     const previewRequests: Array<{ path: string; fileName: string }> = []
     const handlePreview = (event: Event) => {
