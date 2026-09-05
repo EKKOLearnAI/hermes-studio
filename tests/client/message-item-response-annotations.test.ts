@@ -3,12 +3,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 
+const toastError = vi.hoisted(() => vi.fn())
+
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (key: string, params?: Record<string, unknown>) => params?.count != null ? `${key}:${params.count}` : key }),
 }))
 
 vi.mock('naive-ui', () => ({
-  useMessage: () => ({ error: vi.fn(), success: vi.fn(), warning: vi.fn(), info: vi.fn() }),
+  useMessage: () => ({ error: toastError, success: vi.fn(), warning: vi.fn(), info: vi.fn() }),
 }))
 
 import MessageItem from '@/components/hermes/chat/MessageItem.vue'
@@ -38,6 +40,7 @@ function annotation(): ResponseAnnotation {
 
 describe('MessageItem response annotation integration', () => {
   beforeEach(() => {
+    toastError.mockReset()
     setActivePinia(createPinia())
     const chatStore = useChatStore()
     chatStore.activeSessionId = 'session-1'
@@ -101,6 +104,24 @@ describe('MessageItem response annotation integration', () => {
       global: { stubs: { MarkdownRenderer: { props: ['content'], template: '<div>{{ content }}</div>' } } },
     })
     expect(withAnswer.getComponent(ResponseAnnotationSource).props('source')).toBe('Visible answer')
+  })
+
+  it('surfaces annotation limit failures from the response source', () => {
+    const wrapper = mount(MessageItem, {
+      props: {
+        message: {
+          id: 'assistant-limit', role: 'assistant', content: 'Stable response', timestamp: Date.now(),
+        } satisfies Message,
+      },
+      global: {
+        stubs: {
+          MarkdownRenderer: { props: ['content'], template: '<div>{{ content }}</div>' },
+        },
+      },
+    })
+
+    wrapper.getComponent(ResponseAnnotationSource).vm.$emit('annotationError', 'too_many_annotations')
+    expect(toastError).toHaveBeenCalledWith('chat.annotations.errors.too_many_annotations')
   })
 
   it('renders a sent envelope as ordinary body plus immutable annotation evidence', async () => {

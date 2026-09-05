@@ -6,6 +6,7 @@ import { nextTick } from 'vue'
 import ResponseAnnotationSource from '@/components/hermes/chat/ResponseAnnotationSource.vue'
 import { useChatAnnotationsStore } from '@/stores/hermes/chat-annotations'
 import { responseAnnotationSourceHash, type ResponseAnnotation } from '@/utils/chat-response-annotations'
+import { resolveResponseAnnotationRange } from '@/utils/chat-response-annotation-selection'
 
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (key: string) => key }),
@@ -101,8 +102,19 @@ describe('ResponseAnnotationSource', () => {
       }),
     ])
     expect(store.activeEditor?.annotationId).toBe(store.annotationsForSession('session-1')[0].id)
-    expect(wrapper.find('[data-testid="response-annotation-marker"]').text()).toBe('1')
+    const marker = wrapper.get('[data-testid="response-annotation-marker"]')
+    expect(marker.text()).toBe('1')
     expect(wrapper.find('[data-testid="response-annotation-highlight"]').exists()).toBe(true)
+
+    await marker.trigger('mouseenter')
+    await nextTick()
+    const preview = document.body.querySelector<HTMLElement>('[data-testid="response-annotation-marker-preview"]')
+    expect(preview?.textContent).toContain('Beta')
+    expect(marker.attributes('aria-describedby')).toBe(preview?.id)
+    await marker.trigger('mouseleave')
+    ;(marker.element as HTMLButtonElement).focus()
+    await nextTick()
+    expect(document.body.querySelector('[data-testid="response-annotation-marker-preview"]')).not.toBeNull()
   })
 
   it('restores a draft highlight by source hash after optimistic message ids are replaced on reload', async () => {
@@ -333,5 +345,43 @@ describe('ResponseAnnotationSource', () => {
 
     expect(document.body.querySelector('[role="toolbar"]')).toBeNull()
     expect(useChatAnnotationsStore().annotationsForSession('session-1')).toEqual([])
+  })
+
+  it('emits feedback instead of silently dropping an oversized selection', async () => {
+    const oversized = 'x'.repeat(4_001)
+    const annotationError = vi.fn()
+    const wrapper = mount(ResponseAnnotationSource, {
+      attachTo: document.body,
+      props: { sessionId: 'session-1', messageId: 'assistant-large', source: oversized, enabled: true },
+      attrs: { onAnnotationError: annotationError },
+      slots: { default: `<p>${oversized}</p>` },
+    })
+    await nextTick()
+    const text = wrapper.get('p').element.firstChild!
+    const selection = window.getSelection()!
+    const warmup = document.createRange()
+    warmup.setStart(text, 0)
+    warmup.setEnd(text, 4)
+    selection.removeAllRanges()
+    selection.addRange(warmup)
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+    await nextTick()
+    expect(document.body.querySelector('[role="toolbar"]')).not.toBeNull()
+
+    const range = document.createRange()
+    range.selectNodeContents(text)
+    selection.removeAllRanges()
+    selection.addRange(range)
+    expect(selection.isCollapsed).toBe(false)
+    expect(selection.toString().length).toBe(4_001)
+    expect(resolveResponseAnnotationRange(
+      wrapper.get('.response-annotation-source').element as HTMLElement,
+      range,
+    )?.selectedText.length).toBe(4_001)
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+    await nextTick()
+    expect(annotationError).toHaveBeenCalledWith('selected_text_too_long')
+    expect(document.body.querySelector('[role="toolbar"]')).toBeNull()
+    wrapper.unmount()
   })
 })

@@ -190,5 +190,50 @@ describe('response annotation composer and sent evidence', () => {
     expect(useChatAnnotationsStore().inspectedSentMessageId).toBe('user-2')
 
     window.removeEventListener('hermes:show-response-annotation-source', sourceRequest)
+    wrapper.unmount()
+  })
+
+  it('previews sent evidence on hover or focus and positions the expanded card from its measured height', async () => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 800 })
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 300 })
+    const sent = annotation('sent-preview')
+    sent.comment = 'A persisted comment'
+    const wrapper = mount(SentResponseAnnotations, {
+      attachTo: document.body,
+      props: { sessionId: 'session-1', messageId: 'user-preview', annotations: [sent] },
+    })
+    const chipRoot = wrapper.get('.sent-response-annotations')
+    vi.spyOn(chipRoot.element, 'getBoundingClientRect').mockReturnValue({
+      left: 400, right: 520, top: 150, bottom: 180, width: 120, height: 30,
+      x: 400, y: 150, toJSON: () => ({}),
+    } as DOMRect)
+
+    await chipRoot.trigger('mouseenter')
+    await nextTick()
+    const hoverPreview = document.body.querySelector<HTMLElement>('[data-testid="response-annotation-sent-preview"]')!
+    expect(hoverPreview.textContent).toContain('A persisted comment')
+    expect(hoverPreview.style.left).toBe('140px')
+    expect(hoverPreview.style.bottom).toBe('158px')
+    expect(hoverPreview.style.top).toBe('')
+    expect(hoverPreview.style.maxHeight).toBe('134px')
+    expect(wrapper.get('[data-testid="response-annotation-count"]').attributes('aria-describedby')).toContain('user-preview')
+    await chipRoot.trigger('mouseleave')
+    ;(wrapper.get('[data-testid="response-annotation-count"]').element as HTMLButtonElement).focus()
+    await nextTick()
+    expect(document.body.querySelector<HTMLElement>('[data-testid="response-annotation-sent-preview"]')?.textContent)
+      .toContain('A persisted comment')
+
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 600 })
+    await wrapper.get('[data-testid="response-annotation-count"]').trigger('click')
+    await nextTick()
+    const card = document.body.querySelector<HTMLElement>('[data-testid="response-annotation-sent-card"]')!
+    vi.spyOn(card, 'getBoundingClientRect').mockReturnValue({
+      left: 72, right: 520, top: 32, bottom: 472, width: 448, height: 440,
+      x: 72, y: 32, toJSON: () => ({}),
+    } as DOMRect)
+    window.dispatchEvent(new Event('resize'))
+    await nextTick()
+    expect(card.style.top).toBe('152px')
+    wrapper.unmount()
   })
 })

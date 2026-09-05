@@ -311,6 +311,12 @@ const showMessageBubble = computed(() => {
   )
 })
 
+function handleResponseAnnotationError(code: string) {
+  toast.error(code === 'selection_unavailable'
+    ? t('chat.annotations.sourceUnavailable')
+    : t(`chat.annotations.errors.${code}`))
+}
+
 const quotableContent = computed(() => {
   if (props.message.role !== 'user' && props.message.role !== 'assistant') return null
   if (props.message.isStreaming || isAgentError.value) return null
@@ -1186,6 +1192,7 @@ onBeforeUnmount(() => {
               :message-id="message.id"
               :source="assistantAnnotationBody"
               :enabled="true"
+              @annotation-error="handleResponseAnnotationError"
             >
               <MarkdownRenderer
                 :content="assistantAnnotationBody"

@@ -31,7 +31,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  error: [code: string]
+  annotationError: [code: string]
 }>()
 
 const { t } = useI18n()
@@ -43,6 +43,8 @@ const pendingRect = ref<ResponseAnnotationAnchorRect | null>(null)
 const toolbarAutoFocus = ref(false)
 const highlightRects = ref<Record<string, Array<{ left: number; top: number; width: number; height: number }>>>({})
 const markerPositions = ref<Record<string, { left: number; top: number }>>({})
+const markerPreview = ref<{ annotation: ResponseAnnotation; anchor: ResponseAnnotationAnchorRect } | null>(null)
+const markerPreviewTarget = ref<HTMLElement | null>(null)
 const flashing = ref(false)
 const sourceRegistryVersion = ref(0)
 let resizeObserver: ResizeObserver | null = null
@@ -64,6 +66,28 @@ const visibleAnnotations = computed(() => {
   const byId = new Map<string, ResponseAnnotation>()
   for (const annotation of [...draftAnnotations.value, ...inspectedAnnotations.value]) byId.set(annotation.id, annotation)
   return [...byId.values()]
+})
+const markerPreviewId = computed(() => markerPreview.value
+  ? `response-annotation-marker-preview-${markerPreview.value.annotation.id.replace(/[^a-z0-9_-]/gi, '-')}`
+  : undefined)
+const markerPreviewStyle = computed(() => {
+  const anchor = markerPreview.value?.anchor
+  if (!anchor) return {}
+  const width = Math.min(320, window.innerWidth - 16)
+  const left = Math.max(8, Math.min(anchor.left, window.innerWidth - width - 8))
+  const availableAbove = Math.max(0, anchor.top - 16)
+  const availableBelow = Math.max(0, window.innerHeight - anchor.bottom - 16)
+  return availableAbove >= availableBelow
+    ? {
+        left: `${left}px`,
+        bottom: `${Math.max(8, window.innerHeight - anchor.top + 8)}px`,
+        maxHeight: `${Math.min(280, availableAbove)}px`,
+      }
+    : {
+        left: `${left}px`,
+        top: `${Math.max(8, anchor.bottom + 8)}px`,
+        maxHeight: `${Math.min(280, availableBelow)}px`,
+      }
 })
 
 const toolbarStyle = computed(() => {
@@ -122,9 +146,13 @@ function updateSelection(event: Event) {
   }
   const resolved = resolveResponseAnnotationRange(sourceRoot.value, range)
   const rect = range.getBoundingClientRect()
+  if (resolved && resolved.selectedText.length > MAX_RESPONSE_ANNOTATION_SELECTED_TEXT_LENGTH) {
+    emit('annotationError', 'selected_text_too_long')
+    dismissToolbar()
+    return
+  }
   if (
     !resolved
-    || resolved.selectedText.length > MAX_RESPONSE_ANNOTATION_SELECTED_TEXT_LENGTH
     || !Number.isFinite(rect.left)
     || rect.width <= 0
     || rect.height <= 0
@@ -159,7 +187,7 @@ function addToChat() {
   if (!root || !range || !anchorRect) return
   const resolved = resolveResponseAnnotationRange(root, range)
   if (!resolved) {
-    emit('error', 'selection_unavailable')
+    emit('annotationError', 'selection_unavailable')
     dismissToolbar()
     return
   }
@@ -190,7 +218,7 @@ function addToChat() {
   }
   const error = annotationsStore.addAnnotation(props.sessionId, annotation)
   if (error && error !== 'duplicate') {
-    emit('error', error)
+    emit('annotationError', error)
     dismissToolbar()
     return
   }
@@ -301,6 +329,29 @@ function openDraftEditor(annotation: ResponseAnnotation, event: MouseEvent) {
   annotationsStore.openEditor(props.sessionId, annotation.id, serializableRect(target.getBoundingClientRect()))
 }
 
+function showMarkerPreview(annotation: ResponseAnnotation, event: Event) {
+  const target = event.currentTarget as HTMLElement
+  markerPreviewTarget.value = target
+  markerPreview.value = { annotation, anchor: serializableRect(target.getBoundingClientRect()) }
+}
+
+function hideMarkerPreview(annotationId: string) {
+  if (markerPreview.value?.annotation.id !== annotationId) return
+  markerPreview.value = null
+  markerPreviewTarget.value = null
+}
+
+function handleViewportGeometryChange() {
+  scheduleGeometryUpdate()
+  const target = markerPreviewTarget.value
+  if (markerPreview.value && target?.isConnected) {
+    markerPreview.value = {
+      annotation: markerPreview.value.annotation,
+      anchor: serializableRect(target.getBoundingClientRect()),
+    }
+  }
+}
+
 function handleSourceNavigation(event: Event) {
   const annotation = (event as CustomEvent<{ annotation?: ResponseAnnotation }>).detail?.annotation
   const root = sourceRoot.value
@@ -336,8 +387,8 @@ onMounted(() => {
   document.addEventListener('touchend', updateSelection)
   document.addEventListener('keyup', updateSelection)
   document.addEventListener('keydown', handleKeydown)
-  window.addEventListener('resize', scheduleGeometryUpdate)
-  document.addEventListener('scroll', scheduleGeometryUpdate, true)
+  window.addEventListener('resize', handleViewportGeometryChange)
+  document.addEventListener('scroll', handleViewportGeometryChange, true)
   window.addEventListener('hermes:show-response-annotation-source', handleSourceNavigation)
   if (typeof ResizeObserver !== 'undefined' && sourceRoot.value) {
     resizeObserver = new ResizeObserver(scheduleGeometryUpdate)
@@ -358,11 +409,13 @@ onBeforeUnmount(() => {
   document.removeEventListener('touchend', updateSelection)
   document.removeEventListener('keyup', updateSelection)
   document.removeEventListener('keydown', handleKeydown)
-  window.removeEventListener('resize', scheduleGeometryUpdate)
-  document.removeEventListener('scroll', scheduleGeometryUpdate, true)
+  window.removeEventListener('resize', handleViewportGeometryChange)
+  document.removeEventListener('scroll', handleViewportGeometryChange, true)
   window.removeEventListener('hermes:show-response-annotation-source', handleSourceNavigation)
   resizeObserver?.disconnect()
   mutationObserver?.disconnect()
+  markerPreview.value = null
+  markerPreviewTarget.value = null
   cancelScheduledGeometryUpdate()
   if (flashTimer !== null) window.clearTimeout(flashTimer)
   window.dispatchEvent(new Event('hermes:response-annotation-sources-changed'))
@@ -413,10 +466,15 @@ watch(() => props.source, (source) => {
       data-testid="response-annotation-marker"
       data-annotation-ignore
       :aria-label="t('chat.annotations.markerLabel', { index: annotation.ordinal, excerpt: annotation.selectedText.slice(0, 80) })"
+      :aria-describedby="markerPreview?.annotation.id === annotation.id ? markerPreviewId : undefined"
       :style="markerPositions[annotation.id]
         ? { left: `${markerPositions[annotation.id].left}px`, top: `${markerPositions[annotation.id].top}px` }
         : undefined"
       @click="openDraftEditor(annotation, $event)"
+      @mouseenter="showMarkerPreview(annotation, $event)"
+      @mouseleave="hideMarkerPreview(annotation.id)"
+      @focus="showMarkerPreview(annotation, $event)"
+      @blur="hideMarkerPreview(annotation.id)"
     >
       {{ annotation.ordinal }}
     </button>
@@ -437,6 +495,22 @@ watch(() => props.source, (source) => {
         {{ t('chat.annotations.addToChat') }}
       </button>
     </div>
+    <aside
+      v-if="markerPreview"
+      :id="markerPreviewId"
+      role="tooltip"
+      class="response-annotation-marker-preview"
+      data-testid="response-annotation-marker-preview"
+      data-annotation-ignore
+      :style="markerPreviewStyle"
+    >
+      <p class="marker-preview-label">{{ markerPreview.annotation.ordinal }}. {{ t('chat.annotations.selectedExcerpt') }}</p>
+      <blockquote>{{ markerPreview.annotation.selectedText }}</blockquote>
+      <template v-if="markerPreview.annotation.comment">
+        <p class="marker-preview-label marker-preview-comment-label">{{ t('chat.annotations.yourComment') }}</p>
+        <p class="marker-preview-comment">{{ markerPreview.annotation.comment }}</p>
+      </template>
+    </aside>
   </Teleport>
 </template>
 
@@ -517,6 +591,41 @@ watch(() => props.source, (source) => {
 .response-annotation-toolbar button:focus-visible {
   background: var(--bg-card-hover);
   outline: none;
+}
+
+.response-annotation-marker-preview {
+  position: fixed;
+  z-index: 1002;
+  width: min(320px, calc(100vw - 16px));
+  max-height: min(280px, calc(100vh - 16px));
+  overflow: auto;
+  box-sizing: border-box;
+  padding: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  color: var(--text-primary);
+  background: var(--bg-card);
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.26);
+  pointer-events: none;
+}
+
+.marker-preview-label {
+  margin: 0 0 5px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.response-annotation-marker-preview blockquote,
+.marker-preview-comment {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.marker-preview-comment-label {
+  margin-top: 10px;
 }
 
 @media (pointer: coarse) {
