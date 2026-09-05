@@ -183,6 +183,32 @@ describe('chat store response annotation submission', () => {
     vi.unstubAllGlobals()
   })
 
+  it('preserves the existing optimistic turn for a failed ordinary attachment upload', async () => {
+    const store = useChatStore()
+    const active = session()
+    store.sessions = [active]
+    store.activeSessionId = active.id
+    store.activeSession = active
+    const screenshot = new File(['image'], 'selection.png', { type: 'image/png' })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false, status: 404, statusText: 'Not found',
+      text: async () => 'upload route unavailable',
+    }))
+
+    await expect(store.sendMessage('', [{
+      id: 'browser-selection-1', name: 'selection.png', type: 'image/png', size: screenshot.size,
+      url: 'blob:browser-selection', file: screenshot,
+    }])).resolves.toBe(false)
+
+    expect(active.messages.filter((message: Message) => message.role === 'user')).toEqual([
+      expect.objectContaining({
+        attachments: [expect.objectContaining({ id: 'browser-selection-1' })],
+      }),
+    ])
+    expect(store.isStreaming).toBe(false)
+    vi.unstubAllGlobals()
+  })
+
   it('keeps ordinary sends free of annotation transport metadata', async () => {
     const store = useChatStore()
     const active = session()

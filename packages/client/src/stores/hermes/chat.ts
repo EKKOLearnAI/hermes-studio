@@ -4507,8 +4507,10 @@ export const useChatStore = defineStore('chat', () => {
       }
       if (!shouldQueue && !runSubmitted) {
         serverWorking.value.delete(sid)
-        const target = sessions.value.find(session => session.id === sid)
-        if (target) target.messages = target.messages.filter(message => message.id !== userMsg.id)
+        if (hasResponseAnnotations) {
+          const target = sessions.value.find(session => session.id === sid)
+          if (target) target.messages = target.messages.filter(message => message.id !== userMsg.id)
+        }
       }
       addMessage(sid, {
         id: uid(),
