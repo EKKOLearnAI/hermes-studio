@@ -59,6 +59,7 @@ export const useFilesStore = defineStore('files', () => {
   const sortBy = ref<'name' | 'size' | 'modTime'>('name')
   const sortOrder = ref<'asc' | 'desc'>('asc')
   let fetchRequestSeq = 0
+  let previewRequestSeq = 0
 
   const editingFile = ref<{
     path: string
@@ -82,6 +83,15 @@ export const useFilesStore = defineStore('files', () => {
     content?: string
     language?: string
   } | null>(null)
+
+  function beginPreviewRequest(): number {
+    return ++previewRequestSeq
+  }
+
+  function commitPreview(requestSeq: number, file: NonNullable<typeof previewFile.value>): void {
+    if (requestSeq !== previewRequestSeq) return
+    previewFile.value = file
+  }
 
   const pathSegments = computed(() => {
     if (!currentPath.value) return []
@@ -294,6 +304,7 @@ export const useFilesStore = defineStore('files', () => {
   ) {
     const type = getFilePreviewKind(fileName || filePath)
     if (!type) return
+    const requestSeq = beginPreviewRequest()
     const common = {
       path: filePath,
       name: fileName,
@@ -304,17 +315,17 @@ export const useFilesStore = defineStore('files', () => {
     }
     if (type === 'markdown' || type === 'text') {
       const result = await fetchSessionWorkspaceFileText(sessionId, filePath)
-      previewFile.value = type === 'markdown'
+      commitPreview(requestSeq, type === 'markdown'
         ? { ...common, size: result.size, content: result.content }
         : {
             ...common,
             size: result.size,
             content: result.content,
             language: getLanguageFromPath(filePath),
-          }
+          })
       return
     }
-    previewFile.value = common
+    commitPreview(requestSeq, common)
   }
 
   async function openGroupWorkspacePreview(
@@ -373,7 +384,10 @@ export const useFilesStore = defineStore('files', () => {
     return true
   }
 
-  function closePreview() { previewFile.value = null }
+  function closePreview() {
+    previewRequestSeq += 1
+    previewFile.value = null
+  }
 
   function selectDirectory(path: string) { currentPath.value = path }
 

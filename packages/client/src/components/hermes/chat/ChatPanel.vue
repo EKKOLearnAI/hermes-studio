@@ -82,6 +82,7 @@ const ConnectionsPanel = defineAsyncComponent(async () => (await import('@/compo
 const AgentManagerPanel = defineAsyncComponent(async () => (await import('@/views/hermes/AgentManagerView.vue')).default);
 const ModelsPanel = defineAsyncComponent(async () => (await import('@/views/hermes/ModelsView.vue')).default);
 const WorkspaceDiffPreview = defineAsyncComponent(async () => (await import('@/components/hermes/files/WorkspaceDiffPreview.vue')).default);
+const FilePreview = defineAsyncComponent(async () => (await import('@/components/hermes/files/FilePreview.vue')).default);
 const DesktopBrowserPanel = defineAsyncComponent(async () => (await import('./DesktopBrowserPanel.vue')).default);
 
 const chatStore = useChatStore();
@@ -105,9 +106,12 @@ const chatInputRef = ref<(InstanceType<typeof ChatInput> & {
 const chatContentWrapperRef = ref<HTMLElement | null>(null);
 const chatMainContentRef = ref<HTMLElement | null>(null);
 let sessionFadeAnimation: Animation | null = null;
+let workspacePreviewRequestSeq = 0;
+let workspacePreviewRequestPending = false;
 const chatDropCounter = ref(0);
 const isChatDropActive = ref(false);
 const showToolPanel = ref(false);
+const previewOnlyFileOpen = ref(false);
 const toolPanelTransitionReady = ref(false);
 const activeToolPanel = ref<"files" | "terminal" | "browser">("files");
 const desktopBrowserAvailable = hasDesktopBrowserBridge();
@@ -256,9 +260,12 @@ function closeToolPanelOverlay(): boolean {
     return false;
   }
   if (toolPanelStore.workspaceDiff && filesStore.editingFile) filesStore.closeEditor();
+  workspacePreviewRequestSeq += 1;
+  workspacePreviewRequestPending = false;
   filesStore.closePreview();
   toolPanelStore.closeWorkspaceDiff();
   selectedSubagent.value = null;
+  previewOnlyFileOpen.value = false;
   showToolPanel.value = false;
   return true;
 }
@@ -395,20 +402,33 @@ function workspacePreviewPath(filePath: string): string | null {
 }
 
 function handleWorkspaceFilePreviewRequest(event: Event) {
-  const customEvent = event as CustomEvent<{ path?: string; fileName?: string }>;
+  const customEvent = event as CustomEvent<{ path?: string; fileName?: string; previewOnly?: boolean }>;
   const sessionId = activePreviewSessionId.value;
   const filePath = typeof customEvent.detail?.path === "string" ? customEvent.detail.path : "";
   const previewPath = workspacePreviewPath(filePath);
   if (!sessionId || !previewPath) return;
 
   customEvent.preventDefault();
+  const requestSeq = ++workspacePreviewRequestSeq;
+  workspacePreviewRequestPending = true;
   const fileName = customEvent.detail?.fileName || previewPath.split("/").pop() || previewPath;
   filesStore.closePreview();
   toolPanelStore.closeWorkspaceDiff();
   selectedSubagent.value = null;
-  void filesStore.openSessionWorkspacePreview(sessionId, previewPath, fileName).catch((error) => {
-    message.error(error instanceof Error ? error.message : t("files.previewFailed"));
-  });
+  const previewOnly = customEvent.detail?.previewOnly === true;
+  previewOnlyFileOpen.value = previewOnly;
+  if (previewOnly) showToolPanel.value = true;
+  void filesStore.openSessionWorkspacePreview(sessionId, previewPath, fileName)
+    .then(() => {
+      if (requestSeq === workspacePreviewRequestSeq) workspacePreviewRequestPending = false;
+    })
+    .catch((error) => {
+      if (requestSeq !== workspacePreviewRequestSeq) return;
+      workspacePreviewRequestPending = false;
+      previewOnlyFileOpen.value = false;
+      if (previewOnly) showToolPanel.value = false;
+      message.error(error instanceof Error ? error.message : t("files.previewFailed"));
+    });
 }
 
 function handleOpenSubagentStreamRequest(event: Event) {
@@ -420,8 +440,11 @@ function handleOpenSubagentStreamRequest(event: Event) {
     return;
   }
   if (toolPanelStore.workspaceDiff && filesStore.editingFile) filesStore.closeEditor();
+  workspacePreviewRequestSeq += 1;
+  workspacePreviewRequestPending = false;
   filesStore.closePreview();
   toolPanelStore.closeWorkspaceDiff();
+  previewOnlyFileOpen.value = false;
   selectedSubagent.value = detail;
   showToolPanel.value = true;
 }
@@ -433,8 +456,11 @@ function handleOpenDesktopBrowserPanelRequest() {
     return;
   }
   if (toolPanelStore.workspaceDiff && filesStore.editingFile) filesStore.closeEditor();
+  workspacePreviewRequestSeq += 1;
+  workspacePreviewRequestPending = false;
   filesStore.closePreview();
   toolPanelStore.closeWorkspaceDiff();
+  previewOnlyFileOpen.value = false;
   selectedSubagent.value = null;
   activeToolPanel.value = "browser";
   showToolPanel.value = true;
@@ -459,11 +485,16 @@ onMounted(() => {
 watch(
   () => chatStore.activeSessionId,
   async (sessionId, previousSessionId) => {
-    if (!sessionId || !previousSessionId || sessionId === previousSessionId) return;
+    if (sessionId === previousSessionId || !previousSessionId) return;
 
-    if (filesStore.previewFile || toolPanelStore.workspaceDiff || selectedSubagent.value) {
+    if (filesStore.previewFile || toolPanelStore.workspaceDiff || selectedSubagent.value || previewOnlyFileOpen.value) {
       closeToolPanelOverlay();
+    } else {
+      workspacePreviewRequestSeq += 1;
+      workspacePreviewRequestPending = false;
+      filesStore.closePreview();
     }
+    if (!sessionId) return;
 
     await nextTick();
     // A session you just opened should be ready to type in. Without this the
@@ -498,7 +529,10 @@ onUnmounted(() => {
   window.removeEventListener("resize", handleToolPanelViewportResize);
   stopToolResize();
   sessionFadeAnimation?.cancel();
-  if (filesStore.previewFile?.workspaceSessionId) filesStore.closePreview();
+  workspacePreviewRequestSeq += 1;
+  if (workspacePreviewRequestPending || previewOnlyFileOpen.value || filesStore.previewFile?.workspaceSessionId) filesStore.closePreview();
+  workspacePreviewRequestPending = false;
+  previewOnlyFileOpen.value = false;
   toolPanelStore.closeWorkspaceDiff();
   sessionFadeAnimation = null;
 });
@@ -512,7 +546,11 @@ watch(
   () => toolPanelStore.workspaceDiff,
   (workspaceDiff) => {
     if (workspaceDiff) {
+      workspacePreviewRequestSeq += 1;
+      workspacePreviewRequestPending = false;
+      filesStore.closePreview();
       selectedSubagent.value = null;
+      previewOnlyFileOpen.value = false;
       showToolPanel.value = true;
     }
   },
@@ -3157,6 +3195,15 @@ async function handleSessionModelCustomSubmit() {
                   :stream="selectedSubagentStream"
                   @close="closeToolPanelOverlay"
                 />
+                <template v-else-if="previewOnlyFileOpen">
+                  <FilePreview
+                    v-if="filesStore.previewFile"
+                    :custom-close="closeToolPanelOverlay"
+                  />
+                  <div v-else class="chat-file-preview-loading">
+                    <NSpin size="small" />
+                  </div>
+                </template>
                 <template v-else>
                   <div class="chat-tool-tabs" role="tablist">
                     <button
@@ -4178,6 +4225,14 @@ async function handleSessionModelCustomSubmit() {
   min-height: 0;
   overflow: hidden;
   background: $bg-main-surface;
+}
+
+.chat-file-preview-loading {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  min-height: 0;
 }
 
 .chat-tool-tabs {

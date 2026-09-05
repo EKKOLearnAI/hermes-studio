@@ -161,10 +161,10 @@ function localFilePathWithoutLocation(path: string): string {
   return locationMatch[1]
 }
 
-function requestWorkspaceFilePreview(path: string, fileName: string): boolean {
+function requestWorkspaceFilePreview(path: string, fileName: string, previewOnly = false): boolean {
   const event = new CustomEvent('hermes:preview-workspace-file', {
     cancelable: true,
-    detail: { path, fileName },
+    detail: { path, fileName, ...(previewOnly ? { previewOnly: true } : {}) },
   })
   window.dispatchEvent(event)
   return event.defaultPrevented
@@ -429,6 +429,16 @@ onBeforeUnmount(() => {
 })
 
 async function handleMarkdownClick(event: MouseEvent): Promise<void> {
+  const target = event.target as HTMLElement
+  const immediateLink = target.closest('a') as HTMLAnchorElement | null
+  const immediateHref = immediateLink?.getAttribute('href')
+  if (immediateHref && (isLocalFilePath(immediateHref) || immediateHref.startsWith('/api/studio/files/download?'))) {
+    // Native anchor navigation happens as soon as this async listener yields,
+    // so local-file links must be canceled before the first await.
+    event.preventDefault()
+    event.stopPropagation()
+  }
+
   const copyResult = await handleCodeBlockCopyClick(event)
   if (copyResult !== null) {
     if (copyResult) {
@@ -438,8 +448,6 @@ async function handleMarkdownClick(event: MouseEvent): Promise<void> {
     }
     return
   }
-
-  const target = event.target as HTMLElement
 
   // Handle image clicks for preview
   const img = target.closest('img') as HTMLImageElement | null
@@ -516,15 +524,24 @@ async function handleMarkdownClick(event: MouseEvent): Promise<void> {
     return
   }
 
-  // File path links: intercept and download
+  // Code-styled local file links intentionally remain ordinary Markdown links.
+  // Previewable files open as a single-file preview; unsupported files retain
+  // the existing download fallback.
   if (isLocalFilePath(href)) {
     event.preventDefault()
     event.stopPropagation()
     const linkText = link.textContent || ''
     const fileName = linkText.startsWith('File: ') ? linkText.slice(6).trim() : linkText.trim()
     const path = localFilePathWithoutLocation(href)
+    const downloadName = inferDownloadFileName(path, fileName || undefined)
+    if (isPreviewableFile(downloadName)) {
+      if (!requestWorkspaceFilePreview(path, downloadName, true)) {
+        message.error(t('files.previewFailed'))
+      }
+      return
+    }
     message.info(t('download.downloading'))
-    downloadFile(path, inferDownloadFileName(path, fileName || undefined)).catch((err: Error) => {
+    downloadFile(path, downloadName).catch((err: Error) => {
       message.error(err.message || t('download.downloadFailed'))
     })
   }
