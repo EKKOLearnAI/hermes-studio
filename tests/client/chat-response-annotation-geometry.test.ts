@@ -5,6 +5,7 @@ import {
   collectResponseAnnotationTextRects,
   completeResponseAnnotationVisualLineRect,
   placeResponseAnnotationMarker,
+  scrollResponseAnnotationRangeIntoView,
   type ResponseAnnotationRect,
 } from '@/utils/chat-response-annotation-geometry'
 
@@ -83,5 +84,26 @@ describe('response annotation geometry', () => {
 
     expect(positions.a).toEqual({ left: 72, top: 10 })
     expect(positions.b).toEqual({ left: 72, top: 32 })
+  })
+
+  it('centers the exact source range inside the nearest scroll container', () => {
+    const scroller = document.createElement('div')
+    scroller.style.overflowY = 'auto'
+    const root = document.createElement('div')
+    root.textContent = 'a very long response with a selected excerpt'
+    scroller.appendChild(root)
+    document.body.appendChild(scroller)
+    Object.defineProperty(scroller, 'scrollHeight', { configurable: true, value: 1200 })
+    Object.defineProperty(scroller, 'clientHeight', { configurable: true, value: 200 })
+    scroller.getBoundingClientRect = () => rect(0, 100, 400, 200)
+    const scrollBy = vi.fn()
+    scroller.scrollBy = scrollBy
+    const range = document.createRange()
+    range.selectNodeContents(root.firstChild!)
+    range.getBoundingClientRect = () => rect(20, 500, 120, 20)
+
+    scrollResponseAnnotationRangeIntoView(root, range)
+
+    expect(scrollBy).toHaveBeenCalledWith({ top: 310, behavior: 'smooth' })
   })
 })

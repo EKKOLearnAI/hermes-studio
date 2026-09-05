@@ -20,6 +20,7 @@ import {
   collectVisibleResponseAnnotationRangeRects,
   completeResponseAnnotationVisualLineRect,
   placeResponseAnnotationMarker,
+  scrollResponseAnnotationRangeIntoView,
 } from '@/utils/chat-response-annotation-geometry'
 
 const props = defineProps<{
@@ -306,7 +307,7 @@ function handleSourceNavigation(event: Event) {
   if (!annotation || !root || resolveResponseAnnotationSourceElement(annotation) !== root) return
   const range = restoreResponseAnnotationRange(root, annotation.start, annotation.end)
   if (!range) return
-  root.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  scrollResponseAnnotationRangeIntoView(root, range)
   flashing.value = true
   if (flashTimer !== null) window.clearTimeout(flashTimer)
   flashTimer = window.setTimeout(() => { flashing.value = false }, 1600)

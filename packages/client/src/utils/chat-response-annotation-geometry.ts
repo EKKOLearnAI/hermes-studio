@@ -215,3 +215,34 @@ export function avoidResponseAnnotationMarkerCollisions(
   }
   return result
 }
+
+export function scrollResponseAnnotationRangeIntoView(
+  sourceRoot: HTMLElement,
+  sourceRange: Range,
+  behavior: ScrollBehavior = 'smooth',
+): void {
+  const targetRect = sourceRange.getBoundingClientRect()
+  if (!Number.isFinite(targetRect.top) || targetRect.height <= 0) {
+    sourceRoot.scrollIntoView({ block: 'center', behavior })
+    return
+  }
+  const targetCenter = targetRect.top + targetRect.height / 2
+  let ancestor = sourceRoot.parentElement
+  while (ancestor) {
+    const overflowY = window.getComputedStyle(ancestor).overflowY
+    if (/^(auto|scroll)$/u.test(overflowY) && ancestor.scrollHeight > ancestor.clientHeight) {
+      const ancestorRect = ancestor.getBoundingClientRect()
+      ancestor.scrollBy({
+        top: targetCenter - (ancestorRect.top + ancestorRect.height / 2),
+        behavior,
+      })
+      return
+    }
+    ancestor = ancestor.parentElement
+  }
+  if (typeof window.scrollBy === 'function') {
+    window.scrollBy({ top: targetCenter - window.innerHeight / 2, behavior })
+  } else {
+    sourceRoot.scrollIntoView({ block: 'center', behavior })
+  }
+}

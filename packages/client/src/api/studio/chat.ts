@@ -957,6 +957,7 @@ export function startRunViaSocket(
     removeSocketListener(socket, 'run.accepted', handleAcceptedRun)
     removeSocketListener(socket, 'run.failed', handleRejectedRun)
     removeSocketListener(socket, 'connect_error', handleRejectedConnect)
+    removeSocketListener(socket, 'connect', emitAcceptanceTrackedRun)
     resolveAccepted(value)
   }
   const matchesSubmission = (evt: RunEvent) => {
@@ -976,16 +977,28 @@ export function startRunViaSocket(
     if (matchesSubmission(evt)) settleAcceptance(false)
   }
   const handleRejectedConnect = () => settleAcceptance(false)
+  const emitAcceptanceTrackedRun = () => {
+    if (acceptanceSettled) return
+    socket.volatile.emit('run', body)
+  }
   if (trackAcceptance) {
     socket.on('run.started', handleAcceptedStart)
     socket.on('run.queued', handleAcceptedQueue)
     socket.on('run.accepted', handleAcceptedRun)
     socket.on('run.failed', handleRejectedRun)
     socket.on('connect_error', handleRejectedConnect)
+    if (!socket.connected) socket.once('connect', emitAcceptanceTrackedRun)
     acceptanceTimeout = setTimeout(() => settleAcceptance(false), 30_000)
   }
-  if (sessionEventHandlers.has(sid)) {
+  const emitRunRequest = () => {
+    if (trackAcceptance) {
+      if (socket.connected) emitAcceptanceTrackedRun()
+      return
+    }
     socket.emit('run', body)
+  }
+  if (sessionEventHandlers.has(sid)) {
+    emitRunRequest()
     return {
       accepted,
       abort: () => {
@@ -1201,7 +1214,7 @@ export function startRunViaSocket(
   sessionEventHandlers.set(sid, handlers)
 
   // Emit run request
-  socket.emit('run', body)
+  emitRunRequest()
 
   return {
     accepted,
