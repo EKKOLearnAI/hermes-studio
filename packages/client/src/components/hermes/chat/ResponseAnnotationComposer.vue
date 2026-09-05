@@ -8,6 +8,7 @@ const props = defineProps<{ sessionId: string }>()
 const { t } = useI18n()
 const annotationsStore = useChatAnnotationsStore()
 const expanded = ref(false)
+const previewVisible = ref(false)
 const comment = ref('')
 const editorFiles = ref<File[]>([])
 const editorTextarea = ref<HTMLTextAreaElement | null>(null)
@@ -16,6 +17,8 @@ const validationError = ref('')
 const viewportVersion = ref(0)
 
 const annotations = computed(() => annotationsStore.annotationsForSession(props.sessionId) ?? [])
+const previewAnnotations = computed(() => annotations.value.slice(0, 3))
+const previewId = computed(() => `response-annotation-preview-${props.sessionId.replace(/[^a-z0-9_-]/gi, '-')}`)
 const pendingFilesFor = (annotationId: string) => annotationsStore.pendingFilesForAnnotation(annotationId) ?? []
 const activeEditor = computed(() => annotationsStore.activeEditor?.sessionId === props.sessionId
   ? annotationsStore.activeEditor
@@ -68,6 +71,7 @@ watch(
 
 watch(() => props.sessionId, () => {
   expanded.value = false
+  previewVisible.value = false
   annotationsStore.closeEditor()
 })
 
@@ -77,12 +81,28 @@ function annotationCountLabel(count: number) {
 
 function toggleExpanded() {
   expanded.value = !expanded.value
+  previewVisible.value = false
   if (expanded.value) annotationsStore.closeEditor()
+}
+
+function showPreview() {
+  if (!expanded.value) previewVisible.value = true
+}
+
+function hidePreview() {
+  previewVisible.value = false
+}
+
+function handlePreviewFocusOut(event: FocusEvent) {
+  const current = event.currentTarget as HTMLElement
+  if (event.relatedTarget instanceof Node && current.contains(event.relatedTarget)) return
+  hidePreview()
 }
 
 function clearAll() {
   annotationsStore.clearAnnotations(props.sessionId)
   expanded.value = false
+  previewVisible.value = false
 }
 
 function editAnnotation(annotation: ResponseAnnotation, event: MouseEvent) {
@@ -167,12 +187,21 @@ function handleViewportResize() {
 </script>
 
 <template>
-  <div v-if="annotations.length > 0" class="response-annotation-composer" data-annotation-ignore>
+  <div
+    v-if="annotations.length > 0"
+    class="response-annotation-composer"
+    data-annotation-ignore
+    @mouseenter="showPreview"
+    @mouseleave="hidePreview"
+    @focusin="showPreview"
+    @focusout="handlePreviewFocusOut"
+  >
     <div class="response-annotation-chip">
       <button
         type="button"
         data-testid="response-annotation-count"
         :aria-expanded="expanded"
+        :aria-describedby="previewVisible && !expanded ? previewId : undefined"
         @click="toggleExpanded"
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
@@ -186,6 +215,25 @@ function handleViewportResize() {
       <button type="button" class="response-annotation-clear" :aria-label="t('chat.annotations.clearAll')" @click="clearAll">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12" /></svg>
       </button>
+    </div>
+
+    <div
+      v-if="previewVisible && !expanded"
+      :id="previewId"
+      role="tooltip"
+      class="response-annotation-preview"
+      data-testid="response-annotation-preview"
+    >
+      <ol>
+        <li v-for="annotation in previewAnnotations" :key="annotation.id">
+          <p class="annotation-label">{{ annotation.ordinal }}. {{ t('chat.annotations.selectedExcerpt') }}</p>
+          <blockquote>{{ annotation.selectedText }}</blockquote>
+          <template v-if="annotation.comment">
+            <p class="annotation-label annotation-preview-comment-label">{{ t('chat.annotations.yourComment') }}</p>
+            <p class="annotation-comment">{{ annotation.comment }}</p>
+          </template>
+        </li>
+      </ol>
     </div>
 
     <div v-if="expanded" class="response-annotation-card" data-testid="response-annotation-draft-card">
@@ -317,6 +365,47 @@ function handleViewportResize() {
   border-radius: 18px;
   background: var(--bg-card);
   box-shadow: 0 24px 54px rgba(0, 0, 0, 0.3);
+}
+
+.response-annotation-preview {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  z-index: 19;
+  width: min(380px, calc(100vw - 40px));
+  max-height: min(280px, 40vh);
+  overflow: hidden;
+  box-sizing: border-box;
+  padding: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  background: var(--bg-card);
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.26);
+  pointer-events: none;
+}
+
+.response-annotation-preview ol {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.response-annotation-preview li + li {
+  padding-top: 10px;
+  border-top: 1px solid var(--border-light);
+}
+
+.response-annotation-preview blockquote {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.annotation-preview-comment-label {
+  margin-top: 8px;
 }
 
 .response-annotation-card ol {

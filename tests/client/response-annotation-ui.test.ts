@@ -86,6 +86,42 @@ describe('response annotation composer and sent evidence', () => {
     expect(document.body.textContent).not.toContain('Ask in side chat')
   })
 
+  it('shows bounded details on hover or focus before click opens the ordered list', async () => {
+    const store = useChatAnnotationsStore()
+    store.addAnnotation('session-1', annotation('annotation-1'))
+    store.addAnnotation('session-1', {
+      ...annotation('annotation-2'),
+      selectedText: 'A second exact excerpt',
+      end: 'A second exact excerpt'.length,
+      sourceMessageId: 'assistant-2',
+      sourceHash: responseAnnotationSourceHash('A second exact excerpt'),
+      suffix: '',
+    })
+    const wrapper = mount(ResponseAnnotationComposer, {
+      attachTo: document.body,
+      props: { sessionId: 'session-1' },
+    })
+
+    await wrapper.get('.response-annotation-composer').trigger('mouseenter')
+    await nextTick()
+    const preview = wrapper.get('[data-testid="response-annotation-preview"]')
+    expect(preview.text()).toContain('The exact selected excerpt')
+    expect(preview.text()).toContain('A second exact excerpt')
+    expect(wrapper.find('[data-testid="response-annotation-draft-card"]').exists()).toBe(false)
+
+    await wrapper.get('.response-annotation-composer').trigger('mouseleave')
+    await nextTick()
+    expect(wrapper.find('[data-testid="response-annotation-preview"]').exists()).toBe(false)
+    ;(wrapper.get('[data-testid="response-annotation-count"]').element as HTMLButtonElement).focus()
+    await nextTick()
+    expect(wrapper.get('[data-testid="response-annotation-preview"]').text()).toContain('The exact selected excerpt')
+
+    await wrapper.get('[data-testid="response-annotation-count"]').trigger('click')
+    await nextTick()
+    expect(wrapper.find('[data-testid="response-annotation-preview"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="response-annotation-draft-card"]').text()).toContain('A second exact excerpt')
+  })
+
   it('keeps a tall file-heavy editor inside the available viewport side', async () => {
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 800 })
     Object.defineProperty(window, 'innerHeight', { configurable: true, value: 300 })
