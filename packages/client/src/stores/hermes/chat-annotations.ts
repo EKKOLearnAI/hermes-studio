@@ -59,6 +59,7 @@ function readPersistedDrafts(): DraftMap {
 export const useChatAnnotationsStore = defineStore('chat-annotations', () => {
   const annotationsBySession = ref<DraftMap>({})
   const hydratedSessions = ref(new Set<string>())
+  const persistedDraftsLoaded = ref(false)
   const inspectedSentSessionId = ref<string | null>(null)
   const inspectedSentMessageId = ref<string | null>(null)
   const inspectedSentAnnotationsState = ref<ResponseAnnotation[]>([])
@@ -73,8 +74,17 @@ export const useChatAnnotationsStore = defineStore('chat-annotations', () => {
 
   function hydrateSession(sessionId: string) {
     if (!sessionId || hydratedSessions.value.has(sessionId)) return
-    const persisted = readPersistedDrafts()[sessionId]
-    if (persisted) annotationsBySession.value[sessionId] = cloneAnnotations(persisted)
+    if (!persistedDraftsLoaded.value) {
+      const persisted = readPersistedDrafts()
+      annotationsBySession.value = Object.fromEntries(
+        Object.entries(persisted).map(([persistedSessionId, annotations]) => [
+          persistedSessionId,
+          cloneAnnotations(annotations),
+        ]),
+      )
+      hydratedSessions.value = new Set(Object.keys(persisted))
+      persistedDraftsLoaded.value = true
+    }
     hydratedSessions.value = new Set(hydratedSessions.value).add(sessionId)
   }
 

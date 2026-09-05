@@ -71,6 +71,14 @@ describe('ChatInput response annotations', () => {
   beforeEach(() => {
     localStorage.clear()
     document.body.innerHTML = ''
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: vi.fn(() => 'blob:test-attachment'),
+    })
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: vi.fn(),
+    })
   })
 
   it('submits annotation-only input with owned files and clears after dispatch', async () => {
@@ -129,5 +137,28 @@ describe('ChatInput response annotations', () => {
 
     expect(annotationsStore.annotationsForSession('session-1')).toEqual([])
     expect(annotationsStore.annotationsForSession('session-2')).toHaveLength(1)
+  })
+
+  it('preserves text and files added while an annotation send awaits acceptance', async () => {
+    const { wrapper, chatStore } = mountInput()
+    const annotationsStore = useChatAnnotationsStore()
+    annotationsStore.addAnnotation('session-1', annotation())
+    const textarea = wrapper.get('textarea')
+    await textarea.setValue('submitted text')
+    let accept!: (value: boolean) => void
+    vi.spyOn(chatStore, 'sendMessage').mockReturnValue(new Promise(resolve => { accept = resolve }))
+
+    void wrapper.get('.send-button').trigger('click')
+    await vi.waitFor(() => expect(chatStore.sendMessage).toHaveBeenCalledTimes(1))
+    await textarea.setValue('next draft')
+    const lateFile = new File(['later'], 'later.txt', { type: 'text/plain' })
+    ;(wrapper.vm as any).addFiles([lateFile])
+    await flushPromises()
+
+    accept(true)
+    await flushPromises()
+
+    expect((textarea.element as HTMLTextAreaElement).value).toBe('next draft')
+    expect(wrapper.text()).toContain('later.txt')
   })
 })

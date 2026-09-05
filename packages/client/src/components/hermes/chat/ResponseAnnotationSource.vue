@@ -175,6 +175,18 @@ function addToChat() {
     suffix: resolved.suffix,
     files: [],
   }
+  const existing = annotationsStore.annotationsForSession(props.sessionId).find(item => (
+    item.sourceHash === annotation.sourceHash
+    && item.start === annotation.start
+    && item.end === annotation.end
+    && resolveResponseAnnotationSourceElement(item) === root
+  ))
+  if (existing) {
+    annotationsStore.openEditor(props.sessionId, existing.id, anchorRect)
+    window.getSelection()?.removeAllRanges()
+    dismissToolbar()
+    return
+  }
   const error = annotationsStore.addAnnotation(props.sessionId, annotation)
   if (error && error !== 'duplicate') {
     emit('error', error)

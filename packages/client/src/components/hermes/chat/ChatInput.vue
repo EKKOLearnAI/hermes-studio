@@ -1051,6 +1051,8 @@ async function handleSend() {
   const annotationDraftSignature = originSessionId
     ? responseAnnotationDraftSignature(originSessionId)
     : '[]'
+  const submittedInputDraft = inputText.value
+  const submittedAttachmentIds = new Set(attachments.value.map(attachment => attachment.id))
   isSubmitting.value = true
   let submitted = false
   try {
@@ -1072,14 +1074,19 @@ async function handleSend() {
     annotationsStore.clearAnnotations(originSessionId)
   }
   if (originSessionId && activeAnnotationSessionId.value !== originSessionId) return
-  inputText.value = ''
-  saveDraftForActiveSession('')
-  previewAttachment.value = null
-  attachments.value = []
-  slashActive.value = false
-
-  if (textareaRef.value) {
-    textareaRef.value.style.height = 'auto'
+  const inputUnchanged = inputText.value === submittedInputDraft
+  if (inputUnchanged) {
+    inputText.value = ''
+    saveDraftForActiveSession('')
+    slashActive.value = false
+    if (textareaRef.value) textareaRef.value.style.height = 'auto'
+  } else {
+    saveDraftForActiveSession(inputText.value)
+    updateSlashState()
+  }
+  attachments.value = attachments.value.filter(attachment => !submittedAttachmentIds.has(attachment.id))
+  if (previewAttachment.value && submittedAttachmentIds.has(previewAttachment.value.id)) {
+    previewAttachment.value = null
   }
 }
 

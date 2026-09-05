@@ -59,6 +59,23 @@ describe('chat annotation store', () => {
     ])
   })
 
+  it('preserves drafts for sessions that have not been explicitly hydrated yet', () => {
+    const firstStore = useChatAnnotationsStore()
+    firstStore.addAnnotation('session-a', annotation('a-1', 0))
+    firstStore.addAnnotation('session-b', annotation('b-1', 20))
+
+    setActivePinia(createPinia())
+    const reloaded = useChatAnnotationsStore()
+    reloaded.hydrateSession('session-a')
+    reloaded.updateAnnotation('session-a', 'a-1', { comment: 'updated after reload' })
+
+    setActivePinia(createPinia())
+    const verified = useChatAnnotationsStore()
+    expect(verified.annotationsForSession('session-b')).toEqual([
+      expect.objectContaining({ id: 'b-1' }),
+    ])
+  })
+
   it('tracks one inspected immutable sent set without mutating drafts', () => {
     const store = useChatAnnotationsStore()
     const sent = [annotation('sent-1', 2)]

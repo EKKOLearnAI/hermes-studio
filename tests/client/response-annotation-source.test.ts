@@ -136,6 +136,21 @@ describe('ResponseAnnotationSource', () => {
 
     expect(wrapper.find('[data-testid="response-annotation-marker"]').text()).toBe('1')
     expect(wrapper.find('[data-testid="response-annotation-highlight"]').exists()).toBe(true)
+
+    const sourceText = wrapper.get('p').element.firstChild!
+    const range = document.createRange()
+    range.setStart(sourceText, 6)
+    range.setEnd(sourceText, 10)
+    const selection = window.getSelection()!
+    selection.removeAllRanges()
+    selection.addRange(range)
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+    await flushPromises()
+    document.body.querySelector<HTMLElement>('[role="toolbar"] button')!.click()
+    await flushPromises()
+
+    expect(store.annotationsForSession('session-1')).toHaveLength(1)
+    expect(store.activeEditor?.annotationId).toBe('persisted-draft')
   })
 
   it('fails closed when persisted excerpt metadata contradicts the current rendered source', async () => {
