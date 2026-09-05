@@ -785,6 +785,7 @@ const newChatApiMode = ref<CodingAgentApiMode>("codex_responses");
 const newChatWorkspace = ref("");
 const newChatCategoryId = ref<number | null>(null);
 const newChatCategoryCreating = ref(false);
+const newChatCategorySelectRevision = ref(0);
 const newChatLoading = ref(false);
 
 const newChatCategoryOptions = computed(() => [
@@ -812,6 +813,7 @@ async function handleNewChatCategoryChange(value: string | number | null) {
   );
   if (existing) {
     newChatCategoryId.value = existing.id;
+    newChatCategorySelectRevision.value += 1;
     return;
   }
 
@@ -829,6 +831,8 @@ async function handleNewChatCategoryChange(value: string | number | null) {
     message.error(error?.message || t("chat.categoryCreateFailed"));
   } finally {
     newChatCategoryCreating.value = false;
+    // Clear the string tag retained internally by NSelect after resolving it to a category ID.
+    newChatCategorySelectRevision.value += 1;
   }
 }
 
@@ -2728,6 +2732,7 @@ async function handleSessionModelCustomSubmit() {
           <label class="new-chat-field">
             <span class="new-chat-label">{{ t("chat.category") }}</span>
             <NSelect
+              :key="newChatCategorySelectRevision"
               :value="newChatCategoryId ?? 0"
               :options="newChatCategoryOptions"
               :placeholder="t('chat.categoryPlaceholder')"
