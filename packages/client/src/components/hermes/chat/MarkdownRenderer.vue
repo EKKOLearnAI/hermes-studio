@@ -20,6 +20,7 @@ import {
 import { downloadFile, getDownloadUrl, inferDownloadFileName } from '@/api/studio/download'
 import { isPreviewableFile } from '@/utils/hermes/file-preview'
 import { openUrlInDesktopBrowser } from '@/utils/desktop-browser'
+import ImagePreviewOverlay from './ImagePreviewOverlay.vue'
 
 const LATEX_FENCE_LANGS = new Set(['latex', 'tex', 'math', 'katex'])
 function getFenceLanguage(info: string): string {
@@ -525,11 +526,12 @@ async function handleMarkdownClick(event: MouseEvent): Promise<void> {
 
 <template>
   <div ref="markdownBody" class="markdown-body" dir="auto" v-html="renderedHtml" @click="handleMarkdownClick"></div>
-  <Teleport to="body">
-    <div v-if="previewUrl" class="image-preview-overlay" @click.self="previewUrl = null">
-      <img :src="previewUrl" class="image-preview-img" @click="previewUrl = null" />
-    </div>
-  </Teleport>
+  <ImagePreviewOverlay
+    v-if="previewUrl"
+    :src="previewUrl"
+    alt=""
+    @close="previewUrl = null"
+  />
 </template>
 
 <style lang="scss">
@@ -802,25 +804,6 @@ async function handleMarkdownClick(event: MouseEvent): Promise<void> {
     align-items: center;
     justify-content: center;
   }
-}
-
-.image-preview-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 9999;
-  background: rgba(0, 0, 0, 0.85);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-}
-
-.image-preview-img {
-  max-width: 90vw;
-  max-height: 90vh;
-  object-fit: contain;
-  border-radius: 4px;
-  cursor: pointer;
 }
 
 </style>

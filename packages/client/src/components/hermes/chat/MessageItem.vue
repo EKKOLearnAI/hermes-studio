@@ -33,6 +33,7 @@ import type { WorkspaceRunChangeSummary } from "@/api/studio/sessions";
 import { isServerTtsProvider } from "@/api/studio/tts";
 import type { ProfileAvatar as ProfileAvatarData } from "@/api/hermes/profiles";
 import ProfileAvatar from "@/components/hermes/profiles/ProfileAvatar.vue";
+import ImagePreviewOverlay from "./ImagePreviewOverlay.vue";
 
 const MarkdownRenderer = defineAsyncComponent(async () => (await import("./MarkdownRenderer.vue")).default);
 
@@ -1288,8 +1289,8 @@ onBeforeUnmount(() => {
               :title="t('chat.referenceMessage')"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M9 17l-5-5 5-5" />
-                <path d="M20 18v-2a4 4 0 0 0-4-4H4" />
+                <path d="M8 9H5a2 2 0 0 0-2 2v2a2 2 0 0 0 2 2h3v1a3 3 0 0 1-3 3" />
+                <path d="M19 9h-3a2 2 0 0 0-2 2v2a2 2 0 0 0 2 2h3v1a3 3 0 0 1-3 3" />
               </svg>
             </button>
             <button
@@ -1312,11 +1313,12 @@ onBeforeUnmount(() => {
       </div>
     </template>
   </div>
-  <Teleport to="body">
-    <div v-if="previewUrl" class="image-preview-overlay" @click.self="previewUrl = null">
-      <img :src="previewUrl" class="image-preview-img" @click="previewUrl = null" />
-    </div>
-  </Teleport>
+  <ImagePreviewOverlay
+    v-if="previewUrl"
+    :src="previewUrl"
+    alt=""
+    @close="previewUrl = null"
+  />
 </template>
 
 <style scoped lang="scss">
@@ -2118,24 +2120,6 @@ onBeforeUnmount(() => {
     opacity: 1;
     transform: scale(1);
   }
-}
-
-.image-preview-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 9999;
-  background: rgba(0, 0, 0, 0.85);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-}
-
-.image-preview-img {
-  max-width: 90vw;
-  max-height: 90vh;
-  object-fit: contain;
-  border-radius: 4px;
 }
 
 @media (max-width: $breakpoint-mobile) {

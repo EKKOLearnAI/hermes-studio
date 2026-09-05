@@ -538,6 +538,12 @@ const sessionCategories = ref<SessionCategory[]>([]);
 const sessionCategoriesLoading = ref(false);
 const sessionCategoriesLoaded = ref(false);
 const sessionCategoriesLoadFailed = ref(false);
+const showCreateCategoryModal = ref(false);
+const createCategoryValue = ref("");
+const createCategorySessionId = ref<string | null>(null);
+const createCategoryPendingCategory = ref<SessionCategory | null>(null);
+const createCategorySubmitting = ref(false);
+const createCategoryInputRef = ref<InstanceType<typeof NInput> | null>(null);
 let sessionCategoriesLoadPromise: Promise<void> | null = null;
 const COLLAPSED_CATEGORIES_STORAGE_KEY = "hermes_chat_collapsed_categories";
 const RECENT_CATEGORY_REVEAL_SUPPRESSION_STORAGE_KEY = "hermes_chat_recent_category_reveal_suppression";
@@ -779,6 +785,7 @@ const newChatApiMode = ref<CodingAgentApiMode>("codex_responses");
 const newChatWorkspace = ref("");
 const newChatCategoryId = ref<number | null>(null);
 const newChatCategoryCreating = ref(false);
+const newChatCategorySelectRevision = ref(0);
 const newChatLoading = ref(false);
 
 const newChatCategoryOptions = computed(() => [
@@ -806,6 +813,7 @@ async function handleNewChatCategoryChange(value: string | number | null) {
   );
   if (existing) {
     newChatCategoryId.value = existing.id;
+    newChatCategorySelectRevision.value += 1;
     return;
   }
 
@@ -823,6 +831,8 @@ async function handleNewChatCategoryChange(value: string | number | null) {
     message.error(error?.message || t("chat.categoryCreateFailed"));
   } finally {
     newChatCategoryCreating.value = false;
+    // Clear the string tag retained internally by NSelect after resolving it to a category ID.
+    newChatCategorySelectRevision.value += 1;
   }
 }
 
@@ -1453,6 +1463,21 @@ function handleCategoryContextMenu(event: MouseEvent, groupKey: string) {
   showCategoryContextMenu.value = true;
 }
 
+function handleCategoryMenuButton(event: MouseEvent, groupKey: string) {
+  if (groupKey === "category-none") return;
+  const categoryId = Number(groupKey.slice("category-".length));
+  if (!Number.isSafeInteger(categoryId)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const anchor = event.currentTarget as HTMLElement;
+  const rect = anchor.getBoundingClientRect();
+  showContextMenu.value = false;
+  categoryContextId.value = categoryId;
+  categoryContextMenuX.value = rect.left;
+  categoryContextMenuY.value = rect.bottom;
+  showCategoryContextMenu.value = true;
+}
+
 function handleCategoryContextMenuSelect(key: string) {
   showCategoryContextMenu.value = false;
   const category = sessionCategories.value.find((item) => item.id === categoryContextId.value);
@@ -1532,6 +1557,7 @@ const contextMenuOptions = computed(() => {
     children: buildSessionCategoryMenuChildren({
       categories: sessionCategories.value,
       currentCategoryId: contextSession.value?.categoryId,
+      createCategoryLabel: t("chat.createCategory"),
       uncategorizedLabel: t("chat.uncategorized"),
       loadFailedLabel: t("chat.categoryLoadFailed"),
       retryLabel: t("common.retry"),
@@ -1610,6 +1636,17 @@ async function handleContextMenuSelect(key: string) {
     await retrySessionCategories();
     return;
   }
+  if (key === "category:create") {
+    if (sessionCategoriesLoading.value) return;
+    createCategorySessionId.value = contextSessionId.value;
+    createCategoryPendingCategory.value = null;
+    createCategoryValue.value = "";
+    showCreateCategoryModal.value = true;
+    nextTick(() => {
+      createCategoryInputRef.value?.focus();
+    });
+    return;
+  }
   if (key === "pin") {
     sessionBrowserPrefsStore.togglePinned(contextSessionId.value);
     return;
@@ -1682,6 +1719,78 @@ async function handleContextMenuSelect(key: string) {
     });
   }
 }
+
+async function handleCreateCategoryConfirm() {
+  if (createCategorySubmitting.value) return false;
+  const sessionId = createCategorySessionId.value;
+  const session = chatStore.sessions.find((item) => item.id === sessionId);
+  const name = createCategoryValue.value.trim().replace(/\s+/g, " ");
+  if (!sessionId || !session || !name) return false;
+
+  createCategorySubmitting.value = true;
+  let category: SessionCategory | undefined = createCategoryPendingCategory.value || undefined;
+  let created = Boolean(createCategoryPendingCategory.value);
+  try {
+    try {
+      if (!category) {
+        category = sessionCategories.value.find(
+          (item) => item.name.toLocaleLowerCase() === name.toLocaleLowerCase(),
+        );
+      }
+      if (!category) {
+        const createdCategory = await createSessionCategory(name);
+        category = createdCategory;
+        created = true;
+        if (!sessionCategories.value.some((item) => item.id === createdCategory.id)) {
+          sessionCategories.value = [...sessionCategories.value, createdCategory].sort((a, b) =>
+            a.name.localeCompare(b.name),
+          );
+        }
+      }
+    } catch (error: any) {
+      message.error(error?.message || t("chat.categoryCreateFailed"));
+      return false;
+    }
+
+    try {
+      if (!session.isLocalOnly) await setSessionCategory(session.id, category.id);
+    } catch (error: any) {
+      if (created) {
+        createCategoryPendingCategory.value = category;
+        createCategoryValue.value = category.name;
+      }
+      message.error(created
+        ? t("chat.categoryCreatedMoveFailed", { name: category.name })
+        : error?.message || t("chat.categoryUpdateFailed"));
+      return false;
+    }
+
+    session.categoryId = category.id;
+    if (chatStore.activeSession?.id === session.id) {
+      chatStore.activeSession.categoryId = category.id;
+    }
+    message.success(created
+      ? t("chat.categoryCreatedAndMoved", { name: category.name })
+      : t("chat.categoryUpdated"));
+    createCategoryPendingCategory.value = null;
+    showCreateCategoryModal.value = false;
+    createCategorySessionId.value = null;
+  } finally {
+    createCategorySubmitting.value = false;
+  }
+}
+
+function handleCreateCategoryEnter(event: KeyboardEvent) {
+  if (event.isComposing) return;
+  void handleCreateCategoryConfirm();
+}
+
+watch(showCreateCategoryModal, (visible) => {
+  if (visible) return;
+  createCategoryPendingCategory.value = null;
+  createCategorySessionId.value = null;
+  createCategoryValue.value = "";
+});
 
 function handleClickOutside() {
   showContextMenu.value = false;
@@ -2262,6 +2371,26 @@ async function handleSessionModelCustomSubmit() {
             </svg>
             <span class="session-group-label">{{ group.label }}</span>
             <span class="session-group-count">{{ group.sessions.length }}</span>
+            <button
+              v-if="group.key !== 'category-none'"
+              class="session-category-menu-button"
+              type="button"
+              :aria-label="t('chat.more')"
+              :title="t('chat.more')"
+              @click="handleCategoryMenuButton($event, group.key)"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+                aria-hidden="true"
+              >
+                <circle cx="5" cy="12" r="1.6" />
+                <circle cx="12" cy="12" r="1.6" />
+                <circle cx="19" cy="12" r="1.6" />
+              </svg>
+            </button>
           </div>
           <template v-if="!collapsedCategories.has(group.key)">
             <SessionListItem
@@ -2343,6 +2472,33 @@ async function handleSessionModelCustomSubmit() {
       @select="handleCategoryContextMenuSelect"
       @clickoutside="showCategoryContextMenu = false"
     />
+
+    <NModal
+      v-model:show="showCreateCategoryModal"
+      preset="dialog"
+      :title="t('chat.createCategory')"
+      :positive-text="createCategoryPendingCategory ? t('common.retry') : t('common.create')"
+      :negative-text="t('common.cancel')"
+      :positive-button-props="{
+        loading: createCategorySubmitting,
+        disabled: createCategorySubmitting || (!createCategoryPendingCategory && !createCategoryValue.trim()),
+      }"
+      :negative-button-props="{ disabled: createCategorySubmitting }"
+      :mask-closable="!createCategorySubmitting"
+      :close-on-esc="!createCategorySubmitting"
+      :closable="!createCategorySubmitting"
+      @positive-click="handleCreateCategoryConfirm"
+    >
+      <NInput
+        ref="createCategoryInputRef"
+        v-model:value="createCategoryValue"
+        :placeholder="t('chat.enterCategoryName')"
+        :maxlength="40"
+        :disabled="createCategorySubmitting"
+        :readonly="Boolean(createCategoryPendingCategory)"
+        @keydown.enter="handleCreateCategoryEnter"
+      />
+    </NModal>
 
     <NModal
       v-model:show="showRenameCategoryModal"
@@ -2620,6 +2776,7 @@ async function handleSessionModelCustomSubmit() {
           <label class="new-chat-field">
             <span class="new-chat-label">{{ t("chat.category") }}</span>
             <NSelect
+              :key="newChatCategorySelectRevision"
               :value="newChatCategoryId ?? 0"
               :options="newChatCategoryOptions"
               :placeholder="t('chat.categoryPlaceholder')"
@@ -3634,6 +3791,28 @@ async function handleSessionModelCustomSubmit() {
   font-size: 10px;
   color: $text-muted;
   font-weight: 400;
+}
+
+.session-category-menu-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  margin-inline-start: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: $text-muted;
+  cursor: pointer;
+
+  &:hover,
+  &:focus-visible {
+    background: $bg-secondary;
+    color: $text-primary;
+  }
 }
 
 .session-category-load-error {
