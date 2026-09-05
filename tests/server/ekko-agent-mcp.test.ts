@@ -119,6 +119,7 @@ describe('Ekko MCP server context', () => {
     const browser = buildManagedEkkoMcpServers('default')['hermes-studio-browser'] as any
     expect(browser.args).toEqual([join(process.cwd(), 'bin/hermes-studio-mcp.mjs'), 'browser'])
     expect(browser.env.HERMES_MCP_TOOLSET).toBe('browser')
+    expect(browser.env.ELECTRON_RUN_AS_NODE).toBe('1')
   })
 
   it('does not inject managed servers when autoinject is disabled or transient', async () => {

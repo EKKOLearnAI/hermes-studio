@@ -1137,6 +1137,7 @@ function hermesMcpCommandConfig(toolset: string): { command: string; args?: stri
 
 function hermesMcpServerConfig(profile: string, serverName: string, toolset: string): { command: string; args?: string[]; env: Record<string, string> } {
   const appHome = getWebUiHome()
+  const useElectronNodeFallback = isDesktopRuntime() && !runtimeNodePath()
   return {
     ...hermesMcpCommandConfig(toolset),
     env: {
@@ -1147,6 +1148,7 @@ function hermesMcpServerConfig(profile: string, serverName: string, toolset: str
       HERMES_MCP_SERVER_NAME: serverName,
       HERMES_MCP_TOOLSET: toolset,
       [HERMES_MCP_MANAGED_ENV_KEY]: '1',
+      ...(useElectronNodeFallback ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
     },
   }
 }

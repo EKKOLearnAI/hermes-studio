@@ -116,6 +116,7 @@ function managedMcpServerConfig(
   serverName: string,
   toolset: string,
 ): EkkoMcpServerConfig {
+  const useElectronNodeFallback = isDesktopRuntime() && !runtimeNodePath()
   return {
     ...managedCommandConfig(toolset),
     env: {
@@ -126,6 +127,7 @@ function managedMcpServerConfig(
       HERMES_MCP_SERVER_NAME: serverName,
       HERMES_MCP_TOOLSET: toolset,
       [MANAGED_ENV_KEY]: '1',
+      ...(useElectronNodeFallback ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
     },
     enabled: true,
   }

@@ -168,6 +168,7 @@ function managedConfig(
   toolset: string,
   bundledScript: string | null,
 ): Record<string, unknown> {
+  const useElectronNodeFallback = isDesktopRuntime() && !runtimeNodePath()
   const env: Record<string, string> = {
     HERMES_WEB_UI_URL: `http://127.0.0.1:${config.port}`,
     HERMES_WEB_UI_HOME: config.appHome,
@@ -176,6 +177,7 @@ function managedConfig(
     HERMES_MCP_SERVER_NAME: serverName,
     HERMES_MCP_TOOLSET: toolset,
     [MANAGED_ENV_KEY]: '1',
+    ...(useElectronNodeFallback ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
   }
 
   return {

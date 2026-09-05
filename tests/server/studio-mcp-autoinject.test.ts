@@ -428,6 +428,21 @@ describe('studio MCP autoinject', () => {
     expect(injected.data.mcp_servers['hermes-studio-use'].args).toEqual([
       stableLauncher, 'use',
     ])
+    expect(injected.data.mcp_servers['hermes-studio-api'].env).not.toHaveProperty('ELECTRON_RUN_AS_NODE')
+  })
+
+  it('runs the bundled MCP script as Node when the desktop runtime node is unavailable', async () => {
+    process.env.HERMES_DESKTOP = 'true'
+    const { injectBundledMcpServer } = await import('../../packages/server/src/modules/hermes/services/mcp/studio-autoinject')
+
+    await injectBundledMcpServer()
+
+    const injected = await updateConfigYamlForProfileMock.mock.calls[0][1]({})
+    expect(injected.data.mcp_servers['hermes-studio-api']).toMatchObject({
+      command: process.execPath,
+      args: [stableLauncher, 'api'],
+      env: { ELECTRON_RUN_AS_NODE: '1' },
+    })
   })
 
   it('removes stale injected tokens from managed server config', async () => {
