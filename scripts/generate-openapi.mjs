@@ -1037,7 +1037,7 @@ openapi.paths['/api/studio/mobile-calendar/request'] = {
   post: {
     tags: ['Chat Run'],
     summary: 'Request one-time mobile calendar or reminder access',
-    description: 'Requests a user-confirmed calendar/reminder operation from the App for the exact authenticated direct-chat session. Delete, background, workflow, group-chat, and delegated use are not supported.',
+    description: 'Requests a user-confirmed calendar/reminder operation from the App for the exact authenticated direct-chat session. Single-item delete requires exact id, title and occurrence time with fresh App confirmation. Background, workflow, group-chat, and delegated use are not supported.',
     operationId: 'requestMobileCalendar',
     security: [{ BearerAuth: [] }],
     requestBody: {
@@ -1050,7 +1050,7 @@ openapi.paths['/api/studio/mobile-calendar/request'] = {
             properties: {
               session_id: { type: 'string' },
               capability: { type: 'string', enum: ['calendar', 'reminder'] },
-              action: { type: 'string', enum: ['list', 'create', 'update', 'complete'] },
+              action: { type: 'string', enum: ['list', 'create', 'update', 'complete', 'delete'] },
               purpose: { type: 'string', maxLength: 240 },
               start_ms: { type: 'number' },
               end_ms: { type: 'number' },

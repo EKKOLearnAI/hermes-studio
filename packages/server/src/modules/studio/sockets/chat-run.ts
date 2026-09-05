@@ -184,7 +184,7 @@ function mobileCalendarRunInstruction(sessionId: string | undefined, source: str
     `The current Hermes Studio direct-chat session id is ${JSON.stringify(sessionId)}.`,
     'Only when the user explicitly asks to read or change calendar events, use hermes_studio_use_toolset to describe and call hermes_studio_use_mobile_calendar with this exact session_id.',
     'Only when the user explicitly asks to read or change reminders, use hermes_studio_use_toolset to describe and call hermes_studio_use_mobile_reminders with this exact session_id.',
-    'The App always asks the user to share once or confirm the write. Never use these tools proactively, in delegated/workflow/group tasks, for background access, or for delete operations.',
+    'The App always asks the user to share once or confirm the write. Never use these tools proactively, in delegated/workflow/group tasks, or for background access. Delete only the exact listed item after fresh App confirmation; never delete a whole recurring series.',
   ].join(' ')
 }
 type ChatRunBridgeReadiness =
@@ -504,6 +504,7 @@ export class ChatRunSocket {
         [idKey]: requestId,
         ...request,
         timeout_ms: Math.min(timeoutMs, MOBILE_CALENDAR_DEVICE_TIMEOUT_MS),
+        expires_at_ms: Date.now() + Math.min(timeoutMs, MOBILE_CALENDAR_DEVICE_TIMEOUT_MS),
       })
     })
   }

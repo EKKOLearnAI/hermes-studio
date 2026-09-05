@@ -1,5 +1,5 @@
 export type MobileCalendarCapability = 'calendar' | 'reminder'
-export type MobileCalendarAction = 'list' | 'create' | 'update' | 'complete'
+export type MobileCalendarAction = 'list' | 'create' | 'update' | 'complete' | 'delete'
 
 export type MobileCalendarRequest = {
   capability: MobileCalendarCapability
@@ -58,6 +58,15 @@ function timestamp(value: unknown, fallback: number, now: number): number {
 
 function cleanItem(value: unknown, capability: MobileCalendarCapability, action: MobileCalendarAction): Record<string, unknown> | null {
   if (!isRecord(value)) return null
+  if (action === 'delete') {
+    if (typeof value.id !== 'string' || !value.id.trim() || value.id.length > 512) return null
+    if (typeof value.title !== 'string' || !value.title.trim() || value.title.length > 500) return null
+    // Require the exact listed occurrence; never invent a time for deletion.
+    const start = capability === 'calendar' ? value.start_ms : value.due_ms
+    if (capability === 'calendar' && (typeof start !== 'number' || !Number.isFinite(start) || start < MIN_TIME_MS)) return null
+    if (capability === 'reminder' && start != null && (typeof start !== 'number' || !Number.isFinite(start))) return null
+    return { id: value.id.trim(), title: value.title.trim(), ...(start != null ? { [capability === 'calendar' ? 'start_ms' : 'due_ms']: start } : {}) }
+  }
   const now = Date.now()
   const id = text(value.id || value.event_id || value.reminder_id, 512)
   if ((action === 'update' || action === 'complete') && !id) return null
@@ -94,8 +103,8 @@ export function normalizeMobileCalendarRequest(value: Record<string, unknown>): 
   if (capability !== 'calendar' && capability !== 'reminder') throw new Error('capability must be calendar or reminder')
   const action = String(value.action || '').trim() as MobileCalendarAction
   const allowed = capability === 'calendar'
-    ? new Set<MobileCalendarAction>(['list', 'create', 'update'])
-    : new Set<MobileCalendarAction>(['list', 'create', 'update', 'complete'])
+    ? new Set<MobileCalendarAction>(['list', 'create', 'update', 'delete'])
+    : new Set<MobileCalendarAction>(['list', 'create', 'update', 'complete', 'delete'])
   if (!allowed.has(action)) throw new Error(`Unsupported ${capability} action`)
   const purpose = text(value.purpose, 240)
   if (!purpose) throw new Error('purpose is required')
@@ -139,7 +148,7 @@ function cleanResultItem(value: unknown): Record<string, unknown> | null {
 
 export function normalizeMobileCalendarResponse(
   value: unknown,
-  expected: Pick<MobileCalendarRequest, 'capability' | 'action'>,
+  expected: Pick<MobileCalendarRequest, 'capability' | 'action'> & { item?: Record<string, unknown> },
 ): MobileCalendarResponse | null {
   if (!isRecord(value)) return null
   const status = String(value.status || '').trim()
@@ -158,6 +167,10 @@ export function normalizeMobileCalendarResponse(
   }
   if (Array.isArray(value.result.items)) {
     result.items = value.result.items.slice(0, 100).map(cleanResultItem).filter(Boolean) as Array<Record<string, unknown>>
+  }
+  if (expected.action === 'delete') {
+    if (!isRecord(value.result.item) || value.result.item.id !== expected.item?.id || value.result.item.deleted !== true) return null
+    return { status: 'success', result: { capability: expected.capability, action: 'delete', item: { id: expected.item?.id, deleted: true } } }
   }
   const item = cleanResultItem(value.result.item)
   if (item) result.item = item
