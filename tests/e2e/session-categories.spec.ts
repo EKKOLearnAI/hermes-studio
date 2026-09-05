@@ -285,7 +285,7 @@ test('renames and deletes a category from its context menu', async ({ page }) =>
   await page.goto('/#/hermes/chat')
 
   const workHeader = page.locator('.session-group-header').filter({ hasText: 'Work' })
-  await workHeader.click({ button: 'right' })
+  await workHeader.getByRole('button', { name: 'More' }).click()
   await page.getByText('Rename category', { exact: true }).click()
   const renameDialog = page.getByRole('dialog').filter({ hasText: 'Rename category' })
   await renameDialog.getByRole('textbox').fill('Client Work')
@@ -295,7 +295,7 @@ test('renames and deletes a category from its context menu', async ({ page }) =>
   await expect(page.getByRole('link', { name: /Project Alpha/ }).first().locator('.session-item-category-tag')).toHaveText('Client Work')
 
   const renamedHeader = page.locator('.session-group-header').filter({ hasText: 'Client Work' })
-  await renamedHeader.click({ button: 'right' })
+  await renamedHeader.getByRole('button', { name: 'More' }).click()
   await page.getByText('Delete category', { exact: true }).click()
   const deleteDialog = page.getByRole('dialog').filter({ hasText: 'Delete category' })
   await expect(deleteDialog).toContainText('Its sessions will move to Uncategorized')

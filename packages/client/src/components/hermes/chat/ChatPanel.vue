@@ -1460,6 +1460,21 @@ function handleCategoryContextMenu(event: MouseEvent, groupKey: string) {
   showCategoryContextMenu.value = true;
 }
 
+function handleCategoryMenuButton(event: MouseEvent, groupKey: string) {
+  if (groupKey === "category-none") return;
+  const categoryId = Number(groupKey.slice("category-".length));
+  if (!Number.isSafeInteger(categoryId)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const anchor = event.currentTarget as HTMLElement;
+  const rect = anchor.getBoundingClientRect();
+  showContextMenu.value = false;
+  categoryContextId.value = categoryId;
+  categoryContextMenuX.value = rect.left;
+  categoryContextMenuY.value = rect.bottom;
+  showCategoryContextMenu.value = true;
+}
+
 function handleCategoryContextMenuSelect(key: string) {
   showCategoryContextMenu.value = false;
   const category = sessionCategories.value.find((item) => item.id === categoryContextId.value);
@@ -2347,6 +2362,26 @@ async function handleSessionModelCustomSubmit() {
             </svg>
             <span class="session-group-label">{{ group.label }}</span>
             <span class="session-group-count">{{ group.sessions.length }}</span>
+            <button
+              v-if="group.key !== 'category-none'"
+              class="session-category-menu-button"
+              type="button"
+              :aria-label="t('chat.more')"
+              :title="t('chat.more')"
+              @click="handleCategoryMenuButton($event, group.key)"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+                aria-hidden="true"
+              >
+                <circle cx="5" cy="12" r="1.6" />
+                <circle cx="12" cy="12" r="1.6" />
+                <circle cx="19" cy="12" r="1.6" />
+              </svg>
+            </button>
           </div>
           <template v-if="!collapsedCategories.has(group.key)">
             <SessionListItem
@@ -3747,6 +3782,28 @@ async function handleSessionModelCustomSubmit() {
   font-size: 10px;
   color: $text-muted;
   font-weight: 400;
+}
+
+.session-category-menu-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  margin-inline-start: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: $text-muted;
+  cursor: pointer;
+
+  &:hover,
+  &:focus-visible {
+    background: $bg-secondary;
+    color: $text-primary;
+  }
 }
 
 .session-category-load-error {
