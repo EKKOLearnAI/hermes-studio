@@ -12,7 +12,7 @@ export type MobileCalendarRequest = {
   item?: Record<string, unknown>
 }
 
-export type MobileCalendarResponse =
+export type MobileCalendarResponse = (
   | {
       status: 'success'
       result: {
@@ -24,6 +24,7 @@ export type MobileCalendarResponse =
     }
   | { status: 'denied' }
   | { status: 'error'; error: { code: string } }
+) & { device_id?: string }
 
 const DAY_MS = 24 * 60 * 60_000
 const MAX_RANGE_MS = 31 * DAY_MS
