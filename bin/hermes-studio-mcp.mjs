@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { request as httpRequest } from 'node:http'
+import { request as httpsRequest } from 'node:https'
 import { createInterface } from 'node:readline'
 import { randomUUID } from 'node:crypto'
 import { readFileSync, statSync } from 'node:fs'
@@ -181,6 +183,33 @@ function normalizePublicHeaders(headers) {
   return normalized
 }
 
+// Mobile consent can wait five minutes before producing response headers.
+// Avoid fetch's 300-second headers deadline racing that business deadline.
+async function fetchMobileConsent(url, options) {
+  return new Promise((resolve, reject) => {
+    const target = new URL(url)
+    const transport = target.protocol === 'https:' ? httpsRequest : httpRequest
+    let timer
+    const req = transport(target, { method: options.method, headers: options.headers }, res => {
+      const chunks = []
+      res.on('data', chunk => chunks.push(chunk))
+      res.on('error', error => { clearTimeout(timer); reject(error) })
+      res.on('end', () => {
+        clearTimeout(timer)
+        const text = Buffer.concat(chunks).toString('utf8')
+        const headers = new Headers()
+        for (const [name, value] of Object.entries(res.headers)) {
+          if (value != null) headers.set(name, Array.isArray(value) ? value.join(', ') : value)
+        }
+        resolve({ status: res.statusCode || 500, headers, text: async () => text })
+      })
+    })
+    timer = setTimeout(() => req.destroy(new Error('Mobile consent transport timed out')), 330_000)
+    req.on('error', error => { clearTimeout(timer); reject(error) })
+    req.end(options.body)
+  })
+}
+
 async function requestEnvelope(path, options = {}) {
   const profile = typeof options.profile === 'string' && options.profile.trim()
     ? options.profile.trim()
@@ -194,7 +223,8 @@ async function requestEnvelope(path, options = {}) {
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...(profile ? { 'X-Hermes-Profile': profile } : {}),
   }
-  const response = await fetch(`${baseUrl()}${appendQuery(path, options.query)}`, {
+  const fetchRequest = path === '/api/studio/mobile-calendar/request' ? fetchMobileConsent : fetch
+  const response = await fetchRequest(`${baseUrl()}${appendQuery(path, options.query)}`, {
     method,
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
