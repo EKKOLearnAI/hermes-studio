@@ -1086,6 +1086,8 @@ export default {
     workspaceRecent: 'Zuletzt verwendet',
     defaultWorkspace: 'Standardarbeitsbereich',
     more: 'Mehr',
+    sidePanel: 'Seitenleiste',
+    sessionActions: 'Sitzungsaktionen',
     workspace: 'Arbeitsbereich',
     setWorkspaceTitle: 'Sitzungs-Workspace festlegen',
     setWorkspace: 'Workspace festlegen',

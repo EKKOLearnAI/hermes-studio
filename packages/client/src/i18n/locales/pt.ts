@@ -1086,6 +1086,8 @@ export default {
     workspaceRecent: 'Recente',
     defaultWorkspace: 'Área de trabalho padrão',
     more: 'Mais',
+    sidePanel: 'Painel lateral',
+    sessionActions: 'Ações da sessão',
     workspace: 'Área de trabalho',
     setWorkspaceTitle: 'Definir workspace da sessão',
     setWorkspace: 'Definir workspace',

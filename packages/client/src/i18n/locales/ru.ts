@@ -979,6 +979,8 @@ export default {
     workspaceRecent: 'Недавние',
     defaultWorkspace: 'Рабочая область по умолчанию',
     more: 'Ещё',
+    sidePanel: 'Боковая панель',
+    sessionActions: 'Действия с сеансом',
     workspaceSet: 'Рабочая область установлена',
     workspaceSetFailed: 'Ошибка установки рабочей области',
     setModel: 'Установить модель',

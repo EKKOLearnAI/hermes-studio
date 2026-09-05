@@ -1100,6 +1100,8 @@ export default {
     workspaceRecent: 'Recent',
     defaultWorkspace: 'Default Workspace',
     more: 'More',
+    sidePanel: 'Side panel',
+    sessionActions: 'Session actions',
     setWorkspace: 'Set Workspace',
     setWorkspaceTitle: 'Set Session Workspace',
     workspacePlaceholder: 'Enter project path, e.g. /home/user/project',
