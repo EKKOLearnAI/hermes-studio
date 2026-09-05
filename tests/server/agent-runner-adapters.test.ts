@@ -822,7 +822,17 @@ describe('agent runner Responses stream adapters', () => {
 	    expect(events[6].data).toMatchObject({ delta: 'llo', output_index: 1 })
 	    expect(events[7].data).toMatchObject({
 	      output_index: 2,
-	      item: { type: 'function_call', call_id: 'call_1', name: 'lookup' },
+	      item: { type: 'function_call', call_id: 'call_1', name: 'lookup', status: 'in_progress' },
+	    })
+	    expect(events[14].data).toMatchObject({
+	      output_index: 2,
+	      item: {
+	        type: 'function_call',
+	        call_id: 'call_1',
+	        name: 'lookup',
+	        arguments: '{"id":1}',
+	        status: 'completed',
+	      },
 	    })
 	    expect(events[10].data).toMatchObject({
 	      output_index: 0,
@@ -842,7 +852,7 @@ describe('agent runner Responses stream adapters', () => {
 	        output: [
 	          { type: 'reasoning', summary: [{ type: 'summary_text', text: 'think' }] },
 	          { type: 'message', content: [{ type: 'output_text', text: 'hello' }] },
-	          { type: 'function_call', call_id: 'call_1', name: 'lookup', arguments: '{"id":1}' },
+	          { type: 'function_call', call_id: 'call_1', name: 'lookup', arguments: '{"id":1}', status: 'completed' },
         ],
       },
     })

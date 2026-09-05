@@ -93,6 +93,7 @@ function functionCallItem(input: {
     call_id: input.callId || input.id,
     name: normalized.name,
     arguments: normalized.arguments,
+    status: input.status || 'completed',
     ...(namespace ? { namespace } : {}),
   }
 }
