@@ -119,6 +119,7 @@ function managedMcpServerConfig(
   return {
     ...managedCommandConfig(toolset),
     env: {
+      ELECTRON_RUN_AS_NODE: '1',
       HERMES_WEB_UI_URL: `http://127.0.0.1:${config.port}`,
       HERMES_WEB_UI_HOME: config.appHome,
       HERMES_WEBUI_STATE_DIR: config.appHome,

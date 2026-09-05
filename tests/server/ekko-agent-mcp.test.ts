@@ -43,6 +43,7 @@ describe('Ekko MCP server context', () => {
       command: process.execPath,
       args: [join(process.cwd(), 'bin/hermes-studio-mcp.mjs'), 'api'],
       env: {
+        ELECTRON_RUN_AS_NODE: '1',
         HERMES_WEB_UI_URL: 'http://127.0.0.1:8648',
         HERMES_WEB_UI_HOME: '/Users/test/.hermes-web-ui',
         HERMES_WEBUI_STATE_DIR: '/Users/test/.hermes-web-ui',
@@ -93,6 +94,23 @@ describe('Ekko MCP server context', () => {
     expect(servers?.['hermes-studio-browser']).toBeDefined()
     expect(servers?.['hermes-studio-devices']).toBeDefined()
     expect(servers?.['hermes-studio-use']).toBeDefined()
+  })
+
+  it('repairs persisted managed MCP launch environments without a bundled Node', async () => {
+    const { injectManagedEkkoMcpServers } = await import('../../packages/server/src/modules/ekko/services/mcp')
+    injectManagedEkkoMcpServers(setup)
+    const stale = structuredClone(setup.config.read())
+    for (const profile of Object.values(stale.mcp.profiles)) {
+      for (const server of Object.values(profile.servers)) delete server.env?.ELECTRON_RUN_AS_NODE
+    }
+    setup.config.replace(stale)
+    const result = injectManagedEkkoMcpServers(setup)
+    expect(result.targets.every(target => target.status === 'updated')).toBe(true)
+    for (const server of Object.values(setup.config.listMcpServers('work'))) {
+      expect(server.command).toBe(process.execPath)
+      expect(server.env?.ELECTRON_RUN_AS_NODE).toBe('1')
+    }
+    expect(injectManagedEkkoMcpServers(setup).targets.every(target => target.status === 'unchanged')).toBe(true)
   })
 
   it('preserves a disabled managed server while refreshing its injected definition', async () => {

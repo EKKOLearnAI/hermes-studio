@@ -1140,6 +1140,7 @@ function hermesMcpServerConfig(profile: string, serverName: string, toolset: str
   return {
     ...hermesMcpCommandConfig(toolset),
     env: {
+      ELECTRON_RUN_AS_NODE: '1',
       HERMES_WEB_UI_URL: `http://127.0.0.1:${process.env.PORT || '8648'}`,
       HERMES_WEB_UI_HOME: appHome,
       HERMES_WEBUI_STATE_DIR: appHome,
