@@ -16,6 +16,7 @@ import {
 } from '../../packages/server/src/modules/studio/sockets/group-chat'
 import {
   GroupAgentRelayServer,
+  GroupAgentOutboundRelayManager,
   redactRelaySecrets,
   relayRoomWorkspace,
   validateRelayRunRequest,
@@ -124,6 +125,20 @@ describe('group chat baseline behavior', () => {
     expect(joined.members).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: 'Alice', connectionStatus: 'online' }),
     ]))
+  })
+
+  it('includes the current summary state when entering or reconnecting to a room', async () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-summary', 'Summary Room', 'SUMMARY1')
+    const summary = groupServer.getRoomSummaryService().getState('room-summary')
+    expect(storage.claimRoomSummaryRun('room-summary', summary, 'summary-run', Date.now() + 60_000)).toBe(true)
+    const guest = await connectGroupChatClient(port, 'summary-guest', 'Guest')
+    harness.sockets.push(guest)
+    const joined = await emitAck<any>(guest, 'join', { roomId: 'room-summary', inviteCode: 'SUMMARY1' })
+    expect(joined.roomSummary).toMatchObject({ roomId: 'room-summary', status: 'summarizing' })
+    storage.saveRoomSummary({ ...joined.roomSummary, status: 'success', summary: 'Updated summary', updatedAt: Date.now() })
+    const rejoined = await emitAck<any>(guest, 'join', { roomId: 'room-summary', inviteCode: 'SUMMARY1' })
+    expect(rejoined.roomSummary).toMatchObject({ status: 'success', summary: 'Updated summary' })
   })
 
   it('honors the requested initial history page size when joining', async () => {
@@ -554,6 +569,58 @@ describe('group chat baseline behavior', () => {
       'local relay failed',
     )).toMatchObject({ status: 'failed', failureReason: 'local relay failed' })
     expect(relayStore.claimGroupAgentPairingTicket(pairingTicket, 1_300)).toBeNull()
+  })
+
+  it('connects and edits an approved Agent through the real outbound and inbound relay sockets', async () => {
+    const relayStore = await import('../../packages/server/src/modules/studio/services/group-chat/agent-relay-store')
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-approved', 'Approved Room', 'APPROVED1')
+    storage.updateRoomGuestAgentPolicy('room-approved', {
+      allowGuestAgents: true,
+      maxGuestAgentsPerMember: 1,
+      allowRemoteWorkspaceAccess: false,
+    })
+    const agent = relayStore.normalizeRemoteGroupAgentDescriptor({
+      agent: 'hermes', profile: 'default', name: 'Approved Agent',
+    })
+    const created = relayStore.createGroupAgentPairingRequest({
+      roomId: 'room-approved', ownerMemberId: 'guest-approved', ownerName: 'Guest',
+      targetOrigin: 'http://127.0.0.1:8648', agent,
+    })
+    relayStore.decideGroupAgentPairingRequest(created.request.id, true, 1)
+    vi.spyOn(AgentClient.prototype, 'connect').mockResolvedValue()
+    vi.spyOn(AgentClient.prototype, 'joinRoom').mockResolvedValue({
+      roomId: 'room-approved', roomName: 'Approved Room', inviteCode: 'APPROVED1',
+      members: [], messages: [], rooms: ['room-approved'],
+    })
+    const relayServer = new GroupAgentRelayServer(groupServer.getIO(), groupServer)
+    const manager = new GroupAgentOutboundRelayManager(() => null)
+    const persist = vi.spyOn(manager, 'persist').mockResolvedValue()
+    try {
+      const connected = await manager.connect({
+        cloudOrigin: `http://127.0.0.1:${port}`, targetOrigin: 'http://127.0.0.1:8648',
+        pairingTicket: created.pairingTicket, agent,
+      })
+      expect(connected.roomId).toBe('room-approved')
+      expect(persist).toHaveBeenCalledWith(expect.objectContaining({ agent }))
+      expect(relayStore.getGroupAgentPairingRequest(created.request.id)?.status).toBe('consumed')
+      const updated = await manager.updateConnection(connected.connectorId, { ...agent, description: 'Updated remotely' })
+      expect(updated.agent.description).toBe('Updated remotely')
+      expect(storage.getRoomAgents('room-approved')[0].description).toBe('Updated remotely')
+    } finally {
+      manager.shutdown()
+      relayServer.shutdown()
+    }
+  })
+
+  it('identifies whether missing Agent data came from the connection request or relay confirmation', async () => {
+    const { normalizeRemoteGroupAgentDescriptor } = await import('../../packages/server/src/modules/studio/services/group-chat/agent-relay-store')
+    for (const value of [undefined, null, 'hermes', []]) {
+      expect(() => normalizeRemoteGroupAgentDescriptor(value, 'connection request'))
+        .toThrow('Invalid remote Agent in connection request')
+      expect(() => normalizeRemoteGroupAgentDescriptor(value, 'relay confirmation'))
+        .toThrow('Invalid remote Agent in relay confirmation')
+    }
   })
 
   it('releases a pairing claim after an origin mismatch and accepts the intended target once', async () => {

@@ -30,8 +30,13 @@ function boundedText(value: unknown, maxLength: number, field: string, required 
   return text
 }
 
-export function normalizeRemoteGroupAgentDescriptor(value: unknown): RemoteGroupAgentDescriptor {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid remote Agent')
+export function normalizeRemoteGroupAgentDescriptor(
+  value: unknown,
+  source?: 'connection request' | 'relay confirmation',
+): RemoteGroupAgentDescriptor {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`Invalid remote Agent${source ? ` in ${source}` : ''}`)
+  }
   const input = value as Record<string, unknown>
   const agent = String(input.agent || 'hermes').trim() as RemoteGroupAgentDescriptor['agent']
   if (!REMOTE_AGENT_TYPES.has(agent)) throw new Error('Invalid remote Agent type')

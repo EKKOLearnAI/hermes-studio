@@ -4346,6 +4346,7 @@ export class GroupChatServer {
             historyTruncated,
             typingUsers: this.getTypingUsers(roomId),
             contextStatuses: this.getContextStatuses(roomId),
+            roomSummary: this.roomSummaryService.getState(roomId),
             executionQueue: this.executionQueueSnapshot(roomId),
             pendingApprovals: this.pendingApprovalSnapshots(roomId, socket),
             pendingClarifies: this.canSocketManageRoom(socket, roomId) ? this.pendingClarifySnapshots(roomId) : [],

@@ -617,15 +617,18 @@ export class AppRelayClient {
     localSocket.on('connect_error', (err: Error) => this.emitSocketEvent(bridge, 'connect_error', { message: err.message }))
     localSocket.on('disconnect', (reason: string) => this.emitSocketEvent(bridge, 'disconnect', { reason }))
     localSocket.onAny((event: string, ...args: unknown[]) => {
+      // Agent relay events carry one payload. Socket.IO recovery appends an
+      // offset argument which belongs to this local connection, not the relay.
+      const payload = namespace === '/group-chat-agent-relay' ? args[0] : args.length <= 1 ? args[0] : args
       if (namespace === '/group-chat-agent-relay' && typeof args.at(-1) === 'function') {
         const ack = args.pop() as (response: unknown) => void
         if (!this.socket?.connected) { ack({ error: 'Agent relay is disconnected' }); return }
         this.socket.timeout(330_000).emit('app.socket.event', {
-          id, namespace, event, payload: args.length <= 1 ? args[0] : args,
+          id, namespace, event, payload,
         }, (error: Error | null, response: unknown) => ack(error ? { error: 'Agent response timed out' } : response))
         return
       }
-      this.handleLocalSocketEvent(bridge, event, args.length <= 1 ? args[0] : args)
+      this.handleLocalSocketEvent(bridge, event, payload)
     })
     return { id, ok: true, namespace, stream: bridge.stream }
   }

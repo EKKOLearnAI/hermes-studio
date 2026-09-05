@@ -312,7 +312,7 @@ export async function connectLocalAgent(ctx: Context): Promise<void> {
     const cloudOrigin = normalizeCloudOrigin(body.cloudOrigin)
     const targetOrigin = normalizeGroupAgentTargetOrigin(body.targetOrigin)
     const pairingTicket = String(body.pairingTicket || '').trim()
-    const agent = normalizeRemoteGroupAgentDescriptor(body.agent)
+    const agent = normalizeRemoteGroupAgentDescriptor(body.agent, 'connection request')
     assertAgentAvailable(agent.agent)
     if (!pairingTicket) throw new Error('pairingTicket is required')
     const manager = getGroupAgentOutboundRelayManager(() => server.getChatRunService())

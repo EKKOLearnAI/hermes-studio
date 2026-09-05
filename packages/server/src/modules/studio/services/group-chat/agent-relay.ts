@@ -1591,7 +1591,7 @@ class OutboundRelayConnection {
           const roomId = boundedRelayText(data.roomId || this.link.roomId || '', 160, 'room id')
           const roomName = boundedRelayText(data.roomName || this.link.roomName || roomId, 120, 'room name')
           const inviteCode = boundedRelayText(data.inviteCode || this.link.inviteCode || '', 160, 'invite code')
-          const relayAgent = normalizeRemoteGroupAgentDescriptor(data.agent)
+          const relayAgent = normalizeRemoteGroupAgentDescriptor(data.agent, 'relay confirmation')
           if (
             !UUID_PATTERN.test(connectorId)
             || !/^[a-zA-Z0-9_-]{40,128}$/.test(credential)
