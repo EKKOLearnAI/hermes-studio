@@ -1,3 +1,5 @@
+import { mobileDeviceRoom, mobileDeviceId } from '../../packages/server/src/modules/studio/services/chat-run/mobile-device-target'
+const target = { deviceCode: 'iphone', userId: '1', profile: 'default' }
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const bridgeMock = vi.hoisted(() => ({ statusIfLoaded: vi.fn() }))
@@ -42,7 +44,7 @@ function harness() {
   const handlers = new Map<string, Function>()
   const emitted: Array<{ room: string; event: string; payload: any }> = []
   const namespace = {
-    adapter: { rooms: new Map([['session:session-1', new Set(['socket-1'])]]) },
+    adapter: { rooms: new Map([['session:session-1', new Set(['socket-1'])], [mobileDeviceRoom(target), new Set(['socket-1'])]]) },
     sockets: new Map(),
     to: vi.fn((room: string) => ({ emit: vi.fn((event: string, payload: any) => emitted.push({ room, event, payload })) })),
     use: vi.fn(), on: vi.fn(), emit: vi.fn(),
@@ -50,7 +52,7 @@ function harness() {
   const socket = {
     id: 'socket-1',
     connected: true,
-    data: {},
+    data: { mobileDeviceTarget: target },
     handshake: { auth: {}, query: { profile: 'default' } },
     on: vi.fn((event: string, handler: Function) => handlers.set(event, handler)),
     join: vi.fn(),
@@ -75,6 +77,7 @@ describe('ChatRunSocket mobile calendar and reminders', () => {
     const { ChatRunSocket } = await import('../../packages/server/src/modules/studio/sockets/chat-run')
     const { emitted, handlers, io, socket } = harness()
     const server = new ChatRunSocket(io as any)
+    ;(server as any).mobileRunTargets.set('session-1', target)
     ;(server as any).sessionMap.set('session-1', {
       messages: [], events: [], queue: [], isWorking: true, profile: 'default', source: 'coding_agent',
     })
@@ -107,6 +110,7 @@ describe('ChatRunSocket mobile calendar and reminders', () => {
       },
     })
     await expect(resultPromise).resolves.toEqual({
+      device_id: mobileDeviceId(target),
       status: 'success',
       result: {
         capability: 'calendar',
@@ -123,6 +127,7 @@ describe('ChatRunSocket mobile calendar and reminders', () => {
       const { ChatRunSocket } = await import('../../packages/server/src/modules/studio/sockets/chat-run')
       const { emitted, handlers, io, socket } = harness()
       const server = new ChatRunSocket(io as any)
+    ;(server as any).mobileRunTargets.set('session-1', target)
       ;(server as any).onConnection(socket)
       const options = { sessionId: 'session-1', profile: 'default', capability: 'reminder' as const,
         action: 'delete', purpose: 'Delete test', item: { id: '1', title: 'test' }, timeoutMs: 3000 }
@@ -130,7 +135,7 @@ describe('ChatRunSocket mobile calendar and reminders', () => {
       const first = emitted.find(item => item.event === 'reminder.requested')!.payload
       expect(first.expires_at_ms).toBe(Date.now() + 3000)
       handlers.get('reminder.respond')?.({ session_id: 'session-1', reminder_request_id: first.reminder_request_id, status: 'denied' })
-      await expect(pending).resolves.toEqual({ status: 'denied' })
+      await expect(pending).resolves.toEqual({ status: 'denied', device_id: mobileDeviceId(target) })
       const timed = server.requestMobileCalendar(options)
       await vi.advanceTimersByTimeAsync(3001)
       await expect(timed).resolves.toMatchObject({ status: 'error' })
@@ -147,6 +152,7 @@ describe('ChatRunSocket mobile calendar and reminders', () => {
       const { ChatRunSocket } = await import('../../packages/server/src/modules/studio/sockets/chat-run')
       const { emitted, io } = harness()
       const server = new ChatRunSocket(io as any)
+    ;(server as any).mobileRunTargets.set('session-1', target)
       const promise = server.requestMobileCalendar({ sessionId: 'session-1', profile: 'default', capability: 'reminder', action: 'list', purpose: 'test', timeoutMs })
       const event = emitted.find(entry => entry.event === 'reminder.requested')!.payload
       expect(event.timeout_ms).toBe(300000)
@@ -159,10 +165,38 @@ describe('ChatRunSocket mobile calendar and reminders', () => {
     } finally { vi.useRealTimers() }
   })
 
+  it('rejects non-target responses and never broadcasts requested events to other devices', async () => {
+    const { ChatRunSocket } = await import('../../packages/server/src/modules/studio/sockets/chat-run')
+    const { emitted, handlers, io, socket } = harness()
+    const server = new ChatRunSocket(io as any)
+    ;(server as any).mobileRunTargets.set('session-1', target)
+    ;(server as any).onConnection(socket)
+    const result = server.requestMobileCalendar({ sessionId:'session-1', profile:'default', capability:'reminder', action:'list', purpose:'test' })
+    const requests = emitted.filter(v=>v.event==='reminder.requested')
+    expect(requests).toHaveLength(1)
+    expect(requests[0].room).toBe(mobileDeviceRoom(target))
+    const id=requests[0].payload.reminder_request_id
+    socket.data.mobileDeviceTarget={...target,deviceCode:'android'}
+    handlers.get('reminder.respond')?.({session_id:'session-1',reminder_request_id:id,status:'denied'})
+    expect((server as any).pendingMobileCalendar.size).toBe(1)
+    socket.data.mobileDeviceTarget=target
+    handlers.get('reminder.respond')?.({session_id:'session-1',reminder_request_id:id,status:'denied'})
+    await expect(result).resolves.toMatchObject({status:'denied',device_id:mobileDeviceId(target)})
+  })
+  it('fails closed for missing origin and offline target even if another device is online', async () => {
+    const { ChatRunSocket } = await import('../../packages/server/src/modules/studio/sockets/chat-run')
+    const { io } = harness();const server=new ChatRunSocket(io as any)
+    const options={sessionId:'session-1',profile:'default',capability:'reminder' as const,action:'list',purpose:'test'}
+    expect(()=>server.requestMobileCalendar(options)).toThrow('Mobile target unavailable')
+    ;(server as any).mobileRunTargets.set('session-1',{...target,deviceCode:'offline'})
+    expect(()=>server.requestMobileCalendar(options)).toThrow('offline')
+  })
+
   it('supports reminder completion but rejects incomplete delete and workflow requests', async () => {
     const { ChatRunSocket } = await import('../../packages/server/src/modules/studio/sockets/chat-run')
     const { io } = harness()
     const server = new ChatRunSocket(io as any)
+    ;(server as any).mobileRunTargets.set('session-1', target)
     expect(() => server.requestMobileCalendar({
       sessionId: 'session-1',
       profile: 'default',

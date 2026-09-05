@@ -1,3 +1,4 @@
+import { mobileDeviceRoom, mobileDeviceId, sameMobileDevice, mobileEventAllowed, type MobileDeviceTarget } from '../services/chat-run/mobile-device-target'
 /**
  * ChatRunSocket — Socket.IO namespace /chat-run.
  *
@@ -50,7 +51,7 @@ import type {
   QueuedRun,
   SessionState,
 } from '../services/chat-run/types'
-import { authenticateUserToken, isAuthEnabled, type AuthenticatedUser } from '../public/auth'
+import { authenticateUserToken, inspectAppUserToken, isAuthEnabled, type AuthenticatedUser } from '../public/auth'
 import { userCanAccessProfile } from '../repositories/users-store'
 import { observeRunChatPetEvent } from '../public/pet-events'
 import { observeChatRunWebhookEvent, type ChatRunWebhookAgent } from '../services/webhooks'
@@ -349,6 +350,7 @@ function normalizeMobileLocationResponse(value: unknown): MobileLocationResponse
 }
 
 type PendingMobileCalendarRequest = {
+  target: MobileDeviceTarget
   sessionId: string
   profile: string
   request: MobileCalendarRequest
@@ -372,6 +374,7 @@ export class ChatRunSocket {
   private bridgeResumePolls = new Set<string>()
   private readonly runWaiters = new Map<string, Set<(event: string, payload: any) => void>>()
   private readonly pendingMobileLocations = new Map<string, PendingMobileLocationRequest>()
+  private readonly mobileRunTargets = new Map<string, MobileDeviceTarget>()
   private readonly pendingMobileCalendar = new Map<string, PendingMobileCalendarRequest>()
   private backgroundPollTimer?: NodeJS.Timeout
   private backgroundPollInFlight = false
@@ -476,6 +479,10 @@ export class ChatRunSocket {
     for (const pending of this.pendingMobileCalendar.values()) {
       if (pending.sessionId === sessionId) throw new Error('A mobile calendar or reminder request is already pending')
     }
+    const target = this.mobileRunTargets.get(sessionId)
+    if (!target || target.profile !== profile) throw new Error('Mobile target unavailable; send a new message from the intended mobile device')
+    const room = this.nsp.adapter.rooms.get(mobileDeviceRoom(target))
+    if (!room?.size) throw new Error('Target mobile device is offline; reconnect the same device')
     const request = normalizeMobileCalendarRequest({
       capability: options.capability,
       action: options.action,
@@ -498,11 +505,14 @@ export class ChatRunSocket {
         })
       }, timeoutMs)
       timer.unref?.()
-      this.pendingMobileCalendar.set(requestId, { sessionId, profile, request, resolve, timer })
+      this.pendingMobileCalendar.set(requestId, { sessionId, profile, target, request, resolve, timer })
       this.emitMobileCalendarEvent(profile, sessionId, event, {
         event,
         [idKey]: requestId,
         ...request,
+        target_device_id: target.deviceCode,
+        target_user_id: target.userId,
+        target_profile: target.profile,
         timeout_ms: timeoutMs,
         expires_at_ms: Date.now() + timeoutMs,
       })
@@ -522,6 +532,13 @@ export class ChatRunSocket {
 
   private async authMiddleware(socket: Socket, next: (err?: Error) => void) {
     const token = socket.handshake.auth?.token as string | undefined
+    const appToken = token ? await inspectAppUserToken(token) : null
+    if (appToken) {
+      if (appToken.status !== 'active' || !appToken.user) return next(new Error('App device authentication failed'))
+      const profile = String(socket.handshake.query?.profile || 'default')
+      if (!this.canAccessProfile(appToken.user, profile)) return next(new Error('Profile access denied'))
+      socket.data.mobileDeviceTarget = { deviceCode: appToken.deviceCode, userId: String(appToken.user.id), profile }
+    }
     if (!await isAuthEnabled()) {
       next()
       return
@@ -545,6 +562,8 @@ export class ChatRunSocket {
     const socketUser = socket.data.user as AuthenticatedUser | undefined
     const socketProfile = (socket.handshake.query?.profile as string) || 'default'
     const currentProfile = () => socketProfile || getActiveProfileName() || 'default'
+    const mobileTarget = socket.data.mobileDeviceTarget as MobileDeviceTarget | undefined
+    if (mobileTarget) socket.join(mobileDeviceRoom(mobileTarget))
     socket.join(`pending-interactions:${currentProfile()}`)
     socket.emit('session.activity.snapshot', {
       event: 'session.activity.snapshot',
@@ -1122,6 +1141,10 @@ export class ChatRunSocket {
         })
         return
       }
+      if (!sameMobileDevice(pending.target, socket.data.mobileDeviceTarget)) {
+        socket.emit(resolvedEvent, { event: resolvedEvent, session_id: data.session_id, [idKey]: requestId, resolved: false, error: 'Response is not from the target device' })
+        return
+      }
       const response = normalizeMobileCalendarResponse(data, pending.request)
       if (!response) {
         this.finishMobileCalendarRequest(requestId, {
@@ -1203,6 +1226,12 @@ export class ChatRunSocket {
     backgroundContinuationContext?: BackgroundContinuationContext,
   ) {
     const source = resolveRunSource(data.source, data.session_id)
+    if (data.session_id) {
+      const target = socket.data?.mobileDeviceTarget as MobileDeviceTarget | undefined
+      if (target && target.profile === profile && source !== 'workflow' && source !== 'group_chat' && !backgroundContinuationContext) {
+        this.mobileRunTargets.set(data.session_id, { ...target })
+      } else this.mobileRunTargets.delete(data.session_id)
+    }
     const locationInstruction = mobileLocationRunInstruction(data.session_id, source)
     if (locationInstruction) {
       data.instructions = [String(data.instructions || '').trim(), locationInstruction]
@@ -1683,7 +1712,9 @@ export class ChatRunSocket {
       isWorking: state.isWorking,
       runStartedAt: state.runStartedAt,
       isAborting: state.isAborting || false,
-      events: buildResumeEvents(resumeEvents),
+      events: buildResumeEvents(resumeEvents.filter(entry =>
+        !['calendar.requested', 'reminder.requested', 'calendar.resolved', 'reminder.resolved'].includes(entry.event)
+        || mobileEventAllowed(entry.data, socket.data.mobileDeviceTarget))),
       inputTokens: state.inputTokens,
       outputTokens: state.outputTokens,
       contextTokens: state.contextTokens,
@@ -2277,6 +2308,7 @@ export class ChatRunSocket {
   async abortSession(sessionId: string, reason = 'Run canceled'): Promise<void> {
     const sid = String(sessionId || '').trim()
     if (!sid) return
+    this.mobileRunTargets.delete(sid)
     const fakeSocket = {
       id: `workflow-abort-${sid}`,
       connected: false,
@@ -2532,11 +2564,14 @@ export class ChatRunSocket {
     this.emitMobileCalendarEvent(pending.profile, pending.sessionId, event, {
       event,
       [idKey]: requestId,
+      target_device_id: pending.target.deviceCode,
+      target_user_id: pending.target.userId,
+      target_profile: pending.target.profile,
       status: response.status,
       resolved: true,
       ...(response.status === 'error' ? { error: response.error } : {}),
     })
-    pending.resolve(response)
+    pending.resolve({ ...response, device_id: mobileDeviceId(pending.target) })
     return true
   }
   private clearMobileCalendarEventState(sessionId: string, requestId: string): void {
@@ -2555,8 +2590,8 @@ export class ChatRunSocket {
         !['calendar.requested', 'calendar.resolved', 'reminder.requested', 'reminder.resolved'].includes(current))
       state.events.push({ event, data: tagged })
     }
-    this.emitPendingInteraction(profile, event, tagged)
-    this.nsp.to(`session:${sessionId}`).emit(event, tagged)
+    const target: MobileDeviceTarget = { deviceCode: payload.target_device_id, userId: payload.target_user_id, profile: payload.target_profile }
+    this.nsp.to(mobileDeviceRoom(target)).emit(event, tagged)
   }
   private emitToSession(socket: Socket, sessionId: string, event: string, payload: any) {
     const tagged = { ...payload, session_id: sessionId }
