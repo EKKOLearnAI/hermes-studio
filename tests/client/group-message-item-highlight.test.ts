@@ -107,8 +107,8 @@ describe('GroupMessageItem tool details', () => {
     })
 
     expect(wrapper.get('.reference-bubble-btn svg').findAll('path').map(path => path.attributes('d'))).toEqual([
-      'M8 9H5a2 2 0 0 0-2 2v2a2 2 0 0 0 2 2h3v1a3 3 0 0 1-3 3',
-      'M19 9h-3a2 2 0 0 0-2 2v2a2 2 0 0 0 2 2h3v1a3 3 0 0 1-3 3',
+      'M9 17l-5-5 5-5',
+      'M20 18v-2a4 4 0 0 0-4-4H4',
     ])
     await wrapper.get('.reference-bubble-btn').trigger('click')
 
