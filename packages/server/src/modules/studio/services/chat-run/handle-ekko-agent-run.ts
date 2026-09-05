@@ -605,6 +605,11 @@ export async function handleEkkoAgentRun(
         timestamp: now,
       },
     })
+    emit('run.accepted', {
+      event: 'run.accepted',
+      queue_id: data.queue_id,
+      message_id: messageId,
+    })
   }
 
   const { providerConfig, fallbackProviderConfig } = resolveModelProviderConfigs({
