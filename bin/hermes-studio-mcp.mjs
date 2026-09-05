@@ -1025,12 +1025,12 @@ const tools = [
         },
         coding_agent_id: {
           type: 'string',
-          enum: ['claude-code', 'codex'],
+          enum: ['claude-code', 'codex', 'pi', 'grok', 'opencode', 'ekko-agent'],
           description: 'Coding agent id when source is coding_agent.',
         },
         agent_id: {
           type: 'string',
-          enum: ['claude-code', 'codex'],
+          enum: ['claude-code', 'codex', 'pi', 'grok', 'opencode', 'ekko-agent'],
           description: 'Alias for coding_agent_id.',
         },
         mode: {

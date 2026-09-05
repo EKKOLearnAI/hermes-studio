@@ -552,6 +552,10 @@ describe('hermes-web-ui MCP server', () => {
       name: 'hermes_studio_use_toolset',
       arguments: { action: 'describe', tool: 'hermes_studio_use_workflow_rerun_node' },
     })
+    writeRpc(child, 37, 'tools/call', {
+      name: 'hermes_studio_use_toolset',
+      arguments: { action: 'describe', tool: 'hermes_studio_use_chat_run' },
+    })
     writeRpc(child, 35, 'tools/call', {
       name: 'hermes_studio_use_toolset',
       arguments: {
@@ -731,6 +735,17 @@ describe('hermes-web-ui MCP server', () => {
     expect(catalog.operations.some((tool: any) => tool.name === 'hermes_studio_use_workflow_run_rerun_from_node')).toBe(false)
     const workflowRunStartTool = JSON.parse((await waitForRpc(responses, 33)).result.content[0].text)
     const workflowRerunTool = JSON.parse((await waitForRpc(responses, 34)).result.content[0].text)
+    const chatRunTool = JSON.parse((await waitForRpc(responses, 37)).result.content[0].text)
+    expect(chatRunTool?.inputSchema?.properties?.coding_agent_id?.enum).toEqual([
+      'claude-code',
+      'codex',
+      'pi',
+      'grok',
+      'opencode',
+      'ekko-agent',
+    ])
+    expect(chatRunTool?.inputSchema?.properties?.agent_id?.enum)
+      .toEqual(chatRunTool?.inputSchema?.properties?.coding_agent_id?.enum)
     for (const tool of [workflowRunStartTool, workflowRerunTool]) {
       expect(tool?.inputSchema?.properties?.timeout_ms).toMatchObject({
         type: 'integer', minimum: 1000, maximum: 86400000,
