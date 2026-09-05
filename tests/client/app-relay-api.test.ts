@@ -13,7 +13,6 @@ describe('App Relay API', () => {
         machineId: 'hwui_machine',
         pairingCode: 'ABCD2345',
         pairingExpiresAt: 12345,
-        accessMode: 'public_beta',
       },
     })
   })
@@ -21,7 +20,7 @@ describe('App Relay API', () => {
   it('uses the independent App Relay management endpoints', async () => {
     const api = await import('@/api/studio/app-relay')
 
-    const status = await api.fetchAppRelayStatus()
+    await api.fetchAppRelayStatus()
     await api.connectAppRelay()
     await api.updateAppRelayRoute('cloudflare')
     await api.refreshAppRelayPairingCode()
@@ -34,7 +33,6 @@ describe('App Relay API', () => {
       ['/api/app-relay/pairing-code', { method: 'POST' }],
       ['/api/app-relay/disconnect', { method: 'POST' }],
     ])
-    expect(status.accessMode).toBe('public_beta')
   })
 
 })

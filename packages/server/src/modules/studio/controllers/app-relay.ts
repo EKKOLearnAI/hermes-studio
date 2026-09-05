@@ -1,6 +1,5 @@
 import type { Context } from 'koa'
 import { getAppRelayClient } from '../services/app-relay/client'
-import { fetchAppAccessMode } from '../services/app-relay/access-mode'
 import {
   APP_RELAY_CONNECTION_ID,
   ensureAppRelayHostClient,
@@ -20,8 +19,6 @@ function appRelayResponse(relay: Record<string, unknown>) {
 export async function getAppRelayStatusController(ctx: Context) {
   const client = getAppRelayClient(APP_RELAY_CONNECTION_ID)
   const route = await getAppRelayRoute()
-  const relayUrl = appRelayUrlForRoute(route)
-  const accessMode = await fetchAppAccessMode(relayUrl)
   ctx.body = appRelayResponse(
     {
       ...(client?.status() || {
@@ -31,8 +28,7 @@ export async function getAppRelayStatusController(ctx: Context) {
         pairingExpiresAt: 0,
       }),
       route,
-      relayUrl,
-      accessMode,
+      relayUrl: appRelayUrlForRoute(route),
     },
   )
 }

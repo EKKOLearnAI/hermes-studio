@@ -1,7 +1,6 @@
 import { request } from '../client'
 
 export type AppRelayRoute = 'official' | 'cloudflare'
-export type AppAccessMode = 'internal' | 'public_beta' | 'paid'
 
 export interface AppRelayStatus {
   connected: boolean
@@ -11,7 +10,6 @@ export interface AppRelayStatus {
   expiresAt?: number
   route: AppRelayRoute
   relayUrl: string
-  accessMode?: AppAccessMode | null
 }
 
 interface AppRelayResponse {

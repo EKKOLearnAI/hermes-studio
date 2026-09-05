@@ -32,7 +32,7 @@ describe('App connections scan modal', () => {
     expect(source).toContain("appPurchaseEnabled ? 'connections.app.downloadPaidDescription' : 'connections.app.downloadDescription'")
     expect(source).toContain('v-if="appPurchaseEnabled"')
     expect(source).toContain("const appPurchaseEnabled = computed(() => appAccessMode.value === 'paid')")
-    expect(source).toContain('appAccessMode.value = status.accessMode || null')
+    expect(source).toContain('appAccessMode.value = manifest.accessMode || null')
     expect(source).toContain('class="app-download-purchase"')
     expect(source.match(/:href="APP_ACCESS_PURCHASE_URL"/g)).toHaveLength(2)
     expect(source).toContain("t('connections.app.purchaseAccess')")

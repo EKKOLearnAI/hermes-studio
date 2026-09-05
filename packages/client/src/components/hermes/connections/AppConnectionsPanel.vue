@@ -18,10 +18,9 @@ import {
 import {
   fetchAppRelayStatus,
   updateAppRelayRoute,
-  type AppAccessMode,
   type AppRelayRoute,
 } from '@/api/studio/app-relay'
-import { fetchStudioVersionManifest, type StudioMobileRelease } from '@/api/studio/versions'
+import { fetchStudioVersionManifest, type AppAccessMode, type StudioMobileRelease } from '@/api/studio/versions'
 import SocialMessagesView from '@/views/social-messages/SocialMessagesView.vue'
 
 type AppPanelView = 'list' | 'download' | 'messages'
@@ -394,10 +393,8 @@ async function loadCloudRelayRoute(): Promise<void> {
   try {
     const status = await fetchAppRelayStatus()
     cloudRelayRoute.value = status.route || 'official'
-    appAccessMode.value = status.accessMode || null
   } catch {
     cloudRelayRoute.value = 'official'
-    appAccessMode.value = null
   }
 }
 
@@ -440,11 +437,13 @@ function ensureCurrentAuthorization(type: 'lan' | 'cloud', verifyRelaySession = 
 async function loadMobileRelease() {
   try {
     const manifest = await fetchStudioVersionManifest()
+    appAccessMode.value = manifest.accessMode || null
     mobileRelease.value = manifest.mobile
     const android = manifest.mobile.channels.androidApk
     if (!android.cloudflareUrl && android.githubUrl) downloadSource.value = 'github'
     else if (!android.githubUrl && android.cloudflareUrl) downloadSource.value = 'cloudflare'
   } catch {
+    appAccessMode.value = null
     mobileRelease.value = DEFAULT_MOBILE_RELEASE
   }
 }
