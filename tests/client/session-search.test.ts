@@ -208,4 +208,58 @@ describe('keyboard shortcut', () => {
 
     expect(useSessionSearch().sessionSearchOpen.value).toBe(true)
   })
+
+  it.each([
+    ['Cmd', { metaKey: true }],
+    ['Ctrl', { ctrlKey: true }],
+  ])('opens settings on %s+Comma', async (_label, modifiers) => {
+    const Dummy = defineComponent({
+      setup() {
+        useKeyboard()
+        return () => h('div')
+      },
+    })
+
+    const wrapper = mount(Dummy)
+
+    const event = new KeyboardEvent('keydown', {
+      key: ',',
+      ...modifiers,
+      bubbles: true,
+      cancelable: true,
+    })
+    window.dispatchEvent(event)
+    await nextTick()
+
+    expect(apiMocks.routerPushMock).toHaveBeenCalledWith({ name: 'hermes.settings' })
+    expect(event.defaultPrevented).toBe(true)
+
+    wrapper.unmount()
+  })
+
+  it('does not open settings from the login page', async () => {
+    routerCurrentRoute.value = { name: 'login' }
+    const Dummy = defineComponent({
+      setup() {
+        useKeyboard()
+        return () => h('div')
+      },
+    })
+
+    const wrapper = mount(Dummy)
+
+    const event = new KeyboardEvent('keydown', {
+      key: ',',
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    })
+    window.dispatchEvent(event)
+    await nextTick()
+
+    expect(apiMocks.routerPushMock).not.toHaveBeenCalledWith({ name: 'hermes.settings' })
+    expect(event.defaultPrevented).toBe(false)
+
+    wrapper.unmount()
+  })
 })
