@@ -7,6 +7,7 @@ const {
   getDeviceIdentity,
   createAppRelayDeviceSignature,
   getPublicSystemInfo,
+  fetchAppAccessMode,
 } = vi.hoisted(() => ({
   getAppRelayClient: vi.fn(),
   startAppRelayClient: vi.fn(),
@@ -25,6 +26,7 @@ const {
     hermes_agent_version: '1.0.0',
     hermes_web_ui_version: '0.6.32',
   })),
+  fetchAppAccessMode: vi.fn(async () => 'public_beta'),
 }))
 
 vi.mock('../../packages/server/src/modules/studio/services/app-relay/client', () => ({
@@ -38,9 +40,27 @@ vi.mock('../../packages/server/src/modules/studio/public/system-info', () => ({
   createAppRelayDeviceSignature,
   getPublicSystemInfo,
 }))
+vi.mock('../../packages/server/src/modules/studio/services/app-relay/access-mode', () => ({
+  fetchAppAccessMode,
+}))
 
 describe('app relay controller', () => {
   beforeEach(() => vi.clearAllMocks())
+
+  it('includes the existing server access mode in the relay status', async () => {
+    getAppRelayClient.mockReturnValue(null)
+    const { getAppRelayStatusController } = await import('../../packages/server/src/modules/studio/controllers/app-relay')
+    const ctx: any = {}
+
+    await getAppRelayStatusController(ctx)
+
+    expect(fetchAppAccessMode).toHaveBeenCalledWith('https://api.hermes-studio.ai')
+    expect(ctx.body.relay).toMatchObject({
+      route: 'official',
+      relayUrl: 'https://api.hermes-studio.ai',
+      accessMode: 'public_beta',
+    })
+  })
 
   it('starts only the independent App relay and returns a pairing code', async () => {
     const client = {

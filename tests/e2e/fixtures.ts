@@ -865,6 +865,7 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
           pairingExpiresAt: 0,
           route: 'official',
           relayUrl: '',
+          accessMode: 'public_beta',
         },
       }))
       return

@@ -18,6 +18,7 @@ import {
 import {
   fetchAppRelayStatus,
   updateAppRelayRoute,
+  type AppAccessMode,
   type AppRelayRoute,
 } from '@/api/studio/app-relay'
 import { fetchStudioVersionManifest, type StudioMobileRelease } from '@/api/studio/versions'
@@ -66,6 +67,7 @@ const dismissedAccessFailureAt = ref(readDismissedAccessFailureAt())
 const showScanModal = ref(false)
 const connectionTab = ref<'lan' | 'cloud'>('lan')
 const cloudRelayRoute = ref<AppRelayRoute>('official')
+const appAccessMode = ref<AppAccessMode | null>(null)
 const cloudRelayRouteLoading = ref(false)
 const authorizationLoading = ref<Record<'lan' | 'cloud', boolean>>({ lan: false, cloud: false })
 const deletingConnectionId = ref<number | null>(null)
@@ -93,6 +95,7 @@ const APP_RELAY_ROUTE_OPTIONS = [
 const androidVersionLabel = computed(() => formatMobileVersion(mobileRelease.value.channels.androidApk.version))
 const googlePlayVersionLabel = computed(() => formatMobileVersion(mobileRelease.value.channels.googlePlay.version))
 const iosVersionLabel = computed(() => formatMobileVersion(mobileRelease.value.channels.apple.version))
+const appPurchaseEnabled = computed(() => appAccessMode.value === 'paid')
 const androidDownloadUrl = computed(() => {
   const channel = mobileRelease.value.channels.androidApk
   const selectedUrl = downloadSource.value === 'cloudflare' ? channel.cloudflareUrl : channel.githubUrl
@@ -391,8 +394,10 @@ async function loadCloudRelayRoute(): Promise<void> {
   try {
     const status = await fetchAppRelayStatus()
     cloudRelayRoute.value = status.route || 'official'
+    appAccessMode.value = status.accessMode || null
   } catch {
     cloudRelayRoute.value = 'official'
+    appAccessMode.value = null
   }
 }
 
@@ -675,8 +680,9 @@ onUnmounted(() => {
                 <h3>{{ t('connections.app.downloadTitle') }}</h3>
               </div>
             </div>
-            <p>{{ t('connections.app.downloadDescription') }}</p>
+            <p>{{ t(appPurchaseEnabled ? 'connections.app.downloadPaidDescription' : 'connections.app.downloadDescription') }}</p>
             <NButton
+              v-if="appPurchaseEnabled"
               class="app-download-purchase"
               tag="a"
               :href="APP_ACCESS_PURCHASE_URL"
