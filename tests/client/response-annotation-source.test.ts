@@ -244,6 +244,37 @@ describe('ResponseAnnotationSource', () => {
     second.unmount()
   })
 
+  it('repositions an open selection toolbar on scroll and dismisses it outside the viewport', async () => {
+    let selectionRect = rect
+    vi.mocked(Range.prototype.getBoundingClientRect).mockImplementation(() => selectionRect)
+    const wrapper = mount(ResponseAnnotationSource, {
+      attachTo: document.body,
+      props: { sessionId: 'session-1', messageId: 'assistant-toolbar', source: 'Toolbar source', enabled: true },
+      slots: { default: '<p>Toolbar source</p>' },
+    })
+    const range = document.createRange()
+    range.selectNodeContents(wrapper.get('p').element.firstChild!)
+    const selection = window.getSelection()!
+    selection.removeAllRanges()
+    selection.addRange(range)
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+    await nextTick()
+
+    const toolbar = document.body.querySelector<HTMLElement>('[role="toolbar"]')!
+    expect(toolbar.style.left).toBe('82px')
+    selectionRect = { ...rect, left: 200, right: 280, top: 220, bottom: 240 } as DOMRect
+    document.dispatchEvent(new Event('scroll', { bubbles: true }))
+    await nextTick()
+    expect(toolbar.style.left).toBe('182px')
+    expect(toolbar.style.top).toBe('174px')
+
+    selectionRect = { ...rect, left: 200, right: 280, top: -80, bottom: -60 } as DOMRect
+    window.dispatchEvent(new Event('resize'))
+    await nextTick()
+    expect(document.body.querySelector('[role="toolbar"]')).toBeNull()
+    wrapper.unmount()
+  })
+
   it('opens the editor for the new source when identical responses share a range', async () => {
     const first = mount(ResponseAnnotationSource, {
       attachTo: document.body,

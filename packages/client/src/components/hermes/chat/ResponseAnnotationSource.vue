@@ -269,6 +269,7 @@ function updateGeometry() {
     const lineRect = completeResponseAnnotationVisualLineRect(textRects, anchorRect) ?? anchorRect
     const position = placeResponseAnnotationMarker(lineRect, rootRect, {
       viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
       markerSize,
       gap: 6,
       padding: 8,
@@ -288,6 +289,8 @@ function updateGeometry() {
     {
       minLeft: 8 - rootRect.left,
       maxLeft: window.innerWidth - 8 - markerSize - rootRect.left,
+      minTop: 8 - rootRect.top,
+      maxTop: window.innerHeight - 8 - markerSize - rootRect.top,
     },
     textRects.map(rect => ({
       left: rect.left - rootRect.left,
@@ -342,6 +345,26 @@ function hideMarkerPreview(annotationId: string) {
 }
 
 function handleViewportGeometryChange() {
+  const root = sourceRoot.value
+  const range = pendingRange.value
+  if (root && range) {
+    const connected = root.contains(range.startContainer) && root.contains(range.endContainer)
+    const rect = connected ? range.getBoundingClientRect() : null
+    if (
+      !rect
+      || !Number.isFinite(rect.left)
+      || rect.width <= 0
+      || rect.height <= 0
+      || rect.right <= 0
+      || rect.left >= window.innerWidth
+      || rect.bottom <= 0
+      || rect.top >= window.innerHeight
+    ) {
+      dismissToolbar()
+    } else {
+      pendingRect.value = serializableRect(rect)
+    }
+  }
   scheduleGeometryUpdate()
   const target = markerPreviewTarget.value
   if (markerPreview.value && target?.isConnected) {

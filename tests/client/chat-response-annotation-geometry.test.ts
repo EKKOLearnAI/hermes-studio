@@ -69,6 +69,7 @@ describe('response annotation geometry', () => {
 
     expect(placeResponseAnnotationMarker(line!, rect(0, 0, 100, 100), {
       viewportWidth: 100,
+      viewportHeight: 100,
       markerSize: 20,
       gap: 4,
       padding: 8,
@@ -80,10 +81,21 @@ describe('response annotation geometry', () => {
     const positions = avoidResponseAnnotationMarkerCollisions([
       { id: 'a', left: 72, top: 10, direction: 1 },
       { id: 'b', left: 72, top: 10, direction: 1 },
-    ], 20, 2, { minLeft: 8, maxLeft: 72 })
+    ], 20, 2, { minLeft: 8, maxLeft: 72, minTop: 8, maxTop: 72 })
 
     expect(positions.a).toEqual({ left: 72, top: 10 })
     expect(positions.b).toEqual({ left: 72, top: 32 })
+  })
+
+  it('keeps vertically stacked markers inside the viewport bounds', () => {
+    const positions = avoidResponseAnnotationMarkerCollisions([
+      { id: 'a', left: 72, top: 72, direction: 1 },
+      { id: 'b', left: 72, top: 72, direction: 1 },
+      { id: 'c', left: 72, top: 72, direction: 1 },
+    ], 20, 2, { minLeft: 72, maxLeft: 72, minTop: 8, maxTop: 72 })
+
+    expect(Object.values(positions).every(position => position.top >= 8 && position.top <= 72)).toBe(true)
+    expect(new Set(Object.values(positions).map(position => position.top)).size).toBe(3)
   })
 
   it('centers the exact source range inside the nearest scroll container', () => {

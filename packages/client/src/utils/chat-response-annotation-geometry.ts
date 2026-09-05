@@ -124,6 +124,7 @@ export function placeResponseAnnotationMarker(
   sourceRootRect: ResponseAnnotationRect,
   viewport: {
     viewportWidth: number
+    viewportHeight: number
     markerSize: number
     gap: number
     padding: number
@@ -135,14 +136,20 @@ export function placeResponseAnnotationMarker(
     - viewport.padding
     - viewport.markerSize
     - sourceRootRect.left
+  const minTop = viewport.padding - sourceRootRect.top
+  const maxTop = viewport.viewportHeight
+    - viewport.padding
+    - viewport.markerSize
+    - sourceRootRect.top
+  const clampTop = (top: number) => Math.max(minTop, Math.min(maxTop, top))
   const right = finalLineRect.right - sourceRootRect.left + viewport.gap
   const left = finalLineRect.left - sourceRootRect.left - viewport.gap - viewport.markerSize
   const centeredTop = Math.max(
     0,
     finalLineRect.top - sourceRootRect.top + (finalLineRect.height - viewport.markerSize) / 2,
   )
-  if (right <= maxLeft) return { left: right, top: centeredTop }
-  if (left >= minLeft) return { left, top: centeredTop }
+  if (right <= maxLeft) return { left: right, top: clampTop(centeredTop) }
+  if (left >= minLeft) return { left, top: clampTop(centeredTop) }
 
   const fallbackLeft = Math.min(Math.max(right, minLeft), maxLeft)
   const fallbackAbsoluteLeft = sourceRootRect.left + fallbackLeft
@@ -159,7 +166,7 @@ export function placeResponseAnnotationMarker(
   }
   return {
     left: fallbackLeft,
-    top: Math.max(0, fallbackAbsoluteTop - sourceRootRect.top),
+    top: clampTop(fallbackAbsoluteTop - sourceRootRect.top),
   }
 }
 
@@ -167,51 +174,56 @@ export function avoidResponseAnnotationMarkerCollisions(
   positions: Array<{ id: string; left: number; top: number; direction?: -1 | 1 }>,
   markerSize: number,
   gap: number,
-  bounds: { minLeft: number; maxLeft: number },
+  bounds: { minLeft: number; maxLeft: number; minTop: number; maxTop: number },
   textRects: ResponseAnnotationRect[] = [],
 ): Record<string, { left: number; top: number }> {
   const placed: Array<{ left: number; top: number }> = []
   const result: Record<string, { left: number; top: number }> = {}
+  const step = markerSize + gap
+  const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value))
+  const horizontalSteps = Math.max(0, Math.ceil((bounds.maxLeft - bounds.minLeft) / step))
+  const verticalSteps = Math.max(0, Math.ceil((bounds.maxTop - bounds.minTop) / step))
   for (const position of [...positions].sort(
     (left, right) => left.top - right.top || left.id.localeCompare(right.id),
   )) {
-    let left = position.left
-    let top = position.top
     const direction = position.direction ?? 1
-    const findMarkerCollision = () => placed.find(candidate => (
-      Math.abs(candidate.left - left) < markerSize + gap
-      && Math.abs(candidate.top - top) < markerSize + gap
-    ))
-    const findTextCollision = () => textRects.find(rect => (
-      left < rect.right
-      && left + markerSize > rect.left
-      && top < rect.bottom
-      && top + markerSize > rect.top
-    ))
-    let markerCollision = findMarkerCollision()
-    let textCollision = findTextCollision()
-    while (markerCollision || textCollision) {
-      const shiftedLeft = left + direction * (markerSize + gap)
-      const shiftedOverlapsText = textRects.some(rect => (
-        shiftedLeft < rect.right
-        && shiftedLeft + markerSize > rect.left
-        && top < rect.bottom
-        && top + markerSize > rect.top
-      ))
-      if (shiftedLeft >= bounds.minLeft && shiftedLeft <= bounds.maxLeft && !shiftedOverlapsText) {
-        left = shiftedLeft
-      } else {
-        left = position.left
-        top = Math.max(
-          markerCollision ? markerCollision.top + markerSize + gap : top,
-          textCollision ? textCollision.bottom + gap : top,
-        )
-      }
-      markerCollision = findMarkerCollision()
-      textCollision = findTextCollision()
+    const baseLeft = clamp(position.left, bounds.minLeft, bounds.maxLeft)
+    const baseTop = clamp(position.top, bounds.minTop, bounds.maxTop)
+    const verticalOffsets = [0]
+    for (let index = 1; index <= verticalSteps + 1; index += 1) {
+      verticalOffsets.push(index * step, -index * step)
     }
-    result[position.id] = { left, top }
-    placed.push({ left, top })
+    let chosen: { left: number; top: number } | null = null
+    const visitedTops = new Set<number>()
+    for (const verticalOffset of verticalOffsets) {
+      const top = clamp(baseTop + verticalOffset, bounds.minTop, bounds.maxTop)
+      if (visitedTops.has(top)) continue
+      visitedTops.add(top)
+      const visitedLefts = new Set<number>()
+      for (let index = 0; index <= horizontalSteps + 1; index += 1) {
+        const left = clamp(baseLeft + direction * index * step, bounds.minLeft, bounds.maxLeft)
+        if (visitedLefts.has(left)) continue
+        visitedLefts.add(left)
+        const markerCollision = placed.some(candidate => (
+          Math.abs(candidate.left - left) < step
+          && Math.abs(candidate.top - top) < step
+        ))
+        const textCollision = textRects.some(rect => (
+          left < rect.right
+          && left + markerSize > rect.left
+          && top < rect.bottom
+          && top + markerSize > rect.top
+        ))
+        if (!markerCollision && !textCollision) {
+          chosen = { left, top }
+          break
+        }
+      }
+      if (chosen) break
+    }
+    const resolved = chosen ?? { left: baseLeft, top: baseTop }
+    result[position.id] = resolved
+    placed.push(resolved)
   }
   return result
 }
