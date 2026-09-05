@@ -221,3 +221,14 @@ export async function stopCodingAgentRun(sessionId: string): Promise<{ stopped: 
     method: 'DELETE',
   })
 }
+
+export interface AgentUpdatePolicyState {
+ autoUpdate: boolean
+ status: 'unknown'|'checking'|'current'|'available'|'waiting'|'updating'|'failed'
+ currentVersion: string
+ latestVersion: string
+ checkedAt: string
+ error?: string
+}
+export function getAgentUpdatePolicies() { return request<{agents:Record<string,AgentUpdatePolicyState>}>('/api/coding-agents/update-policies') }
+export function setAgentAutoUpdate(id: CodingAgentId, autoUpdate: boolean) { return request<{agents:Record<string,AgentUpdatePolicyState>}>(`/api/coding-agents/${id}/update-policy`, {method:'PUT',body:JSON.stringify({autoUpdate})}) }

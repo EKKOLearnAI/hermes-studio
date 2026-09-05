@@ -1,3 +1,4 @@
+import { getAgentUpdateManager } from '../services/update-manager'
 import type { Context } from 'koa'
 import {
   checkUpdateAgent,
@@ -239,4 +240,15 @@ export async function stopRun(ctx: Context) {
     ctx.status = err.status || 500
     ctx.body = { error: err.message || 'Failed to stop coding agent run' }
   }
+}
+
+export async function updatePolicies(ctx: Context) {
+  ctx.body = { agents: (await getAgentUpdateManager()).snapshot() }
+}
+export async function setUpdatePolicy(ctx: Context) {
+  try {
+    const manager = await getAgentUpdateManager()
+    await manager.set(ctx.params.id, (ctx.request.body as any)?.autoUpdate)
+    ctx.body = { agents: manager.snapshot() }
+  } catch (error) { ctx.status=400;ctx.body={error:error instanceof Error?error.message:'Invalid policy'} }
 }

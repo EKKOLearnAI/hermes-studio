@@ -1,6 +1,7 @@
 import { socialMessagesRu } from '../social-messages-locales'
 
 export default {
+  agentAutoUpdate: { label: 'Автообновление в простое' },
   ekkoConfig: {
     "settingsTitle": "Настройки",
     "settingsRuntime": "Выполнение",

@@ -1,6 +1,7 @@
 import { socialMessagesAr } from '../social-messages-locales'
 
 export default {
+  agentAutoUpdate: { label: 'التحديث التلقائي عند الخمول' },
   ekkoConfig: {
     "settingsTitle": "الإعدادات",
     "settingsRuntime": "التشغيل",

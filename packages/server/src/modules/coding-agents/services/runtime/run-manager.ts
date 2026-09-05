@@ -1,3 +1,4 @@
+import { agentUpdateLocked } from '../update-lock'
 import { dirname, join } from 'path'
 import { existsSync, accessSync, chmodSync, constants as fsConstants, readFileSync, writeFileSync } from 'fs'
 import { homedir } from 'os'
@@ -599,6 +600,10 @@ export class CodingAgentRunManager {
 
   constructor(private readonly idleMs = DEFAULT_IDLE_MS) {}
 
+  hasLiveAgent(id: string): boolean {
+    return [...this.runs.values()].some(run => run.launch.agentId === id && !run.exited)
+  }
+
   isAvailable(): boolean {
     return !!pty
   }
@@ -648,6 +653,7 @@ export class CodingAgentRunManager {
   }
 
   start(launch: CodingAgentRunLaunch): { runId: string; pid: number } {
+    if (agentUpdateLocked(launch.agentId)) throw new Error('Agent is updating; retry after completion')
     const existingRunId = this.sessionIndex.get(launch.sessionId)
     if (existingRunId) {
       const existing = this.runs.get(existingRunId)

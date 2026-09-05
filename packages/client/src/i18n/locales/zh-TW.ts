@@ -1,6 +1,7 @@
 import { socialMessagesZhTw } from '../social-messages'
 
 export default {
+  agentAutoUpdate: { label: '閒置時自動更新' },
   ekkoConfig: {
     "settingsTitle": "設定",
     "settingsRuntime": "執行",

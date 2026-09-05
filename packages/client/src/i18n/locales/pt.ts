@@ -1,6 +1,7 @@
 import { socialMessagesPt } from '../social-messages-locales'
 
 export default {
+  agentAutoUpdate: { label: 'Atualizar automaticamente quando ocioso' },
   ekkoConfig: {
     "settingsTitle": "Configurações",
     "settingsRuntime": "Execução",

@@ -1,6 +1,7 @@
 import { socialMessagesJa } from '../social-messages-locales'
 
 export default {
+  agentAutoUpdate: { label: '待機時に自動更新' },
   ekkoConfig: {
     "settingsTitle": "設定",
     "settingsRuntime": "ランタイム",

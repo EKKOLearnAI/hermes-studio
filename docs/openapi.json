@@ -1353,6 +1353,32 @@
         }
       }
     },
+    "/api/coding-agents/update-policies": {
+      "get": {
+        "tags": [
+          "Coding Agents"
+        ],
+        "summary": "Get update-policies",
+        "description": "GET /api/coding-agents/update-policies",
+        "operationId": "updatePolicies",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
     "/api/coding-agents/{id}": {
       "delete": {
         "tags": [
@@ -1987,6 +2013,57 @@
                     "type": "string"
                   },
                   "sessionId": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/coding-agents/{id}/update-policy": {
+      "put": {
+        "tags": [
+          "Coding Agents"
+        ],
+        "summary": "Update update-policy",
+        "description": "PUT /api/coding-agents/:id/update-policy",
+        "operationId": "setUpdatePolicy",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "autoUpdate": {
                     "type": "string"
                   }
                 }

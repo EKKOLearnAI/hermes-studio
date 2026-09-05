@@ -1,6 +1,7 @@
 import { socialMessagesKo } from '../social-messages-locales'
 
 export default {
+  agentAutoUpdate: { label: '유휴 시 자동 업데이트' },
   ekkoConfig: {
     "settingsTitle": "설정",
     "settingsRuntime": "런타임",

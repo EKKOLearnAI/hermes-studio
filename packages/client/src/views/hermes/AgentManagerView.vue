@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, h, onMounted, ref, watch } from 'vue'
+import { getAgentUpdatePolicies, setAgentAutoUpdate, type AgentUpdatePolicyState } from '@/api/coding-agents'
+import { computed, defineAsyncComponent, h, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { NAlert, NButton, NDrawer, NDrawerContent, NPopconfirm, NSpin, NTag, useDialog, useMessage } from 'naive-ui'
@@ -86,6 +87,16 @@ const codingAgents: CodingAgentCard[] = [
   },
 ]
 
+const updatePolicies = ref<Record<string, AgentUpdatePolicyState>>({})
+let policyTimer: ReturnType<typeof setInterval> | undefined
+async function refreshPolicies() {
+  try { updatePolicies.value = (await getAgentUpdatePolicies()).agents } catch { /* unavailable to non-admin/old server */ }
+}
+async function toggleAutoUpdate(id: CodingAgentId, enabled: boolean) {
+  try { updatePolicies.value = (await setAgentAutoUpdate(id, enabled)).agents } catch (error) { message.error(String(error)) }
+}
+onMounted(() => { void refreshPolicies(); policyTimer = setInterval(() => void refreshPolicies(), 15000) })
+onUnmounted(() => { if(policyTimer) clearInterval(policyTimer) })
 const { t } = useI18n()
 const message = useMessage()
 const dialog = useDialog()
@@ -589,6 +600,12 @@ onMounted(() => {
                 >
                   {{ t('codingAgents.checkUpdate') }}
                 </NButton>
+                <label v-if="toolStatus(agent.id)?.installed && updatePolicies[agent.id]">
+                  <input type="checkbox" :checked="updatePolicies[agent.id]?.autoUpdate" @change="toggleAutoUpdate(agent.id, ($event.target as HTMLInputElement).checked)" />
+                  {{ t('agentAutoUpdate.label') }}
+                  <span v-if="['available','waiting'].includes(updatePolicies[agent.id]?.status || '')">New · {{ updatePolicies[agent.id]?.latestVersion }}</span>
+                  <small v-if="updatePolicies[agent.id]?.error">{{ updatePolicies[agent.id]?.error }}</small>
+                </label>
                 <NPopconfirm
                   v-if="toolStatus(agent.id)?.installed"
                   @positive-click="handleDelete(agent.id)"
