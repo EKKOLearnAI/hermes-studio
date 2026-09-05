@@ -8,7 +8,7 @@ function appendError(current: string, chunk: Buffer | string): string {
   return `${current}${chunk.toString()}`.slice(0, MAX_ERROR_LENGTH)
 }
 
-function extractWithWindowsTar(archive: string, targetRoot: string): Promise<void> {
+function extractWithWindowsTar(archive: string, targetRoot: string): Promise<boolean> {
   return new Promise((resolvePromise, rejectPromise) => {
     const child = spawn('tar.exe', ['-xzf', archive, '-C', targetRoot], {
       stdio: ['ignore', 'ignore', 'pipe'],
@@ -19,11 +19,16 @@ function extractWithWindowsTar(archive: string, targetRoot: string): Promise<voi
       stderr = appendError(stderr, chunk)
     })
     child.once('error', error => {
+      // Only a missing executable can safely fall back: extraction has not started.
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        resolvePromise(false)
+        return
+      }
       rejectPromise(new Error(`Windows tar.exe failed to start: ${error.message}`, { cause: error }))
     })
     child.once('close', (code, signal) => {
       if (code === 0) {
-        resolvePromise()
+        resolvePromise(true)
         return
       }
       const detail = stderr.trim() || `exit code ${code ?? 'unknown'}${signal ? `, signal ${signal}` : ''}`
@@ -33,8 +38,7 @@ function extractWithWindowsTar(archive: string, targetRoot: string): Promise<voi
 }
 
 export async function extractTarGzipArchive(archive: string, targetRoot: string): Promise<void> {
-  if (process.platform === 'win32') {
-    await extractWithWindowsTar(archive, targetRoot)
+  if (process.platform === 'win32' && await extractWithWindowsTar(archive, targetRoot)) {
     return
   }
 
