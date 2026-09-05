@@ -1204,6 +1204,7 @@ describe('coding agent launch preparation', () => {
     expect(codexConfig).toContain('[mcp_servers.hermes-studio-browser]')
     expect(codexConfig).toContain('[mcp_servers.hermes-studio-devices]')
     expect(codexConfig).toContain('[mcp_servers.hermes-studio-use]')
+    expect(codexConfig).toMatch(/\[mcp_servers.hermes-studio-use\][\s\S]*?tool_timeout_sec = 360/)
   })
 
   it('inherits external MCP configs for scoped Claude and Codex launches', async () => {
@@ -1332,6 +1333,7 @@ describe('coding agent launch preparation', () => {
     expect(codexConfig).toContain('[mcp_servers.hermes-studio-browser]')
     expect(codexConfig).toContain('[mcp_servers.hermes-studio-devices]')
     expect(codexConfig).toContain('[mcp_servers.hermes-studio-use]')
+    expect(codexConfig).toMatch(/\[mcp_servers.hermes-studio-use\][\s\S]*?tool_timeout_sec = 360/)
   })
 
   it('isolates Claude Code settings for hidden chat runs only', async () => {
