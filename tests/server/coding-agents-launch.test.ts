@@ -784,7 +784,6 @@ describe('coding agent launch preparation', () => {
         OPENCODE_CONFIG_DIR: result.rootDir,
         OPENCODE_DB: join(result.rootDir, 'opencode.db'),
         OPENCODE_DISABLE_CLAUDE_CODE: '1',
-        OPENCODE_DISABLE_EXTERNAL_SKILLS: '1',
       },
       promptFile: join(result.rootDir, 'AGENTS.md'),
     })
@@ -825,7 +824,7 @@ describe('coding agent launch preparation', () => {
     expect(result.env.OPENCODE_CONFIG_DIR).toBe(result.rootDir)
     expect(result.env.OPENCODE_DB).toBe(join(result.rootDir, 'opencode.db'))
     expect(result.env.OPENCODE_DISABLE_CLAUDE_CODE).toBe('1')
-    expect(result.env.OPENCODE_DISABLE_EXTERNAL_SKILLS).toBe('1')
+    expect(result.env.OPENCODE_DISABLE_EXTERNAL_SKILLS).toBeUndefined()
     expect(result.env.OPENCODE_DISABLE_PROJECT_CONFIG).toBeUndefined()
     expect(config.model).toBe('hermes-studio/test-model')
     expect(config.provider['hermes-studio'].npm).toBe('@ai-sdk/openai')

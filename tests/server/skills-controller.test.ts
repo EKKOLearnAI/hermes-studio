@@ -380,9 +380,13 @@ describe('skills controller', () => {
     const previousGlobalHome = process.env.HERMES_CODING_AGENT_GLOBAL_HOME
     const skillsDir = join(root, '.config', 'opencode', 'skills')
     const skillDir = join(skillsDir, 'demo-skill')
+    const sharedSkillsDir = join(root, '.agents', 'skills')
+    const sharedSkillDir = join(sharedSkillsDir, 'shared-skill')
 
     await mkdir(skillDir, { recursive: true })
+    await mkdir(sharedSkillDir, { recursive: true })
     await writeFile(join(skillDir, 'SKILL.md'), '# Demo Skill\nOpenCode skill\n', 'utf-8')
+    await writeFile(join(sharedSkillDir, 'SKILL.md'), '# Shared Skill\nShared OpenCode skill\n', 'utf-8')
     process.env.HERMES_CODING_AGENT_GLOBAL_HOME = root
 
     try {
@@ -395,16 +399,21 @@ describe('skills controller', () => {
         body: null,
       }
       await list(listCtx)
-      expect(listCtx.body.paths).toEqual({ local: skillsDir, external: [] })
+      expect(listCtx.body.paths).toEqual({ local: skillsDir, external: [sharedSkillsDir] })
       expect(listCtx.body.categories).toContainEqual(expect.objectContaining({
         name: 'misc',
-        skills: [
+        skills: expect.arrayContaining([
           expect.objectContaining({
             name: 'demo-skill',
             enabled: true,
             source: 'local',
           }),
-        ],
+          expect.objectContaining({
+            name: 'shared-skill',
+            enabled: true,
+            source: 'local',
+          }),
+        ]),
       }))
       expect(mockUpdateConfigYamlForProfile).not.toHaveBeenCalled()
     } finally {

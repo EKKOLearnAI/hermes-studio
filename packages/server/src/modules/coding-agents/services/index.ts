@@ -1653,7 +1653,6 @@ function openCodeRuntimeEnv(rootDir: string, apiKey = ''): Record<string, string
     OPENCODE_CONFIG_DIR: rootDir,
     OPENCODE_DB: join(rootDir, OPENCODE_DATABASE_FILE),
     OPENCODE_DISABLE_CLAUDE_CODE: '1',
-    OPENCODE_DISABLE_EXTERNAL_SKILLS: '1',
     ...(apiKey ? { [OPENCODE_API_KEY_ENV]: apiKey } : {}),
   }
 }

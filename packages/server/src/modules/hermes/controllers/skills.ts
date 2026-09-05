@@ -76,7 +76,7 @@ async function resolveSkillDirForTarget(ctx: any, category: string, skillName: s
   if (target === 'codex') {
     return findSkillDirInRoot(codexSystemSkillsDir(), category, skillName)
   }
-  if (target === 'grok') {
+  if (target === 'grok' || target === 'opencode') {
     return findSkillDirInRoot(sharedAgentSkillsDir(), category, skillName)
   }
 
@@ -538,7 +538,7 @@ export async function list(ctx: any) {
           'builtin',
         )
         categories = mergeExternalCategories(categories, systemCategories)
-      } else if (target === 'grok') {
+      } else if (target === 'grok' || target === 'opencode') {
         const sharedDir = sharedAgentSkillsDir()
         extraDirs.push(sharedDir)
         const sharedCategories = withSkillSource(
@@ -872,7 +872,8 @@ export async function updateSkill(ctx: any) {
       }
     }
 
-    const localSkillDir = target === 'grok'
+    const usesSharedAgentSkills = target === 'grok' || target === 'opencode'
+    const localSkillDir = usesSharedAgentSkills
       ? await resolveSkillDirForTarget(ctx, category, name)
       : await findSkillDirInRoot(skillsDir, category, name)
     if (!localSkillDir) {
@@ -880,7 +881,7 @@ export async function updateSkill(ctx: any) {
       ctx.body = { error: 'Skill not found' }
       return
     }
-    const writableRoots = target === 'grok'
+    const writableRoots = usesSharedAgentSkills
       ? [skillsDir, sharedAgentSkillsDir()]
       : [skillsDir]
     if (!writableRoots.some(root => isPathWithin(localSkillDir, root))) {

@@ -91,7 +91,12 @@ async function skillRootsForTarget(target: WorkflowSkillTarget, profile: string)
   if (target === 'claude') return [join(globalHome, '.claude', 'skills')]
   if (target === 'pi') return [join(globalHome, '.agents', 'skills')]
   if (target === 'grok') return [join(globalHome, '.grok', 'skills')]
-  if (target === 'opencode') return [join(globalHome, '.config', 'opencode', 'skills')]
+  if (target === 'opencode') {
+    return [
+      join(globalHome, '.config', 'opencode', 'skills'),
+      join(globalHome, '.agents', 'skills'),
+    ]
+  }
   return [
     join(globalHome, '.agents', 'skills'),
     join(globalHome, '.codex', 'skills', '.system'),
