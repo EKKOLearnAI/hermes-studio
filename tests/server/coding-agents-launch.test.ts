@@ -753,14 +753,13 @@ describe('coding agent launch preparation', () => {
   it('launches global OpenCode with native provider settings plus managed MCP', async () => {
     const home = makeHome()
     const globalOpenCodeHome = join(home, 'global-home', '.config', 'opencode')
-    const enabledSkill = join(globalOpenCodeHome, 'skills', 'enabled-skill')
-    const disabledSkill = join(globalOpenCodeHome, 'skills', 'disabled-skill')
-    mkdirSync(enabledSkill, { recursive: true })
-    mkdirSync(disabledSkill, { recursive: true })
+    const firstSkill = join(globalOpenCodeHome, 'skills', 'first-skill')
+    const secondSkill = join(globalOpenCodeHome, 'skills', 'second-skill')
+    mkdirSync(firstSkill, { recursive: true })
+    mkdirSync(secondSkill, { recursive: true })
     writeFileSync(join(globalOpenCodeHome, 'AGENTS.md'), 'User global OpenCode instructions.\n')
-    writeFileSync(join(enabledSkill, 'SKILL.md'), '# Enabled skill\n')
-    writeFileSync(join(disabledSkill, 'SKILL.md'), '# Disabled skill\n')
-    writeFileSync(join(globalOpenCodeHome, 'skills', '.disabled.json'), '["disabled-skill"]\n')
+    writeFileSync(join(firstSkill, 'SKILL.md'), '# First skill\n')
+    writeFileSync(join(secondSkill, 'SKILL.md'), '# Second skill\n')
     writeFileSync(join(globalOpenCodeHome, 'opencode.json'), `${JSON.stringify({
       model: 'native/model',
       provider: { native: { npm: '@ai-sdk/openai-compatible' } },
@@ -793,8 +792,8 @@ describe('coding agent launch preparation', () => {
     expect(config.mcp.local).toEqual({ type: 'local', command: ['local-mcp'], enabled: true })
     expect(config.mcp['hermes-studio-api']).toMatchObject({ type: 'local', enabled: true })
     expect(readFileSync(join(result.rootDir, 'AGENTS.md'), 'utf8')).toContain('User global OpenCode instructions.')
-    expect(readFileSync(join(result.rootDir, 'skills', 'enabled-skill', 'SKILL.md'), 'utf8')).toBe('# Enabled skill\n')
-    expect(existsSync(join(result.rootDir, 'skills', 'disabled-skill'))).toBe(false)
+    expect(readFileSync(join(result.rootDir, 'skills', 'first-skill', 'SKILL.md'), 'utf8')).toBe('# First skill\n')
+    expect(readFileSync(join(result.rootDir, 'skills', 'second-skill', 'SKILL.md'), 'utf8')).toBe('# Second skill\n')
   })
 
   it('launches scoped OpenCode through the Responses proxy without writing the upstream key', async () => {

@@ -2,6 +2,7 @@ import { homedir } from 'os'
 import { join, resolve } from 'path'
 import { readdir, realpath } from 'fs/promises'
 import { getProfileDir, readConfigYamlForProfile, safeReadFile } from '../../public/profile-config'
+import { getCodingAgentGlobalHome } from '../../public/coding-agent-global-home'
 
 export type WorkflowSkillTarget = 'hermes' | 'claude' | 'codex' | 'pi' | 'grok' | 'opencode'
 
@@ -86,13 +87,14 @@ async function configuredHermesSkillRoots(profile: string): Promise<string[]> {
 
 async function skillRootsForTarget(target: WorkflowSkillTarget, profile: string): Promise<string[]> {
   if (target === 'hermes') return configuredHermesSkillRoots(profile)
-  if (target === 'claude') return [join(homedir(), '.claude', 'skills')]
-  if (target === 'pi') return [join(homedir(), '.agents', 'skills')]
-  if (target === 'grok') return [join(homedir(), '.grok', 'skills')]
-  if (target === 'opencode') return [join(homedir(), '.config', 'opencode', 'skills')]
+  const globalHome = getCodingAgentGlobalHome()
+  if (target === 'claude') return [join(globalHome, '.claude', 'skills')]
+  if (target === 'pi') return [join(globalHome, '.agents', 'skills')]
+  if (target === 'grok') return [join(globalHome, '.grok', 'skills')]
+  if (target === 'opencode') return [join(globalHome, '.config', 'opencode', 'skills')]
   return [
-    join(homedir(), '.agents', 'skills'),
-    join(homedir(), '.codex', 'skills', '.system'),
+    join(globalHome, '.agents', 'skills'),
+    join(globalHome, '.codex', 'skills', '.system'),
   ]
 }
 

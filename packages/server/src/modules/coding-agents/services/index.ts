@@ -38,6 +38,7 @@ import { assertScopedCodingAgentProviderAllowed } from '../protocol/provider-pol
 import type { CodingAgentRuntime } from '../../studio/contracts/agents/runtime'
 import { defaultCodingAgentWorkspace } from '../../studio/public/workspace-manager'
 import { isolateUnhealthyRuntimeMcpServers } from './mcp-runtime-isolation'
+import { getCodingAgentGlobalHome } from '../../studio/public/coding-agent-global-home'
 
 const execFileAsync = promisify(execFile)
 const LAUNCH_API_MODES = new Set<ApiMode>(['chat_completions', 'codex_responses', 'anthropic_messages'])
@@ -433,7 +434,7 @@ function getNpmBin() {
 }
 
 function getGlobalConfigHome() {
-  return process.env.HERMES_CODING_AGENT_GLOBAL_HOME?.trim() || homedir()
+  return getCodingAgentGlobalHome()
 }
 
 function compareNodeVersionDesc(left: string, right: string): number {
@@ -1578,32 +1579,6 @@ function mergeOpenCodeSettingsConfig(existingContent: string, settingsContent: s
   return `${JSON.stringify(merged, null, 2)}\n`
 }
 
-async function readOpenCodeDisabledSkills(sourceHome: string): Promise<Set<string>> {
-  const content = await safeReadFile(join(sourceHome, 'skills', '.disabled.json'))
-  if (!content) return new Set()
-  try {
-    const parsed = JSON.parse(content)
-    return new Set(Array.isArray(parsed)
-      ? parsed.map(String).map(name => name.trim()).filter(Boolean)
-      : [])
-  } catch {
-    return new Set()
-  }
-}
-
-async function removeDisabledOpenCodeSkills(directory: string, disabled: Set<string>): Promise<void> {
-  const entries = await readdir(directory, { withFileTypes: true }).catch(() => [])
-  for (const entry of entries) {
-    if (!entry.isDirectory() && !entry.isSymbolicLink()) continue
-    const path = join(directory, entry.name)
-    if (disabled.has(entry.name) && await safeReadFile(join(path, 'SKILL.md')) !== null) {
-      await rm(path, { recursive: true, force: true })
-      continue
-    }
-    await removeDisabledOpenCodeSkills(path, disabled)
-  }
-}
-
 async function syncOpenCodeSkills(sourceHome: string, rootDir: string): Promise<void> {
   const source = join(sourceHome, 'skills')
   const target = join(rootDir, 'skills')
@@ -1616,9 +1591,6 @@ async function syncOpenCodeSkills(sourceHome: string, rootDir: string): Promise<
     force: true,
     preserveTimestamps: true,
   })
-  await removeDisabledOpenCodeSkills(target, await readOpenCodeDisabledSkills(sourceHome))
-  await rm(join(target, '.disabled.json'), { force: true })
-  await rm(join(target, '.usage.json'), { force: true })
 }
 
 function opencodeRuntimeConfig(

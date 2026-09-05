@@ -17,6 +17,7 @@ import {
   getSkillUsageSyncCursor,
   syncExternalSkillUsageEvents,
 } from '../../studio/public/skill-usage'
+import { getCodingAgentGlobalHome } from '../../studio/public/coding-agent-global-home'
 
 function requestedProfile(ctx: any): string {
   return ctx.state?.profile?.name || getActiveProfileName() || 'default'
@@ -38,48 +39,27 @@ function requestSkillTarget(ctx: any): SkillTarget {
 }
 
 function globalSkillsDir(target: Exclude<SkillTarget, 'hermes'>): string {
+  const globalHome = getCodingAgentGlobalHome()
   return target === 'claude'
-    ? join(homedir(), '.claude', 'skills')
+    ? join(globalHome, '.claude', 'skills')
     : target === 'grok'
-      ? join(homedir(), '.grok', 'skills')
+      ? join(globalHome, '.grok', 'skills')
       : target === 'opencode'
-        ? join(homedir(), '.config', 'opencode', 'skills')
-      : join(homedir(), '.agents', 'skills')
+        ? join(globalHome, '.config', 'opencode', 'skills')
+      : join(globalHome, '.agents', 'skills')
 }
 
 function codexSystemSkillsDir(): string {
-  return join(homedir(), '.codex', 'skills', '.system')
+  return join(getCodingAgentGlobalHome(), '.codex', 'skills', '.system')
 }
 
 function sharedAgentSkillsDir(): string {
-  return join(homedir(), '.agents', 'skills')
+  return join(getCodingAgentGlobalHome(), '.agents', 'skills')
 }
 
 function requestTargetSkillsDir(ctx: any): string {
   const target = requestSkillTarget(ctx)
   return target === 'hermes' ? requestSkillsDir(ctx) : globalSkillsDir(target)
-}
-
-async function readTargetDisabledSkills(skillsDir: string): Promise<string[]> {
-  const content = await safeReadFile(join(skillsDir, '.disabled.json'))
-  if (!content) return []
-  try {
-    const parsed = JSON.parse(content)
-    return Array.isArray(parsed)
-      ? parsed.map(String).map(name => name.trim()).filter(Boolean)
-      : []
-  } catch {
-    return []
-  }
-}
-
-async function updateTargetDisabledSkill(skillsDir: string, name: string, enabled: boolean): Promise<void> {
-  const disabled = await readTargetDisabledSkills(skillsDir)
-  const next = new Set(disabled)
-  if (enabled) next.delete(name)
-  else next.add(name)
-  await mkdir(skillsDir, { recursive: true })
-  await writeFile(join(skillsDir, '.disabled.json'), `${JSON.stringify([...next].sort(), null, 2)}\n`, 'utf-8')
 }
 
 async function resolveSkillDirForTarget(ctx: any, category: string, skillName: string): Promise<string | null> {
@@ -548,9 +528,7 @@ export async function list(ctx: any) {
   const skillsDir = requestTargetSkillsDir(ctx)
   try {
     if (target !== 'hermes') {
-      const disabledList = await readTargetDisabledSkills(skillsDir)
-      const usageStats = readUsageStats(await safeReadFile(join(skillsDir, '.usage.json')))
-      let categories = await scanSkillsDirIfExists(skillsDir, new Map(), new Set(), disabledList, usageStats)
+      let categories = await scanSkillsDirIfExists(skillsDir, new Map(), new Set(), [], new Map())
       const extraDirs: string[] = []
       if (target === 'codex') {
         const systemDir = codexSystemSkillsDir()
@@ -738,12 +716,6 @@ export async function toggle(ctx: any) {
     return
   }
   try {
-    const target = requestSkillTarget(ctx)
-    if (target === 'opencode') {
-      await updateTargetDisabledSkill(requestTargetSkillsDir(ctx), name, enabled)
-      ctx.body = { success: true }
-      return
-    }
     await updateConfigYamlForProfile(requestedProfile(ctx), (config) => {
       if (!config.skills) config.skills = {}
       if (!Array.isArray(config.skills.disabled)) config.skills.disabled = []
@@ -846,7 +818,7 @@ export async function pin_(ctx: any) {
     return
   }
   try {
-    await updatePinnedSkill(requestTargetSkillsDir(ctx), name, pinned)
+    await updatePinnedSkill(requestSkillsDir(ctx), name, pinned)
     ctx.body = { success: true }
   } catch (err: any) {
     ctx.status = 500
@@ -978,36 +950,28 @@ export async function deleteSkill(ctx: any) {
     return
   }
 
-  const target = requestSkillTarget(ctx)
-  const skillsDir = requestTargetSkillsDir(ctx)
+  const skillsDir = requestSkillsDir(ctx)
   try {
-    if (target === 'hermes') {
-      // Determine source — only allow deleting `local` skills
-      const bundledManifest = readBundledManifest(await safeReadFile(join(skillsDir, '.bundled_manifest')))
-      const hubNames = readHubInstalledNames(await safeReadFile(join(skillsDir, '.hub', 'lock.json')))
-      const source = getSkillSource(name, bundledManifest, hubNames)
-      if (source !== 'local') {
-        ctx.status = 403
-        ctx.body = { error: `Only local skills can be deleted (this skill is ${source})` }
-        return
-      }
+    // Determine source — only allow deleting `local` skills
+    const bundledManifest = readBundledManifest(await safeReadFile(join(skillsDir, '.bundled_manifest')))
+    const hubNames = readHubInstalledNames(await safeReadFile(join(skillsDir, '.hub', 'lock.json')))
+    const source = getSkillSource(name, bundledManifest, hubNames)
+    if (source !== 'local') {
+      ctx.status = 403
+      ctx.body = { error: `Only local skills can be deleted (this skill is ${source})` }
+      return
     }
 
     // Resolve via the same category-aware path used by list/listFiles/readFile_
     // so two skills sharing a name in different categories don't collide.
     // Skip `external_dirs` here — only the local profile dir is deletable.
-    const localSkillDir = target === 'grok'
-      ? await resolveSkillDirForTarget(ctx, category, name)
-      : await findSkillDirInRoot(skillsDir, category, name)
+    const localSkillDir = await findSkillDirInRoot(skillsDir, category, name)
     if (!localSkillDir) {
       ctx.status = 404
       ctx.body = { error: 'Skill not found' }
       return
     }
-    const writableRoots = target === 'grok'
-      ? [skillsDir, sharedAgentSkillsDir()]
-      : [skillsDir]
-    if (!writableRoots.some(root => isPathWithin(localSkillDir, root))) {
+    if (!isPathWithin(localSkillDir, skillsDir)) {
       ctx.status = 403
       ctx.body = { error: 'Access denied' }
       return
@@ -1015,21 +979,17 @@ export async function deleteSkill(ctx: any) {
 
     await rm(localSkillDir, { recursive: true, force: true })
 
-    // Cleanup disabled state so a later reinstall does not inherit stale state.
+    // Cleanup `disabled` list in profile config so the deleted name doesn't linger
     try {
-      if (target === 'hermes') {
-        await updateConfigYamlForProfile(requestedProfile(ctx), (config) => {
-          const list = config?.skills?.disabled
-          if (Array.isArray(list)) {
-            const idx = list.indexOf(name)
-            if (idx !== -1) list.splice(idx, 1)
-          }
-          return config
-        })
-      } else if (target === 'opencode') {
-        await updateTargetDisabledSkill(skillsDir, name, true)
-      }
-    } catch { /* disabled-state cleanup is best-effort */ }
+      await updateConfigYamlForProfile(requestedProfile(ctx), (config) => {
+        const list = config?.skills?.disabled
+        if (Array.isArray(list)) {
+          const idx = list.indexOf(name)
+          if (idx !== -1) list.splice(idx, 1)
+        }
+        return config
+      })
+    } catch { /* config cleanup is best-effort */ }
 
     ctx.body = { success: true }
   } catch (err: any) {
