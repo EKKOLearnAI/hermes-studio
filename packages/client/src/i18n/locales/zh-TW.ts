@@ -577,7 +577,7 @@ export default {
       viewDownload: '下載',
       viewMessages: '訊息推送',
       downloadTitle: '在手機上使用 HStudio',
-      downloadDescription: '我們目前正處於封閉測試階段，必須使用註冊碼才能註冊；我們會在社群媒體上釋出部分註冊碼。',
+      downloadDescription: 'Hermes Studio App 已正式上線，目前處於付費階段。如需體驗，請前往定價與購買頁面選擇合適的方案，完成購買後即可開始使用。',
       downloadScan: '用手機掃碼下載',
       downloadScanHint: '目前提供 Android 安裝包',
       available: '可下載',

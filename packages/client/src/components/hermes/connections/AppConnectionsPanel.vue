@@ -676,6 +676,17 @@ onUnmounted(() => {
               </div>
             </div>
             <p>{{ t('connections.app.downloadDescription') }}</p>
+            <NButton
+              class="app-download-purchase"
+              tag="a"
+              :href="APP_ACCESS_PURCHASE_URL"
+              target="_blank"
+              rel="noopener noreferrer"
+              size="small"
+              type="primary"
+            >
+              {{ t('connections.app.purchaseAccess') }}
+            </NButton>
             <div class="app-download-meta">
               <span>APK {{ androidVersionLabel }}</span>
               <span>Google Play {{ googlePlayVersionLabel }}</span>
@@ -1197,6 +1208,10 @@ onUnmounted(() => {
     font-size: 14px;
     line-height: 22px;
   }
+}
+
+.app-download-purchase {
+  margin-top: 14px;
 }
 
 .app-download-brand {
