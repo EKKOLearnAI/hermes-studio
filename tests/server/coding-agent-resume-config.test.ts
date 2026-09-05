@@ -376,6 +376,7 @@ describe('coding agent resumed session config', () => {
       provider: 'global',
       model: '',
       env: {
+        HERMES_STUDIO_SESSION_ID: 'session-1',
         CODEX_HOME: expect.stringContaining(join('coding-agent', 'model', 'default', 'global', 'codex', 'runs')),
       },
       args: [],

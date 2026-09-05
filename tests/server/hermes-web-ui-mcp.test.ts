@@ -459,6 +459,18 @@ describe('hermes-web-ui MCP server', () => {
         })
         return
       }
+      if (req.url === '/api/studio/mobile-calendar/request' && req.method === 'POST') {
+        let raw = ''
+        req.on('data', chunk => { raw += chunk })
+        req.on('end', () => {
+          res.end(JSON.stringify({
+            ok: true,
+            status: 'success',
+            body: raw ? JSON.parse(raw) : null,
+          }))
+        })
+        return
+      }
       if (req.url === '/api/studio/workflows?profile=default') {
         res.end(JSON.stringify({ workflows: [{ id: 'workflow-1', name: 'Demo workflow', profile: 'default' }] }))
         return
@@ -528,6 +540,7 @@ describe('hermes-web-ui MCP server', () => {
       env: {
         ...process.env,
         HERMES_WEB_UI_URL: `http://127.0.0.1:${address.port}`,
+        HERMES_STUDIO_SESSION_ID: 'studio-codex-session',
       },
     })
     child.stdout.on('data', (chunk) => {
@@ -562,6 +575,32 @@ describe('hermes-web-ui MCP server', () => {
         action: 'call',
         tool: 'hermes_studio_use_sessions_count',
         arguments: { source: 'coding_agent' },
+      },
+    })
+    writeRpc(child, 136, 'tools/call', {
+      name: 'hermes_studio_use_toolset',
+      arguments: {
+        action: 'call',
+        tool: 'hermes_studio_use_mobile_location',
+        arguments: {
+          session_id: 'session-1',
+          purpose: 'Find nearby restaurants',
+          accuracy: 'coarse',
+          timeout_ms: 10000,
+        },
+      },
+    })
+    writeRpc(child, 36, 'tools/call', {
+      name: 'hermes_studio_use_toolset',
+      arguments: {
+        action: 'call',
+        tool: 'hermes_studio_use_mobile_calendar',
+        arguments: {
+          session_id: 'codex-runtime-thread-id',
+          action: 'list',
+          purpose: 'Verify calendar access',
+          limit: 20,
+        },
       },
     })
     writeRpc(child, 3, 'tools/call', {
@@ -647,19 +686,6 @@ describe('hermes-web-ui MCP server', () => {
       name: 'hermes_studio_use_worker_status',
       arguments: {},
     })
-    writeRpc(child, 36, 'tools/call', {
-      name: 'hermes_studio_use_toolset',
-      arguments: {
-        action: 'call',
-        tool: 'hermes_studio_use_mobile_location',
-        arguments: {
-          session_id: 'session-1',
-          purpose: 'Find nearby restaurants',
-          accuracy: 'coarse',
-          timeout_ms: 10000,
-        },
-      },
-    })
     writeRpc(child, 20, 'tools/call', {
       name: 'hermes_studio_use_workflows_list',
       arguments: { profile: 'default' },
@@ -720,7 +746,7 @@ describe('hermes-web-ui MCP server', () => {
     expect(list.result.tools[0].description).toContain('internal delegation')
 
     const catalog = JSON.parse((await waitForRpc(responses, 32)).result.content[0].text)
-    expect(catalog).toMatchObject({ toolset: 'use', operation_count: 26 })
+    expect(catalog).toMatchObject({ toolset: 'use', operation_count: 28 })
     expect(catalog.operations.map((tool: any) => tool.name)).toEqual(expect.arrayContaining([
       'hermes_studio_use_chat_run',
       'hermes_studio_use_sessions_count',
@@ -729,6 +755,8 @@ describe('hermes-web-ui MCP server', () => {
       'hermes_studio_use_provider_add',
       'hermes_studio_use_worker_status',
       'hermes_studio_use_mobile_location',
+      'hermes_studio_use_mobile_calendar',
+      'hermes_studio_use_mobile_reminders',
       'hermes_studio_use_workflows_list',
       'hermes_studio_use_workflow_rerun_node',
     ]))
@@ -754,7 +782,7 @@ describe('hermes-web-ui MCP server', () => {
     }
     const gatewaySessionCount = JSON.parse((await waitForRpc(responses, 35)).result.content[0].text)
     expect(gatewaySessionCount.count).toBe(7)
-    const mobileLocation = JSON.parse((await waitForRpc(responses, 36)).result.content[0].text)
+    const mobileLocation = JSON.parse((await waitForRpc(responses, 136)).result.content[0].text)
     expect(mobileLocation).toMatchObject({
       ok: true,
       status: 'success',
@@ -771,6 +799,18 @@ describe('hermes-web-ui MCP server', () => {
       },
     })
 
+    const mobileCalendar = JSON.parse((await waitForRpc(responses, 36)).result.content[0].text)
+    expect(mobileCalendar).toMatchObject({
+      ok: true,
+      status: 'success',
+      body: {
+        capability: 'calendar',
+        session_id: 'studio-codex-session',
+        action: 'list',
+        purpose: 'Verify calendar access',
+        limit: 20,
+      },
+    })
     const chatRun = JSON.parse((await waitForRpc(responses, 3)).result.content[0].text)
     expect(chatRun.body).toMatchObject({ input: 'hello', session_id: 'session-1', include_events: true })
     const sessions = JSON.parse((await waitForRpc(responses, 4)).result.content[0].text)

@@ -55,6 +55,13 @@ import { userCanAccessProfile } from '../repositories/users-store'
 import { observeRunChatPetEvent } from '../public/pet-events'
 import { observeChatRunWebhookEvent, type ChatRunWebhookAgent } from '../services/webhooks'
 import { getAgentStatusSnapshot } from '../public/agent-status-registry'
+import {
+  normalizeMobileCalendarRequest,
+  normalizeMobileCalendarResponse,
+  type MobileCalendarCapability,
+  type MobileCalendarResponse,
+  type MobileCalendarRequest,
+} from '../services/chat-run/mobile-calendar'
 
 type AgentBridgeBackgroundNotification = any
 type AgentBridgeBackgroundSession = any
@@ -171,6 +178,15 @@ function mobileLocationRunInstruction(sessionId: string | undefined, source: str
   ].join(' ')
 }
 
+function mobileCalendarRunInstruction(sessionId: string | undefined, source: string | undefined): string {
+  if (!sessionId || source === 'workflow' || source === 'group_chat') return ''
+  return [
+    `The current Hermes Studio direct-chat session id is ${JSON.stringify(sessionId)}.`,
+    'Only when the user explicitly asks to read or change calendar events, use hermes_studio_use_toolset to describe and call hermes_studio_use_mobile_calendar with this exact session_id.',
+    'Only when the user explicitly asks to read or change reminders, use hermes_studio_use_toolset to describe and call hermes_studio_use_mobile_reminders with this exact session_id.',
+    'The App always asks the user to share once or confirm the write. Never use these tools proactively, in delegated/workflow/group tasks, or for background access. Delete only the exact listed item after fresh App confirmation; never delete a whole recurring series.',
+  ].join(' ')
+}
 type ChatRunBridgeReadiness =
   | { ok: true }
   | { ok: false; error: string; runtimeUnavailable?: true }
@@ -332,6 +348,21 @@ function normalizeMobileLocationResponse(value: unknown): MobileLocationResponse
   return { status: 'success', location }
 }
 
+type PendingMobileCalendarRequest = {
+  sessionId: string
+  profile: string
+  request: MobileCalendarRequest
+  resolve: (response: MobileCalendarResponse) => void
+  timer: NodeJS.Timeout
+}
+const MOBILE_CALENDAR_MIN_TIMEOUT_MS = 3_000
+const MOBILE_CALENDAR_MAX_TIMEOUT_MS = 300_000
+const MOBILE_CALENDAR_DEFAULT_TIMEOUT_MS = 300_000
+function boundedMobileCalendarTimeout(value: unknown): number {
+  const numeric = Math.round(Number(value))
+  if (value == null || !Number.isFinite(numeric) || numeric <= 0) return MOBILE_CALENDAR_DEFAULT_TIMEOUT_MS
+  return Math.max(MOBILE_CALENDAR_MIN_TIMEOUT_MS, Math.min(MOBILE_CALENDAR_MAX_TIMEOUT_MS, numeric))
+}
 export class ChatRunSocket {
   private nsp: ReturnType<Server['of']>
   private bridge = createPrimaryAgentBridge()
@@ -341,6 +372,7 @@ export class ChatRunSocket {
   private bridgeResumePolls = new Set<string>()
   private readonly runWaiters = new Map<string, Set<(event: string, payload: any) => void>>()
   private readonly pendingMobileLocations = new Map<string, PendingMobileLocationRequest>()
+  private readonly pendingMobileCalendar = new Map<string, PendingMobileCalendarRequest>()
   private backgroundPollTimer?: NodeJS.Timeout
   private backgroundPollInFlight = false
   private backgroundRecoveryNeeded = true
@@ -418,6 +450,64 @@ export class ChatRunSocket {
     })
   }
 
+  requestMobileCalendar(options: {
+    sessionId: string
+    profile: string
+    capability: MobileCalendarCapability
+    action?: unknown
+    purpose?: unknown
+    startMs?: unknown
+    endMs?: unknown
+    includeCompleted?: unknown
+    limit?: unknown
+    item?: unknown
+    timeoutMs?: unknown
+  }): Promise<MobileCalendarResponse> {
+    const sessionId = String(options.sessionId || '').trim()
+    const profile = String(options.profile || '').trim() || 'default'
+    const session = getSession(sessionId)
+    if (!session) throw new Error('Session not found')
+    if ((String(session.profile || '').trim() || 'default') !== profile) {
+      throw new Error('Session is not available for this profile')
+    }
+    if (session.source === 'group_chat' || session.source === 'workflow') {
+      throw new Error('Mobile calendar and reminders are available only in direct chats')
+    }
+    for (const pending of this.pendingMobileCalendar.values()) {
+      if (pending.sessionId === sessionId) throw new Error('A mobile calendar or reminder request is already pending')
+    }
+    const request = normalizeMobileCalendarRequest({
+      capability: options.capability,
+      action: options.action,
+      purpose: options.purpose,
+      start_ms: options.startMs,
+      end_ms: options.endMs,
+      include_completed: options.includeCompleted,
+      limit: options.limit,
+      item: options.item,
+    })
+    const requestId = randomUUID()
+    const timeoutMs = boundedMobileCalendarTimeout(options.timeoutMs)
+    const event = request.capability === 'reminder' ? 'reminder.requested' : 'calendar.requested'
+    const idKey = request.capability === 'reminder' ? 'reminder_request_id' : 'calendar_request_id'
+    return new Promise<MobileCalendarResponse>((resolve) => {
+      const timer = setTimeout(() => {
+        this.finishMobileCalendarRequest(requestId, {
+          status: 'error',
+          error: { code: 'calendar_failed' },
+        })
+      }, timeoutMs)
+      timer.unref?.()
+      this.pendingMobileCalendar.set(requestId, { sessionId, profile, request, resolve, timer })
+      this.emitMobileCalendarEvent(profile, sessionId, event, {
+        event,
+        [idKey]: requestId,
+        ...request,
+        timeout_ms: timeoutMs,
+        expires_at_ms: Date.now() + timeoutMs,
+      })
+    })
+  }
   init() {
     this.closing = false
     this.nsp.use(this.authMiddleware.bind(this))
@@ -994,6 +1084,56 @@ export class ChatRunSocket {
       }
       this.finishMobileLocationRequest(data.location_request_id, response)
     })
+    const respondMobileCalendar = (
+      capability: MobileCalendarCapability,
+      data: {
+        session_id?: string
+        calendar_request_id?: string
+        reminder_request_id?: string
+        status?: string
+        result?: unknown
+        error?: unknown
+      },
+    ) => {
+      const requestId = capability === 'reminder' ? data.reminder_request_id : data.calendar_request_id
+      const resolvedEvent = capability === 'reminder' ? 'reminder.resolved' : 'calendar.resolved'
+      const idKey = capability === 'reminder' ? 'reminder_request_id' : 'calendar_request_id'
+      if (!data.session_id || !requestId) return
+      try {
+        requireSocketSessionAccess(data.session_id)
+      } catch (err) {
+        socket.emit(resolvedEvent, {
+          event: resolvedEvent,
+          session_id: data.session_id,
+          [idKey]: requestId,
+          resolved: false,
+          error: err instanceof Error ? err.message : String(err),
+        })
+        return
+      }
+      const pending = this.pendingMobileCalendar.get(requestId)
+      if (!pending || pending.sessionId !== data.session_id || pending.request.capability !== capability) {
+        this.emitToSession(socket, data.session_id, resolvedEvent, {
+          event: resolvedEvent,
+          [idKey]: requestId,
+          resolved: false,
+          stale: true,
+          error: 'Calendar or reminder request is no longer pending.',
+        })
+        return
+      }
+      const response = normalizeMobileCalendarResponse(data, pending.request)
+      if (!response) {
+        this.finishMobileCalendarRequest(requestId, {
+          status: 'error',
+          error: { code: 'calendar_invalid_request' },
+        })
+        return
+      }
+      this.finishMobileCalendarRequest(requestId, response)
+    }
+    socket.on('calendar.respond', data => respondMobileCalendar('calendar', data))
+    socket.on('reminder.respond', data => respondMobileCalendar('reminder', data))
   }
 
   respondCodingAgentApproval(sessionId: string, approvalId: string, choice: string): boolean {
@@ -1066,6 +1206,12 @@ export class ChatRunSocket {
     const locationInstruction = mobileLocationRunInstruction(data.session_id, source)
     if (locationInstruction) {
       data.instructions = [String(data.instructions || '').trim(), locationInstruction]
+        .filter(Boolean)
+        .join('\n\n')
+    }
+    const calendarInstruction = mobileCalendarRunInstruction(data.session_id, source)
+    if (calendarInstruction) {
+      data.instructions = [String(data.instructions || '').trim(), calendarInstruction]
         .filter(Boolean)
         .join('\n\n')
     }
@@ -2163,6 +2309,13 @@ export class ChatRunSocket {
         error: { code: 'location_failed' },
       })
     }
+    for (const [requestId, pending] of this.pendingMobileCalendar.entries()) {
+      if (pending.sessionId !== sid) continue
+      this.finishMobileCalendarRequest(requestId, {
+        status: 'error',
+        error: { code: 'calendar_failed' },
+      })
+    }
     codingAgentRunManager.stop(sid, { reportClosed: false })
     const state = this.sessionMap.get(sid)
     state?.abortController?.abort()
@@ -2368,6 +2521,43 @@ export class ChatRunSocket {
     this.emitPendingInteraction(profile, event, tagged)
   }
 
+  private finishMobileCalendarRequest(requestId: string, response: MobileCalendarResponse): boolean {
+    const pending = this.pendingMobileCalendar.get(requestId)
+    if (!pending) return false
+    this.pendingMobileCalendar.delete(requestId)
+    clearTimeout(pending.timer)
+    this.clearMobileCalendarEventState(pending.sessionId, requestId)
+    const event = pending.request.capability === 'reminder' ? 'reminder.resolved' : 'calendar.resolved'
+    const idKey = pending.request.capability === 'reminder' ? 'reminder_request_id' : 'calendar_request_id'
+    this.emitMobileCalendarEvent(pending.profile, pending.sessionId, event, {
+      event,
+      [idKey]: requestId,
+      status: response.status,
+      resolved: true,
+      ...(response.status === 'error' ? { error: response.error } : {}),
+    })
+    pending.resolve(response)
+    return true
+  }
+  private clearMobileCalendarEventState(sessionId: string, requestId: string): void {
+    const state = this.sessionMap.get(sessionId)
+    if (!state?.events.length) return
+    state.events = state.events.filter(({ event, data }) => {
+      if (!['calendar.requested', 'calendar.resolved', 'reminder.requested', 'reminder.resolved'].includes(event)) return true
+      return data?.calendar_request_id !== requestId && data?.reminder_request_id !== requestId
+    })
+  }
+  private emitMobileCalendarEvent(profile: string, sessionId: string, event: string, payload: any): void {
+    const tagged = { ...payload, session_id: sessionId }
+    if (event === 'calendar.requested' || event === 'reminder.requested') {
+      const state = getOrCreateSession(this.sessionMap, sessionId)
+      state.events = state.events.filter(({ event: current }) =>
+        !['calendar.requested', 'calendar.resolved', 'reminder.requested', 'reminder.resolved'].includes(current))
+      state.events.push({ event, data: tagged })
+    }
+    this.emitPendingInteraction(profile, event, tagged)
+    this.nsp.to(`session:${sessionId}`).emit(event, tagged)
+  }
   private emitToSession(socket: Socket, sessionId: string, event: string, payload: any) {
     const tagged = { ...payload, session_id: sessionId }
     const profile = this.resolvePetEventProfile(sessionId, tagged)
@@ -2397,7 +2587,9 @@ export class ChatRunSocket {
     this.emitSessionActivity(profile, event, payload)
     if (event !== 'approval.requested' && event !== 'approval.resolved'
       && event !== 'clarify.requested' && event !== 'clarify.resolved'
-      && event !== 'location.requested' && event !== 'location.resolved') return
+      && event !== 'location.requested' && event !== 'location.resolved'
+      && event !== 'calendar.requested' && event !== 'calendar.resolved'
+      && event !== 'reminder.requested' && event !== 'reminder.resolved') return
     const sessionId = typeof payload?.session_id === 'string' ? payload.session_id : ''
     const source = sessionId
       ? this.sessionMap.get(sessionId)?.source || getSession(sessionId)?.source
@@ -2458,6 +2650,12 @@ export class ChatRunSocket {
       this.finishMobileLocationRequest(requestId, {
         status: 'error',
         error: { code: 'location_failed' },
+      })
+    }
+    for (const requestId of [...this.pendingMobileCalendar.keys()]) {
+      this.finishMobileCalendarRequest(requestId, {
+        status: 'error',
+        error: { code: 'calendar_failed' },
       })
     }
     const releaseClaims: Array<Promise<unknown>> = []
