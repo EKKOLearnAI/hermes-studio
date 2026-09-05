@@ -136,7 +136,7 @@ describe('ChatRunSocket mobile location', () => {
         accuracyMeters: 65,
         altitudeMeters: 12,
         speedMetersPerSecond: 2,
-        coordinateSystem: 'gcj02',
+        coordinateSystem: 'wgs84',
         timestamp: 123456789,
         address: { street: 'must not be retained' },
       },
@@ -164,6 +164,89 @@ describe('ChatRunSocket mobile location', () => {
         resolved: true,
       }),
     }))
+  })
+
+  it.each([
+    { latitude: null },
+    { longitude: '' },
+    { latitude: undefined },
+    { longitude: ' ' },
+    { latitude: false },
+    { longitude: true },
+    { latitude: [] },
+    { longitude: {} },
+    { latitude: '31.2304' },
+    { longitude: '121.4737' },
+    { latitude: NaN },
+    { longitude: Infinity },
+    { latitude: -91 },
+    { latitude: 91 },
+    { longitude: -181 },
+    { longitude: 181 },
+    { coordinateSystem: 'gcj02' },
+    { coordinateSystem: 'bd09' },
+    { coordinateSystem: undefined },
+    { coordinateSystem: null },
+    { coordinateSystem: '' },
+  ])('rejects invalid location fields %j and resolves the pending request', async (invalidFields) => {
+    const { ChatRunSocket } = await import('../../packages/server/src/modules/studio/sockets/chat-run')
+    const { emitted, handlers, io, socket } = createHarness()
+    const server = new ChatRunSocket(io as any)
+    ;(server as any).sessionMap.set('session-1', {
+      messages: [], events: [], queue: [], isWorking: true, profile: 'default', source: 'cli',
+    })
+    ;(server as any).onConnection(socket)
+    const resultPromise = server.requestMobileLocation({
+      sessionId: 'session-1', profile: 'default', purpose: 'Use current location',
+    })
+    const request = emitted.find(item => item.event === 'location.requested')
+    handlers.get('location.respond')!({
+      session_id: 'session-1',
+      location_request_id: request?.payload.location_request_id,
+      status: 'success',
+      location: {
+        latitude: 31.2304, longitude: 121.4737, coordinateSystem: 'wgs84', ...invalidFields,
+      },
+    })
+    await expect(resultPromise).resolves.toEqual({
+      status: 'error', error: { code: 'location_invalid_result' },
+    })
+    expect((server as any).pendingMobileLocations.size).toBe(0)
+    expect((server as any).sessionMap.get('session-1').events).toEqual([])
+    expect(emitted).toContainEqual(expect.objectContaining({
+      event: 'location.resolved',
+      payload: expect.objectContaining({
+        resolved: true, status: 'error', error: { code: 'location_invalid_result' },
+      }),
+    }))
+  })
+
+  it.each([
+    { latitude: 0, longitude: 0 },
+    { latitude: -90, longitude: -180 },
+    { latitude: 90, longitude: 180 },
+  ])('preserves valid WGS84 coordinates %j without inventing optional values', async (coordinates) => {
+    const { ChatRunSocket } = await import('../../packages/server/src/modules/studio/sockets/chat-run')
+    const { emitted, handlers, io, socket } = createHarness()
+    const server = new ChatRunSocket(io as any)
+    ;(server as any).onConnection(socket)
+    const resultPromise = server.requestMobileLocation({
+      sessionId: 'session-1', profile: 'default', purpose: 'Use current location',
+    })
+    const request = emitted.find(item => item.event === 'location.requested')
+    handlers.get('location.respond')!({
+      session_id: 'session-1',
+      location_request_id: request?.payload.location_request_id,
+      status: 'success',
+      location: {
+        ...coordinates, coordinateSystem: 'wgs84', accuracyMeters: 10,
+        timestamp: 123456789, altitudeMeters: null, speedMetersPerSecond: '',
+      },
+    })
+    await expect(resultPromise).resolves.toEqual({
+      status: 'success',
+      location: { ...coordinates, coordinateSystem: 'wgs84', accuracyMeters: 10, timestamp: 123456789 },
+    })
   })
 
   it('returns a denial without storing location data', async () => {

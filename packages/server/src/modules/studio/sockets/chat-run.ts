@@ -289,8 +289,7 @@ function boundedMobileLocationTimeout(value: unknown): number {
 }
 
 function finiteLocationNumber(value: unknown): number | null {
-  const numeric = Number(value)
-  return Number.isFinite(numeric) ? numeric : null
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
 
 function normalizeMobileLocationResponse(value: unknown): MobileLocationResponse | null {
@@ -306,6 +305,8 @@ function normalizeMobileLocationResponse(value: unknown): MobileLocationResponse
     }
   }
   if (status !== 'success' || !response.location || typeof response.location !== 'object') return null
+  // The App must supply WGS84 coordinates; relabeling another system does not convert it.
+  if (Array.isArray(response.location) || response.location.coordinateSystem !== 'wgs84') return null
   const latitude = finiteLocationNumber(response.location.latitude)
   const longitude = finiteLocationNumber(response.location.longitude)
   if (
