@@ -33,6 +33,9 @@ bridge = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = bridge
 spec.loader.exec_module(bridge)
 
+# Explicitly simulate an absent optional runtime, even on development hosts
+# where Hermes has already been imported during bridge initialization.
+sys.modules["tools.mcp_tool"] = None
 server = bridge.BridgeServer("tcp://127.0.0.1:0")
 server._read_mcp_config = lambda profile: {
     "mcp_servers": {

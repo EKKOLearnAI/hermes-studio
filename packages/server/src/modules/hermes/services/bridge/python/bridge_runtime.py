@@ -835,7 +835,12 @@ def _load_enabled_toolsets() -> list[str] | None:
 def _discover_bridge_mcp_tools() -> list[str]:
     _ensure_agent_imports()
     try:
-        from tools.mcp_tool import discover_mcp_tools
+        try:
+            from tools.mcp_tool_discovery import discover_mcp_tools
+        except ModuleNotFoundError as exc:
+            if exc.name != "tools.mcp_tool_discovery":
+                raise
+            from tools.mcp_tool import discover_mcp_tools
 
         tools = discover_mcp_tools()
         return list(tools) if isinstance(tools, list) else []
