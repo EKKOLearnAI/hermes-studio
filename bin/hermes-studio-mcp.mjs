@@ -1294,10 +1294,10 @@ const tools = [
   {
     name: 'hermes_studio_use_mobile_calendar',
     toolset: 'use',
-    description: 'With the user’s explicit request, ask their mobile App to list, create, or update calendar events in the current direct chat. The App always requires one-time confirmation. Delete and background access are not supported.',
+    description: 'With the user’s explicit request, ask their mobile App to list, create, update, or delete calendar events in the current direct chat. The App always requires one-time confirmation. Single-item delete requires exact listed id, title and start_ms (calendar) or due_ms when present (reminder), with fresh App confirmation. Background access is not supported.',
     inputSchema: inputSchema({
       session_id: { type: 'string', description: 'Exact current Hermes Studio direct-chat session id supplied in the run context.' },
-      action: { type: 'string', enum: ['list', 'create', 'update'], description: 'Calendar operation.' },
+      action: { type: 'string', enum: ['list', 'create', 'update', 'delete'], description: 'Calendar operation.' },
       purpose: { type: 'string', description: 'Short user-visible reason for the request.' },
       start_ms: { type: 'number', description: 'List range start as Unix milliseconds.' },
       end_ms: { type: 'number', description: 'List range end as Unix milliseconds; maximum range is 31 days.' },
@@ -1309,10 +1309,10 @@ const tools = [
   {
     name: 'hermes_studio_use_mobile_reminders',
     toolset: 'use',
-    description: 'With the user’s explicit request, ask their mobile App to list, create, update, or complete reminders in the current direct chat. The App always requires one-time confirmation. Delete and background access are not supported.',
+    description: 'With the user’s explicit request, ask their mobile App to list, create, update, complete, or delete reminders in the current direct chat. The App always requires one-time confirmation. Single-item delete requires exact listed id, title and start_ms (calendar) or due_ms when present (reminder), with fresh App confirmation. Background access is not supported.',
     inputSchema: inputSchema({
       session_id: { type: 'string', description: 'Exact current Hermes Studio direct-chat session id supplied in the run context.' },
-      action: { type: 'string', enum: ['list', 'create', 'update', 'complete'], description: 'Reminder operation.' },
+      action: { type: 'string', enum: ['list', 'create', 'update', 'complete', 'delete'], description: 'Reminder operation.' },
       purpose: { type: 'string', description: 'Short user-visible reason for the request.' },
       start_ms: { type: 'number', description: 'List range start as Unix milliseconds.' },
       end_ms: { type: 'number', description: 'List range end as Unix milliseconds; maximum range is 31 days.' },

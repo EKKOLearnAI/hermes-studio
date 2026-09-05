@@ -117,7 +117,31 @@ describe('ChatRunSocket mobile calendar and reminders', () => {
     expect((server as any).sessionMap.get('session-1').events).toEqual([])
   })
 
-  it('supports reminder completion but rejects delete and workflow requests', async () => {
+  it('requires fresh deletion confirmation and rejects late responses', async () => {
+    vi.useFakeTimers()
+    try {
+      const { ChatRunSocket } = await import('../../packages/server/src/modules/studio/sockets/chat-run')
+      const { emitted, handlers, io, socket } = harness()
+      const server = new ChatRunSocket(io as any)
+      ;(server as any).onConnection(socket)
+      const options = { sessionId: 'session-1', profile: 'default', capability: 'reminder' as const,
+        action: 'delete', purpose: 'Delete test', item: { id: '1', title: 'test' }, timeoutMs: 3000 }
+      const pending = server.requestMobileCalendar(options)
+      const first = emitted.find(item => item.event === 'reminder.requested')!.payload
+      expect(first.expires_at_ms).toBe(Date.now() + 3000)
+      handlers.get('reminder.respond')?.({ session_id: 'session-1', reminder_request_id: first.reminder_request_id, status: 'denied' })
+      await expect(pending).resolves.toEqual({ status: 'denied' })
+      const timed = server.requestMobileCalendar(options)
+      await vi.advanceTimersByTimeAsync(3001)
+      await expect(timed).resolves.toMatchObject({ status: 'error' })
+      expect((server as any).pendingMobileCalendar.size).toBe(0)
+      handlers.get('reminder.respond')?.({ session_id: 'session-1', reminder_request_id: first.reminder_request_id,
+        status: 'success', result: { item: { id: '1', deleted: true } } })
+      expect((server as any).pendingMobileCalendar.size).toBe(0)
+    } finally { vi.useRealTimers() }
+  })
+
+  it('supports reminder completion but rejects incomplete delete and workflow requests', async () => {
     const { ChatRunSocket } = await import('../../packages/server/src/modules/studio/sockets/chat-run')
     const { io } = harness()
     const server = new ChatRunSocket(io as any)
@@ -128,7 +152,7 @@ describe('ChatRunSocket mobile calendar and reminders', () => {
       action: 'delete',
       purpose: 'Delete it',
       item: { id: '1' },
-    })).toThrow('Unsupported reminder action')
+    })).toThrow('A valid item is required')
     sessionStoreMock.getSession.mockReturnValue({ id: 'session-1', profile: 'default', source: 'workflow' })
     expect(() => server.requestMobileCalendar({
       sessionId: 'session-1',
