@@ -141,6 +141,24 @@ describe('ChatRunSocket mobile calendar and reminders', () => {
     } finally { vi.useRealTimers() }
   })
 
+  it.each([undefined, null, 0, 600000, 300000])('uses a matching five-minute card/server deadline for %s', async timeoutMs => {
+    vi.useFakeTimers()
+    try {
+      const { ChatRunSocket } = await import('../../packages/server/src/modules/studio/sockets/chat-run')
+      const { emitted, io } = harness()
+      const server = new ChatRunSocket(io as any)
+      const promise = server.requestMobileCalendar({ sessionId: 'session-1', profile: 'default', capability: 'reminder', action: 'list', purpose: 'test', timeoutMs })
+      const event = emitted.find(entry => entry.event === 'reminder.requested')!.payload
+      expect(event.timeout_ms).toBe(300000)
+      expect(event.expires_at_ms).toBe(Date.now() + 300000)
+      await vi.advanceTimersByTimeAsync(60001)
+      expect((server as any).pendingMobileCalendar.size).toBe(1)
+      await vi.advanceTimersByTimeAsync(239999)
+      await expect(promise).resolves.toMatchObject({ status: 'error' })
+      expect((server as any).pendingMobileCalendar.size).toBe(0)
+    } finally { vi.useRealTimers() }
+  })
+
   it('supports reminder completion but rejects incomplete delete and workflow requests', async () => {
     const { ChatRunSocket } = await import('../../packages/server/src/modules/studio/sockets/chat-run')
     const { io } = harness()

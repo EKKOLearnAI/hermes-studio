@@ -1057,7 +1057,7 @@ openapi.paths['/api/studio/mobile-calendar/request'] = {
               include_completed: { type: 'boolean' },
               limit: { type: 'integer', minimum: 1, maximum: 100 },
               item: { type: 'object', additionalProperties: true },
-              timeout_ms: { type: 'integer', minimum: 3000, maximum: 60000 },
+              timeout_ms: { type: 'integer', minimum: 3000, maximum: 300000, default: 300000 },
             },
           },
         },
