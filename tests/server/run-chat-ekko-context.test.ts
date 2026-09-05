@@ -1399,6 +1399,34 @@ describe('ekko-agent context usage events', () => {
     })
   })
 
+  it('persists Ekko annotation display content separately from model storage content', async () => {
+    agentRunMock.mockResolvedValueOnce({
+      runId: 'run-1',
+      output: { role: 'assistant', content: 'done', usage: { inputTokens: 3, outputTokens: 2 } },
+      steps: [], messages: [], events: [], contextEstimate: { contextTokens: 5_000 },
+    })
+    const { handleEkkoAgentRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-ekko-agent-run')
+    const { nsp, socket, sessionMap, state } = makeHarness()
+    const storageText = '<response_annotations>model context</response_annotations>'
+    const displayText = '{"__hermes_studio_response_annotations__":1,"body":"","annotations":[]}'
+
+    await handleEkkoAgentRun(nsp as any, socket as any, {
+      session_id: 'session-1', input: storageText, storage_message: storageText,
+      display_input: displayText, coding_agent_id: 'ekko-agent',
+    }, 'default', sessionMap, vi.fn(() => false))
+
+    expect(addMessageMock).toHaveBeenCalledWith(expect.objectContaining({
+      role: 'user', content: storageText, display_content: displayText,
+    }))
+    expect(state.messages[0]).toEqual(expect.objectContaining({
+      role: 'user', content: storageText, display_content: displayText,
+    }))
+    const peerEmit = (socket.to as any).mock.results[0]?.value.emit
+    expect(peerEmit).toHaveBeenCalledWith('run.peer_user_message', expect.objectContaining({
+      message: expect.objectContaining({ content: displayText }),
+    }))
+  })
+
   it('loads frontend image blocks into ephemeral model content parts without storing base64', async () => {
     const imagePath = join(process.cwd(), 'packages/client/public/coding-agents/ekko-agent.png')
     const expectedBase64 = (await readFile(imagePath)).toString('base64')

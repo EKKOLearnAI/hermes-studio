@@ -5,8 +5,8 @@ import type { ProviderApiMode } from './provider-api-mode'
 
 export type ContentBlock =
   | { type: 'text'; text: string }
-  | { type: 'image'; name: string; path: string; media_type: string; context?: string; video_frame?: boolean }
-  | { type: 'file'; name: string; path: string; media_type?: string; context?: string }
+  | { type: 'image'; name: string; path: string; media_type: string; context?: string; video_frame?: boolean; annotation_id?: string }
+  | { type: 'file'; name: string; path: string; media_type?: string; context?: string; annotation_id?: string }
 
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system'
@@ -17,6 +17,8 @@ export interface StartRunRequest {
   input: string | ContentBlock[]
   /** Optional UI/storage representation when model input carries hidden metadata. */
   display_input?: string | ContentBlock[] | null
+  /** Model-facing content persisted separately from display_input. */
+  storage_message?: string
   instructions?: string
   session_id?: string
   profile?: string
@@ -926,8 +928,10 @@ export function startRunViaSocket(
   options?: {
     onReconnectResume?: (data: ResumeSessionPayload) => void
     transport?: ChatRunTransport
+    /** Opt in to a bounded server-acceptance gate for durable draft clearing. */
+    trackAcceptance?: boolean
   },
-): { abort: () => void } {
+): { abort: () => void; accepted: Promise<boolean> } {
   const sid = body.session_id
   if (!sid) {
     throw new Error('session_id is required for startRunViaSocket')
@@ -935,9 +939,55 @@ export function startRunViaSocket(
 
   let closed = false
   const socket = connectChatRun(body.profile, options?.transport)
+
+  const trackAcceptance = options?.trackAcceptance === true
+  let resolveAccepted: (accepted: boolean) => void = () => {}
+  let acceptanceSettled = false
+  let acceptanceTimeout: ReturnType<typeof setTimeout> | null = null
+  const accepted = trackAcceptance
+    ? new Promise<boolean>((resolve) => { resolveAccepted = resolve })
+    : Promise.resolve(true)
+  const settleAcceptance = (value: boolean) => {
+    if (acceptanceSettled) return
+    acceptanceSettled = true
+    if (acceptanceTimeout) clearTimeout(acceptanceTimeout)
+    acceptanceTimeout = null
+    removeSocketListener(socket, 'run.started', handleAcceptedStart)
+    removeSocketListener(socket, 'run.queued', handleAcceptedQueue)
+    removeSocketListener(socket, 'run.accepted', handleAcceptedRun)
+    removeSocketListener(socket, 'run.failed', handleRejectedRun)
+    removeSocketListener(socket, 'connect_error', handleRejectedConnect)
+    resolveAccepted(value)
+  }
+  const matchesSubmission = (evt: RunEvent) => {
+    if (evt?.session_id !== sid) return false
+    return !body.queue_id || evt.queue_id === body.queue_id
+  }
+  const handleAcceptedStart = (evt: RunEvent) => {
+    if (matchesSubmission(evt)) settleAcceptance(true)
+  }
+  const handleAcceptedQueue = (evt: RunEvent) => {
+    if (matchesSubmission(evt)) settleAcceptance(true)
+  }
+  const handleAcceptedRun = (evt: RunEvent) => {
+    if (matchesSubmission(evt)) settleAcceptance(true)
+  }
+  const handleRejectedRun = (evt: RunEvent) => {
+    if (matchesSubmission(evt)) settleAcceptance(false)
+  }
+  const handleRejectedConnect = () => settleAcceptance(false)
+  if (trackAcceptance) {
+    socket.on('run.started', handleAcceptedStart)
+    socket.on('run.queued', handleAcceptedQueue)
+    socket.on('run.accepted', handleAcceptedRun)
+    socket.on('run.failed', handleRejectedRun)
+    socket.on('connect_error', handleRejectedConnect)
+    acceptanceTimeout = setTimeout(() => settleAcceptance(false), 30_000)
+  }
   if (sessionEventHandlers.has(sid)) {
     socket.emit('run', body)
     return {
+      accepted,
       abort: () => {
         if (!closed) {
           socket.emit('abort', { session_id: sid })
@@ -971,6 +1021,7 @@ export function startRunViaSocket(
 
   const handleSocketError = (err: Error) => {
     if (closed) return
+    settleAcceptance(false)
     closed = true
     removeTerminalSocketListeners()
     sessionEventHandlers.delete(sid)
@@ -1153,6 +1204,7 @@ export function startRunViaSocket(
   socket.emit('run', body)
 
   return {
+    accepted,
     abort: () => {
       if (!closed) {
         socket.emit('abort', { session_id: sid })
