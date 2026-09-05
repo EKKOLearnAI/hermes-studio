@@ -157,6 +157,40 @@ describe('response annotation composer and sent evidence', () => {
     expect(editor.style.maxHeight).toBe('76px')
   })
 
+  it('keeps comment and files unchanged when Save exceeds the aggregate file limit', async () => {
+    const store = useChatAnnotationsStore()
+    store.addAnnotation('session-1', { ...annotation(), comment: 'Original comment' })
+    store.openEditor('session-1', 'annotation-1', {
+      left: 100, top: 100, right: 140, bottom: 120, width: 40, height: 20,
+    })
+    mount(ResponseAnnotationComposer, {
+      attachTo: document.body,
+      props: { sessionId: 'session-1' },
+    })
+    await nextTick()
+    const editor = document.body.querySelector<HTMLElement>('[data-testid="response-annotation-editor"]')!
+    const textarea = editor.querySelector<HTMLTextAreaElement>('textarea')!
+    textarea.value = 'Changed comment'
+    textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    const files = Array.from({ length: 11 }, (_, index) => (
+      new File(['proof'], `proof-${index}.txt`, { type: 'text/plain' })
+    ))
+    const input = editor.querySelector<HTMLInputElement>('input[type="file"]')!
+    Object.defineProperty(input, 'files', { configurable: true, value: files })
+    input.dispatchEvent(new Event('change', { bubbles: true }))
+    await nextTick()
+
+    const save = Array.from(editor.querySelectorAll('button'))
+      .find(button => button.textContent?.trim() === 'chat.annotations.save')!
+    save.click()
+    await nextTick()
+
+    expect(editor.textContent).toContain('chat.annotations.tooManyFiles')
+    expect(store.annotationsForSession('session-1')[0].comment).toBe('Original comment')
+    expect(store.pendingFilesForAnnotation('annotation-1')).toEqual([])
+    expect(store.activeEditor?.annotationId).toBe('annotation-1')
+  })
+
   it('renders immutable sent annotations and dispatches Show source without edit controls', async () => {
     const sourceRequest = vi.fn()
     window.addEventListener('hermes:show-response-annotation-source', sourceRequest)

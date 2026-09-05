@@ -143,13 +143,6 @@ function saveEditor() {
     validationError.value = t('chat.annotations.commentTooLong', { count: MAX_RESPONSE_ANNOTATION_COMMENT_LENGTH })
     return
   }
-  const updateError = annotationsStore.updateAnnotation(props.sessionId, current.id, {
-    comment: comment.value.trim() || null,
-  })
-  if (updateError) {
-    validationError.value = t(`chat.annotations.errors.${updateError}`)
-    return
-  }
   const existingPersistedFiles = annotations.value.find(annotation => annotation.id === current.id)?.files.length || 0
   const otherFileCount = annotations.value.reduce((total, annotation) => (
     total
@@ -157,6 +150,13 @@ function saveEditor() {
   ), 0)
   if (existingPersistedFiles + otherFileCount + editorFiles.value.length > 10) {
     validationError.value = t('chat.annotations.tooManyFiles', { count: 10 })
+    return
+  }
+  const updateError = annotationsStore.updateAnnotation(props.sessionId, current.id, {
+    comment: comment.value.trim() || null,
+  })
+  if (updateError) {
+    validationError.value = t(`chat.annotations.errors.${updateError}`)
     return
   }
   annotationsStore.replacePendingFiles(current.id, editorFiles.value)
