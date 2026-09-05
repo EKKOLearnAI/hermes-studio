@@ -2308,7 +2308,6 @@ export class ChatRunSocket {
         error: { code: 'location_failed' },
       })
     }
-    codingAgentRunManager.stop(sid, { reportClosed: false })
     for (const [requestId, pending] of this.pendingMobileCalendar.entries()) {
       if (pending.sessionId !== sid) continue
       this.finishMobileCalendarRequest(requestId, {
