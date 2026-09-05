@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import { NAlert, NButton, NSpin, useMessage } from 'naive-ui'
+import { computed, defineAsyncComponent, ref, watch } from 'vue'
+import { NAlert, NButton, NSpin, NTooltip, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import type { FileEntry, WorkspaceFileDiff } from '@/api/studio/files'
 import { fetchSessionWorkspaceFileDiff, readSessionWorkspaceFile } from '@/api/studio/sessions'
 import { fetchGroupWorkspaceFileDiff, readGroupWorkspaceFile } from '@/api/studio/group-chat'
-import { getLanguageFromPath, useFilesStore } from '@/stores/hermes/files'
+import { getLanguageFromPath, isMarkdownFile, useFilesStore } from '@/stores/hermes/files'
 import { handleCodeBlockCopyClick, renderHighlightedCodeBlock } from '@/components/hermes/chat/highlight'
+
+const MarkdownRenderer = defineAsyncComponent(async () => (await import('@/components/hermes/chat/MarkdownRenderer.vue')).default)
 
 const props = defineProps<{
   entry: FileEntry
@@ -116,8 +118,45 @@ watch(
         </span>
       </div>
       <div class="diff-actions">
-        <NButton size="small" secondary @click="editFile">{{ t('common.edit') }}</NButton>
-        <NButton size="small" quaternary @click="emit('close')">{{ t('files.closePreview') }}</NButton>
+        <NTooltip trigger="hover">
+          <template #trigger>
+            <NButton
+              class="diff-action-button"
+              size="small"
+              quaternary
+              circle
+              :aria-label="t('common.edit')"
+              @click="editFile"
+            >
+              <template #icon>
+                <svg data-icon="edit" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 20h9" />
+                  <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                </svg>
+              </template>
+            </NButton>
+          </template>
+          {{ t('common.edit') }}
+        </NTooltip>
+        <NTooltip trigger="hover">
+          <template #trigger>
+            <NButton
+              class="diff-action-button"
+              size="small"
+              quaternary
+              circle
+              :aria-label="t('files.closePreview')"
+              @click="emit('close')"
+            >
+              <template #icon>
+                <svg data-icon="close" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="m18 6-12 12M6 6l12 12" />
+                </svg>
+              </template>
+            </NButton>
+          </template>
+          {{ t('files.closePreview') }}
+        </NTooltip>
       </div>
     </header>
     <main class="diff-content">
@@ -132,6 +171,12 @@ watch(
         v-html="renderedPatch"
         @click="handleDiffClick"
       />
+      <div
+        v-else-if="fileContent !== null && isMarkdownFile(entry.name)"
+        class="workspace-markdown-preview"
+      >
+        <MarkdownRenderer :content="fileContent" />
+      </div>
       <div
         v-else-if="fileContent !== null"
         class="file-code"
@@ -195,6 +240,18 @@ watch(
 .diff-add { color: #2da44e; }
 .diff-del { color: #cf222e; }
 
+.diff-action-button {
+  :deep(svg) {
+    width: 16px;
+    height: 16px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.7;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+}
+
 .diff-content {
   flex: 1;
   min-width: 0;
@@ -206,6 +263,24 @@ watch(
   display: flex;
   justify-content: center;
   margin-top: 24px;
+}
+
+.workspace-markdown-preview {
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  box-sizing: border-box;
+  padding: 24px clamp(16px, 4vw, 48px);
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
+
+  :deep(.markdown-body) {
+    width: min(800px, 100%);
+    margin: 0 auto;
+  }
 }
 
 .diff-code,
