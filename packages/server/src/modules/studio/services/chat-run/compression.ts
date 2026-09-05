@@ -186,6 +186,16 @@ async function resolveCompressionModelContext(
   return { model, provider }
 }
 
+export async function isStudioTurnTailCompressionEnabled(profile: string): Promise<boolean> {
+  try {
+    const compression = (await readConfigYamlForProfile(profile))?.compression
+    return compression?.studio_compact_on_turn_end === true
+  } catch (err) {
+    logger.warn(err, '[context-compress] failed to read Studio turn-tail compression config for profile %s', profile)
+    return false
+  }
+}
+
 async function getRunChatCompressionConfig(profile: string, contextLength: number): Promise<RunChatCompressionConfig> {
   let raw: Record<string, any> = {}
   try {
@@ -442,6 +452,35 @@ export async function buildCompressedHistory(
     if (isContextWindowTooSmallError(err)) throw err
     logger.warn(err, '[chat-run-socket] failed to build compressed history for session %s', sessionId)
     return []
+  }
+}
+
+export async function compactStudioTurnTail(args: {
+  sessionId: string
+  profile: string
+  upstream: string
+  apiKey?: string
+  emit: (event: string, payload: any) => void
+  sessionMap: Map<string, SessionState>
+  modelContext?: CompressionModelContext
+  contextTokenEstimator?: (messages: ChatMessage[], messageTokens: number) => Promise<number | null | undefined>
+}): Promise<number | undefined> {
+  try {
+    await buildCompressedHistory(
+      args.sessionId,
+      args.profile,
+      args.upstream,
+      args.apiKey,
+      args.emit,
+      args.sessionMap,
+      args.modelContext,
+      args.contextTokenEstimator,
+      0,
+      false,
+    )
+    return args.sessionMap.get(args.sessionId)?.contextTokens
+  } catch (err) {
+    logger.warn(err, '[context-compress] Studio turn-tail compression failed for session %s; completing run', args.sessionId)
   }
 }
 

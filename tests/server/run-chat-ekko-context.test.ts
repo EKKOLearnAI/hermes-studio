@@ -25,6 +25,9 @@ const getGlobalEkkoAgentMock = vi.hoisted(() => vi.fn(() => ({
   sessionWorkspaceDirectory: agentSessionWorkspaceDirectoryMock,
 })))
 const buildCompressedHistoryMock = vi.hoisted(() => vi.fn())
+const buildDbSnapshotAwareHistoryMock = vi.hoisted(() => vi.fn())
+const compactStudioTurnTailMock = vi.hoisted(() => vi.fn())
+const isStudioTurnTailCompressionEnabledMock = vi.hoisted(() => vi.fn(async () => false))
 const recordSessionUsageMock = vi.hoisted(() => vi.fn())
 const startWorkspaceRunCheckpointMock = vi.hoisted(() => vi.fn())
 const completeWorkspaceRunCheckpointMock = vi.hoisted(() => vi.fn())
@@ -48,6 +51,9 @@ vi.mock('../../packages/server/src/modules/studio/services/chat-run/compression'
   return {
     ...actual,
     buildCompressedHistory: buildCompressedHistoryMock,
+    buildDbSnapshotAwareHistory: buildDbSnapshotAwareHistoryMock,
+    compactStudioTurnTail: compactStudioTurnTailMock,
+    isStudioTurnTailCompressionEnabled: isStudioTurnTailCompressionEnabledMock,
   }
 })
 
@@ -173,6 +179,9 @@ function continuationContext(subagentId = 'child-background') {
 describe('ekko-agent context usage events', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    isStudioTurnTailCompressionEnabledMock.mockResolvedValue(false)
+    buildDbSnapshotAwareHistoryMock.mockResolvedValue([])
+    compactStudioTurnTailMock.mockResolvedValue(undefined)
     agentEstimateContextMock.mockResolvedValue({ contextTokens: 5_000 })
     buildCompressedHistoryMock.mockImplementation(async (
       sessionId: string,
@@ -219,6 +228,53 @@ describe('ekko-agent context usage events', () => {
       },
     })
     completeWorkspaceRunCheckpointMock.mockReturnValue(null)
+  })
+
+  it('runs enabled turn-tail compression before Ekko completion and queue release', async () => {
+    isStudioTurnTailCompressionEnabledMock.mockResolvedValue(true)
+    buildDbSnapshotAwareHistoryMock.mockResolvedValue([{ role: 'user', content: 'previous' }])
+    const order: string[] = []
+    addMessagesMock.mockImplementation((messages: unknown[]) => {
+      order.push('persist')
+      return messages.map((_, index) => 100 + index)
+    })
+    compactStudioTurnTailMock.mockImplementation(async () => {
+      order.push('compress')
+      return 1_234
+    })
+    agentRunMock.mockImplementationOnce(async (input: any) => {
+      input.onEvent({ type: 'context.estimated', runId: 'run-turn-tail', estimate: { contextTokens: 5_000, context_tokens: 5_000 } })
+      return {
+        runId: 'run-turn-tail',
+        output: { role: 'assistant', content: 'done' },
+        steps: [],
+      }
+    })
+    const { handleEkkoAgentRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-ekko-agent-run')
+    const { nsp, socket, sessionMap, events } = makeHarness()
+
+    await handleEkkoAgentRun(nsp as any, socket as any, {
+      session_id: 'session-1',
+      input: 'continue',
+      coding_agent_id: 'ekko-agent',
+      onEvent: (event: string, payload: any) => {
+        events.push({ event, payload })
+        if (event === 'run.completed') order.push('completed')
+      },
+    }, 'default', sessionMap as any, vi.fn())
+
+    expect(compactStudioTurnTailMock).toHaveBeenCalledTimes(1)
+    expect(compactStudioTurnTailMock).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'session-1' }))
+    expect(order.indexOf('persist')).toBeLessThan(order.indexOf('compress'))
+    expect(order.indexOf('compress')).toBeLessThan(order.indexOf('completed'))
+    expect(events.find(item => item.event === 'run.completed')?.payload).toMatchObject({
+      contextTokens: 1_234,
+      context_tokens: 1_234,
+    })
+    expect(events.find(item => item.event === 'run.completed')?.payload.contextEstimate).toMatchObject({
+      contextTokens: 1_234,
+      context_tokens: 1_234,
+    })
   })
 
   it('bridges Ekko tool approval requests through the existing chat events', async () => {

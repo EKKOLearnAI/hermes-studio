@@ -80,6 +80,7 @@ Hermes 控制面 API 使用 `/api/hermes/*`。已经发布的旧版移动 App �
 - 可直接预览 Agent 生成的 HTML、PDF、DOCX、PPTX、XLSX、CSV、图片、Markdown 和源码文件
 - 会话搜索 — Ctrl+K 搜索 Studio 本地会话库；不包含只读 Hermes 历史会话
 - 会话分类、消息引用、压缩进度和可持久恢复的后台委派结果
+- 可选的 Studio turn-tail 压缩 — 在 Hermes Profile 配置中设置 `compression.studio_compact_on_turn_end: true`，将阈值检查移到成功响应持久化之后；压缩失败保持 fail-open，且不改变 Hermes Agent Core 的压缩行为
 - 按账号授权 Profile 汇总模型选择器 — 只展示当前账号可访问的 Hermes Profile 中可用的模型
 - 每个会话显示模型标签和上下文 Token 用量
 

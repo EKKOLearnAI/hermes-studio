@@ -40,7 +40,7 @@ import { logger } from '../../public/logging'
 import { recordSessionUsage } from '../usage/usage-recorder'
 import { observeRunChatPetEvent } from '../../public/pet-events'
 import { contentBlocksToString, convertContentBlocksForAgent, extractTextForPreview } from './content-blocks'
-import { buildCompressedHistory, getOrCreateSession } from './compression'
+import { buildCompressedHistory, compactStudioTurnTail, getOrCreateSession, isStudioTurnTailCompressionEnabled } from './compression'
 import { resolveBridgeRunModelConfig, type RunModelGroup } from './model-config'
 import { persistRunMessages, type RunMessageDraft } from './message-persistence'
 import { buildOutboundRunEvent } from './resume-payload'
@@ -1298,6 +1298,8 @@ export async function handleEkkoAgentRun(
       )
     }
     let fixedContextEstimate: Promise<number> | undefined
+    const studioTurnTailEnabled = data.context_compression_enabled !== false
+      && await isStudioTurnTailCompressionEnabled(profile)
     const compressedHistory = callbackContext
       ? []
       : data.context_compression_enabled === false ? [] : await buildCompressedHistory(
@@ -1552,6 +1554,44 @@ export async function handleEkkoAgentRun(
       contextTokens: contextEstimate?.contextTokens ?? state.contextTokens,
       context_tokens: contextEstimate?.contextTokens ?? state.contextTokens,
     })
+    let completedContextTokens = contextEstimate?.contextTokens ?? state.contextTokens
+    if (studioTurnTailEnabled && !abortController.signal.aborted) {
+      const turnTailContextTokens = await compactStudioTurnTail({
+        sessionId,
+        profile,
+        upstream: baseUrl,
+        apiKey,
+        emit,
+        sessionMap,
+        modelContext: {
+          model: modelConfig.model,
+          provider: modelConfig.provider,
+          allowHermesFallback: false,
+        },
+        contextTokenEstimator: async (_messages, localMessageTokens) => {
+          const estimate = await agent.estimateContext({
+            modelClient,
+            model: modelConfig.model,
+            modelDefaults: { model: modelConfig.model },
+            messages: instructionMessages,
+            signal: abortController.signal,
+            memoryEnabled: false,
+            toolContext,
+            metadata,
+            backgroundDelegationEnabled: data.background_delegation_enabled !== false,
+          })
+          return estimate.contextTokens + localMessageTokens
+        },
+      })
+      if (turnTailContextTokens != null) completedContextTokens = turnTailContextTokens
+    }
+    const completedContextEstimate = contextEstimate && typeof contextEstimate === 'object'
+      ? { ...contextEstimate }
+      : contextEstimate
+    if (completedContextEstimate && typeof completedContextEstimate === 'object') {
+      completedContextEstimate.contextTokens = completedContextTokens
+      completedContextEstimate.context_tokens = completedContextTokens
+    }
     const workspaceRunChange = completeWorkspaceRunDiff()
     emit('run.completed', {
       event: 'run.completed',
@@ -1559,9 +1599,9 @@ export async function handleEkkoAgentRun(
       message_id: assistantMessageId || undefined,
       output: assistantText,
       context: result.context,
-      contextTokens: contextEstimate?.contextTokens,
-      context_tokens: contextEstimate?.contextTokens,
-      contextEstimate,
+      contextTokens: completedContextTokens,
+      context_tokens: completedContextTokens,
+      contextEstimate: completedContextEstimate,
       usage: {
         input_tokens: usageInput,
         output_tokens: usageOutput,

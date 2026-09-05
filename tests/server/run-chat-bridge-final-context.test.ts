@@ -13,6 +13,8 @@ const updateUsageMock = vi.fn()
 const buildCompressedHistoryMock = vi.fn()
 const buildDbHistoryMock = vi.fn()
 const buildSnapshotAwareHistoryMock = vi.fn(async (_sessionId: string, _profile: string, history: any[]) => history)
+const compactStudioTurnTailMock = vi.fn()
+const isStudioTurnTailCompressionEnabledMock = vi.fn(async () => false)
 const buildDbSnapshotAwareHistoryMock = vi.fn(async (sessionId: string, profile: string, options: any, modelContext: any) => (
   buildSnapshotAwareHistoryMock(
     sessionId,
@@ -78,6 +80,8 @@ vi.mock('../../packages/server/src/modules/studio/services/chat-run/compression'
   buildDbHistory: buildDbHistoryMock,
   buildSnapshotAwareHistory: buildSnapshotAwareHistoryMock,
   buildDbSnapshotAwareHistory: buildDbSnapshotAwareHistoryMock,
+  compactStudioTurnTail: compactStudioTurnTailMock,
+  isStudioTurnTailCompressionEnabled: isStudioTurnTailCompressionEnabledMock,
   pushState: pushStateMock,
   replaceState: replaceStateMock,
   forceCompressBridgeHistory: forceCompressBridgeHistoryMock,
@@ -151,6 +155,7 @@ describe('bridge run final context usage', () => {
     homes.push(home)
     process.env.HERMES_WEB_UI_HOME = home
     vi.clearAllMocks()
+    isStudioTurnTailCompressionEnabledMock.mockResolvedValue(false)
     getSystemPromptMock.mockReturnValue('system prompt')
     issueModelRunJwtMock.mockResolvedValue('model-run-token')
     getSessionMock.mockReturnValue({ id: 'session-1', profile: 'default', model: '', provider: '' })
@@ -204,6 +209,39 @@ describe('bridge run final context usage', () => {
   afterEach(() => {
     delete process.env.HERMES_WEB_UI_HOME
     for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true })
+  })
+
+  it('runs enabled turn-tail compression after persistence and before completion', async () => {
+    isStudioTurnTailCompressionEnabledMock.mockResolvedValue(true)
+    const order: string[] = []
+    flushBridgePendingToDbMock.mockImplementation(() => order.push('persist'))
+    compactStudioTurnTailMock.mockImplementation(async () => {
+      order.push('compress')
+      return 1_234
+    })
+    const emit = vi.fn((event: string) => {
+      if (event === 'run.completed') order.push('completed')
+    })
+    const nsp = makeNamespace(emit)
+    const socket = makeSocket()
+    const sessionMap = new Map([['session-1', makeState()]])
+    const bridge = {
+      chat: vi.fn().mockResolvedValue({ run_id: 'run-1', status: 'started' }),
+      contextEstimate: vi.fn().mockResolvedValue({ token_count: 5_000, fixed_context_tokens: 4_900, message_count: 2 }),
+      streamOutput: vi.fn(async function* () {
+        yield { run_id: 'run-1', done: true, status: 'completed', output: 'done' }
+      }),
+    } as any
+
+    const { handleBridgeRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-bridge-run')
+    await handleBridgeRun(nsp, socket, { input: 'hello', session_id: 'session-1' }, 'default', sessionMap, bridge, false, vi.fn(), vi.fn())
+
+    expect(compactStudioTurnTailMock).toHaveBeenCalledTimes(1)
+    expect(compactStudioTurnTailMock).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'session-1' }))
+    expect(order).toEqual(expect.arrayContaining(['persist', 'compress', 'completed']))
+    expect(order.indexOf('persist')).toBeLessThan(order.indexOf('compress'))
+    expect(order.indexOf('compress')).toBeLessThan(order.indexOf('completed'))
+    expect(emit).toHaveBeenCalledWith('run.completed', expect.objectContaining({ contextTokens: 1_234 }))
   })
 
   it('reopens an ended bridge session when starting a new run', async () => {
@@ -1727,6 +1765,25 @@ describe('bridge run final context usage', () => {
         workspace: '/tmp/hermes-bridge-final-context/default/workspace',
       }),
     )
+  })
+
+  it('skips enabled turn-tail compression when a bridge run fails', async () => {
+    isStudioTurnTailCompressionEnabledMock.mockResolvedValue(true)
+    const emit = vi.fn()
+    const nsp = makeNamespace(emit)
+    const socket = makeSocket()
+    const sessionMap = new Map([['session-1', makeState()]])
+    const bridge = {
+      chat: vi.fn().mockRejectedValue(new Error('bridge timeout')),
+      contextEstimate: vi.fn().mockResolvedValue({ token_count: 5_000, fixed_context_tokens: 4_900 }),
+      streamOutput: vi.fn(),
+    } as any
+
+    const { handleBridgeRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-bridge-run')
+    await handleBridgeRun(nsp, socket, { input: 'hello', session_id: 'session-1' }, 'default', sessionMap, bridge, false, vi.fn(), vi.fn())
+
+    expect(compactStudioTurnTailMock).not.toHaveBeenCalled()
+    expect(emit).toHaveBeenCalledWith('run.failed', expect.any(Object))
   })
 
   it('refreshes full context tokens when a bridge run fails', async () => {
