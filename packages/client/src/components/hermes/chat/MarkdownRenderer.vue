@@ -63,6 +63,8 @@ const props = withDefaults(defineProps<{
     content: string
     mentionNames?: string[]
     headingIdPrefix?: string
+    resolveImageUrl?: (path: string) => string
+    deferImages?: boolean
 }>(), {
     mentionNames: () => [],
     headingIdPrefix: '',
@@ -187,6 +189,7 @@ function hasExtension(path: string, extensions: Set<string>): boolean {
 
 const renderedHtml = computed(() => {
   let html = md.render(repairNestedMarkdownFences(props.content))
+  if (props.deferImages) html = html.replace(/<img\b[^>]*>/gi, '')
 
   // Add IDs to headings for anchor links
   const prefix = props.headingIdPrefix ? `${props.headingIdPrefix}-` : ''
@@ -212,6 +215,11 @@ const renderedHtml = computed(() => {
   // Replace image src paths with download URLs
   html = html.replace(/\bsrc=(["'])([^"']+)\1/g, (match, quote, path) => {
     if (!isLocalFilePath(path)) return match
+    if (props.resolveImageUrl && !path.startsWith('//')) {
+      let decodedPath = md.utils.unescapeAll(path)
+      try { decodedPath = decodeURIComponent(decodedPath) } catch { /* Keep literal paths. */ }
+      return `src="${md.utils.escapeHtml(props.resolveImageUrl(normalizeLocalFilePath(decodedPath)))}"`
+    }
     const downloadUrl = getDownloadUrl(normalizeLocalFilePath(path))
     return `src=${quote}${downloadUrl}${quote}`
   })

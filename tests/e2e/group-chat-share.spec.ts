@@ -19,7 +19,7 @@ const previewPng = Buffer.from(
   'base64',
 )
 
-async function mockInviteSocket(page: Page, joinFailure: { code: string, error: string } | null = null) {
+async function mockInviteSocket(page: Page, joinFailure: { code: string, error: string } | null = null, workerContent = 'How can I help?') {
   const joinFailureJson = JSON.stringify(joinFailure)
   await page.route('**/node_modules/.vite/deps/socket__io-client.js*', async (route) => {
     await route.fulfill({
@@ -76,7 +76,7 @@ export function io(url, options) {
             roomId: 'room-shared',
             senderId: 'agent-worker',
             senderName: 'Worker',
-            content: 'How can I help?',
+            content: ${JSON.stringify(workerContent)},
             timestamp: 2,
             role: 'assistant',
           }],
@@ -180,6 +180,19 @@ async function mockInviteApi(page: Page, valid = true, delayMs = 0) {
 }
 
 test.describe('invite-only group chat share page', () => {
+  test('loads an Agent Markdown image through the room invite without filesystem API access', async ({ page }) => {
+    await mockInviteSocket(page, null, 'Here is the image: ![result](/Users/owner/workspace/agent-result.png)')
+    const protectedRequests = await mockInviteApi(page)
+    await page.route('**/api/studio/group-chat/invites/ROOM1/attachments/agent-result.png*', route =>
+      route.fulfill({ status: 200, contentType: 'image/png', body: previewPng }))
+    await page.goto('/#/share/group-chat/ROOM1')
+    await page.locator('#group-chat-guest-name input').fill('Visitor')
+    await page.getByRole('button', { name: 'Enter room' }).click()
+    const picture = page.locator('.markdown-body img[alt="result"]')
+    await expect(picture).toHaveAttribute('src', /\/invites\/ROOM1\/attachments\/agent-result\.png$/)
+    await expect.poll(() => picture.evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0)).toBe(true)
+    expect(protectedRequests).toEqual([])
+  })
   test('joins one room without login, app sidebar, room list, or protected API calls', async ({ page }) => {
     await mockInviteSocket(page)
     const protectedRequests = await mockInviteApi(page, true, 300)

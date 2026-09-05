@@ -41,7 +41,7 @@ describe('invite-scoped group chat attachments', () => {
         getRoom: (roomId: string) => [...rooms.values()].find(room => room.id === roomId) || null,
         getRoomsForProfiles: () => [],
         getMemberByAuthUserId: () => null,
-        getMessagesForContext: () => messages,
+        getMessagesForContext: (roomId: string) => messages.filter(message => !message.roomId || message.roomId === roomId),
         getRoomAgents: () => agents,
       }),
     })
@@ -287,6 +287,40 @@ describe('invite-scoped group chat attachments', () => {
     )
     expect(preview.status).toBe(200)
     expect(await preview.text()).toBe('legacy-image')
+  })
+
+  it('serves historical Agent Markdown images through the invite without granting cross-room access', async () => {
+    const imagePath = join(stateDir, '马年 image.png')
+    await writeFile(imagePath, 'published-markdown-image')
+    agents = [{ agentId: 'agent-1', executorType: 'server' }]
+    messages = [{ roomId: 'room-1', senderId: 'agent-1', role: 'assistant',
+      content: `图片在这里：\n\n![马年](<${imagePath}>)` }]
+    const file = encodeURIComponent(basename(imagePath))
+    const crossRoom = await fetch(`${baseUrl}/api/studio/group-chat/invites/ROOM2/attachments/${file}`)
+    expect(crossRoom.status).toBe(404)
+    const image = await fetch(`${baseUrl}/api/studio/group-chat/invites/ROOM1/attachments/${file}`)
+    expect(image.status).toBe(200)
+    expect(image.headers.get('content-type')).toBe('image/png')
+    expect(await image.text()).toBe('published-markdown-image')
+    await rm(imagePath)
+    expect(await (await fetch(`${baseUrl}/api/studio/group-chat/invites/ROOM1/attachments/${file}`)).text()).toBe('published-markdown-image')
+  })
+
+  it('does not publish paths from visitors, remote Agents, code samples or ordinary file links', async () => {
+    agents = [{ agentId: 'agent-1', executorType: 'server' }, { agentId: 'remote-1', executorType: 'remote' }]
+    for (const [name, senderId, role, content] of [
+      ['human', 'guest-1', 'user', (path: string) => `![private](${path})`],
+      ['remote', 'remote-1', 'assistant', (path: string) => `![private](${path})`],
+      ['code', 'agent-1', 'assistant', (path: string) => `\`\`\`md\n![private](${path})\n\`\`\``],
+      ['link', 'agent-1', 'assistant', (path: string) => `[private](${path})`],
+      ['html', 'agent-1', 'assistant', (path: string) => `<img src="${path}">`],
+    ] as const) {
+      const path = join(stateDir, `${name}.png`)
+      await writeFile(path, 'private-image')
+      messages.push({ roomId: 'room-1', senderId, role, content: content(path) })
+      const response = await fetch(`${baseUrl}/api/studio/group-chat/invites/ROOM1/attachments/${name}.png`)
+      expect(response.status, name).toBe(404)
+    }
   })
 
   it('rate-limits repeated public uploads per room', async () => {
