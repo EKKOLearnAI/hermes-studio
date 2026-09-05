@@ -1303,7 +1303,7 @@ const tools = [
       end_ms: { type: 'number', description: 'List range end as Unix milliseconds; maximum range is 31 days.' },
       limit: { type: 'number', description: 'Maximum list result count, from 1 to 100.' },
       item: { type: 'object', additionalProperties: true, description: 'Event fields for create/update: id (update), title, start_ms, end_ms, all_day, location, notes, reminder_minutes.' },
-      timeout_ms: { type: 'number', description: 'Wait time for user confirmation, from 3000 to 60000 milliseconds.' },
+      timeout_ms: { type: 'number', minimum: 3000, maximum: 300000, default: 300000, description: 'Wait time for user confirmation, from 3000 to 300000 milliseconds. Defaults to 5 minutes, matching the App consent card. Omit unless the user requests a shorter wait.' },
     }, ['session_id', 'action', 'purpose']),
   },
   {
@@ -1319,7 +1319,7 @@ const tools = [
       include_completed: { type: 'boolean', description: 'Include completed reminders when listing.' },
       limit: { type: 'number', description: 'Maximum list result count, from 1 to 100.' },
       item: { type: 'object', additionalProperties: true, description: 'Reminder fields: id (update/complete), title, due_ms, notes, priority, completed.' },
-      timeout_ms: { type: 'number', description: 'Wait time for user confirmation, from 3000 to 60000 milliseconds.' },
+      timeout_ms: { type: 'number', minimum: 3000, maximum: 300000, default: 300000, description: 'Wait time for user confirmation, from 3000 to 300000 milliseconds. Defaults to 5 minutes, matching the App consent card. Omit unless the user requests a shorter wait.' },
     }, ['session_id', 'action', 'purpose']),
   },
   {

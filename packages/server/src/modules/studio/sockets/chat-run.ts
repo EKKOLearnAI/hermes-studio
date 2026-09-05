@@ -356,11 +356,11 @@ type PendingMobileCalendarRequest = {
   timer: NodeJS.Timeout
 }
 const MOBILE_CALENDAR_MIN_TIMEOUT_MS = 3_000
-const MOBILE_CALENDAR_MAX_TIMEOUT_MS = 60_000
-const MOBILE_CALENDAR_DEVICE_TIMEOUT_MS = 30_000
+const MOBILE_CALENDAR_MAX_TIMEOUT_MS = 300_000
+const MOBILE_CALENDAR_DEFAULT_TIMEOUT_MS = 300_000
 function boundedMobileCalendarTimeout(value: unknown): number {
   const numeric = Math.round(Number(value))
-  if (!Number.isFinite(numeric)) return 35_000
+  if (value == null || !Number.isFinite(numeric) || numeric <= 0) return MOBILE_CALENDAR_DEFAULT_TIMEOUT_MS
   return Math.max(MOBILE_CALENDAR_MIN_TIMEOUT_MS, Math.min(MOBILE_CALENDAR_MAX_TIMEOUT_MS, numeric))
 }
 export class ChatRunSocket {
@@ -503,8 +503,8 @@ export class ChatRunSocket {
         event,
         [idKey]: requestId,
         ...request,
-        timeout_ms: Math.min(timeoutMs, MOBILE_CALENDAR_DEVICE_TIMEOUT_MS),
-        expires_at_ms: Date.now() + Math.min(timeoutMs, MOBILE_CALENDAR_DEVICE_TIMEOUT_MS),
+        timeout_ms: timeoutMs,
+        expires_at_ms: Date.now() + timeoutMs,
       })
     })
   }

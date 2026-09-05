@@ -14938,7 +14938,8 @@
                   "timeout_ms": {
                     "type": "integer",
                     "minimum": 3000,
-                    "maximum": 60000
+                    "maximum": 300000,
+                    "default": 300000
                   }
                 }
               }
