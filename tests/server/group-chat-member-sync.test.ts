@@ -28,6 +28,7 @@ vi.mock('../../packages/server/src/modules/studio/services/auth/token-auth', () 
 
 import { AgentClients, groupBridgeSessionId } from '../../packages/server/src/modules/studio/services/group-chat/agent-clients'
 import { GroupChatServer } from '../../packages/server/src/modules/studio/sockets/group-chat'
+import type { GroupRoomSummaryService } from '../../packages/server/src/modules/studio/services/group-chat/room-summary'
 import { canManageGroupChatRoom, isGroupChatRoomOwner } from '../../packages/server/src/modules/studio/services/group-chat/access'
 import { groupChatRoutes, setGroupChatServer } from '../../packages/server/src/modules/studio/routes/group-chat'
 import {
@@ -39,6 +40,22 @@ function routeHandler(path: string, method: string) {
   const layer = (groupChatRoutes as any).stack.find((item: any) => item.path === path && item.methods.includes(method))
   if (!layer) throw new Error(`Route not found: ${method} ${path}`)
   return layer.stack[0]
+}
+
+function createRoomSummaryServiceMock(): Pick<GroupRoomSummaryService, 'getState'> {
+  return {
+    getState: vi.fn((roomId: string) => ({
+      roomId,
+      summary: '',
+      summaryThroughMessageId: '',
+      summaryThroughMessageTimestamp: 0,
+      summarizedTurnCount: 0,
+      status: 'idle',
+      version: 0,
+      updatedAt: 0,
+      lastError: null,
+    })),
+  }
 }
 
 describe('Group Chat member/agent identity sync', () => {
@@ -1340,6 +1357,7 @@ describe('Group Chat member/agent identity sync', () => {
     server.userInfoMap = new Map([['agent-stable-1', { name: 'Worker', description: 'runtime agent' }]])
     server.typingState = new Map()
     server.contextStatusState = new Map()
+    server.roomSummaryService = createRoomSummaryServiceMock()
     server.storage = {
       getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room', inviteCode: 'secret', ownerAuthUserId: 7 })),
       getRoomAgentByAgentId: vi.fn(() => ({ id: 'row-1', roomId: 'room-1', agentId: 'agent-stable-1', profile: 'default', name: 'Worker', description: '', invited: 0 })),
@@ -1360,6 +1378,8 @@ describe('Group Chat member/agent identity sync', () => {
 
     server.handleJoin(socket, { roomId: 'room-1' }, ack)
 
+    expect(server.roomSummaryService.getState).toHaveBeenCalledWith('room-1')
+    expect(ack.mock.calls[0][0].roomSummary).toMatchObject({ roomId: 'room-1', status: 'idle' })
     expect(server.storage.getRoomAgentByAgentId).toHaveBeenCalledWith('room-1', 'agent-stable-1')
     expect(server.storage.addRoomMember).not.toHaveBeenCalled()
     expect(socket.join).toHaveBeenCalledWith('room-1')
@@ -1376,6 +1396,7 @@ describe('Group Chat member/agent identity sync', () => {
     server.userInfoMap = new Map([['auth:42', { name: 'alice', description: '' }]])
     server.typingState = new Map()
     server.contextStatusState = new Map()
+    server.roomSummaryService = createRoomSummaryServiceMock()
     server.storage = {
       getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room', inviteCode: 'secret', ownerAuthUserId: 7 })),
       getRoomAgentByAgentId: vi.fn(() => null),
@@ -1421,6 +1442,7 @@ describe('Group Chat member/agent identity sync', () => {
     server.userInfoMap = new Map([['auth:42', { name: 'alice', description: '' }]])
     server.typingState = new Map()
     server.contextStatusState = new Map()
+    server.roomSummaryService = createRoomSummaryServiceMock()
     server.storage = {
       getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room', inviteCode: null, ownerAuthUserId: 42 })),
       getRoomAgentByAgentId: vi.fn(() => null),
@@ -1477,6 +1499,7 @@ describe('Group Chat member/agent identity sync', () => {
     server.userInfoMap = new Map([['auth:42', { name: 'alice', description: '' }]])
     server.typingState = new Map()
     server.contextStatusState = new Map()
+    server.roomSummaryService = createRoomSummaryServiceMock()
     server.nsp = { to: vi.fn(() => ({ emit })) }
     server.storage = {
       getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room', inviteCode: null, ownerAuthUserId: 42 })),
@@ -1541,6 +1564,7 @@ describe('Group Chat member/agent identity sync', () => {
     server.userInfoMap = new Map([['auth:42', { name: 'alice', description: '' }]])
     server.typingState = new Map()
     server.contextStatusState = new Map()
+    server.roomSummaryService = createRoomSummaryServiceMock()
     server.nsp = { to: vi.fn(() => ({ emit })) }
     server.storage = {
       getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room', inviteCode: null, ownerAuthUserId: 42 })),
@@ -1595,6 +1619,7 @@ describe('Group Chat member/agent identity sync', () => {
     server.userInfoMap = new Map([['auth:42', { name: 'alice-login', description: '' }]])
     server.typingState = new Map()
     server.contextStatusState = new Map()
+    server.roomSummaryService = createRoomSummaryServiceMock()
     server.storage = {
       getRoomAgentByAgentId: vi.fn(() => null),
       getMemberByUserId: vi.fn(() => null),
@@ -1898,6 +1923,7 @@ describe('Group Chat member/agent identity sync', () => {
     server.userInfoMap = new Map([['auth:42', { name: '郑工', description: '' }]])
     server.typingState = new Map()
     server.contextStatusState = new Map()
+    server.roomSummaryService = createRoomSummaryServiceMock()
     server.storage = {
       getRoom: vi.fn(() => ({ id: 'room-1', name: 'Family Room', inviteCode: 'secret' })),
       getRoomAgentByAgentId: vi.fn(() => null),
@@ -1949,6 +1975,7 @@ describe('Group Chat member/agent identity sync', () => {
     server.userInfoMap = new Map([['auth:42', { name: 'default-name', description: '' }]])
     server.typingState = new Map()
     server.contextStatusState = new Map()
+    server.roomSummaryService = createRoomSummaryServiceMock()
     server.storage = {
       getRoom: vi.fn(() => ({ id: 'room-2', name: 'Work Room', inviteCode: 'work123' })),
       getRoomAgentByAgentId: vi.fn(() => null),
@@ -2000,6 +2027,7 @@ describe('Group Chat member/agent identity sync', () => {
     }]])
     server.typingState = new Map()
     server.contextStatusState = new Map()
+    server.roomSummaryService = createRoomSummaryServiceMock()
     server.storage = {
       getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room' })),
       getRoomAgentByAgentId: vi.fn(() => null),
