@@ -347,10 +347,10 @@ function hasManagedHermesMcpConfig(run: ManagedCodingAgentRun): boolean {
     }
   }
   if (run.launch.agentId === 'opencode') {
-    const configPath = String(run.launch.env?.OPENCODE_CONFIG || '').trim()
-    if (!configPath) return false
+    const configDir = String(run.launch.env?.OPENCODE_CONFIG_DIR || '').trim()
+    if (!configDir) return false
     try {
-      const config = readFileSync(configPath, 'utf-8')
+      const config = readFileSync(join(configDir, 'opencode.json'), 'utf-8')
       return config.includes('"hermes-studio-api"') && config.includes('"hermes-studio-use"')
     } catch {
       return false

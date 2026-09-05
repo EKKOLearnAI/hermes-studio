@@ -1,7 +1,7 @@
 import { execFile } from 'child_process'
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'crypto'
 import { existsSync, readdirSync, realpathSync } from 'fs'
-import { chmod, copyFile, cp, lstat, mkdir, open, readFile, readdir, rename, rm, stat, symlink, writeFile } from 'fs/promises'
+import { chmod, copyFile, lstat, mkdir, open, readFile, readdir, rename, rm, stat, symlink, writeFile } from 'fs/promises'
 import { homedir } from 'os'
 import { delimiter, dirname, join } from 'path'
 import { promisify } from 'util'
@@ -65,6 +65,7 @@ const PI_DYNAMIC_PROMPT_FILE = 'dynamic-system-prompt.md'
 const PI_STUDIO_EXTENSION_FILE = 'hermes-studio-runtime.ts'
 const OPENCODE_PROVIDER_ID = 'hermes-studio'
 const OPENCODE_CONFIG_FILE = 'opencode.json'
+const OPENCODE_DATABASE_FILE = 'opencode.db'
 const OPENCODE_API_KEY_ENV = 'HERMES_OPENCODE_API_KEY'
 const PI_PROXY_TARGET_KEY_FILE = '.pi-proxy-target.key'
 const PI_PROXY_TARGET_LEGACY_AAD = Buffer.from('hermes-studio/pi-proxy-target/v1', 'utf8')
@@ -1579,20 +1580,6 @@ function mergeOpenCodeSettingsConfig(existingContent: string, settingsContent: s
   return `${JSON.stringify(merged, null, 2)}\n`
 }
 
-async function syncOpenCodeSkills(sourceHome: string, rootDir: string): Promise<void> {
-  const source = join(sourceHome, 'skills')
-  const target = join(rootDir, 'skills')
-  await rm(target, { recursive: true, force: true })
-  if (!existsSync(source)) return
-  await cp(source, target, {
-    recursive: true,
-    dereference: true,
-    errorOnExist: false,
-    force: true,
-    preserveTimestamps: true,
-  })
-}
-
 function opencodeRuntimeConfig(
   profile: string,
   runtime: {
@@ -1654,6 +1641,21 @@ function opencodeRuntimeConfig(
     },
     permission: { '*': 'allow' },
   }, null, 2)}\n`
+}
+
+function openCodeRuntimeEnv(rootDir: string, apiKey = ''): Record<string, string> {
+  // OpenCode loads OPENCODE_CONFIG before project config, but loads the
+  // OPENCODE_CONFIG_DIR config afterward. Use the directory override so
+  // project .opencode resources remain available without overriding Studio's
+  // provider and managed MCP settings. Isolate only OpenCode's native session
+  // database; changing HOME/XDG would also redirect git, ssh, npm, and shells.
+  return {
+    OPENCODE_CONFIG_DIR: rootDir,
+    OPENCODE_DB: join(rootDir, OPENCODE_DATABASE_FILE),
+    OPENCODE_DISABLE_CLAUDE_CODE: '1',
+    OPENCODE_DISABLE_EXTERNAL_SKILLS: '1',
+    ...(apiKey ? { [OPENCODE_API_KEY_ENV]: apiKey } : {}),
+  }
 }
 
 export function getCodingAgentManagedMcpServerConfigs(
@@ -2958,7 +2960,6 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       promptFile = join(rootDir, 'AGENTS.md')
       const userInstructions = await safeReadFile(join(globalOpenCodeHome, 'AGENTS.md')) || ''
       await writeManagedPromptFile(promptFile, systemPrompt, userInstructions)
-      await syncOpenCodeSkills(globalOpenCodeHome, rootDir)
       const configPath = join(rootDir, OPENCODE_CONFIG_FILE)
       const globalConfig = await safeReadFile(getLiveConfigFileDefinition(tool.id, 'config')?.absolutePath || '')
       await writeFile(configPath, opencodeRuntimeConfig(scope.profile, { systemPrompt: promptFile }, globalConfig), 'utf-8')
@@ -2966,10 +2967,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
         { key: 'agents', path: 'AGENTS.md', absolutePath: promptFile },
         { key: 'config', path: OPENCODE_CONFIG_FILE, absolutePath: configPath },
       ]
-      env = {
-        OPENCODE_CONFIG: configPath,
-        OPENCODE_CONFIG_DIR: rootDir,
-      }
+      env = openCodeRuntimeEnv(rootDir)
     } else {
       promptFile = join(rootDir, 'APPEND_SYSTEM.md')
       await writeManagedPromptFile(promptFile, systemPrompt, '')
@@ -3359,7 +3357,6 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       : null
     const configPath = join(rootDir, OPENCODE_CONFIG_FILE)
     const promptPath = join(rootDir, 'AGENTS.md')
-    const globalOpenCodeHome = dirname(getLiveConfigFileDefinition(tool.id, 'config')?.absolutePath || '')
     const globalConfig = await safeReadFile(getLiveConfigFileDefinition(tool.id, 'config')?.absolutePath || '')
     const scopedConfig = await safeReadFile(getScopedConfigFileDefinition(tool.id, 'config', scope)?.absolutePath || '')
     const userInstructions = [
@@ -3367,7 +3364,6 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       await safeReadFile(getScopedConfigFileDefinition(tool.id, 'agents', scope)?.absolutePath || ''),
     ].map(value => value?.trim() || '').filter((value, index, values) => value && values.indexOf(value) === index)
     await writeManagedPromptFile(promptPath, scopedSystemPrompt, userInstructions.join('\n\n'))
-    await syncOpenCodeSkills(globalOpenCodeHome, rootDir)
     await writeFile(configPath, opencodeRuntimeConfig(scope.profile, {
       provider,
       model,
@@ -3378,11 +3374,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       { key: 'config', path: OPENCODE_CONFIG_FILE, absolutePath: configPath },
       { key: 'agents', path: 'AGENTS.md', absolutePath: promptPath },
     )
-    env = {
-      OPENCODE_CONFIG: configPath,
-      OPENCODE_CONFIG_DIR: rootDir,
-      [OPENCODE_API_KEY_ENV]: proxyTarget?.token || apiKey,
-    }
+    env = openCodeRuntimeEnv(rootDir, proxyTarget?.token || apiKey)
     args = ['--model', `${OPENCODE_PROVIDER_ID}/${model}`]
   }
 

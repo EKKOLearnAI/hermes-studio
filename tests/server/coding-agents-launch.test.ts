@@ -781,8 +781,10 @@ describe('coding agent launch preparation', () => {
       command: 'opencode',
       args: [],
       env: {
-        OPENCODE_CONFIG: join(result.rootDir, 'opencode.json'),
         OPENCODE_CONFIG_DIR: result.rootDir,
+        OPENCODE_DB: join(result.rootDir, 'opencode.db'),
+        OPENCODE_DISABLE_CLAUDE_CODE: '1',
+        OPENCODE_DISABLE_EXTERNAL_SKILLS: '1',
       },
       promptFile: join(result.rootDir, 'AGENTS.md'),
     })
@@ -792,8 +794,7 @@ describe('coding agent launch preparation', () => {
     expect(config.mcp.local).toEqual({ type: 'local', command: ['local-mcp'], enabled: true })
     expect(config.mcp['hermes-studio-api']).toMatchObject({ type: 'local', enabled: true })
     expect(readFileSync(join(result.rootDir, 'AGENTS.md'), 'utf8')).toContain('User global OpenCode instructions.')
-    expect(readFileSync(join(result.rootDir, 'skills', 'first-skill', 'SKILL.md'), 'utf8')).toBe('# First skill\n')
-    expect(readFileSync(join(result.rootDir, 'skills', 'second-skill', 'SKILL.md'), 'utf8')).toBe('# Second skill\n')
+    expect(existsSync(join(result.rootDir, 'skills'))).toBe(false)
   })
 
   it('launches scoped OpenCode through the Responses proxy without writing the upstream key', async () => {
@@ -820,13 +821,19 @@ describe('coding agent launch preparation', () => {
     expect(result.args).toEqual(['--model', 'hermes-studio/test-model'])
     expect(result.env.HERMES_OPENCODE_API_KEY).toBeTruthy()
     expect(result.env.HERMES_OPENCODE_API_KEY).not.toBe('sk-opencode-upstream')
+    expect(result.env.OPENCODE_CONFIG).toBeUndefined()
+    expect(result.env.OPENCODE_CONFIG_DIR).toBe(result.rootDir)
+    expect(result.env.OPENCODE_DB).toBe(join(result.rootDir, 'opencode.db'))
+    expect(result.env.OPENCODE_DISABLE_CLAUDE_CODE).toBe('1')
+    expect(result.env.OPENCODE_DISABLE_EXTERNAL_SKILLS).toBe('1')
+    expect(result.env.OPENCODE_DISABLE_PROJECT_CONFIG).toBeUndefined()
     expect(config.model).toBe('hermes-studio/test-model')
     expect(config.provider['hermes-studio'].npm).toBe('@ai-sdk/openai')
     expect(config.provider['hermes-studio'].options.baseURL).toContain('/api/codex-proxy/')
     expect(config.provider['hermes-studio'].options.apiKey).toBe('{env:HERMES_OPENCODE_API_KEY}')
     expect(configText).not.toContain('sk-opencode-upstream')
     expect(readFileSync(join(result.rootDir, 'AGENTS.md'), 'utf8')).toContain('OpenCode workflow memory.')
-    expect(readFileSync(join(result.rootDir, 'skills', 'workflow-skill', 'SKILL.md'), 'utf8')).toBe('# Workflow skill\n')
+    expect(existsSync(join(result.rootDir, 'skills'))).toBe(false)
   })
 
   it('launches interactive Pi with its global config when requested', async () => {
