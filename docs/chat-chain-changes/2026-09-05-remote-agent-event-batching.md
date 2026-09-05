@@ -1,0 +1,12 @@
+# Remote group Agent event batching
+
+- Date: 2026-09-05
+- Area: `/group-chat-agent-relay`, between an invited Agent's Studio and the room's Studio.
+- Problem: concurrent cloud throttle waits could forward streaming events out of sequence. The room rejected the run after showing some reasoning, so the final reply could be missing.
+- Change: the source groups streaming events for up to 40 ms, 64 events or 16 KiB. Approval, clarification, final-message and end events flush the current buffer immediately. A flush waits behind any packet already being acknowledged; it never overtakes earlier events.
+- Completion: one packet is in flight at a time, with a 30-second acknowledgement timeout. The room applies each event through its existing run, sequence and permission checks. The source sends `run.completed` only after all output is acknowledged.
+- Bounds: the source fails and interrupts the run if pending output exceeds 2,048 events or 4 MiB. Disconnects cancel pending output; stale acknowledgements cannot complete a new run.
+- Cloud companion: queue each remote Agent connection independently in each direction, before invoking the existing throttle. Source-to-room forwarding waits for the target acknowledgement. Room-to-source delivery preserves send order without waiting for approval-response acknowledgements. Each cloud queue is capped at 128 frames or 2 MiB; overflow closes that remote connection.
+- Compatibility: protocol version remains 2. The target advertises `capabilities: ['agent.events.v1']`; the cloud adds `relayCapabilities: ['agent.events.v1']`. Cloud batching requires both flags; direct batching requires only the target flag. Otherwise the new source sends acknowledged, ordered legacy `agent.event` packets. Update both Studios and the cloud to enable batching through the cloud. The App needs no update.
+- Scope: ordinary `/chat-run`, `/group-chat`, App connection handling and the shared cloud throttle are unchanged. This optimizes the remote Agent-to-room hop; it does not batch subsequent room broadcasts to viewers or change invitation validation ownership.
+- Validation: source queue tests cover burst ordering, delayed flushes, terminal acknowledgements, legacy negotiation, overflow and stale acknowledgements. Real Socket.IO tests exercise the Studio cloud bridge and the target executor with reasoning, text and final output; cloud tests exercise delayed throttling, delayed acknowledgements, independent connections and disconnect cleanup.
