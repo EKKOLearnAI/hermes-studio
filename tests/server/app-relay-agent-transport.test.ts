@@ -17,8 +17,10 @@ it('keeps Agent payloads intact across a real Socket.IO connection with recovery
   const run = { runId: 'run-1', room: { id: 'room-1' } }
   const forwarded: Array<{ event: string; payload: unknown }> = []
   let relaySocket: Socket | undefined
+  const batches: unknown[] = []
   target.of('/group-chat-agent-relay').on('connection', socket => {
     relaySocket = socket
+    socket.on('agent.events', (batch, ack) => { batches.push(batch); ack({ ok: true }) })
     socket.emit('relay.ready', ready)
     socket.emit('run.request', run)
   })
@@ -45,6 +47,12 @@ it('keeps Agent payloads intact across a real Socket.IO connection with recovery
     expect(opened).toMatchObject({ ok: true })
     await vi.waitFor(() => expect(forwarded).toContainEqual(expect.objectContaining({ event: 'run.request', payload: run })))
     expect(forwarded).toContainEqual(expect.objectContaining({ event: 'relay.ready', payload: ready }))
+    const batch = { events: [{ runId: 'run-1', seq: 1, event: 'message_reasoning_delta', data: { id: 'm', delta: '思考' } }] }
+    const batchAck = await new Promise(resolve => host!.emit('app.socket.event', {
+      id: 'agent-bridge', event: 'agent.events', payload: batch, ack: true, stream: true,
+    }, resolve))
+    expect(batchAck).toMatchObject({ ok: true, payload: { ok: true } })
+    expect(batches).toEqual([batch])
     const approvalAck = vi.fn()
     relaySocket!.emit('approval.respond', { decision: 'allow' }, approvalAck)
     await vi.waitFor(() => expect(approvalAck).toHaveBeenCalledWith({ ok: true }))

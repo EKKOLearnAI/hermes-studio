@@ -41,7 +41,7 @@ const ALLOWED_REQUEST_HEADERS = new Set([
 ])
 const ALLOWED_SOCKET_NAMESPACES = new Set(['/chat-run', '/group-chat', '/workflow', '/group-chat-agent-relay'])
 const ALLOWED_GROUP_AGENT_CLIENT_EVENTS = new Set([
-  'run.accepted', 'run.completed', 'run.failed', 'agent.event', 'agent.config.update', 'attachment.read', 'connector.revoke',
+  'run.accepted', 'run.completed', 'run.failed', 'agent.event', 'agent.events', 'agent.config.update', 'attachment.read', 'connector.revoke',
 ])
 const ALLOWED_CHAT_RUN_CLIENT_EVENTS = new Set([
   'run',
