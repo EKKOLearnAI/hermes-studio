@@ -680,21 +680,29 @@ function saveRecentCount() {
   showRecentCountModal.value = false;
 }
 
+const activeSessionCategoryKey = computed(() => {
+  const session = chatStore.sessions.find((item) => item.id === chatStore.activeSessionId);
+  return session?.categoryId == null ? "category-none" : `category-${session.categoryId}`;
+});
+
 watch(
-  () => [
-    sessionCategoriesLoaded.value,
-    categorizedSessions.value.map((group) => group.key).join("\u0000"),
-    chatStore.activeSessionId,
+  [
+    () => sessionCategoriesLoaded.value,
+    () => categorizedSessions.value.map((group) => group.key).join("\u0000"),
+    () => chatStore.activeSessionId,
+    activeSessionCategoryKey,
   ],
-  () => {
+  ([loaded, , sessionId, activeKey], [previousLoaded, , previousSessionId, previousActiveKey]) => {
     if (!sessionCategoriesLoaded.value || categorizedSessions.value.length === 0) return;
     const activeSession = chatStore.sessions.find((session) => session.id === chatStore.activeSessionId);
     if (categoryRevealSuppressedSessionId.value === activeSession?.id) return;
     setCategoryRevealSuppressedSessionId(null);
-    const activeKey = activeSession?.categoryId == null
-      ? "category-none"
-      : `category-${activeSession.categoryId}`;
-    if (collapsedCategories.value.has(activeKey)) {
+    // Only navigation or a changed category should reveal the active session.
+    // Background list refreshes must preserve manually collapsed groups.
+    const shouldReveal = loaded !== previousLoaded
+      || sessionId !== previousSessionId
+      || activeKey !== previousActiveKey;
+    if (shouldReveal && collapsedCategories.value.has(activeKey)) {
       collapsedCategories.value = new Set(
         [...collapsedCategories.value].filter((key) => key !== activeKey),
       );

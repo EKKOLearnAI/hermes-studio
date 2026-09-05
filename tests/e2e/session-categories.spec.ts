@@ -108,6 +108,57 @@ test('groups sessions by category and persists collapsed groups', async ({ page 
   await expect(recentHeader.locator('.session-group-count')).toHaveText('2')
 })
 
+test('keeps manually collapsed categories closed across polling and foreground refreshes', async ({ page }) => {
+  await authenticate(page, TEST_ACCESS_KEY, 'research')
+  await page.clock.install()
+  await page.addInitScript(() => {
+    (window as any).__PW_CHAT_SOCKET_RESUMES__ = Object.fromEntries(
+      ['work-session', 'notes-session'].map(sessionId => [sessionId, {
+        session_id: sessionId, messages: [], isWorking: false,
+      }]),
+    )
+  })
+  const sessions = [
+    sessionSummary('work-session', 'Project Alpha', 1, 200),
+    sessionSummary('notes-session', 'General Notes', null, 100),
+  ]
+  const api = await mockHermesApi(page, {
+    sessionCategories: [{ id: 1, name: 'Work' }, { id: 2, name: 'Other' }],
+    sessions,
+  })
+  await mockChatSocket(page)
+  await page.goto('/#/hermes/session/work-session')
+
+  const workHeader = page.locator('.session-group-header').filter({ hasText: 'Work' })
+  const workChevron = workHeader.locator('.group-chevron')
+  await expect(workChevron).not.toHaveClass(/collapsed/)
+  await workHeader.click()
+  await expect(workChevron).toHaveClass(/collapsed/)
+
+  await page.clock.runFor(100)
+  const listRequests = () => api.requests.filter(request => request.pathname === '/api/studio/sessions').length
+  const beforePoll = listRequests()
+  sessions[0].title = 'Project Alpha Updated'
+  await page.clock.fastForward(12_000)
+  await expect.poll(listRequests).toBeGreaterThan(beforePoll)
+  await expect(page.getByRole('link', { name: /Project Alpha Updated/ })).toHaveCount(1)
+  await expect(workChevron).toHaveClass(/collapsed/)
+
+  // A refresh that adds another visible category must also preserve the user's choice.
+  sessions.push(sessionSummary('other-session', 'Other Project', 2, 300))
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await expect(page.locator('.session-group-header').filter({ hasText: 'Other' })).toBeVisible()
+  await expect(workChevron).toHaveClass(/collapsed/)
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('hermes_chat_collapsed_categories')))
+    .toContain('category-1')
+  await expect(page).toHaveURL(/\/hermes\/session\/work-session$/)
+
+  // Ordinary navigation still reveals the selected session's category.
+  await page.goto('/#/hermes/session/notes-session')
+  await page.goto('/#/hermes/session/work-session')
+  await expect(workChevron).not.toHaveClass(/collapsed/)
+})
+
 test('selects a recent session without expanding its collapsed category', async ({ page }) => {
   await authenticate(page, TEST_ACCESS_KEY, 'research')
   await mockHermesApi(page, {
