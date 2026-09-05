@@ -365,7 +365,13 @@ class BridgeServer:
 
     def _shutdown_all_mcp_servers(self) -> int:
         try:
-            from tools.mcp_tool import _run_on_mcp_loop, _servers, _lock
+            from tools.mcp_tool import _servers, _lock
+            try:
+                from tools.mcp_tool_loop import _run_on_mcp_loop
+            except ModuleNotFoundError as exc:
+                if exc.name != "tools.mcp_tool_loop":
+                    raise
+                from tools.mcp_tool import _run_on_mcp_loop
         except ImportError:
             return 0
         with _lock:
@@ -375,9 +381,35 @@ class BridgeServer:
     def _handle_mcp_action(self, action: str, req: dict[str, Any], profile: str | None = None) -> dict[str, Any]:
         """Handle MCP management actions in worker process."""
         try:
-            from tools.mcp_tool import discover_mcp_tools, register_mcp_servers, _run_on_mcp_loop, _servers, _lock
+            from tools.mcp_tool import _servers, _lock
+            try:
+                from tools.mcp_tool_loop import _run_on_mcp_loop
+            except ModuleNotFoundError as exc:
+                if exc.name != "tools.mcp_tool_loop":
+                    raise
+                from tools.mcp_tool import _run_on_mcp_loop
+            try:
+                from tools.mcp_tool_discovery import discover_mcp_tools, register_mcp_servers
+            except ModuleNotFoundError as exc:
+                if exc.name != "tools.mcp_tool_discovery":
+                    raise
+                from tools.mcp_tool import discover_mcp_tools, register_mcp_servers
         except ImportError:
-            return {"error": "MCP tool module not available", "ok": False}
+            # Older/minimal Hermes runtimes may not ship the live MCP module.
+            # Keep config listing usable so Studio clients can render the MCP
+            # page instead of failing during initial load.
+            if profile is None:
+                profile = _worker_profile() or "default"
+            if action == "mcp_list":
+                result = self._mcp_list(profile, {}, threading.RLock())
+                for server in result["servers"]:
+                    server["error"] = "Hermes Runtime MCP module is unavailable; update Hermes Runtime"
+                result["runtime_available"] = False
+                return result
+            return {
+                "error": "Hermes Runtime MCP module is unavailable; update Hermes Runtime",
+                "ok": False,
+            }
 
         if profile is None:
             profile = _worker_profile() or "default"

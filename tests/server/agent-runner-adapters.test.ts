@@ -822,7 +822,17 @@ describe('agent runner Responses stream adapters', () => {
 	    expect(events[6].data).toMatchObject({ delta: 'llo', output_index: 1 })
 	    expect(events[7].data).toMatchObject({
 	      output_index: 2,
-	      item: { type: 'function_call', call_id: 'call_1', name: 'lookup' },
+	      item: { type: 'function_call', call_id: 'call_1', name: 'lookup', status: 'in_progress' },
+	    })
+	    expect(events[14].data).toMatchObject({
+	      output_index: 2,
+	      item: {
+	        type: 'function_call',
+	        call_id: 'call_1',
+	        name: 'lookup',
+	        arguments: '{"id":1}',
+	        status: 'completed',
+	      },
 	    })
 	    expect(events[10].data).toMatchObject({
 	      output_index: 0,
@@ -842,7 +852,7 @@ describe('agent runner Responses stream adapters', () => {
 	        output: [
 	          { type: 'reasoning', summary: [{ type: 'summary_text', text: 'think' }] },
 	          { type: 'message', content: [{ type: 'output_text', text: 'hello' }] },
-	          { type: 'function_call', call_id: 'call_1', name: 'lookup', arguments: '{"id":1}' },
+	          { type: 'function_call', call_id: 'call_1', name: 'lookup', arguments: '{"id":1}', status: 'completed' },
         ],
       },
     })
@@ -1041,6 +1051,38 @@ describe('agent runner Responses stream adapters', () => {
     expect(events.map(event => event.data.sequence_number)).toEqual([0, 1, 2])
     expect((events[0].data.response as any).created_at).toEqual(expect.any(Number))
     expect((events[2].data.response as any).created_at).toBe((events[0].data.response as any).created_at)
+  })
+
+  it.each([undefined, null])('fills absent text annotations throughout native Responses streams (%s)', async annotations => {
+    const part = { type: 'output_text', text: 'An image description', ...(annotations === null ? { annotations } : {}) }
+    const item = { type: 'message', id: 'msg_image', role: 'assistant', content: [part] }
+    const frames = [
+      { type: 'response.content_part.added', part },
+      { type: 'response.content_part.done', part },
+      { type: 'response.output_item.added', item },
+      { type: 'response.output_item.done', item },
+      { type: 'response.completed', response: { id: 'resp_image', output: [item] } },
+    ]
+    const events = await collectEvents(normalizeResponsesSseEvents(openAiResponsesSseToResponsesEvents(encodedChunks(
+      frames.map(frame => `data: ${JSON.stringify(frame)}\n\n`),
+    ))))
+    const parts = events.flatMap(({ data }: any) => data.part ? [data.part] : data.item?.content || data.response.output[0].content)
+    expect(parts).toHaveLength(5)
+    for (const result of parts) expect(result).toEqual({ ...part, annotations: [] })
+  })
+
+  it('preserves provider annotations and leaves non-text content unchanged', async () => {
+    const citation = { type: 'url_citation', start_index: 0, end_index: 4, url: 'https://example.com', title: 'Source' }
+    const text = { type: 'output_text', text: 'Look', annotations: [citation] }
+    const refusal = { type: 'refusal', refusal: 'Cannot answer' }
+    const source = {
+      type: 'response.completed',
+      data: { response: { id: 'resp_citation', output: [{ type: 'message', content: [text, refusal] }] } },
+    }
+    const original = structuredClone(source)
+    const events = await collectEvents(normalizeResponsesSseEvents((async function* () { yield source })()))
+    expect((events[0].data.response as any).output[0].content).toEqual([text, refusal])
+    expect(source).toEqual(original)
   })
 })
 

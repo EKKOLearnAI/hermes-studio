@@ -1,4 +1,5 @@
 import type { Context } from 'koa'
+import { normalizeCloudAgentMachineId } from '../services/group-chat/cloud-agent-auth'
 import { listProfileNamesFromDisk } from '../public/profile-config'
 import { canManageGroupChatRoom } from '../services/group-chat/access'
 import {
@@ -317,6 +318,7 @@ export async function connectLocalAgent(ctx: Context): Promise<void> {
     const manager = getGroupAgentOutboundRelayManager(() => server.getChatRunService())
     const connected = await manager.connect({
       cloudOrigin,
+      cloudMachineId: normalizeCloudAgentMachineId(body.cloudMachineId),
       targetOrigin,
       pairingTicket,
       agent,

@@ -6,6 +6,7 @@ export function workflowAgentToSkillTarget(agent: string): SkillTarget {
   if (agent === 'codex') return 'codex'
   if (agent === 'pi') return 'pi'
   if (agent === 'grok') return 'grok'
+  if (agent === 'opencode') return 'opencode'
   return 'hermes'
 }
 

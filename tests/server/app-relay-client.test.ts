@@ -85,6 +85,41 @@ describe('AppRelayClient', () => {
     expect(auth.timestamp).toEqual(expect.any(Number))
   })
 
+  it('bridges Agent events and preserves acknowledgements from the source Studio', async () => {
+    const { startAppRelayClient } = await import('../../packages/server/src/modules/studio/services/app-relay/client')
+    startAppRelayClient({ relayUrl: 'https://relay.example', machineId: 'hwui_machine_1234567890', publicKey: 'key', localBaseUrl: 'http://127.0.0.1:8648', fetchImpl: vi.fn() as any })
+    const remote = sockets[0]
+    remote.connected = true
+    const openAck = vi.fn()
+    remote.__handlers.get('app.socket.open')({ id: 'agent-bridge', namespace: '/group-chat-agent-relay', auth: { pairingTicket: 'target-ticket' } }, openAck)
+    const local = sockets[1]
+    expect(local.__url).toBe('http://127.0.0.1:8648/group-chat-agent-relay')
+    expect(local.__options.auth).toEqual({ pairingTicket: 'target-ticket' })
+    expect(openAck).toHaveBeenCalledWith(expect.objectContaining({ ok: true }))
+    local.emit.mockImplementation((_event: string, payload: unknown, ack?: Function) => { ack?.({ accepted: payload }); return local })
+    const eventAck = vi.fn()
+    remote.__handlers.get('app.socket.event')({ id: 'agent-bridge', event: 'agent.config.update', payload: { name: 'Updated' }, ack: true }, eventAck)
+    await vi.waitFor(() => expect(eventAck).toHaveBeenCalledWith(expect.objectContaining({ ok: true, payload: { accepted: { name: 'Updated' } } })))
+    remote.emit.mockImplementation((_event: string, _payload: unknown, ack?: Function) => { ack?.(null, { ok: true }); return remote })
+    const approvalAck = vi.fn()
+    local.__onAny('approval.respond', { decision: 'allow' }, approvalAck)
+    expect(remote.emit).toHaveBeenCalledWith('app.socket.event', { id: 'agent-bridge', namespace: '/group-chat-agent-relay', event: 'approval.respond', payload: { decision: 'allow' } }, expect.any(Function))
+    expect(approvalAck).toHaveBeenCalledWith({ ok: true })
+    const denied = vi.fn()
+    remote.__handlers.get('app.socket.event')({ id: 'agent-bridge', event: 'run', payload: {} }, denied)
+    await vi.waitFor(() => expect(denied).toHaveBeenCalledWith(expect.objectContaining({ ok: false })))
+  })
+
+  it('forwards target-issued Agent request secrets and workspace hash preconditions', async () => {
+    const { startAppRelayClient } = await import('../../packages/server/src/modules/studio/services/app-relay/client')
+    const fetchImpl = vi.fn(async () => new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } }))
+    startAppRelayClient({ relayUrl: 'https://relay.example', machineId: 'hwui_machine_1234567890', publicKey: 'key', localBaseUrl: 'http://127.0.0.1:8648', fetchImpl: fetchImpl as any })
+    const ack = vi.fn()
+    sockets[0].__handlers.get('app.http.request')({ id: 'agent-status', method: 'GET', path: '/api/studio/group-chat/invites/code/agent-links/request', headers: { 'x-group-agent-request-secret': 'request-secret', 'x-expected-sha256': 'hash' } }, ack)
+    await vi.waitFor(() => expect(ack).toHaveBeenCalled())
+    expect(Object.fromEntries((fetchImpl.mock.calls as any)[0][1].headers.entries())).toMatchObject({ 'x-group-agent-request-secret': 'request-secret', 'x-expected-sha256': 'hash' })
+  })
+
   it('marks development Web UI relay hosts as non-preemptive', async () => {
     const { shouldReplaceExistingAppRelayHost } = await import(
       '../../packages/server/src/modules/studio/services/app-relay/connection'
@@ -619,6 +654,27 @@ describe('AppRelayClient', () => {
       id: 'relay-chat-1',
       ok: true,
       event: 'insert_queued_run',
+    })))
+
+    const locationAck = vi.fn()
+    remote.__handlers.get('app.socket.event')({
+      id: 'relay-chat-1',
+      event: 'location.respond',
+      payload: {
+        session_id: 'session-1',
+        location_request_id: 'location-1',
+        status: 'denied',
+      },
+    }, locationAck)
+    expect(local.emit).toHaveBeenCalledWith('location.respond', {
+      session_id: 'session-1',
+      location_request_id: 'location-1',
+      status: 'denied',
+    })
+    await vi.waitFor(() => expect(locationAck).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'relay-chat-1',
+      ok: true,
+      event: 'location.respond',
     })))
 
     local.__onAny('message.delta', { session_id: 'session-1', delta: 'hi' })

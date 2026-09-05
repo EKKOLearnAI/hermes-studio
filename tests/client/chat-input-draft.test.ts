@@ -144,6 +144,31 @@ describe('ChatInput draft persistence', () => {
     expect(wrapper.get('.attachment-file').text()).toContain('notes.txt')
   })
 
+  it('shows the full uploaded image in a lightbox before sending', async () => {
+    const wrapper = mountForSession('session-image-preview')
+    const image = new File(['image'], 'wide-screenshot.png', { type: 'image/png' })
+    const input = wrapper.get('input[type="file"]')
+    Object.defineProperty(input.element, 'files', { configurable: true, value: [image] })
+
+    await input.trigger('change')
+    await nextTick()
+
+    const thumb = wrapper.get('.attachment-thumb')
+    expect(thumb.attributes('src')).toBe('blob:chat-attachment')
+    expect(wrapper.get('.attachment-thumb-button').attributes('aria-label')).toBe('wide-screenshot.png')
+
+    await wrapper.get('.attachment-thumb-button').trigger('click')
+    await nextTick()
+
+    const lightbox = document.body.querySelector('.image-preview-overlay')
+    expect(lightbox).not.toBeNull()
+    expect(lightbox?.querySelector('img')?.getAttribute('src')).toBe('blob:chat-attachment')
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await nextTick()
+    expect(document.body.querySelector('.image-preview-overlay')).toBeNull()
+  })
+
   it('sends extracted video frames to the model without showing them as separate attachments', async () => {
     const wrapper = mountForSession('session-video')
     const chatStore = useChatStore()

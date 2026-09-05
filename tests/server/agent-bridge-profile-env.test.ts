@@ -473,6 +473,7 @@ def discover_mcp_tools():
     return ["mcp_anysearch_search"]
 mcp_tool.discover_mcp_tools = discover_mcp_tools
 sys.modules["tools.mcp_tool"] = mcp_tool
+sys.modules["tools.mcp_tool_discovery"] = mcp_tool
 
 run_agent = types.ModuleType("run_agent")
 class FakeAgent:

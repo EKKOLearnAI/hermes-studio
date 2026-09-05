@@ -6,6 +6,7 @@ import { useGroupChatStore } from '@/stores/hermes/group-chat'
 import { useSettingsStore } from '@/stores/hermes/settings'
 import { useToolTraceVisibility } from '@/composables/useToolTraceVisibility'
 import { extractClipboardFiles } from '@/utils/clipboard-files'
+import ImagePreviewOverlay from '@/components/hermes/chat/ImagePreviewOverlay.vue'
 import { buildMentionOptions, type MentionOption } from './mention-options'
 import type { GroupChatMention } from '@/api/studio/group-chat'
 import type { Attachment } from '@/stores/hermes/chat'
@@ -48,6 +49,7 @@ const textareaRef = ref<HTMLTextAreaElement>()
 const dropdownRef = ref<HTMLDivElement>()
 const fileInputRef = ref<HTMLInputElement>()
 const attachments = ref<Attachment[]>([])
+const previewAttachment = ref<Attachment | null>(null)
 const isSending = ref(false)
 const pendingSendRoomId = ref<string | null>(null)
 const isDragging = ref(false)
@@ -239,6 +241,7 @@ const filteredMentionOptions = computed(() => buildMentionOptions(
 const canSend = computed(() => !!inputText.value.trim() || (props.allowAttachments && attachments.value.length > 0))
 
 function resetTransientComposerState() {
+    previewAttachment.value = null
     for (const attachment of attachments.value) URL.revokeObjectURL(attachment.url)
     attachments.value = []
     mentionActive.value = false
@@ -701,6 +704,7 @@ function removeAttachment(id: string) {
     if (isSending.value) return
     const idx = attachments.value.findIndex(a => a.id === id)
     if (idx !== -1) {
+        if (previewAttachment.value?.id === id) previewAttachment.value = null
         URL.revokeObjectURL(attachments.value[idx].url)
         attachments.value.splice(idx, 1)
     }
@@ -715,13 +719,26 @@ function formatSize(bytes: number): string {
 function isImage(type: string): boolean {
     return type.startsWith('image/')
 }
+
+function openAttachmentPreview(attachment: Attachment) {
+    if (!isImage(attachment.type)) return
+    previewAttachment.value = attachment
+}
 </script>
 
 <template>
     <div class="chat-input-area">
         <div v-if="attachments.length > 0" class="attachment-previews">
             <div v-for="att in attachments" :key="att.id" class="attachment-preview" :class="{ image: isImage(att.type) }">
-                <img v-if="isImage(att.type)" :src="att.url" :alt="att.name" class="attachment-thumb" />
+                <button
+                    v-if="isImage(att.type)"
+                    type="button"
+                    class="attachment-thumb-button"
+                    :aria-label="att.name"
+                    @click="openAttachmentPreview(att)"
+                >
+                    <img :src="att.url" :alt="att.name" class="attachment-thumb" />
+                </button>
                 <div v-else class="attachment-file">
                     <span class="file-name">{{ att.name }}</span>
                     <span class="file-size">{{ formatSize(att.size) }}</span>
@@ -731,6 +748,12 @@ function isImage(type: string): boolean {
                 </button>
             </div>
         </div>
+        <ImagePreviewOverlay
+            v-if="previewAttachment"
+            :src="previewAttachment.url"
+            :alt="previewAttachment.name"
+            @close="previewAttachment = null"
+        />
         <div v-if="activeMessageReference" class="message-reference-preview">
             <span class="message-reference-text">{{ messageReferencePreview }}</span>
             <button
@@ -960,15 +983,32 @@ function isImage(type: string): boolean {
     border: 1px solid $border-color;
 
     &.image {
-        width: 64px;
-        height: 64px;
+        width: 112px;
+        height: 72px;
     }
 }
 
 .attachment-thumb {
+    display: block;
     width: 100%;
     height: 100%;
-    object-fit: cover;
+    object-fit: contain;
+}
+
+.attachment-thumb-button {
+    display: block;
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    border: 0;
+    background:
+        linear-gradient(45deg, rgba(127, 127, 127, 0.08) 25%, transparent 25%),
+        linear-gradient(-45deg, rgba(127, 127, 127, 0.08) 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, rgba(127, 127, 127, 0.08) 75%),
+        linear-gradient(-45deg, transparent 75%, rgba(127, 127, 127, 0.08) 75%);
+    background-position: 0 0, 0 6px, 6px -6px, -6px 0;
+    background-size: 12px 12px;
+    cursor: zoom-in;
 }
 
 .attachment-file {

@@ -12,6 +12,21 @@ export interface CanonicalResponsesEvent {
   data: Record<string, unknown>
 }
 
+function normalizeResponseContentPart(part: unknown): unknown {
+  if (!part || typeof part !== 'object' || Array.isArray(part)) return part
+  const content = part as Record<string, unknown>
+  // Grok's typed Responses decoder requires this array even without citations.
+  if (content.type !== 'output_text' || content.annotations != null) return part
+  return { ...content, annotations: [] }
+}
+
+function normalizeResponseOutputItem(item: unknown): unknown {
+  if (!item || typeof item !== 'object' || Array.isArray(item)) return item
+  const output = item as Record<string, unknown>
+  if (!Array.isArray(output.content)) return item
+  return { ...output, content: output.content.map(normalizeResponseContentPart) }
+}
+
 /**
  * Fill wire fields required by strict Responses API clients such as Grok Build.
  * Some upstream OpenAI-compatible providers omit these fields, while clients
@@ -30,11 +45,17 @@ export async function* normalizeResponsesSseEvents(
       : nextSequenceNumber
     nextSequenceNumber = Math.max(nextSequenceNumber, sequenceNumber + 1)
 
+    const data = {
+      ...event.data,
+      sequence_number: sequenceNumber,
+      ...(event.data.part ? { part: normalizeResponseContentPart(event.data.part) } : {}),
+      ...(event.data.item ? { item: normalizeResponseOutputItem(event.data.item) } : {}),
+    }
     const response = event.data.response
     if (!response || typeof response !== 'object' || Array.isArray(response)) {
       yield {
         ...event,
-        data: { ...event.data, sequence_number: sequenceNumber },
+        data,
       }
       continue
     }
@@ -50,9 +71,14 @@ export async function* normalizeResponsesSseEvents(
     yield {
       ...event,
       data: {
-        ...event.data,
-        sequence_number: sequenceNumber,
-        response: { ...responseRecord, created_at: createdAt },
+        ...data,
+        response: {
+          ...responseRecord,
+          created_at: createdAt,
+          ...(Array.isArray(responseRecord.output)
+            ? { output: responseRecord.output.map(normalizeResponseOutputItem) }
+            : {}),
+        },
       },
     }
   }
@@ -93,6 +119,7 @@ function functionCallItem(input: {
     call_id: input.callId || input.id,
     name: normalized.name,
     arguments: normalized.arguments,
+    status: input.status || 'completed',
     ...(namespace ? { namespace } : {}),
   }
 }

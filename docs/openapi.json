@@ -11059,7 +11059,11 @@
                     "type": "string",
                     "enum": [
                       "claude-code",
-                      "codex"
+                      "codex",
+                      "pi",
+                      "grok",
+                      "opencode",
+                      "ekko-agent"
                     ],
                     "description": "Coding agent id when source is coding_agent."
                   },
@@ -11067,7 +11071,11 @@
                     "type": "string",
                     "enum": [
                       "claude-code",
-                      "codex"
+                      "codex",
+                      "pi",
+                      "grok",
+                      "opencode",
+                      "ekko-agent"
                     ],
                     "description": "Alias for coding_agent_id."
                   },
@@ -14951,6 +14959,44 @@
           },
           "503": {
             "description": "Chat run service unavailable"
+          }
+        }
+      }
+    },
+    "/api/studio/mobile-location/request": {
+      "post": {
+        "tags": [
+          "Chat Run"
+        ],
+        "summary": "Create request",
+        "description": "POST /api/studio/mobile-location/request",
+        "operationId": "requestMobileLocation",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true
+              }
+            }
           }
         }
       }

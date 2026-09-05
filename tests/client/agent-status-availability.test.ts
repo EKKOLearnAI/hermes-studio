@@ -18,6 +18,7 @@ function snapshot(): AgentStatusSnapshot {
       { id: 'claude-code', installed: false, source: 'not-installed', path: '', version: '' },
       { id: 'codex', installed: true, source: 'user-cli', path: '/usr/local/bin/codex', version: '1.0.0' },
       { id: 'pi', installed: false, source: 'not-installed', path: '', version: '' },
+      { id: 'opencode', installed: true, source: 'user-cli', path: '/usr/local/bin/opencode', version: '1.18.28' },
     ],
   }
 }
@@ -27,6 +28,7 @@ describe('Agent status availability', () => {
     expect(resolveAgentStatusId('ekko')).toBe('ekko-agent')
     expect(resolveAgentStatusId('claude')).toBe('claude-code')
     expect(resolveAgentStatusId('codex')).toBe('codex')
+    expect(resolveAgentStatusId('OpenCode')).toBe('opencode')
   })
 
   it('only exposes Agents that the server inventory marks installed', () => {
@@ -36,6 +38,7 @@ describe('Agent status availability', () => {
     expect(isAgentStatusAvailable(status, 'ekko')).toBe(true)
     expect(isAgentStatusAvailable(status, 'claude-code')).toBe(false)
     expect(isAgentStatusAvailable(status, 'codex')).toBe(true)
+    expect(isAgentStatusAvailable(status, 'opencode')).toBe(true)
   })
 
   it('uses the shared inventory state without requiring a version or executable path', () => {
@@ -51,5 +54,6 @@ describe('Agent status availability', () => {
     availability.agents[0] = { id: 'hermes', installed: false, source: 'not-installed' }
     expect(agentInstallationState(availability, 'hermes')).toBe('not-installed')
     expect(agentInstallationState(null, 'hermes')).toBe('unknown')
+    expect(agentInstallationState(snapshot(), 'opencode')).toBe('installed')
   })
 })

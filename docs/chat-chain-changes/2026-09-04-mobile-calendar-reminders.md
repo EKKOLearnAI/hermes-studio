@@ -9,3 +9,8 @@ Direct Hermes Studio chats can request one-time, user-confirmed access to mobile
 - Delete, background access, workflow/group/delegated use, and cross-session persistence are not supported.
 - Every request is bound to the authenticated profile and exact direct-chat session.
 - App responses are allowlisted and sanitized before being returned to the MCP caller.
+
+2026-09-05 integration update (PR #2892): merge current main while retaining
+location, calendar and reminder routes, MCP operations, relay events and socket
+lifecycles. Preserve distinct MCP test request IDs and expect the bound Studio
+session environment in the global Codex resume regression.

@@ -13,6 +13,7 @@ const agentLabels: Record<string, string> = {
   codex: 'codex',
   pi: 'pi',
   grok: 'grok',
+  opencode: 'opencode',
   ekko_agent: 'ekkoAgent',
 }
 

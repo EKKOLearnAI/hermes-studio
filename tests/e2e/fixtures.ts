@@ -873,6 +873,7 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
     if (pathname === '/api/studio/versions' && request.method() === 'GET') {
       await route.fulfill(jsonResponse({
         schema: 1,
+        accessMode: 'public_beta',
         hermes: [],
         mobile: {
           version: '1.0.0',

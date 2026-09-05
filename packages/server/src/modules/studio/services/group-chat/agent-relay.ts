@@ -5,6 +5,7 @@ import { basename, dirname, extname, join, resolve } from 'node:path'
 import type { Server, Socket as ServerSocket } from 'socket.io'
 import { io, type Socket as ClientSocket } from 'socket.io-client'
 import { config } from '../../public/config'
+import { groupAgentSocketAuth, normalizeCloudAgentMachineId } from './cloud-agent-auth'
 import { logger } from '../../public/logging'
 import {
   createGroupPrimaryAgentBridge,
@@ -353,7 +354,7 @@ function sameRemoteAgent(
 
 class RelayGroupAgentExecutor implements GroupAgentExecutor {
   readonly agentId: string
-  agent: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi' | 'grok'
+  agent: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi' | 'grok' | 'opencode'
   agentMode: 'scoped' | 'global'
   profile: string
   provider: string
@@ -1533,6 +1534,7 @@ class OutboundRelayEventSink implements GroupAgentEventSink {
 
 type PersistedOutboundLink = {
   cloudOrigin: string
+  cloudMachineId?: string
   targetOrigin: string
   connectorId: string
   credential: string
@@ -1563,13 +1565,13 @@ class OutboundRelayConnection {
   async connect(): Promise<PersistedOutboundLink> {
     const reconnecting = Boolean(this.link.connectorId && this.link.credential)
     this.socket = io(`${this.link.cloudOrigin}/group-chat-agent-relay`, {
-      auth: {
+      auth: groupAgentSocketAuth({
         protocolVersion: GROUP_AGENT_RELAY_PROTOCOL_VERSION,
         targetOrigin: this.link.targetOrigin,
         ...(reconnecting
           ? { connectorId: this.link.connectorId, credential: this.link.credential }
           : { pairingTicket: this.pairingTicket }),
-      },
+      }, this.link.cloudMachineId),
       transports: ['websocket'],
       reconnection: true,
       reconnectionAttempts: Infinity,
@@ -1606,12 +1608,12 @@ class OutboundRelayConnection {
             ...(inviteCode ? { inviteCode } : {}),
             agent: this.link.agent,
           }
-          this.socket!.auth = {
+          this.socket!.auth = groupAgentSocketAuth({
             protocolVersion: GROUP_AGENT_RELAY_PROTOCOL_VERSION,
             targetOrigin: this.link.targetOrigin,
             connectorId,
             credential,
-          }
+          }, this.link.cloudMachineId)
           void this.manager.persist(this.link)
             .then(() => resolve(this.link))
             .catch(reject)
@@ -1816,7 +1818,9 @@ class OutboundRelayConnection {
           ...(request.workspaceApi
             ? {
                 remoteWorkspaceApi: {
-                  endpoint: `${this.link.cloudOrigin}/api/studio/group-chat/remote-workspace/v1`,
+                  endpoint: this.link.cloudMachineId
+                    ? `${this.link.cloudOrigin}/api/group-agent-relay/${this.link.cloudMachineId}/${this.link.connectorId}/workspace`
+                    : `${this.link.cloudOrigin}/api/studio/group-chat/remote-workspace/v1`,
                   token: request.workspaceApi.token,
                   access: request.workspaceApi.access,
                 },
@@ -1998,11 +2002,13 @@ export class GroupAgentOutboundRelayManager {
 
   async connect(input: {
     cloudOrigin: string
+    cloudMachineId?: string
     targetOrigin: string
     pairingTicket: string
     agent: RemoteGroupAgentDescriptor
   }): Promise<{ connectorId: string; roomId?: string; roomName?: string; inviteCode?: string }> {
     const cloudOrigin = normalizeOrigin(input.cloudOrigin)
+    const cloudMachineId = normalizeCloudAgentMachineId(input.cloudMachineId)
     const targetOrigin = normalizeOrigin(input.targetOrigin)
     const ticket = String(input.pairingTicket || '').trim()
     if (!ticket) throw new Error('pairingTicket is required')
@@ -2010,6 +2016,7 @@ export class GroupAgentOutboundRelayManager {
     const key = `pairing:${ticket.slice(0, 12)}`
     const connection = new OutboundRelayConnection(this, key, {
       cloudOrigin,
+      ...(cloudMachineId ? { cloudMachineId } : {}),
       targetOrigin,
       connectorId: '',
       credential: '',
@@ -2055,6 +2062,7 @@ export class GroupAgentOutboundRelayManager {
   async listConnections(): Promise<Array<{
     connectorId: string
     cloudOrigin: string
+    cloudMachineId?: string
     targetOrigin: string
     roomId?: string
     roomName?: string
@@ -2068,6 +2076,7 @@ export class GroupAgentOutboundRelayManager {
       return links.map(link => ({
         connectorId: link.connectorId,
         cloudOrigin: link.cloudOrigin,
+        ...(link.cloudMachineId ? { cloudMachineId: link.cloudMachineId } : {}),
         targetOrigin: link.targetOrigin,
         ...(link.roomId ? { roomId: link.roomId } : {}),
         ...(link.roomName ? { roomName: link.roomName } : {}),
@@ -2209,7 +2218,7 @@ export class GroupAgentOutboundRelayManager {
 
   private sameRoomLink(link: PersistedOutboundLink, seed: PersistedOutboundLink): boolean {
     if (!seed.roomId || !link.roomId) return link.connectorId === seed.connectorId
-    return link.cloudOrigin === seed.cloudOrigin && link.roomId === seed.roomId
+    return link.cloudOrigin === seed.cloudOrigin && link.cloudMachineId === seed.cloudMachineId && link.roomId === seed.roomId
   }
 
   private async withPersistenceLock<T>(task: () => Promise<T>): Promise<T> {
@@ -2281,6 +2290,7 @@ export class GroupAgentOutboundRelayManager {
           if (!UUID_PATTERN.test(connectorId) || !/^[a-zA-Z0-9_-]{40,128}$/.test(credential)) continue
           links.push({
             cloudOrigin: normalizeOrigin(link.cloudOrigin),
+            ...(link.cloudMachineId ? { cloudMachineId: normalizeCloudAgentMachineId(link.cloudMachineId) } : {}),
             targetOrigin: normalizeOrigin(link.targetOrigin),
             connectorId,
             credential,

@@ -141,6 +141,7 @@ describe('GroupMessageList scroll behavior', () => {
       'Claude',
       'Pi',
       'Grok',
+      'OpenCode',
     ])
     expect(wrapper.get('.empty-state p').text()).toBe('groupChat.emptyState')
     expect(wrapper.text()).not.toContain('chat.emptyState')

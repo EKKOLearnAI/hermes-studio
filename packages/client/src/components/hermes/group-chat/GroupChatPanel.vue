@@ -231,7 +231,7 @@ const profileOptions = computed(() =>
     profilesStore.profiles.map(p => ({ label: p.name, value: p.name }))
 )
 
-type GroupAgentType = 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi' | 'grok'
+type GroupAgentType = 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi' | 'grok' | 'opencode'
 
 const groupAgentTypeDefinitions: Array<{ label: string; value: GroupAgentType }> = [
     { label: 'Hermes', value: 'hermes' },
@@ -240,6 +240,7 @@ const groupAgentTypeDefinitions: Array<{ label: string; value: GroupAgentType }>
     { label: 'Codex', value: 'codex' },
     { label: 'Pi', value: 'pi' },
     { label: 'Grok', value: 'grok' },
+    { label: 'OpenCode', value: 'opencode' },
 ]
 
 const groupAgentTypeOptions = computed(() => groupAgentTypeDefinitions.map((option) => {
@@ -254,7 +255,7 @@ const groupAgentTypeOptions = computed(() => groupAgentTypeDefinitions.map((opti
 const firstAvailableGroupAgentType = computed<GroupAgentType | null>(() =>
     groupAgentTypeOptions.value.find(option => !option.disabled)?.value || null
 )
-const supportsGlobalAgentMode = computed(() => ['claude', 'codex', 'pi', 'grok'].includes(selectedAgentType.value))
+const supportsGlobalAgentMode = computed(() => ['claude', 'codex', 'pi', 'grok', 'opencode'].includes(selectedAgentType.value))
 const usesGlobalAgentMode = computed(() => supportsGlobalAgentMode.value && selectedAgentMode.value === 'global')
 const agentModeOptions = computed(() => [
     { label: t('codingAgents.launchModeGlobal'), value: 'global' },
@@ -294,6 +295,8 @@ function getAgentModelGroups(profile: string) {
                         ? 'pi'
                         : selectedAgentType.value === 'grok'
                             ? 'grok'
+                            : selectedAgentType.value === 'opencode'
+                                ? 'opencode'
                             : 'codex'
             return canScopedCodingAgentUseProvider(codingAgentId, group.provider)
         })
@@ -513,7 +516,7 @@ function handleAgentTypeChange(agent: GroupAgentType) {
         return
     }
     selectedAgentType.value = agent
-    if (!['claude', 'codex', 'pi', 'grok'].includes(agent)) selectedAgentMode.value = 'scoped'
+    if (!['claude', 'codex', 'pi', 'grok', 'opencode'].includes(agent)) selectedAgentMode.value = 'scoped'
     if (selectedProfile.value) syncAgentModelSelection(selectedProfile.value)
 }
 

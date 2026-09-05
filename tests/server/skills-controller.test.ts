@@ -375,6 +375,54 @@ describe('skills controller', () => {
     }
   })
 
+  it('reads OpenCode skills from the configured Coding Agent global home', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'hermes-web-ui-opencode-skills-'))
+    const previousGlobalHome = process.env.HERMES_CODING_AGENT_GLOBAL_HOME
+    const skillsDir = join(root, '.config', 'opencode', 'skills')
+    const skillDir = join(skillsDir, 'demo-skill')
+    const sharedSkillsDir = join(root, '.agents', 'skills')
+    const sharedSkillDir = join(sharedSkillsDir, 'shared-skill')
+
+    await mkdir(skillDir, { recursive: true })
+    await mkdir(sharedSkillDir, { recursive: true })
+    await writeFile(join(skillDir, 'SKILL.md'), '# Demo Skill\nOpenCode skill\n', 'utf-8')
+    await writeFile(join(sharedSkillDir, 'SKILL.md'), '# Shared Skill\nShared OpenCode skill\n', 'utf-8')
+    process.env.HERMES_CODING_AGENT_GLOBAL_HOME = root
+
+    try {
+      const { list } = await loadController()
+      const target = { target: 'opencode' }
+
+      const listCtx: any = {
+        query: target,
+        state: { profile: { name: 'research' } },
+        body: null,
+      }
+      await list(listCtx)
+      expect(listCtx.body.paths).toEqual({ local: skillsDir, external: [sharedSkillsDir] })
+      expect(listCtx.body.categories).toContainEqual(expect.objectContaining({
+        name: 'misc',
+        skills: expect.arrayContaining([
+          expect.objectContaining({
+            name: 'demo-skill',
+            enabled: true,
+            source: 'local',
+          }),
+          expect.objectContaining({
+            name: 'shared-skill',
+            enabled: true,
+            source: 'local',
+          }),
+        ]),
+      }))
+      expect(mockUpdateConfigYamlForProfile).not.toHaveBeenCalled()
+    } finally {
+      if (previousGlobalHome == null) delete process.env.HERMES_CODING_AGENT_GLOBAL_HOME
+      else process.env.HERMES_CODING_AGENT_GLOBAL_HOME = previousGlobalHome
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('reads Codex system skill details for the codex target', async () => {
     const root = await mkdtemp(join(tmpdir(), 'hermes-web-ui-codex-system-skill-'))
     const previousHome = process.env.HOME

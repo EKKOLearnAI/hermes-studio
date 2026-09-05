@@ -1,5 +1,7 @@
 export const STUDIO_VERSION_MANIFEST_URL = 'https://api.hermes-studio.ai/api/studio/versions'
 
+export type AppAccessMode = 'internal' | 'public_beta' | 'paid'
+
 export interface StudioMobileLinkChannel {
   url: string
   online: boolean
@@ -32,6 +34,7 @@ export interface StudioMobileRelease {
 
 export interface StudioVersionManifest {
   schema: 1
+  accessMode?: AppAccessMode
   hermes: string[]
   mobile: StudioMobileRelease
 }
@@ -43,6 +46,11 @@ type StudioMobileReleaseWire = Omit<StudioMobileRelease, 'channels'> & {
     apple: Omit<StudioMobileRelease['channels']['apple'], 'version'> & { version?: string }
     harmony: StudioMobileLinkChannel
   }
+}
+
+type StudioVersionManifestWire = Omit<StudioVersionManifest, 'accessMode' | 'mobile'> & {
+  accessMode?: unknown
+  mobile: StudioMobileReleaseWire
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -80,17 +88,15 @@ export async function fetchStudioVersionManifest(): Promise<StudioVersionManifes
   if (!isRecord(manifest) || manifest.schema !== 1 || !isStudioMobileRelease(manifest.mobile)) {
     throw new Error('Invalid Studio version manifest')
   }
-  return normalizeStudioVersionManifest(manifest as unknown as Omit<StudioVersionManifest, 'mobile'> & {
-    mobile: StudioMobileReleaseWire
-  })
+  return normalizeStudioVersionManifest(manifest as StudioVersionManifestWire)
 }
 
-function normalizeStudioVersionManifest(
-  manifest: Omit<StudioVersionManifest, 'mobile'> & { mobile: StudioMobileReleaseWire },
-): StudioVersionManifest {
+function normalizeStudioVersionManifest(manifest: StudioVersionManifestWire): StudioVersionManifest {
+  const { accessMode, ...baseManifest } = manifest
   const fallbackVersion = manifest.mobile.version
   return {
-    ...manifest,
+    ...baseManifest,
+    ...(isAppAccessMode(accessMode) ? { accessMode } : {}),
     mobile: {
       ...manifest.mobile,
       channels: {
@@ -110,6 +116,10 @@ function normalizeStudioVersionManifest(
       },
     },
   }
+}
+
+function isAppAccessMode(value: unknown): value is AppAccessMode {
+  return value === 'internal' || value === 'public_beta' || value === 'paid'
 }
 
 function isVersion(value: unknown): value is string {

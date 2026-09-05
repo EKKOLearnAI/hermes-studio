@@ -17,6 +17,7 @@ import {
   getSkillUsageSyncCursor,
   syncExternalSkillUsageEvents,
 } from '../../studio/public/skill-usage'
+import { getCodingAgentGlobalHome } from '../../studio/public/coding-agent-global-home'
 
 function requestedProfile(ctx: any): string {
   return ctx.state?.profile?.name || getActiveProfileName() || 'default'
@@ -30,27 +31,30 @@ function requestSkillsDir(ctx: any): string {
   return join(requestProfileDir(ctx), 'skills')
 }
 
-type SkillTarget = 'hermes' | 'claude' | 'codex' | 'pi' | 'grok'
+type SkillTarget = 'hermes' | 'claude' | 'codex' | 'pi' | 'grok' | 'opencode'
 
 function requestSkillTarget(ctx: any): SkillTarget {
   const target = String(ctx.query?.target || 'hermes').trim().toLowerCase()
-  return target === 'claude' || target === 'codex' || target === 'pi' || target === 'grok' ? target : 'hermes'
+  return target === 'claude' || target === 'codex' || target === 'pi' || target === 'grok' || target === 'opencode' ? target : 'hermes'
 }
 
 function globalSkillsDir(target: Exclude<SkillTarget, 'hermes'>): string {
+  const globalHome = getCodingAgentGlobalHome()
   return target === 'claude'
-    ? join(homedir(), '.claude', 'skills')
+    ? join(globalHome, '.claude', 'skills')
     : target === 'grok'
-      ? join(homedir(), '.grok', 'skills')
-      : join(homedir(), '.agents', 'skills')
+      ? join(globalHome, '.grok', 'skills')
+      : target === 'opencode'
+        ? join(globalHome, '.config', 'opencode', 'skills')
+      : join(globalHome, '.agents', 'skills')
 }
 
 function codexSystemSkillsDir(): string {
-  return join(homedir(), '.codex', 'skills', '.system')
+  return join(getCodingAgentGlobalHome(), '.codex', 'skills', '.system')
 }
 
 function sharedAgentSkillsDir(): string {
-  return join(homedir(), '.agents', 'skills')
+  return join(getCodingAgentGlobalHome(), '.agents', 'skills')
 }
 
 function requestTargetSkillsDir(ctx: any): string {
@@ -72,7 +76,7 @@ async function resolveSkillDirForTarget(ctx: any, category: string, skillName: s
   if (target === 'codex') {
     return findSkillDirInRoot(codexSystemSkillsDir(), category, skillName)
   }
-  if (target === 'grok') {
+  if (target === 'grok' || target === 'opencode') {
     return findSkillDirInRoot(sharedAgentSkillsDir(), category, skillName)
   }
 
@@ -534,7 +538,7 @@ export async function list(ctx: any) {
           'builtin',
         )
         categories = mergeExternalCategories(categories, systemCategories)
-      } else if (target === 'grok') {
+      } else if (target === 'grok' || target === 'opencode') {
         const sharedDir = sharedAgentSkillsDir()
         extraDirs.push(sharedDir)
         const sharedCategories = withSkillSource(
@@ -868,7 +872,8 @@ export async function updateSkill(ctx: any) {
       }
     }
 
-    const localSkillDir = target === 'grok'
+    const usesSharedAgentSkills = target === 'grok' || target === 'opencode'
+    const localSkillDir = usesSharedAgentSkills
       ? await resolveSkillDirForTarget(ctx, category, name)
       : await findSkillDirInRoot(skillsDir, category, name)
     if (!localSkillDir) {
@@ -876,7 +881,7 @@ export async function updateSkill(ctx: any) {
       ctx.body = { error: 'Skill not found' }
       return
     }
-    const writableRoots = target === 'grok'
+    const writableRoots = usesSharedAgentSkills
       ? [skillsDir, sharedAgentSkillsDir()]
       : [skillsDir]
     if (!writableRoots.some(root => isPathWithin(localSkillDir, root))) {

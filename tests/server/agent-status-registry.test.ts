@@ -21,6 +21,7 @@ describe('Agent status registry', () => {
       'codex',
       'pi',
       'grok',
+      'opencode',
     ])
     expect(snapshot.agents.find(agent => agent.id === 'ekko-agent')).toMatchObject({
       installed: true,

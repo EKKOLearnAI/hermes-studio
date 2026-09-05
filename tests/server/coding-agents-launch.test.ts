@@ -27,6 +27,7 @@ import {
 } from '../../packages/server/src/modules/coding-agents/services/pi/thinking'
 import { codingAgentRunManager } from '../../packages/server/src/modules/coding-agents/services/runtime/run-manager'
 import { configureProfileConfig } from '../../packages/server/src/modules/studio/public/profile-config'
+import * as providerRuntime from '../../packages/server/src/modules/studio/public/provider-runtime'
 import { upsertCodingAgentMcpServer } from '../../packages/server/src/modules/coding-agents/services/mcp-manager'
 
 const homes: string[] = []
@@ -748,6 +749,163 @@ describe('coding agent launch preparation', () => {
     expect(readFileSync(join(rootDir, 'AGENTS.md'), 'utf8')).toContain('User global Grok instructions.')
     expect(readFileSync(join(globalGrokHome, 'config.toml'), 'utf8')).toBe('[models]\ndefault = "grok-4"\n')
     expect(readFileSync(join(globalGrokHome, 'AGENTS.md'), 'utf8')).toBe('User global Grok instructions.\n')
+  })
+
+  it('launches global OpenCode with native provider settings plus managed MCP', async () => {
+    const home = makeHome()
+    const globalOpenCodeHome = join(home, 'global-home', '.config', 'opencode')
+    const firstSkill = join(globalOpenCodeHome, 'skills', 'first-skill')
+    const secondSkill = join(globalOpenCodeHome, 'skills', 'second-skill')
+    mkdirSync(firstSkill, { recursive: true })
+    mkdirSync(secondSkill, { recursive: true })
+    writeFileSync(join(globalOpenCodeHome, 'AGENTS.md'), 'User global OpenCode instructions.\n')
+    writeFileSync(join(firstSkill, 'SKILL.md'), '# First skill\n')
+    writeFileSync(join(secondSkill, 'SKILL.md'), '# Second skill\n')
+    writeFileSync(join(globalOpenCodeHome, 'opencode.json'), `${JSON.stringify({
+      model: 'native/model',
+      provider: { native: { npm: '@ai-sdk/openai-compatible' } },
+      instructions: ['USER.md'],
+      mcp: { local: { type: 'local', command: ['local-mcp'], enabled: true } },
+    }, null, 2)}\n`)
+
+    const result = await prepareCodingAgentLaunch('opencode', {
+      mode: 'global',
+      profile: 'default',
+    })
+    const config = JSON.parse(readFileSync(join(result.rootDir, 'opencode.json'), 'utf8'))
+
+    expect(result).toMatchObject({
+      agentId: 'opencode',
+      mode: 'global',
+      provider: 'global',
+      model: '',
+      command: 'opencode',
+      args: [],
+      env: {
+        OPENCODE_CONFIG_DIR: result.rootDir,
+        OPENCODE_DB: join(result.rootDir, 'opencode.db'),
+        OPENCODE_CONFIG_CONTENT: expect.any(String),
+        OPENCODE_DISABLE_CLAUDE_CODE: '1',
+      },
+      promptFile: join(result.rootDir, 'hermes-rules.md'),
+    })
+    expect(config.model).toBe('native/model')
+    expect(config.provider.native).toEqual({ npm: '@ai-sdk/openai-compatible' })
+    expect(config.instructions).toEqual(['USER.md'])
+    expect(JSON.parse(result.env.OPENCODE_CONFIG_CONTENT).instructions)
+      .toEqual([join(result.rootDir, 'hermes-rules.md')])
+    expect(config.mcp.local).toEqual({ type: 'local', command: ['local-mcp'], enabled: true })
+    expect(config.mcp['hermes-studio-api']).toMatchObject({ type: 'local', enabled: true })
+    expect(readFileSync(join(result.rootDir, 'AGENTS.md'), 'utf8')).toContain('User global OpenCode instructions.')
+    expect(readFileSync(join(result.rootDir, 'hermes-rules.md'), 'utf8')).toContain('BEGIN HERMES WEB UI PROMPT')
+    expect(statSync(join(result.rootDir, 'skills')).isDirectory()).toBe(true)
+    expect(readFileSync(join(result.rootDir, 'skills', 'first-skill', 'SKILL.md'), 'utf8')).toBe('# First skill\n')
+    expect(result.files).toEqual(expect.arrayContaining([
+      { key: 'config', path: 'opencode.json', absolutePath: join(result.rootDir, 'opencode.json') },
+      { key: 'agents', path: 'AGENTS.md', absolutePath: join(result.rootDir, 'AGENTS.md') },
+      { key: 'prompt', path: 'hermes-rules.md', absolutePath: join(result.rootDir, 'hermes-rules.md') },
+      { key: 'launcher', path: 'launch.sh', absolutePath: join(result.rootDir, 'launch.sh') },
+    ]))
+  })
+
+  it.each(['chat', 'group-chat'] as const)('isolates global OpenCode %s prompts while preserving native session storage', async (surface) => {
+    const home = makeHome()
+    const inputs = ['first', 'second'].map(name => ({
+      mode: 'global' as const,
+      profile: 'default',
+      sessionId: `opencode-${name}`,
+      agentSessionId: `run-${name}`,
+      workspace: join(home, `workspace-${name}`),
+      groupSystemPrompt: `ROLE_${name}`,
+      ...(surface === 'group-chat' ? { groupRuntimeScope: { roomId: 'room', agentId: name } } : {}),
+    }))
+    const first = await prepareCodingAgentLaunch('opencode', inputs[0])
+    const second = await prepareCodingAgentLaunch('opencode', inputs[1])
+
+    expect(first.promptFile).not.toBe(second.promptFile)
+    for (const [launch, name] of [[first, 'first'], [second, 'second']] as const) {
+      expect(launch.promptFile).toBe(join(launch.rootDir, 'hermes-rules.md'))
+      expect(readFileSync(launch.promptFile!, 'utf8')).toContain(`ROLE_${name}`)
+      expect(JSON.parse(launch.env.OPENCODE_CONFIG_CONTENT).instructions).toEqual([launch.promptFile])
+      const launcher = launch.files.find(file => file.key === 'launcher')!
+      expect(dirname(launcher.absolutePath)).toBe(launch.rootDir)
+      expect(readFileSync(launcher.absolutePath, 'utf8')).toContain(JSON.stringify(launch.promptFile))
+    }
+    const sharedRoot = join(home, 'coding-agent', 'model', 'default', 'global', 'opencode')
+    expect(first.env.OPENCODE_CONFIG_DIR).toBe(sharedRoot)
+    expect(first.env.OPENCODE_DB).toBe(join(sharedRoot, 'opencode.db'))
+    const resumed = await prepareCodingAgentLaunch('opencode', inputs[0])
+    expect(resumed.promptFile).toBe(first.promptFile)
+    expect(resumed.env.OPENCODE_DB).toBe(first.env.OPENCODE_DB)
+    expect(readFileSync(second.promptFile!, 'utf8')).toContain('ROLE_second')
+  })
+
+  it('launches scoped OpenCode through the Responses proxy without writing the upstream key', async () => {
+    const home = makeHome()
+    const globalOpenCodeHome = join(home, 'global-home', '.config', 'opencode')
+    const globalSkill = join(globalOpenCodeHome, 'skills', 'workflow-skill')
+    mkdirSync(globalSkill, { recursive: true })
+    writeFileSync(join(globalOpenCodeHome, 'AGENTS.md'), 'OpenCode workflow memory.\n')
+    writeFileSync(join(globalSkill, 'SKILL.md'), '# Workflow skill\n')
+    const result = await prepareCodingAgentLaunch('opencode', {
+      mode: 'scoped',
+      profile: 'default',
+      sessionId: 'opencode-chat',
+      agentSessionId: 'opencode-run',
+      provider: 'test',
+      model: 'test-model',
+      baseUrl: 'https://api.example.com/v1',
+      apiKey: 'sk-opencode-upstream',
+      apiMode: 'codex_responses',
+    })
+    const configText = readFileSync(join(result.rootDir, 'opencode.json'), 'utf8')
+    const config = JSON.parse(configText)
+
+    expect(result.args).toEqual(['--model', 'hermes-studio/test-model'])
+    expect(result.env.HERMES_OPENCODE_API_KEY).toBeTruthy()
+    expect(result.env.HERMES_OPENCODE_API_KEY).not.toBe('sk-opencode-upstream')
+    expect(result.env.OPENCODE_CONFIG).toBeUndefined()
+    const baseRoot = join(home, 'coding-agent', 'model', 'default', 'test', 'opencode')
+    expect(result.env.OPENCODE_CONFIG_DIR).toBe(baseRoot)
+    expect(result.env.OPENCODE_DB).toBe(join(result.rootDir, 'opencode.db'))
+    expect(result.env.OPENCODE_CONFIG_CONTENT).toBe(configText)
+    expect(result.env.OPENCODE_DISABLE_CLAUDE_CODE).toBe('1')
+    expect(result.env.OPENCODE_DISABLE_EXTERNAL_SKILLS).toBeUndefined()
+    expect(result.env.OPENCODE_DISABLE_PROJECT_CONFIG).toBeUndefined()
+    expect(config.model).toBe('hermes-studio/test-model')
+    expect(config.provider['hermes-studio'].npm).toBe('@ai-sdk/openai')
+    expect(config.provider['hermes-studio'].options.baseURL).toContain('/api/codex-proxy/')
+    expect(config.provider['hermes-studio'].options.apiKey).toBe('{env:HERMES_OPENCODE_API_KEY}')
+    expect(config.provider['hermes-studio'].models['test-model']).toMatchObject({
+      attachment: true,
+      modalities: { input: ['text', 'image'], output: ['text'] },
+    })
+    expect(configText).not.toContain('sk-opencode-upstream')
+    expect(readFileSync(join(result.rootDir, 'AGENTS.md'), 'utf8')).not.toContain('OpenCode workflow memory.')
+    expect(readFileSync(join(baseRoot, 'AGENTS.md'), 'utf8')).toContain('OpenCode workflow memory.')
+    expect(JSON.parse(readFileSync(join(baseRoot, 'opencode.json'), 'utf8')).mcp['hermes-studio-api'])
+      .toMatchObject({ type: 'local', enabled: true })
+    expect(statSync(join(baseRoot, 'skills')).isDirectory()).toBe(true)
+    expect(readFileSync(join(baseRoot, 'skills', 'workflow-skill', 'SKILL.md'), 'utf8')).toBe('# Workflow skill\n')
+    expect(existsSync(join(baseRoot, 'launch.sh'))).toBe(true)
+    expect(existsSync(join(result.rootDir, 'skills'))).toBe(false)
+  })
+
+  it.each([{ input: ['text'] }, { input: ['text', 'image'] }])('allows OpenCode images regardless of model metadata $input', async ({ input }) => {
+    makeHome()
+    const capabilities = vi.spyOn(providerRuntime, 'getModelRuntimeCapabilities').mockReturnValue({
+      input, reasoning: false, contextWindow: 128_000, outputLimit: 8192,
+    })
+    const launch = await prepareCodingAgentLaunch('opencode', {
+      mode: 'scoped', profile: 'default', provider: 'test', model: 'capability-test',
+      baseUrl: 'https://api.example.com/v1', apiKey: 'sk-test', apiMode: 'codex_responses',
+      sessionId: 'image-capabilities', agentSessionId: 'image-capabilities-run',
+    })
+    const config = JSON.parse(launch.env.OPENCODE_CONFIG_CONTENT)
+    expect(config.provider['hermes-studio'].models['capability-test']).toMatchObject({
+      attachment: true, modalities: { input: ['text', 'image'], output: ['text'] },
+    })
+    expect(capabilities).not.toHaveBeenCalled()
   })
 
   it('launches interactive Pi with its global config when requested', async () => {
@@ -2199,6 +2357,56 @@ describe('coding agent launch preparation', () => {
     expect(sse).not.toContain('"usage"')
   })
 
+  it('keeps OpenCode response.completed valid when Chat Completions omits usage', async () => {
+    const target = registerCodexProxyTarget({
+      profile: 'default',
+      provider: 'openai-compatible',
+      model: 'gpt-5.6-sol',
+      baseUrl: 'https://api.example.com/v1',
+      apiKey: 'sk-upstream',
+      apiMode: 'chat_completions',
+      agentId: 'opencode',
+      agentSessionId: 'opencode-terminal-run',
+      chatSessionId: 'opencode-terminal-chat',
+    })
+    const encoder = new TextEncoder()
+    const fetchMock = vi.fn(async () => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"hello"}}]}\n\n'))
+        controller.enqueue(encoder.encode('data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'))
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+        controller.close()
+      },
+    }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const ctx = makeProxyContext(target.routeKey, target.token, {
+      stream: true,
+      input: [{ role: 'user', content: [{ type: 'input_text', text: 'ping' }] }],
+    })
+
+    await codexProxyResponses(ctx)
+
+    const chunks: string[] = []
+    for await (const chunk of ctx.body) chunks.push(String(chunk))
+    const completed = chunks.join('')
+      .split('\n\n')
+      .find(frame => frame.startsWith('event: response.completed'))
+    expect(completed).toBeTruthy()
+    const payload = JSON.parse(completed!.split('\ndata: ')[1])
+    expect(payload).toMatchObject({
+      type: 'response.completed',
+      response: {
+        status: 'completed',
+        usage: {
+          input_tokens: 0,
+          output_tokens: 0,
+          total_tokens: 0,
+        },
+      },
+    })
+  })
+
   it('keeps the selected Chat Completions protocol and emits Pi-compatible Responses reasoning events', async () => {
     const target = registerCodexProxyTarget({
       profile: 'default',
@@ -2416,6 +2624,48 @@ describe('coding agent launch preparation', () => {
     expect(forwarded.messages[0].content).toContain('Project rules')
     expect(forwarded).not.toHaveProperty('max_tokens')
     expect(forwarded).not.toHaveProperty('max_output_tokens')
+  })
+
+  it('normalizes image response annotations before streaming them to Grok', async () => {
+    const target = registerCodexProxyTarget({
+      profile: 'default', provider: 'custom', model: 'grok-vision-test',
+      baseUrl: 'https://api.example.com/v1', apiKey: 'sk-upstream',
+      apiMode: 'codex_responses', agentId: 'grok',
+    })
+    const part = { type: 'output_text', text: 'A red square' }
+    const item = { type: 'message', id: 'msg_vision', role: 'assistant', status: 'completed', content: [part] }
+    const frames = [
+      { type: 'response.content_part.added', part: { ...part, text: '' } },
+      { type: 'response.content_part.done', part },
+      { type: 'response.output_item.done', item },
+      { type: 'response.completed', response: { id: 'resp_vision', output: [item] } },
+    ]
+    const fetchMock = vi.fn(async (_url: string, _init: any) => new Response(
+      frames.map(frame => `data: ${JSON.stringify(frame)}\n\n`).join(''),
+      { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+    ))
+    vi.stubGlobal('fetch', fetchMock)
+    const imageUrl = 'data:image/png;base64,AQID'
+    const ctx = makeProxyContext(target.routeKey, target.token, {
+      stream: true,
+      input: [{ role: 'user', content: [
+        { type: 'input_text', text: 'Describe this image' },
+        { type: 'input_image', image_url: imageUrl },
+      ] }],
+    })
+    await codexProxyResponses(ctx)
+    const chunks: string[] = []
+    for await (const chunk of ctx.body) chunks.push(String(chunk))
+    const events = chunks.join('').split('\n\n').filter(Boolean)
+      .map(frame => JSON.parse(frame.split('\ndata: ')[1]))
+    expect(events[0].part.annotations).toEqual([])
+    expect(events[1].part.annotations).toEqual([])
+    expect(events[2].item.content[0].annotations).toEqual([])
+    expect(events[3].response.output[0].annotations).toBeUndefined()
+    expect(events[3].response.output[0].content[0].annotations).toEqual([])
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).input[0].content[1]).toEqual({
+      type: 'input_image', image_url: imageUrl,
+    })
   })
 
   it('does not append Grok proxy deltas before Grok prints them through stdout', async () => {
