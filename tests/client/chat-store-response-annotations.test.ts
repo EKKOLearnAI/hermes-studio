@@ -161,6 +161,42 @@ describe('chat store response annotation submission', () => {
     vi.unstubAllGlobals()
   })
 
+  it('renders an ordinary attachment only once when sent with an annotation', async () => {
+    const store = useChatStore()
+    const active = session()
+    store.sessions = [active]
+    store.activeSessionId = active.id
+    store.activeSession = active
+    const screenshot = new File(['image'], 'screen.png', { type: 'image/png' })
+    const proof = new File(['proof'], 'proof.txt', { type: 'text/plain' })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ files: [
+        { name: 'screen.png', path: '/uploads/screen.png' },
+        { name: 'proof.txt', path: '/uploads/proof.txt' },
+      ] }),
+    }))
+
+    await expect(store.sendMessage('', [
+      {
+        id: 'ordinary-file', name: 'screen.png', type: 'image/png', size: screenshot.size,
+        url: 'blob:screen', file: screenshot,
+      },
+      {
+        id: 'annotation-file', name: 'proof.txt', type: 'text/plain', size: proof.size,
+        url: 'blob:proof', file: proof, annotationId: 'annotation-1',
+      },
+    ], [annotation()])).resolves.toBe(true)
+
+    expect(active.messages[0].attachments).toBeUndefined()
+    const displayBlocks = JSON.parse(active.messages[0].content) as Array<Record<string, unknown>>
+    expect(displayBlocks.filter(block => block.name === 'screen.png')).toHaveLength(1)
+    expect(displayBlocks.filter(block => block.name === 'proof.txt')).toHaveLength(1)
+    expect(displayBlocks.find(block => block.name === 'screen.png')?.annotation_id).toBeUndefined()
+    expect(displayBlocks.find(block => block.name === 'proof.txt')?.annotation_id).toBe('annotation-1')
+    vi.unstubAllGlobals()
+  })
+
   it('removes the optimistic user turn when an annotation upload fails before dispatch', async () => {
     const store = useChatStore()
     const active = session()

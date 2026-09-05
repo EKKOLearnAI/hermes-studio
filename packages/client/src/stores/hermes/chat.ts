@@ -3636,8 +3636,12 @@ export const useChatStore = defineStore('chat', () => {
           displayInput = await buildContentBlocks(displaySubmittedContent, attachments, uploaded, false)
           storageMessage = JSON.stringify(input)
           userMsg.content = JSON.stringify(displayInput)
-          if (shouldQueue) updateQueuedUserMessage(sid, userMsg.id, { content: userMsg.content })
-          else updateMessage(sid, userMsg.id, { content: userMsg.content })
+          userMsg.attachments = undefined
+          if (shouldQueue) {
+            updateQueuedUserMessage(sid, userMsg.id, { content: userMsg.content, attachments: undefined })
+          } else {
+            updateMessage(sid, userMsg.id, { content: userMsg.content, attachments: undefined })
+          }
         } else if (attachments.some(attachment => attachment.context?.trim())) {
           displayInput = await buildContentBlocks(submittedContent, attachments, uploaded, false)
         }
