@@ -412,6 +412,9 @@ export class AgentClient implements GroupAgentExecutor {
         const token = await getToken()
 
         this.socket = io(`http://127.0.0.1:${actualPort}/group-chat`, {
+            // A relay namespace can close its entire transport. Do not let it
+            // share this Agent's connection and permanently disconnect it.
+            forceNew: true,
             auth: {
                 token: token || undefined,
                 userId: this.agentId,
@@ -1979,8 +1982,14 @@ export class AgentClient implements GroupAgentExecutor {
             this.handlers.onRoomUpdated?.(data)
         })
 
-        // Auto rejoin rooms on reconnect
-        s.io.on('reconnect', async () => {
+        s.on('disconnect', (reason) => {
+            logger.info({ agentId: this.agentId, reason, willReconnect: s.active }, '[AgentClient] group socket disconnected')
+        })
+
+        // Manager reconnect fires before this namespace is connected, when
+        // joinRoom still fails ensureConnected(). Rejoin after socket connect.
+        s.on('connect', async () => {
+            if (s !== this.socket || this.joinedRooms.size === 0) return
             if (this._reconnecting) return
             this._reconnecting = true
             logger.info(`[AgentClients] ${this.name} reconnecting, rejoining ${this.joinedRooms.size} rooms...`)
