@@ -783,17 +783,28 @@ describe('coding agent launch preparation', () => {
       env: {
         OPENCODE_CONFIG_DIR: result.rootDir,
         OPENCODE_DB: join(result.rootDir, 'opencode.db'),
+        OPENCODE_CONFIG_CONTENT: expect.any(String),
         OPENCODE_DISABLE_CLAUDE_CODE: '1',
       },
-      promptFile: join(result.rootDir, 'AGENTS.md'),
+      promptFile: join(result.rootDir, 'hermes-rules.md'),
     })
     expect(config.model).toBe('native/model')
     expect(config.provider.native).toEqual({ npm: '@ai-sdk/openai-compatible' })
-    expect(config.instructions).toEqual(['USER.md', join(result.rootDir, 'AGENTS.md')])
+    expect(config.instructions).toEqual(['USER.md'])
+    expect(JSON.parse(result.env.OPENCODE_CONFIG_CONTENT).instructions)
+      .toEqual([join(result.rootDir, 'hermes-rules.md')])
     expect(config.mcp.local).toEqual({ type: 'local', command: ['local-mcp'], enabled: true })
     expect(config.mcp['hermes-studio-api']).toMatchObject({ type: 'local', enabled: true })
     expect(readFileSync(join(result.rootDir, 'AGENTS.md'), 'utf8')).toContain('User global OpenCode instructions.')
-    expect(existsSync(join(result.rootDir, 'skills'))).toBe(false)
+    expect(readFileSync(join(result.rootDir, 'hermes-rules.md'), 'utf8')).toContain('BEGIN HERMES WEB UI PROMPT')
+    expect(statSync(join(result.rootDir, 'skills')).isDirectory()).toBe(true)
+    expect(readFileSync(join(result.rootDir, 'skills', 'first-skill', 'SKILL.md'), 'utf8')).toBe('# First skill\n')
+    expect(result.files).toEqual(expect.arrayContaining([
+      { key: 'config', path: 'opencode.json', absolutePath: join(result.rootDir, 'opencode.json') },
+      { key: 'agents', path: 'AGENTS.md', absolutePath: join(result.rootDir, 'AGENTS.md') },
+      { key: 'prompt', path: 'hermes-rules.md', absolutePath: join(result.rootDir, 'hermes-rules.md') },
+      { key: 'launcher', path: 'launch.sh', absolutePath: join(result.rootDir, 'launch.sh') },
+    ]))
   })
 
   it('launches scoped OpenCode through the Responses proxy without writing the upstream key', async () => {
@@ -821,8 +832,10 @@ describe('coding agent launch preparation', () => {
     expect(result.env.HERMES_OPENCODE_API_KEY).toBeTruthy()
     expect(result.env.HERMES_OPENCODE_API_KEY).not.toBe('sk-opencode-upstream')
     expect(result.env.OPENCODE_CONFIG).toBeUndefined()
-    expect(result.env.OPENCODE_CONFIG_DIR).toBe(result.rootDir)
+    const baseRoot = join(home, 'coding-agent', 'model', 'default', 'test', 'opencode')
+    expect(result.env.OPENCODE_CONFIG_DIR).toBe(baseRoot)
     expect(result.env.OPENCODE_DB).toBe(join(result.rootDir, 'opencode.db'))
+    expect(result.env.OPENCODE_CONFIG_CONTENT).toBe(configText)
     expect(result.env.OPENCODE_DISABLE_CLAUDE_CODE).toBe('1')
     expect(result.env.OPENCODE_DISABLE_EXTERNAL_SKILLS).toBeUndefined()
     expect(result.env.OPENCODE_DISABLE_PROJECT_CONFIG).toBeUndefined()
@@ -831,7 +844,13 @@ describe('coding agent launch preparation', () => {
     expect(config.provider['hermes-studio'].options.baseURL).toContain('/api/codex-proxy/')
     expect(config.provider['hermes-studio'].options.apiKey).toBe('{env:HERMES_OPENCODE_API_KEY}')
     expect(configText).not.toContain('sk-opencode-upstream')
-    expect(readFileSync(join(result.rootDir, 'AGENTS.md'), 'utf8')).toContain('OpenCode workflow memory.')
+    expect(readFileSync(join(result.rootDir, 'AGENTS.md'), 'utf8')).not.toContain('OpenCode workflow memory.')
+    expect(readFileSync(join(baseRoot, 'AGENTS.md'), 'utf8')).toContain('OpenCode workflow memory.')
+    expect(JSON.parse(readFileSync(join(baseRoot, 'opencode.json'), 'utf8')).mcp['hermes-studio-api'])
+      .toMatchObject({ type: 'local', enabled: true })
+    expect(statSync(join(baseRoot, 'skills')).isDirectory()).toBe(true)
+    expect(readFileSync(join(baseRoot, 'skills', 'workflow-skill', 'SKILL.md'), 'utf8')).toBe('# Workflow skill\n')
+    expect(existsSync(join(baseRoot, 'launch.sh'))).toBe(true)
     expect(existsSync(join(result.rootDir, 'skills'))).toBe(false)
   })
 

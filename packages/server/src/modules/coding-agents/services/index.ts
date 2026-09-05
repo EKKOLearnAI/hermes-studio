@@ -1,7 +1,7 @@
 import { execFile } from 'child_process'
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'crypto'
 import { existsSync, readdirSync, realpathSync } from 'fs'
-import { chmod, copyFile, lstat, mkdir, open, readFile, readdir, rename, rm, stat, symlink, writeFile } from 'fs/promises'
+import { chmod, copyFile, cp, lstat, mkdir, open, readFile, readdir, rename, rm, stat, symlink, writeFile } from 'fs/promises'
 import { homedir } from 'os'
 import { delimiter, dirname, join } from 'path'
 import { promisify } from 'util'
@@ -67,6 +67,17 @@ const OPENCODE_PROVIDER_ID = 'hermes-studio'
 const OPENCODE_CONFIG_FILE = 'opencode.json'
 const OPENCODE_DATABASE_FILE = 'opencode.db'
 const OPENCODE_API_KEY_ENV = 'HERMES_OPENCODE_API_KEY'
+const OPENCODE_RUNTIME_CONFIG_ENV = 'OPENCODE_CONFIG_CONTENT'
+const OPENCODE_SHARED_CONFIG_DIRS = [
+  'agent',
+  'agents',
+  'command',
+  'commands',
+  'plugin',
+  'plugins',
+  'skill',
+  'skills',
+] as const
 const PI_PROXY_TARGET_KEY_FILE = '.pi-proxy-target.key'
 const PI_PROXY_TARGET_LEGACY_AAD = Buffer.from('hermes-studio/pi-proxy-target/v1', 'utf8')
 // Codex ToolSearch became stable in 0.128; always-defer was removed in 0.142.
@@ -1643,17 +1654,27 @@ function opencodeRuntimeConfig(
   }, null, 2)}\n`
 }
 
-function openCodeRuntimeEnv(rootDir: string, apiKey = ''): Record<string, string> {
-  // OpenCode loads OPENCODE_CONFIG before project config, but loads the
-  // OPENCODE_CONFIG_DIR config afterward. Use the directory override so
-  // project .opencode resources remain available without overriding Studio's
-  // provider and managed MCP settings. Isolate only OpenCode's native session
-  // database; changing HOME/XDG would also redirect git, ssh, npm, and shells.
+function openCodeRuntimeEnv(input: {
+  configDir: string
+  databasePath: string
+  runtimeConfig?: string
+  apiKey?: string
+}): Record<string, string> {
+  // OPENCODE_CONFIG_DIR is OpenCode's native global-config override. Keep it
+  // stable at the provider/profile root so OpenCode installs its plugin SDK
+  // once and discovers the same agents, commands, plugins, skills, memory, and
+  // MCP configuration for terminal, chat, group-chat, and workflow launches.
+  //
+  // Per-conversation provider credentials and model selection are applied with
+  // OPENCODE_CONFIG_CONTENT, which OpenCode intentionally loads last. The
+  // native database remains isolated per conversation. Do not redirect HOME or
+  // XDG because that would also redirect git, ssh, npm, and child shells.
   return {
-    OPENCODE_CONFIG_DIR: rootDir,
-    OPENCODE_DB: join(rootDir, OPENCODE_DATABASE_FILE),
+    OPENCODE_CONFIG_DIR: input.configDir,
+    OPENCODE_DB: input.databasePath,
+    ...(input.runtimeConfig ? { [OPENCODE_RUNTIME_CONFIG_ENV]: input.runtimeConfig } : {}),
     OPENCODE_DISABLE_CLAUDE_CODE: '1',
-    ...(apiKey ? { [OPENCODE_API_KEY_ENV]: apiKey } : {}),
+    ...(input.apiKey ? { [OPENCODE_API_KEY_ENV]: input.apiKey } : {}),
   }
 }
 
@@ -2034,6 +2055,101 @@ async function ensurePiScopedBaseConfigFiles(scope: Required<CodingAgentConfigSc
       if (err?.code !== 'EEXIST') throw err
     })
   }
+}
+
+function shouldShareOpenCodeGlobalFile(name: string): boolean {
+  if (name === 'AGENTS.md' || name === 'opencode.json' || name === 'opencode.jsonc') return false
+  if (name === '.gitignore' || name === 'package.json' || name === 'package-lock.json' || name === 'bun.lock') return false
+  if (name.endsWith('.lock') || name.endsWith('.pid') || name.endsWith('.sock')) return false
+  if (name.endsWith('.db') || name.endsWith('.db-shm') || name.endsWith('.db-wal')) return false
+  if (name.endsWith('.sqlite') || name.endsWith('.sqlite-shm') || name.endsWith('.sqlite-wal')) return false
+  return !name.endsWith('.log')
+}
+
+async function shareOpenCodeGlobalEntry(source: string, target: string, type: 'file' | 'dir'): Promise<void> {
+  if (await pathEntryExists(target)) return
+  try {
+    await symlink(source, target, process.platform === 'win32' && type === 'dir' ? 'junction' : type)
+    return
+  } catch (err: any) {
+    if (err?.code !== 'EEXIST' && err?.code !== 'EPERM' && err?.code !== 'ENOTSUP' && err?.code !== 'EINVAL') {
+      throw err
+    }
+    if (err?.code === 'EEXIST') return
+  }
+  if (type === 'dir') {
+    await cp(source, target, {
+      recursive: true,
+      dereference: true,
+      errorOnExist: false,
+      force: false,
+      preserveTimestamps: true,
+    })
+  } else {
+    await copyFile(source, target)
+  }
+}
+
+async function ensureOpenCodeScopedBaseConfigFiles(
+  scope: Required<CodingAgentConfigScope>,
+  systemPrompt: string,
+  workspaceDir = resolveLaunchWorkspaceRoot(scope, null),
+): Promise<{
+  rootDir: string
+  memoryFile: string
+  promptFile: string
+  configFile: string
+  launcherFile: string
+  launcherRuntimeConfig: string
+}> {
+  const rootDir = getScopedConfigRoot('opencode', scope)
+  const sourceHome = dirname(getLiveConfigFileDefinition('opencode', 'config')?.absolutePath || '')
+  await mkdir(rootDir, { recursive: true, mode: 0o700 })
+  await mkdir(sourceHome, { recursive: true })
+
+  for (const directory of OPENCODE_SHARED_CONFIG_DIRS) {
+    const source = join(sourceHome, directory)
+    const target = join(rootDir, directory)
+    if (directory === 'skills') await mkdir(source, { recursive: true })
+    if (!existsSync(source)) continue
+    await shareOpenCodeGlobalEntry(source, target, 'dir')
+  }
+
+  if (sourceHome !== rootDir && existsSync(sourceHome)) {
+    for (const entry of await readdir(sourceHome, { withFileTypes: true })) {
+      if (!entry.isFile() || !shouldShareOpenCodeGlobalFile(entry.name)) continue
+      await shareOpenCodeGlobalEntry(join(sourceHome, entry.name), join(rootDir, entry.name), 'file')
+    }
+  }
+
+  const memoryFile = join(rootDir, 'AGENTS.md')
+  const promptFile = join(rootDir, 'hermes-rules.md')
+  const configFile = join(rootDir, OPENCODE_CONFIG_FILE)
+  const globalInstructions = await safeReadFile(join(sourceHome, 'AGENTS.md')) || ''
+  const globalConfig = await safeReadFile(join(sourceHome, OPENCODE_CONFIG_FILE))
+    || await safeReadFile(join(sourceHome, 'opencode.jsonc'))
+    || ''
+  await writeFile(memoryFile, globalInstructions, 'utf-8')
+  await writeManagedPromptFile(promptFile, systemPrompt, '')
+  await writeFile(
+    configFile,
+    opencodeRuntimeConfig(scope.profile, {}, globalConfig),
+    'utf-8',
+  )
+  const launcherRuntimeConfig = opencodeRuntimeConfig(scope.profile, { systemPrompt: promptFile })
+  const env = openCodeRuntimeEnv({
+    configDir: rootDir,
+    databasePath: join(rootDir, OPENCODE_DATABASE_FILE),
+    runtimeConfig: launcherRuntimeConfig,
+  })
+  const launcherFile = await writeLauncherScript({
+    rootDir,
+    workspaceDir,
+    env,
+    command: 'opencode',
+    args: [],
+  })
+  return { rootDir, memoryFile, promptFile, configFile, launcherFile, launcherRuntimeConfig }
 }
 
 function buildLaunchShellCommand(input: {
@@ -2955,18 +3071,23 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       env = { GROK_HOME: rootDir }
       args = ['--always-approve', '--no-auto-update']
     } else if (tool.id === 'opencode') {
-      const globalOpenCodeHome = dirname(getLiveConfigFileDefinition(tool.id, 'config')?.absolutePath || '')
-      promptFile = join(rootDir, 'AGENTS.md')
-      const userInstructions = await safeReadFile(join(globalOpenCodeHome, 'AGENTS.md')) || ''
-      await writeManagedPromptFile(promptFile, systemPrompt, userInstructions)
-      const configPath = join(rootDir, OPENCODE_CONFIG_FILE)
-      const globalConfig = await safeReadFile(getLiveConfigFileDefinition(tool.id, 'config')?.absolutePath || '')
-      await writeFile(configPath, opencodeRuntimeConfig(scope.profile, { systemPrompt: promptFile }, globalConfig), 'utf-8')
+      const prepared = await ensureOpenCodeScopedBaseConfigFiles(scope, systemPrompt, workspaceDir)
+      promptFile = prepared.promptFile
       files = [
-        { key: 'agents', path: 'AGENTS.md', absolutePath: promptFile },
-        { key: 'config', path: OPENCODE_CONFIG_FILE, absolutePath: configPath },
+        { key: 'agents', path: 'AGENTS.md', absolutePath: prepared.memoryFile },
+        { key: 'prompt', path: 'hermes-rules.md', absolutePath: prepared.promptFile },
+        { key: 'config', path: OPENCODE_CONFIG_FILE, absolutePath: prepared.configFile },
+        {
+          key: 'launcher',
+          path: process.platform === 'win32' ? WINDOWS_LAUNCHER_FILE : POSIX_LAUNCHER_FILE,
+          absolutePath: prepared.launcherFile,
+        },
       ]
-      env = openCodeRuntimeEnv(rootDir)
+      env = openCodeRuntimeEnv({
+        configDir: prepared.rootDir,
+        databasePath: join(prepared.rootDir, OPENCODE_DATABASE_FILE),
+        runtimeConfig: prepared.launcherRuntimeConfig,
+      })
     } else {
       promptFile = join(rootDir, 'APPEND_SYSTEM.md')
       await writeManagedPromptFile(promptFile, systemPrompt, '')
@@ -3354,26 +3475,27 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
           chatSessionId: isolatedInput.sessionId,
         })
       : null
+    const baseRuntime = await ensureOpenCodeScopedBaseConfigFiles(scope, scopedSystemPrompt, workspaceDir)
     const configPath = join(rootDir, OPENCODE_CONFIG_FILE)
     const promptPath = join(rootDir, 'AGENTS.md')
-    const globalConfig = await safeReadFile(getLiveConfigFileDefinition(tool.id, 'config')?.absolutePath || '')
-    const scopedConfig = await safeReadFile(getScopedConfigFileDefinition(tool.id, 'config', scope)?.absolutePath || '')
-    const userInstructions = [
-      await safeReadFile(getLiveConfigFileDefinition(tool.id, 'agents')?.absolutePath || ''),
-      await safeReadFile(getScopedConfigFileDefinition(tool.id, 'agents', scope)?.absolutePath || ''),
-    ].map(value => value?.trim() || '').filter((value, index, values) => value && values.indexOf(value) === index)
-    await writeManagedPromptFile(promptPath, scopedSystemPrompt, userInstructions.join('\n\n'))
-    await writeFile(configPath, opencodeRuntimeConfig(scope.profile, {
+    await writeManagedPromptFile(promptPath, scopedSystemPrompt, '')
+    const runtimeConfig = opencodeRuntimeConfig(scope.profile, {
       provider,
       model,
       baseUrl: proxyTarget?.baseUrl || baseUrl,
       systemPrompt: promptPath,
-    }, globalConfig, scopedConfig), 'utf-8')
+    })
+    await writeFile(configPath, runtimeConfig, 'utf-8')
     files.push(
       { key: 'config', path: OPENCODE_CONFIG_FILE, absolutePath: configPath },
       { key: 'agents', path: 'AGENTS.md', absolutePath: promptPath },
     )
-    env = openCodeRuntimeEnv(rootDir, proxyTarget?.token || apiKey)
+    env = openCodeRuntimeEnv({
+      configDir: baseRuntime.rootDir,
+      databasePath: join(rootDir, OPENCODE_DATABASE_FILE),
+      runtimeConfig,
+      apiKey: proxyTarget?.token || apiKey,
+    })
     args = ['--model', `${OPENCODE_PROVIDER_ID}/${model}`]
   }
 
