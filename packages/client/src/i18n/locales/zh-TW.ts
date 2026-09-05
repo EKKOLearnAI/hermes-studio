@@ -1091,6 +1091,8 @@ export default {
     workspaceRecent: '最近使用',
     defaultWorkspace: '預設工作區',
     more: '更多',
+    sidePanel: '側邊面板',
+    sessionActions: '工作階段操作',
     setWorkspace: '設定工作區',
     setWorkspaceTitle: '設定工作階段工作區',
     workspacePlaceholder: '輸入專案路徑，例如 /home/user/project',

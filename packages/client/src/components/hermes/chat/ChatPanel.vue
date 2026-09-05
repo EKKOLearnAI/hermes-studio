@@ -52,6 +52,7 @@ import TerminalPanel from "./TerminalPanel.vue";
 import SubagentStreamPanel from "./SubagentStreamPanel.vue";
 import { buildVisibleSessionCategoryGroups, partitionRecentSessions } from "./session-category-groups";
 import { buildSessionCategoryMenuChildren, resolveRecentSessionCategoryLabel } from "./session-category-menu";
+import { buildActiveSessionMenuOptions, buildSessionContextMenuOptions } from "./session-menu-options";
 import PageSidebarNav from "@/components/layout/PageSidebarNav.vue";
 import { isStoredSuperAdmin } from "@/api/client";
 import { useDefaultWorkspace } from "@/composables/useDefaultWorkspace";
@@ -96,6 +97,14 @@ const { t } = useI18n();
 const isSuperAdmin = computed(() => isStoredSuperAdmin());
 
 const showOutline = ref(false);
+const ACTIVE_SESSION_MENU_ID = "active-session-actions-menu";
+const showActiveSessionMenu = ref(false);
+const activeSessionMenuTriggerRef = ref<InstanceType<typeof NButton> | null>(null);
+let activeSessionMenuInitialFocus: "first" | "last" = "first";
+let restoreActiveSessionMenuTriggerFocus = false;
+const activeSessionSupportsPersistence = computed(() =>
+  Boolean(chatStore.activeSession && !chatStore.activeSession.isLocalOnly),
+);
 const showRealtimeVoice = ref(false);
 const messageListRef = ref<InstanceType<typeof MessageList> | null>(null);
 const chatInputRef = ref<(InstanceType<typeof ChatInput> & {
@@ -168,21 +177,22 @@ function closeRealtimeVoice() {
   showRealtimeVoice.value = false;
 }
 
-function sessionHref(sessionId: string) {
+function sessionHref(sessionId: string, profile?: string | null) {
   return router.resolve({
     name: chatStore.runtimeMode === "global_agent" ? "hermes.globalAgentSession" : "hermes.session",
     params: { sessionId },
+    query: profile ? { profile } : undefined,
   }).href;
 }
 
-function openSessionInNewTab(sessionId: string) {
+function openSessionInNewTab(sessionId: string, profile = sessionProfile(sessionId)) {
   if (typeof window === "undefined") return;
   const bridge = desktopBridge();
   if (bridge?.isDesktop && bridge.openChatWindow) {
-    void bridge.openChatWindow(sessionId, sessionProfile(sessionId) || undefined);
+    void bridge.openChatWindow(sessionId, profile || undefined);
     return;
   }
-  window.open(sessionHref(sessionId), "_blank", "noopener,noreferrer");
+  window.open(sessionHref(sessionId, profile), "_blank", "noopener,noreferrer");
 }
 
 function handleOutlineNavigate(target: { messageId: string; anchorId: string }) {
@@ -1330,6 +1340,170 @@ async function copySessionId(id?: string) {
   }
 }
 
+const activeSessionMenuOptions = computed<DropdownOption[]>(() => buildActiveSessionMenuOptions({
+  outline: t("chat.outlineTitle"),
+  rename: t("chat.rename"),
+  open: t(desktopChatWindowAvailable
+    ? "chat.openSessionInNewWindow"
+    : "chat.openSessionInNewTab"),
+  copyId: t("chat.copySessionId"),
+}, {
+  canRename: activeSessionSupportsPersistence.value,
+  canOpen: activeSessionSupportsPersistence.value,
+}));
+
+function activeSessionMenuProps() {
+  return {
+    id: ACTIVE_SESSION_MENU_ID,
+    role: "menu",
+    "aria-label": t("chat.sessionActions"),
+  };
+}
+
+function activeSessionMenuNodeProps(option: DropdownOption) {
+  return {
+    id: `${ACTIVE_SESSION_MENU_ID}-${String(option.key || "item")}`,
+    role: "menuitem",
+    tabindex: -1,
+    "aria-disabled": option.disabled ? "true" as const : undefined,
+  };
+}
+
+function activeSessionMenuItems(): HTMLElement[] {
+  if (typeof document === "undefined") return [];
+  const menu = document.getElementById(ACTIVE_SESSION_MENU_ID);
+  if (!menu) return [];
+  return Array.from(menu.querySelectorAll<HTMLElement>('[role="menuitem"]'));
+}
+
+function focusActiveSessionMenuItem(position: number | "first" | "last") {
+  const items = activeSessionMenuItems();
+  if (items.length === 0) return;
+  const index = position === "first"
+    ? 0
+    : position === "last"
+      ? items.length - 1
+      : (position + items.length) % items.length;
+  items[index]?.focus({ preventScroll: true });
+}
+
+function focusActiveSessionMenuTrigger() {
+  const element = activeSessionMenuTriggerRef.value?.$el as HTMLElement | undefined;
+  element?.focus({ preventScroll: true });
+}
+
+function focusAdjacentToActiveSessionMenuTrigger(backwards: boolean) {
+  if (typeof document === "undefined") return;
+  const trigger = activeSessionMenuTriggerRef.value?.$el as HTMLElement | undefined;
+  if (!trigger) return;
+  const selector = [
+    'a[href]',
+    'button:not([disabled])',
+    'input:not([disabled])',
+    'select:not([disabled])',
+    'textarea:not([disabled])',
+    '[contenteditable="true"]',
+    '[tabindex]:not([tabindex="-1"])',
+  ].join(',');
+  const candidates = Array.from(document.querySelectorAll<HTMLElement>(selector)).filter((element) => {
+    if (element.closest(`#${ACTIVE_SESSION_MENU_ID}`) || element.closest('[inert]')) return false;
+    if (element.tabIndex < 0 || element.getClientRects().length === 0) return false;
+    const style = window.getComputedStyle(element);
+    return style.display !== "none" && style.visibility !== "hidden";
+  });
+  const triggerIndex = candidates.indexOf(trigger);
+  if (triggerIndex < 0) return;
+  const target = candidates[triggerIndex + (backwards ? -1 : 1)];
+  target?.focus({ preventScroll: true });
+}
+
+function handleActiveSessionMenuTriggerKeydown(event: KeyboardEvent) {
+  if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+  event.preventDefault();
+  event.stopPropagation();
+  activeSessionMenuInitialFocus = event.key === "ArrowUp" ? "last" : "first";
+  showActiveSessionMenu.value = true;
+}
+
+function handleActiveSessionMenuKeydown(event: KeyboardEvent) {
+  const items = activeSessionMenuItems();
+  const current = (event.target as HTMLElement | null)?.closest<HTMLElement>('[role="menuitem"]');
+  const currentIndex = current ? items.indexOf(current) : -1;
+
+  if (event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Home" || event.key === "End") {
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.key === "Home") focusActiveSessionMenuItem("first");
+    else if (event.key === "End") focusActiveSessionMenuItem("last");
+    else if (event.key === "ArrowDown") focusActiveSessionMenuItem(currentIndex < 0 ? 0 : currentIndex + 1);
+    else focusActiveSessionMenuItem(currentIndex < 0 ? items.length - 1 : currentIndex - 1);
+    return;
+  }
+
+  if (event.key === "Enter" || event.key === " ") {
+    event.preventDefault();
+    event.stopPropagation();
+    current?.querySelector<HTMLElement>(".n-dropdown-option-body")?.click();
+    return;
+  }
+
+  if (event.key === "Escape") {
+    event.preventDefault();
+    event.stopPropagation();
+    restoreActiveSessionMenuTriggerFocus = true;
+    showActiveSessionMenu.value = false;
+  } else if (event.key === "Tab") {
+    event.preventDefault();
+    event.stopPropagation();
+    const backwards = event.shiftKey;
+    restoreActiveSessionMenuTriggerFocus = false;
+    showActiveSessionMenu.value = false;
+    void nextTick().then(() => focusAdjacentToActiveSessionMenuTrigger(backwards));
+  }
+}
+
+watch(showActiveSessionMenu, async (visible, wasVisible) => {
+  if (visible) {
+    restoreActiveSessionMenuTriggerFocus = false;
+    await nextTick();
+    focusActiveSessionMenuItem(activeSessionMenuInitialFocus);
+    activeSessionMenuInitialFocus = "first";
+    return;
+  }
+  if (!wasVisible || !restoreActiveSessionMenuTriggerFocus) return;
+  restoreActiveSessionMenuTriggerFocus = false;
+  await nextTick();
+  focusActiveSessionMenuTrigger();
+});
+
+function openRenameSession(sessionId: string) {
+  const session = chatStore.sessions.find((item) => item.id === sessionId)
+    || (chatStore.activeSession?.id === sessionId ? chatStore.activeSession : null);
+  renameSessionId.value = sessionId;
+  renameValue.value = session?.title || "";
+  showRenameModal.value = true;
+  nextTick(() => {
+    renameInputRef.value?.focus();
+  });
+}
+
+function handleActiveSessionMenuSelect(key: string) {
+  const sessionId = chatStore.activeSessionId;
+  if (!sessionId) return;
+  restoreActiveSessionMenuTriggerFocus = key !== "rename";
+  if (key === "outline") {
+    showOutline.value = !showOutline.value;
+  } else if (key === "rename") {
+    if (!activeSessionSupportsPersistence.value) return;
+    openRenameSession(sessionId);
+  } else if (key === "open-link") {
+    if (!activeSessionSupportsPersistence.value) return;
+    openSessionInNewTab(sessionId, chatStore.activeSession?.profile || null);
+  } else if (key === "copy-id") {
+    void copySessionId(sessionId);
+  }
+}
+
 async function handleDeleteSession(id: string) {
   const ok = await chatStore.deleteSession(id);
   if (!ok) {
@@ -1539,73 +1713,43 @@ async function handleDeleteCategoryConfirm() {
   }
 }
 
-const contextMenuOptions = computed(() => {
-  const options: DropdownOption[] = [{
-    label: t(contextSessionPinned.value ? "chat.unpin" : "chat.pin"),
-    key: "pin",
-  },
-  { label: t("chat.rename"), key: "rename" }]
+const canSetContextSessionModel = computed(() =>
+  contextSession.value?.source === "cli" ||
+  (contextSession.value?.source === "coding_agent" && contextSession.value?.codingAgentMode !== "global"),
+);
 
-  if (contextSession.value?.source !== "global_agent") {
-    options.push({ label: t("chat.archiveSession"), key: "archive" })
-  }
-
-  options.push({ label: t("chat.setWorkspace"), key: "workspace" })
-
-  if (
-    contextSession.value?.source === "cli" ||
-    (contextSession.value?.source === "coding_agent" && contextSession.value?.codingAgentMode !== "global")
-  ) {
-    options.push({ label: t("chat.setModel"), key: "model" })
-  }
-
-  options.push({
-    label: t("chat.moveToCategory"),
-    key: "category",
-    children: buildSessionCategoryMenuChildren({
-      categories: sessionCategories.value,
-      currentCategoryId: contextSession.value?.categoryId,
-      createCategoryLabel: t("chat.createCategory"),
-      uncategorizedLabel: t("chat.uncategorized"),
-      loadFailedLabel: t("chat.categoryLoadFailed"),
-      retryLabel: t("common.retry"),
-      loadFailed: sessionCategoriesLoadFailed.value,
-      loading: sessionCategoriesLoading.value,
-    }),
-  })
-
-  options.push({
-    label: t("chat.export"),
-    key: "export",
-    children: [
-      {
-        label: t("chat.exportFull"),
-        key: "export-full",
-        children: [
-          { label: "JSON", key: "export-full-json" },
-          { label: "TXT", key: "export-full-txt" },
-        ],
-      },
-      {
-        label: t("chat.exportCompressed"),
-        key: "export-compressed",
-        children: [
-          { label: "JSON", key: "export-compressed-json" },
-          { label: "TXT", key: "export-compressed-txt" },
-        ],
-      },
-    ],
-  })
-  options.push({
-    label: t(desktopChatWindowAvailable
+const contextMenuOptions = computed(() => buildSessionContextMenuOptions({
+  pinned: contextSessionPinned.value,
+  includeArchive: contextSession.value?.source !== "global_agent",
+  includeModel: canSetContextSessionModel.value,
+  categoryChildren: buildSessionCategoryMenuChildren({
+    categories: sessionCategories.value,
+    currentCategoryId: contextSession.value?.categoryId,
+    createCategoryLabel: t("chat.createCategory"),
+    uncategorizedLabel: t("chat.uncategorized"),
+    loadFailedLabel: t("chat.categoryLoadFailed"),
+    retryLabel: t("common.retry"),
+    loadFailed: sessionCategoriesLoadFailed.value,
+    loading: sessionCategoriesLoading.value,
+  }),
+  labels: {
+    pin: t("chat.pin"),
+    unpin: t("chat.unpin"),
+    rename: t("chat.rename"),
+    archive: t("chat.archiveSession"),
+    workspace: t("chat.setWorkspace"),
+    model: t("chat.setModel"),
+    category: t("chat.moveToCategory"),
+    export: t("chat.export"),
+    exportFull: t("chat.exportFull"),
+    exportCompressed: t("chat.exportCompressed"),
+    open: t(desktopChatWindowAvailable
       ? "chat.openSessionInNewWindow"
       : "chat.openSessionInNewTab"),
-    key: "open-link",
-  })
-  options.push({ label: t("chat.copySessionLink"), key: "copy-link" })
-  options.push({ label: t("chat.copySessionId"), key: "copy-id" })
-  return options
-});
+    copyLink: t("chat.copySessionLink"),
+    copyId: t("chat.copySessionId"),
+  },
+}));
 const contextMenuCategoriesKey = computed(() => [
   sessionCategoriesLoadFailed.value ? "failed" : "ready",
   sessionCategoriesLoading.value ? "loading" : "idle",
@@ -1681,7 +1825,7 @@ async function handleContextMenuSelect(key: string) {
   } else if (key === "copy-id") {
     copySessionId(contextSessionId.value);
   } else if (key === "open-link") {
-    openSessionInNewTab(contextSessionId.value);
+    openSessionInNewTab(contextSessionId.value, contextSession.value?.profile || null);
   } else if (key === "archive") {
     const archivedSession = contextSession.value;
     const ok = await chatStore.archiveSession(contextSessionId.value);
@@ -1716,15 +1860,7 @@ async function handleContextMenuSelect(key: string) {
   } else if (key === "model") {
     await openSessionModelModal(contextSessionId.value);
   } else if (key === "rename") {
-    const session = chatStore.sessions.find(
-      (s) => s.id === contextSessionId.value,
-    );
-    renameSessionId.value = contextSessionId.value;
-    renameValue.value = session?.title || "";
-    showRenameModal.value = true;
-    nextTick(() => {
-      renameInputRef.value?.focus();
-    });
+    openRenameSession(contextSessionId.value);
   }
 }
 
@@ -2306,7 +2442,7 @@ async function handleSessionModelCustomSubmit() {
               :to="sessionHref(s.id)"
               :intercept-modified-navigation="desktopChatWindowAvailable"
               @select="handleRecentSessionClick(s.id)"
-              @open-new="openSessionInNewTab(s.id)"
+              @open-new="openSessionInNewTab(s.id, s.profile || null)"
               @contextmenu="handleContextMenu($event, s.id)"
               @delete="handleDeleteSession(s.id)"
               @toggle-select="toggleSessionSelection(s)"
@@ -2352,7 +2488,7 @@ async function handleSessionModelCustomSubmit() {
             :to="sessionHref(s.id)"
             :intercept-modified-navigation="desktopChatWindowAvailable"
             @select="handleSessionClick(s.id)"
-            @open-new="openSessionInNewTab(s.id)"
+            @open-new="openSessionInNewTab(s.id, s.profile || null)"
             @contextmenu="handleContextMenu($event, s.id)"
             @delete="handleDeleteSession(s.id)"
             @toggle-select="toggleSessionSelection(s)"
@@ -2419,7 +2555,7 @@ async function handleSessionModelCustomSubmit() {
               :to="sessionHref(s.id)"
               :intercept-modified-navigation="desktopChatWindowAvailable"
               @select="handleSessionClick(s.id)"
-              @open-new="openSessionInNewTab(s.id)"
+              @open-new="openSessionInNewTab(s.id, s.profile || null)"
               @contextmenu="handleContextMenu($event, s.id)"
               @delete="handleDeleteSession(s.id)"
               @toggle-select="toggleSessionSelection(s)"
@@ -3022,6 +3158,9 @@ async function handleSessionModelCustomSubmit() {
                   :class="{ active: showToolPanel }"
                   quaternary
                   size="small"
+                  :aria-label="t('chat.sidePanel')"
+                  :aria-expanded="showToolPanel"
+                  aria-controls="chat-tool-panel"
                   @click="toggleToolPanel"
                   circle
                 >
@@ -3045,57 +3184,52 @@ async function handleSessionModelCustomSubmit() {
               </template>
               {{ desktopBrowserAvailable ? `${t("drawer.files")} / ${t("drawer.terminal")} / ${t("browser.title")}` : `${t("drawer.files")} / ${t("drawer.terminal")}` }}
             </NTooltip>
-            <NTooltip trigger="hover">
-              <template #trigger>
-                <NButton
-                  quaternary
-                  size="small"
-                  @click="showOutline = !showOutline"
-                  circle
-                >
-                  <template #icon>
-                    <svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="1.5"
-                    >
-                      <path d="M3 12h18M3 6h18M3 18h18" />
-                    </svg>
-                  </template>
-                </NButton>
-              </template>
-              {{ t("chat.outlineTitle") }}
-            </NTooltip>
-            <NTooltip trigger="hover">
-              <template #trigger>
-                <NButton
-                  quaternary
-                  size="small"
-                  @click="copySessionId()"
-                  circle
-                >
-                  <template #icon>
-                    <svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="1.5"
-                    >
-                      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                      <path
-                        d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"
-                      />
-                    </svg>
-                  </template>
-                </NButton>
-              </template>
-              {{ t("chat.copySessionId") }}
-            </NTooltip>
+            <NDropdown
+              v-model:show="showActiveSessionMenu"
+              trigger="click"
+              placement="bottom-end"
+              :keyboard="false"
+              :menu-props="activeSessionMenuProps"
+              :node-props="activeSessionMenuNodeProps"
+              :options="activeSessionMenuOptions"
+              :show-arrow="true"
+              @select="handleActiveSessionMenuSelect"
+              @keydown="handleActiveSessionMenuKeydown"
+            >
+              <NTooltip trigger="hover" :disabled="showActiveSessionMenu">
+                <template #trigger>
+                  <NButton
+                    ref="activeSessionMenuTriggerRef"
+                    class="header-session-menu-trigger"
+                    quaternary
+                    size="small"
+                    :disabled="!chatStore.activeSessionId"
+                    :aria-label="t('chat.sessionActions')"
+                    :aria-expanded="showActiveSessionMenu"
+                    aria-controls="active-session-actions-menu"
+                    aria-haspopup="menu"
+                    @keydown="handleActiveSessionMenuTriggerKeydown"
+                    circle
+                  >
+                    <template #icon>
+                      <svg
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2.4"
+                        stroke-linecap="round"
+                        aria-hidden="true"
+                      >
+                        <path d="M5 12h.01M12 12h.01M19 12h.01" />
+                      </svg>
+                    </template>
+                  </NButton>
+                </template>
+                {{ t("chat.sessionActions") }}
+              </NTooltip>
+            </NDropdown>
           </template>
         </div>
       </header>
@@ -3140,7 +3274,10 @@ async function handleSessionModelCustomSubmit() {
           >
             <aside
               v-if="showToolPanel"
+              id="chat-tool-panel"
               class="chat-tool-panel"
+              role="region"
+              :aria-label="t('chat.sidePanel')"
               :style="toolPanelStyle"
             >
               <div
@@ -4015,6 +4152,11 @@ async function handleSessionModelCustomSubmit() {
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
+}
+
+:global(#active-session-actions-menu [role="menuitem"]:focus-visible > .n-dropdown-option-body) {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: -2px;
 }
 
 .chat-mode-toggle {

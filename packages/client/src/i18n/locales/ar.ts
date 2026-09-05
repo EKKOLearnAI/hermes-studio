@@ -1093,6 +1093,8 @@ export default {
     workspaceRecent: 'حديثة',
     defaultWorkspace: 'مساحة العمل الافتراضية',
     more: 'المزيد',
+    sidePanel: 'اللوحة الجانبية',
+    sessionActions: 'إجراءات الجلسة',
     setWorkspace: 'تعيين مساحة العمل',
     setWorkspaceTitle: 'تعيين مساحة عمل الجلسة',
     workspacePlaceholder: 'أدخل مسار المشروع، مثال: /home/user/project',

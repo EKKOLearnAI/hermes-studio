@@ -1100,6 +1100,8 @@ export default {
     workspaceRecent: '最近使用',
     defaultWorkspace: '默认工作区',
     more: '更多',
+    sidePanel: '侧边面板',
+    sessionActions: '会话操作',
     setWorkspace: '设置工作区',
     setWorkspaceTitle: '设置会话工作区',
     workspacePlaceholder: '输入项目路径，例如 /home/user/project',

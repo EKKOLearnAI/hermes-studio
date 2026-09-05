@@ -1086,6 +1086,8 @@ export default {
     workspaceRecent: '最近使用',
     defaultWorkspace: 'デフォルトワークスペース',
     more: 'もっと見る',
+    sidePanel: 'サイドパネル',
+    sessionActions: 'セッション操作',
     workspace: 'ワークスペース',
     setWorkspaceTitle: 'セッション Workspace を設定',
     setWorkspace: 'Workspace を設定',

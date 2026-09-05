@@ -1086,6 +1086,8 @@ export default {
     workspaceRecent: '최근 사용',
     defaultWorkspace: '기본 작업 공간',
     more: '더보기',
+    sidePanel: '사이드 패널',
+    sessionActions: '세션 작업',
     workspace: '작업 공간',
     setWorkspaceTitle: '세션 Workspace 설정',
     setWorkspace: 'Workspace 설정',
