@@ -15,6 +15,8 @@ const getExactSessionDetailFromDbWithProfileMock = vi.fn()
 const getUsageStatsFromDbMock = vi.fn()
 const getSessionMock = vi.fn()
 const deleteHermesSessionForProfileMock = vi.fn()
+const renameHermesSessionForProfileMock = vi.fn()
+const isReplaceableLocalTitleMock = vi.fn()
 const localListSessionsMock = vi.fn()
 const localGetSessionDetailMock = vi.fn()
 const localSearchSessionsMock = vi.fn()
@@ -106,6 +108,8 @@ vi.mock('../../packages/server/src/modules/studio/repositories/session-store', (
   getSession: getSessionMock,
   updateSession: localUpdateSessionMock,
   updateSessionStats: localUpdateSessionStatsMock,
+  isReplaceableLocalTitle: isReplaceableLocalTitleMock,
+  normalizeSessionTitleText: (value: unknown) => String(value || '').replace(/\s+/g, ' ').trim(),
 }))
 
 vi.mock('../../packages/server/src/modules/studio/repositories/session-category-store', () => ({
@@ -234,6 +238,7 @@ vi.mock('../../packages/server/src/modules/studio/public/session-agent-runtime',
       profile,
     )
   },
+  renameHermesSessionForProfile: renameHermesSessionForProfileMock,
   stopCodingAgentSessionRun: codingAgentRunManagerMock.stop,
 }))
 
@@ -250,6 +255,7 @@ describe('session conversations controller', () => {
     listConversationSummariesMock.mockReset()
     getConversationDetailMock.mockReset()
     listSessionSummariesMock.mockReset()
+    listSessionSummariesMock.mockResolvedValue([])
     listSessionSummaryGroupsMock.mockReset()
     getSessionDetailFromDbMock.mockReset()
     getSessionDetailFromDbWithProfileMock.mockReset()
@@ -257,6 +263,10 @@ describe('session conversations controller', () => {
     getUsageStatsFromDbMock.mockReset()
     getSessionMock.mockReset()
     deleteHermesSessionForProfileMock.mockReset()
+    renameHermesSessionForProfileMock.mockReset()
+    renameHermesSessionForProfileMock.mockResolvedValue(true)
+    isReplaceableLocalTitleMock.mockReset()
+    isReplaceableLocalTitleMock.mockReturnValue(false)
     localListSessionsMock.mockReset()
     localGetSessionDetailMock.mockReset()
     localSearchSessionsMock.mockReset()
@@ -1059,6 +1069,82 @@ describe('session conversations controller', () => {
       excludeSessionIds: [],
     })
     expect(workflowCtx.body.sessions).toEqual([expect.objectContaining({ id: 'workflow-1', source: 'workflow' })])
+  })
+
+  it('heals a stale bridge session title from Hermes state.db on list', async () => {
+    localListSessionsMock.mockReturnValue([
+      { id: 'cli-1', profile: 'default', source: 'cli', title: '有什么推荐的领夹麦？' },
+    ])
+    listSessionSummariesMock.mockResolvedValue([
+      { id: 'cli-1', source: 'cli', title: '领夹麦选购咨询' },
+    ])
+    isReplaceableLocalTitleMock.mockReturnValue(true)
+
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
+    const ctx: any = { query: {}, state: {}, body: null }
+    await mod.list(ctx)
+
+    expect(ctx.body.sessions[0].title).toBe('领夹麦选购咨询')
+    expect(localUpdateSessionMock).toHaveBeenCalledWith('cli-1', { title: '领夹麦选购咨询', title_source: 'llm' })
+  })
+
+  it('heals a garbage bridge session title that later events can no longer replace', async () => {
+    localListSessionsMock.mockReturnValue([
+      { id: 'cli-2', profile: 'default', source: 'cli', title: '```' },
+    ])
+    listSessionSummariesMock.mockResolvedValue([
+      { id: 'cli-2', source: 'cli', title: 'NPD 人格与 Hermes 标题生成 bug 排查' },
+    ])
+    isReplaceableLocalTitleMock.mockReturnValue(true)
+
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
+    const ctx: any = { query: {}, state: {}, body: null }
+    await mod.list(ctx)
+
+    expect(ctx.body.sessions[0].title).toBe('NPD 人格与 Hermes 标题生成 bug 排查')
+  })
+
+  it('keeps a user-renamed bridge session title during reconciliation', async () => {
+    localListSessionsMock.mockReturnValue([
+      { id: 'cli-3', profile: 'default', source: 'cli', title: '我的自定义标题' },
+    ])
+    listSessionSummariesMock.mockResolvedValue([
+      { id: 'cli-3', source: 'cli', title: '领夹麦选购咨询' },
+    ])
+    isReplaceableLocalTitleMock.mockReturnValue(false)
+
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
+    const ctx: any = { query: {}, state: {}, body: null }
+    await mod.list(ctx)
+
+    expect(ctx.body.sessions[0].title).toBe('我的自定义标题')
+    expect(localUpdateSessionMock).not.toHaveBeenCalled()
+  })
+
+  it('propagates a bridge session rename to the Hermes profile state.db', async () => {
+    getSessionMock.mockReturnValue({ id: 'cli-9', profile: 'travel', source: 'cli' })
+    localRenameSessionMock.mockReturnValue(true)
+    renameHermesSessionForProfileMock.mockResolvedValue(true)
+
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
+    const ctx: any = { params: { id: 'cli-9' }, request: { body: { title: '  新标题  ' } }, state: {}, body: null }
+    await mod.rename(ctx)
+
+    expect(localRenameSessionMock).toHaveBeenCalledWith('cli-9', '新标题')
+    expect(renameHermesSessionForProfileMock).toHaveBeenCalledWith('cli-9', 'travel', '新标题')
+    expect(ctx.body).toEqual({ ok: true })
+  })
+
+  it('still renames locally when the Hermes rename propagation fails', async () => {
+    getSessionMock.mockReturnValue({ id: 'cli-10', profile: 'default', source: 'global_agent' })
+    localRenameSessionMock.mockReturnValue(true)
+    renameHermesSessionForProfileMock.mockResolvedValue(false)
+
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
+    const ctx: any = { params: { id: 'cli-10' }, request: { body: { title: '改名' } }, state: {}, body: null }
+    await mod.rename(ctx)
+
+    expect(ctx.body).toEqual({ ok: true })
   })
 
   it('counts visible single-chat sessions with the same filters as the list endpoint', async () => {

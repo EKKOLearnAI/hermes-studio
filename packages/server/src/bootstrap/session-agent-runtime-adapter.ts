@@ -10,7 +10,7 @@ import {
   listSessionSummaries,
   listSessionSummaryGroups,
 } from '../modules/hermes/services/history/sessions-db'
-import { deleteSessionForProfile, getSession } from '../modules/hermes/services/runtime/cli'
+import { deleteSessionForProfile, getSession, renameSessionForProfile } from '../modules/hermes/services/runtime/cli'
 import { getModelContextLength } from '../modules/hermes/services/models/context'
 import { configureSessionAgentRuntime } from '../modules/studio/public/session-agent-runtime'
 
@@ -25,6 +25,7 @@ configureSessionAgentRuntime({
   getHermesUsageStats: getUsageStatsFromDb,
   listHermesSessionSummaries: listSessionSummaries,
   listHermesSessionSummaryGroups: listSessionSummaryGroups,
+  renameHermesSessionForProfile: renameSessionForProfile,
   notifyHermesSessionModelChanged: async (sessionId, model, provider, profile) => {
     const state = getAgentBridgeManager().getRuntimeState()
     if (!state.ready || !state.running) return
