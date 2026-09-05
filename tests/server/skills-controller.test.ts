@@ -375,6 +375,75 @@ describe('skills controller', () => {
     }
   })
 
+  it('manages OpenCode skill state in the OpenCode skills directory', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'hermes-web-ui-opencode-skills-'))
+    const previousHome = process.env.HOME
+    const skillsDir = join(root, '.config', 'opencode', 'skills')
+    const skillDir = join(skillsDir, 'demo-skill')
+
+    await mkdir(skillDir, { recursive: true })
+    await writeFile(join(skillDir, 'SKILL.md'), '# Demo Skill\nOpenCode skill\n', 'utf-8')
+    process.env.HOME = root
+
+    try {
+      const { deleteSkill, list, pin_, toggle } = await loadController()
+      const target = { target: 'opencode' }
+
+      const toggleCtx: any = {
+        query: target,
+        request: { body: { name: 'demo-skill', enabled: false } },
+        state: { profile: { name: 'research' } },
+        body: null,
+      }
+      await toggle(toggleCtx)
+      expect(toggleCtx.body).toEqual({ success: true })
+
+      const pinCtx: any = {
+        query: target,
+        request: { body: { name: 'demo-skill', pinned: true } },
+        state: { profile: { name: 'research' } },
+        body: null,
+      }
+      await pin_(pinCtx)
+      expect(pinCtx.body).toEqual({ success: true })
+
+      const listCtx: any = {
+        query: target,
+        state: { profile: { name: 'research' } },
+        body: null,
+      }
+      await list(listCtx)
+      expect(listCtx.body.paths).toEqual({ local: skillsDir, external: [] })
+      expect(listCtx.body.categories).toContainEqual(expect.objectContaining({
+        name: 'misc',
+        skills: [
+          expect.objectContaining({
+            name: 'demo-skill',
+            enabled: false,
+            pinned: true,
+            source: 'local',
+          }),
+        ],
+      }))
+
+      const deleteCtx: any = {
+        query: target,
+        params: { category: 'misc', skill: 'demo-skill' },
+        state: { profile: { name: 'research' } },
+        body: null,
+      }
+      await deleteSkill(deleteCtx)
+      expect(deleteCtx.body).toEqual({ success: true })
+      await expect(readFile(join(skillDir, 'SKILL.md'), 'utf-8')).rejects.toThrow()
+      expect(JSON.parse(await readFile(join(skillsDir, '.disabled.json'), 'utf-8'))).toEqual([])
+      expect(mockUpdateConfigYamlForProfile).not.toHaveBeenCalled()
+    } finally {
+      if (previousHome == null) delete process.env.HOME
+      else process.env.HOME = previousHome
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('reads Codex system skill details for the codex target', async () => {
     const root = await mkdtemp(join(tmpdir(), 'hermes-web-ui-codex-system-skill-'))
     const previousHome = process.env.HOME

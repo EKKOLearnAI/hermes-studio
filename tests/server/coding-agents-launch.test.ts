@@ -753,7 +753,14 @@ describe('coding agent launch preparation', () => {
   it('launches global OpenCode with native provider settings plus managed MCP', async () => {
     const home = makeHome()
     const globalOpenCodeHome = join(home, 'global-home', '.config', 'opencode')
-    mkdirSync(globalOpenCodeHome, { recursive: true })
+    const enabledSkill = join(globalOpenCodeHome, 'skills', 'enabled-skill')
+    const disabledSkill = join(globalOpenCodeHome, 'skills', 'disabled-skill')
+    mkdirSync(enabledSkill, { recursive: true })
+    mkdirSync(disabledSkill, { recursive: true })
+    writeFileSync(join(globalOpenCodeHome, 'AGENTS.md'), 'User global OpenCode instructions.\n')
+    writeFileSync(join(enabledSkill, 'SKILL.md'), '# Enabled skill\n')
+    writeFileSync(join(disabledSkill, 'SKILL.md'), '# Disabled skill\n')
+    writeFileSync(join(globalOpenCodeHome, 'skills', '.disabled.json'), '["disabled-skill"]\n')
     writeFileSync(join(globalOpenCodeHome, 'opencode.json'), `${JSON.stringify({
       model: 'native/model',
       provider: { native: { npm: '@ai-sdk/openai-compatible' } },
@@ -785,10 +792,18 @@ describe('coding agent launch preparation', () => {
     expect(config.instructions).toEqual(['USER.md', join(result.rootDir, 'AGENTS.md')])
     expect(config.mcp.local).toEqual({ type: 'local', command: ['local-mcp'], enabled: true })
     expect(config.mcp['hermes-studio-api']).toMatchObject({ type: 'local', enabled: true })
+    expect(readFileSync(join(result.rootDir, 'AGENTS.md'), 'utf8')).toContain('User global OpenCode instructions.')
+    expect(readFileSync(join(result.rootDir, 'skills', 'enabled-skill', 'SKILL.md'), 'utf8')).toBe('# Enabled skill\n')
+    expect(existsSync(join(result.rootDir, 'skills', 'disabled-skill'))).toBe(false)
   })
 
   it('launches scoped OpenCode through the Responses proxy without writing the upstream key', async () => {
     const home = makeHome()
+    const globalOpenCodeHome = join(home, 'global-home', '.config', 'opencode')
+    const globalSkill = join(globalOpenCodeHome, 'skills', 'workflow-skill')
+    mkdirSync(globalSkill, { recursive: true })
+    writeFileSync(join(globalOpenCodeHome, 'AGENTS.md'), 'OpenCode workflow memory.\n')
+    writeFileSync(join(globalSkill, 'SKILL.md'), '# Workflow skill\n')
     const result = await prepareCodingAgentLaunch('opencode', {
       mode: 'scoped',
       profile: 'default',
@@ -811,6 +826,8 @@ describe('coding agent launch preparation', () => {
     expect(config.provider['hermes-studio'].options.baseURL).toContain('/api/codex-proxy/')
     expect(config.provider['hermes-studio'].options.apiKey).toBe('{env:HERMES_OPENCODE_API_KEY}')
     expect(configText).not.toContain('sk-opencode-upstream')
+    expect(readFileSync(join(result.rootDir, 'AGENTS.md'), 'utf8')).toContain('OpenCode workflow memory.')
+    expect(readFileSync(join(result.rootDir, 'skills', 'workflow-skill', 'SKILL.md'), 'utf8')).toBe('# Workflow skill\n')
   })
 
   it('launches interactive Pi with its global config when requested', async () => {

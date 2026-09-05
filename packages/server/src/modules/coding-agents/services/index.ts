@@ -1,7 +1,7 @@
 import { execFile } from 'child_process'
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'crypto'
 import { existsSync, readdirSync, realpathSync } from 'fs'
-import { chmod, copyFile, lstat, mkdir, open, readFile, readdir, rename, rm, stat, symlink, writeFile } from 'fs/promises'
+import { chmod, copyFile, cp, lstat, mkdir, open, readFile, readdir, rename, rm, stat, symlink, writeFile } from 'fs/promises'
 import { homedir } from 'os'
 import { delimiter, dirname, join } from 'path'
 import { promisify } from 'util'
@@ -1578,6 +1578,49 @@ function mergeOpenCodeSettingsConfig(existingContent: string, settingsContent: s
   return `${JSON.stringify(merged, null, 2)}\n`
 }
 
+async function readOpenCodeDisabledSkills(sourceHome: string): Promise<Set<string>> {
+  const content = await safeReadFile(join(sourceHome, 'skills', '.disabled.json'))
+  if (!content) return new Set()
+  try {
+    const parsed = JSON.parse(content)
+    return new Set(Array.isArray(parsed)
+      ? parsed.map(String).map(name => name.trim()).filter(Boolean)
+      : [])
+  } catch {
+    return new Set()
+  }
+}
+
+async function removeDisabledOpenCodeSkills(directory: string, disabled: Set<string>): Promise<void> {
+  const entries = await readdir(directory, { withFileTypes: true }).catch(() => [])
+  for (const entry of entries) {
+    if (!entry.isDirectory() && !entry.isSymbolicLink()) continue
+    const path = join(directory, entry.name)
+    if (disabled.has(entry.name) && await safeReadFile(join(path, 'SKILL.md')) !== null) {
+      await rm(path, { recursive: true, force: true })
+      continue
+    }
+    await removeDisabledOpenCodeSkills(path, disabled)
+  }
+}
+
+async function syncOpenCodeSkills(sourceHome: string, rootDir: string): Promise<void> {
+  const source = join(sourceHome, 'skills')
+  const target = join(rootDir, 'skills')
+  await rm(target, { recursive: true, force: true })
+  if (!existsSync(source)) return
+  await cp(source, target, {
+    recursive: true,
+    dereference: true,
+    errorOnExist: false,
+    force: true,
+    preserveTimestamps: true,
+  })
+  await removeDisabledOpenCodeSkills(target, await readOpenCodeDisabledSkills(sourceHome))
+  await rm(join(target, '.disabled.json'), { force: true })
+  await rm(join(target, '.usage.json'), { force: true })
+}
+
 function opencodeRuntimeConfig(
   profile: string,
   runtime: {
@@ -2939,8 +2982,11 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       env = { GROK_HOME: rootDir }
       args = ['--always-approve', '--no-auto-update']
     } else if (tool.id === 'opencode') {
+      const globalOpenCodeHome = dirname(getLiveConfigFileDefinition(tool.id, 'config')?.absolutePath || '')
       promptFile = join(rootDir, 'AGENTS.md')
-      await writeManagedPromptFile(promptFile, systemPrompt, '')
+      const userInstructions = await safeReadFile(join(globalOpenCodeHome, 'AGENTS.md')) || ''
+      await writeManagedPromptFile(promptFile, systemPrompt, userInstructions)
+      await syncOpenCodeSkills(globalOpenCodeHome, rootDir)
       const configPath = join(rootDir, OPENCODE_CONFIG_FILE)
       const globalConfig = await safeReadFile(getLiveConfigFileDefinition(tool.id, 'config')?.absolutePath || '')
       await writeFile(configPath, opencodeRuntimeConfig(scope.profile, { systemPrompt: promptFile }, globalConfig), 'utf-8')
@@ -3341,6 +3387,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       : null
     const configPath = join(rootDir, OPENCODE_CONFIG_FILE)
     const promptPath = join(rootDir, 'AGENTS.md')
+    const globalOpenCodeHome = dirname(getLiveConfigFileDefinition(tool.id, 'config')?.absolutePath || '')
     const globalConfig = await safeReadFile(getLiveConfigFileDefinition(tool.id, 'config')?.absolutePath || '')
     const scopedConfig = await safeReadFile(getScopedConfigFileDefinition(tool.id, 'config', scope)?.absolutePath || '')
     const userInstructions = [
@@ -3348,6 +3395,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       await safeReadFile(getScopedConfigFileDefinition(tool.id, 'agents', scope)?.absolutePath || ''),
     ].map(value => value?.trim() || '').filter((value, index, values) => value && values.indexOf(value) === index)
     await writeManagedPromptFile(promptPath, scopedSystemPrompt, userInstructions.join('\n\n'))
+    await syncOpenCodeSkills(globalOpenCodeHome, rootDir)
     await writeFile(configPath, opencodeRuntimeConfig(scope.profile, {
       provider,
       model,
