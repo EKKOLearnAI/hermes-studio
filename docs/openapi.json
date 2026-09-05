@@ -14859,6 +14859,44 @@
         }
       }
     },
+    "/api/studio/mobile-location/request": {
+      "post": {
+        "tags": [
+          "Chat Run"
+        ],
+        "summary": "Create request",
+        "description": "POST /api/studio/mobile-location/request",
+        "operationId": "requestMobileLocation",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/studio/performance/runtime": {
       "get": {
         "tags": [

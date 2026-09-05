@@ -5,3 +5,4 @@ export { getChatRunServer, setChatRunServer } from '../public/chat-run'
 export const chatRunRoutes = new Router()
 
 chatRunRoutes.post('/api/studio/chat-run/runs', ctrl.runOnce)
+chatRunRoutes.post('/api/studio/mobile-location/request', ctrl.requestMobileLocation)
