@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { checkServerModuleBoundaries } from './server-module-boundaries.mjs'
+import { hasManagedMcpNodeMode } from './managed-mcp-harness.mjs'
 
 const root = process.cwd()
 const failures = []
@@ -120,6 +121,16 @@ if (!buildWorkflow.includes('npm run harness:check')) {
 
 for (const failure of await checkServerModuleBoundaries(root)) {
   fail(failure)
+}
+
+for (const [file, factory] of [
+  ['packages/server/src/modules/hermes/services/mcp/studio-autoinject.ts', 'managedConfig'],
+  ['packages/server/src/modules/ekko/services/mcp.ts', 'managedMcpServerConfig'],
+  ['packages/server/src/modules/coding-agents/services/index.ts', 'hermesMcpServerConfig'],
+]) {
+  if (!hasManagedMcpNodeMode(await readText(file), factory)) {
+    fail(`${file}: ${factory} must inject ELECTRON_RUN_AS_NODE: '1' into every managed MCP env; Electron fallback must not launch the desktop GUI`)
+  }
 }
 
 const desktopReleaseWorkflow = await readText('.github/workflows/desktop-release.yml')

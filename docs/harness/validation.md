@@ -33,6 +33,20 @@ npm run build
 | GitHub workflow | `npm run harness:check` and `actionlint` when available |
 | Package manifests | `npm ci --ignore-scripts` and lockfile workflow expectations |
 
+## Managed MCP launch environment
+
+Every MCP definition injected by Studio (Hermes, Ekko, or Coding Agent) must
+include `ELECTRON_RUN_AS_NODE: '1'` in that MCP subprocess's `env`. Independent
+Node ignores the flag; the Electron executable fallback requires it to execute
+the MCP script instead of opening another desktop instance. External Gateway
+processes may not inherit the desktop server's environment.
+
+`npm run harness:check` inspects all three configuration factories. New managed
+MCP injection paths must be added to that check. Keep configuration comparison
+and migration aware of the flag so previously injected entries are repaired;
+do not overwrite user-owned MCP definitions or globally enable Node mode for
+the desktop app. Validate changes with the MCP injection and launch tests.
+
 ## CI Mapping
 
 - Build workflow: installs dependencies, runs coverage, and builds production
