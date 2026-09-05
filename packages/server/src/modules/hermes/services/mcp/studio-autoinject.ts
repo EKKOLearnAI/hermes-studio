@@ -169,6 +169,9 @@ function managedConfig(
   bundledScript: string | null,
 ): Record<string, unknown> {
   const env: Record<string, string> = {
+    // process.execPath can be Electron. Persist Node mode for external MCP
+    // clients (such as Gateway) that do not inherit the desktop server's env.
+    ELECTRON_RUN_AS_NODE: '1',
     HERMES_WEB_UI_URL: `http://127.0.0.1:${config.port}`,
     HERMES_WEB_UI_HOME: config.appHome,
     HERMES_WEBUI_STATE_DIR: config.appHome,
@@ -211,6 +214,7 @@ function sameConfig(existing: Record<string, any>, desired: Record<string, unkno
     (desired.timeout === undefined || existing.timeout === desired.timeout) &&
     existing.enabled !== false &&
     isRecord(existing.env) &&
+    existing.env.ELECTRON_RUN_AS_NODE === desiredEnv.ELECTRON_RUN_AS_NODE &&
     existing.env.HERMES_WEB_UI_URL === desiredEnv.HERMES_WEB_UI_URL &&
     existing.env.HERMES_WEB_UI_HOME === desiredEnv.HERMES_WEB_UI_HOME &&
     existing.env.HERMES_WEBUI_STATE_DIR === desiredEnv.HERMES_WEBUI_STATE_DIR &&

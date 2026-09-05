@@ -101,6 +101,7 @@ describe('studio MCP autoinject', () => {
   })
 
   afterEach(() => {
+    vi.unstubAllEnvs()
     delete process.env.HERMES_WEB_UI_MCP_BIN
     for (const root of fixtureRoots.splice(0).reverse()) rmSync(root, { recursive: true, force: true })
   })
@@ -117,6 +118,7 @@ describe('studio MCP autoinject', () => {
       command: process.execPath,
       args: [stableLauncher, 'api'],
       env: {
+        ELECTRON_RUN_AS_NODE: '1',
         HERMES_WEB_UI_URL: 'http://127.0.0.1:8648',
         HERMES_WEB_UI_HOME: '/Users/test/.hermes-web-ui',
         HERMES_WEBUI_STATE_DIR: '/Users/test/.hermes-web-ui',
@@ -167,6 +169,29 @@ describe('studio MCP autoinject', () => {
       'hermes-studio-use',
     ])
     expect(result.command).toBe(process.execPath)
+  })
+
+  it.each([undefined, '0'])('repairs managed MCP Node mode %s and then leaves the config unchanged', async (runAsNode) => {
+    vi.stubEnv('HERMES_DESKTOP', 'true')
+    vi.stubEnv('ELECTRON_RUN_AS_NODE', undefined)
+    const { injectBundledMcpServer } = await import('../../packages/server/src/modules/hermes/services/mcp/studio-autoinject')
+    await injectBundledMcpServer()
+    const updater = updateConfigYamlForProfileMock.mock.calls[0][1]
+    const initial = await updater({})
+    for (const server of Object.values(initial.data.mcp_servers) as any[]) {
+      expect(server.command).toBe(process.execPath)
+      expect(server.env.ELECTRON_RUN_AS_NODE).toBe('1')
+      if (runAsNode === undefined) delete server.env.ELECTRON_RUN_AS_NODE
+      else server.env.ELECTRON_RUN_AS_NODE = runAsNode
+    }
+    initial.data.mcp_servers['hermes-studio-api'].timeout = 42
+    const repaired = await updater(initial.data)
+    expect(repaired.result.status).toBe('updated')
+    for (const server of Object.values(repaired.data.mcp_servers) as any[]) {
+      expect(server.env.ELECTRON_RUN_AS_NODE).toBe('1')
+    }
+    expect(repaired.data.mcp_servers['hermes-studio-api'].timeout).toBe(42)
+    expect((await updater(repaired.data)).result.status).toBe('unchanged')
   })
 
   it('migrates an existing managed use server from the default MCP timeout', async () => {
