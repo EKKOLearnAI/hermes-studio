@@ -16,6 +16,7 @@ export function unregisterResponseAnnotationSource(root: HTMLElement) {
 const RESPONSE_ANNOTATION_IGNORE_SELECTOR = [
   '[data-annotation-ignore]',
   '.code-header',
+  '.diff-line-context-fold',
   '.diff-line-number',
   'button',
   'script',

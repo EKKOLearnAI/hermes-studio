@@ -36,7 +36,10 @@ describe('response annotation geometry', () => {
     clipping.style.overflowX = 'hidden'
     clipping.style.overflowY = 'hidden'
     clipping.textContent = 'visible excerpt'
-    root.appendChild(clipping)
+    const foldedChrome = document.createElement('div')
+    foldedChrome.className = 'diff-line-context-fold'
+    foldedChrome.textContent = '⋮ 12 unchanged lines'
+    root.append(clipping, foldedChrome)
     document.body.appendChild(root)
     root.getBoundingClientRect = () => rect(0, 0, 100, 100)
     clipping.getBoundingClientRect = () => rect(10, 10, 50, 20)

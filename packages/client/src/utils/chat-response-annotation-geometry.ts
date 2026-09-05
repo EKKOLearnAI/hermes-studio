@@ -10,6 +10,7 @@ export interface ResponseAnnotationRect {
 const GEOMETRY_IGNORE_SELECTOR = [
   '[data-annotation-ignore]',
   '.code-header',
+  '.diff-line-context-fold',
   '.diff-line-number',
   'button',
   'script',

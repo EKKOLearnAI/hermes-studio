@@ -169,6 +169,7 @@ describe('chat response annotation DOM ranges', () => {
       '<div class="code-header"><span class="code-lang">diff</span><button>Copy</button></div>',
       '<code class="hljs language-diff">',
       '<span class="diff-line"><span class="diff-line-number" aria-hidden="true">7</span><span class="diff-line-content">-old value</span></span>',
+      '<span class="diff-line diff-line-context-fold"><span class="diff-line-number" aria-hidden="true"></span><span class="diff-line-content">⋮ 12 unchanged lines</span></span>',
       '<span class="diff-line"><span class="diff-line-number" aria-hidden="true">8</span><span class="diff-line-content">+new value</span></span>',
       '</code></pre>',
     ].join('')
@@ -177,7 +178,7 @@ describe('chat response annotation DOM ranges', () => {
     const lines = root.querySelectorAll('.diff-line-content')
     const range = document.createRange()
     range.setStart(lines[0].firstChild!, 0)
-    range.setEnd(lines[1].firstChild!, '+new value'.length)
+    range.setEnd(lines[lines.length - 1].firstChild!, '+new value'.length)
 
     expect(responseAnnotationSemanticText(root)).toBe('-old value\n+new value')
     const resolved = resolveResponseAnnotationRange(root, range)
