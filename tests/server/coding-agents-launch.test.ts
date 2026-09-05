@@ -27,6 +27,7 @@ import {
 } from '../../packages/server/src/modules/coding-agents/services/pi/thinking'
 import { codingAgentRunManager } from '../../packages/server/src/modules/coding-agents/services/runtime/run-manager'
 import { configureProfileConfig } from '../../packages/server/src/modules/studio/public/profile-config'
+import * as providerRuntime from '../../packages/server/src/modules/studio/public/provider-runtime'
 import { upsertCodingAgentMcpServer } from '../../packages/server/src/modules/coding-agents/services/mcp-manager'
 
 const homes: string[] = []
@@ -807,6 +808,38 @@ describe('coding agent launch preparation', () => {
     ]))
   })
 
+  it.each(['chat', 'group-chat'] as const)('isolates global OpenCode %s prompts while preserving native session storage', async (surface) => {
+    const home = makeHome()
+    const inputs = ['first', 'second'].map(name => ({
+      mode: 'global' as const,
+      profile: 'default',
+      sessionId: `opencode-${name}`,
+      agentSessionId: `run-${name}`,
+      workspace: join(home, `workspace-${name}`),
+      groupSystemPrompt: `ROLE_${name}`,
+      ...(surface === 'group-chat' ? { groupRuntimeScope: { roomId: 'room', agentId: name } } : {}),
+    }))
+    const first = await prepareCodingAgentLaunch('opencode', inputs[0])
+    const second = await prepareCodingAgentLaunch('opencode', inputs[1])
+
+    expect(first.promptFile).not.toBe(second.promptFile)
+    for (const [launch, name] of [[first, 'first'], [second, 'second']] as const) {
+      expect(launch.promptFile).toBe(join(launch.rootDir, 'hermes-rules.md'))
+      expect(readFileSync(launch.promptFile!, 'utf8')).toContain(`ROLE_${name}`)
+      expect(JSON.parse(launch.env.OPENCODE_CONFIG_CONTENT).instructions).toEqual([launch.promptFile])
+      const launcher = launch.files.find(file => file.key === 'launcher')!
+      expect(dirname(launcher.absolutePath)).toBe(launch.rootDir)
+      expect(readFileSync(launcher.absolutePath, 'utf8')).toContain(JSON.stringify(launch.promptFile))
+    }
+    const sharedRoot = join(home, 'coding-agent', 'model', 'default', 'global', 'opencode')
+    expect(first.env.OPENCODE_CONFIG_DIR).toBe(sharedRoot)
+    expect(first.env.OPENCODE_DB).toBe(join(sharedRoot, 'opencode.db'))
+    const resumed = await prepareCodingAgentLaunch('opencode', inputs[0])
+    expect(resumed.promptFile).toBe(first.promptFile)
+    expect(resumed.env.OPENCODE_DB).toBe(first.env.OPENCODE_DB)
+    expect(readFileSync(second.promptFile!, 'utf8')).toContain('ROLE_second')
+  })
+
   it('launches scoped OpenCode through the Responses proxy without writing the upstream key', async () => {
     const home = makeHome()
     const globalOpenCodeHome = join(home, 'global-home', '.config', 'opencode')
@@ -843,6 +876,10 @@ describe('coding agent launch preparation', () => {
     expect(config.provider['hermes-studio'].npm).toBe('@ai-sdk/openai')
     expect(config.provider['hermes-studio'].options.baseURL).toContain('/api/codex-proxy/')
     expect(config.provider['hermes-studio'].options.apiKey).toBe('{env:HERMES_OPENCODE_API_KEY}')
+    expect(config.provider['hermes-studio'].models['test-model']).toMatchObject({
+      attachment: true,
+      modalities: { input: ['text', 'image'], output: ['text'] },
+    })
     expect(configText).not.toContain('sk-opencode-upstream')
     expect(readFileSync(join(result.rootDir, 'AGENTS.md'), 'utf8')).not.toContain('OpenCode workflow memory.')
     expect(readFileSync(join(baseRoot, 'AGENTS.md'), 'utf8')).toContain('OpenCode workflow memory.')
@@ -852,6 +889,23 @@ describe('coding agent launch preparation', () => {
     expect(readFileSync(join(baseRoot, 'skills', 'workflow-skill', 'SKILL.md'), 'utf8')).toBe('# Workflow skill\n')
     expect(existsSync(join(baseRoot, 'launch.sh'))).toBe(true)
     expect(existsSync(join(result.rootDir, 'skills'))).toBe(false)
+  })
+
+  it.each([{ input: ['text'] }, { input: ['text', 'image'] }])('allows OpenCode images regardless of model metadata $input', async ({ input }) => {
+    makeHome()
+    const capabilities = vi.spyOn(providerRuntime, 'getModelRuntimeCapabilities').mockReturnValue({
+      input, reasoning: false, contextWindow: 128_000, outputLimit: 8192,
+    })
+    const launch = await prepareCodingAgentLaunch('opencode', {
+      mode: 'scoped', profile: 'default', provider: 'test', model: 'capability-test',
+      baseUrl: 'https://api.example.com/v1', apiKey: 'sk-test', apiMode: 'codex_responses',
+      sessionId: 'image-capabilities', agentSessionId: 'image-capabilities-run',
+    })
+    const config = JSON.parse(launch.env.OPENCODE_CONFIG_CONTENT)
+    expect(config.provider['hermes-studio'].models['capability-test']).toMatchObject({
+      attachment: true, modalities: { input: ['text', 'image'], output: ['text'] },
+    })
+    expect(capabilities).not.toHaveBeenCalled()
   })
 
   it('launches interactive Pi with its global config when requested', async () => {
@@ -2553,6 +2607,48 @@ describe('coding agent launch preparation', () => {
     expect(forwarded.messages[0].content).toContain('Project rules')
     expect(forwarded).not.toHaveProperty('max_tokens')
     expect(forwarded).not.toHaveProperty('max_output_tokens')
+  })
+
+  it('normalizes image response annotations before streaming them to Grok', async () => {
+    const target = registerCodexProxyTarget({
+      profile: 'default', provider: 'custom', model: 'grok-vision-test',
+      baseUrl: 'https://api.example.com/v1', apiKey: 'sk-upstream',
+      apiMode: 'codex_responses', agentId: 'grok',
+    })
+    const part = { type: 'output_text', text: 'A red square' }
+    const item = { type: 'message', id: 'msg_vision', role: 'assistant', status: 'completed', content: [part] }
+    const frames = [
+      { type: 'response.content_part.added', part: { ...part, text: '' } },
+      { type: 'response.content_part.done', part },
+      { type: 'response.output_item.done', item },
+      { type: 'response.completed', response: { id: 'resp_vision', output: [item] } },
+    ]
+    const fetchMock = vi.fn(async (_url: string, _init: any) => new Response(
+      frames.map(frame => `data: ${JSON.stringify(frame)}\n\n`).join(''),
+      { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+    ))
+    vi.stubGlobal('fetch', fetchMock)
+    const imageUrl = 'data:image/png;base64,AQID'
+    const ctx = makeProxyContext(target.routeKey, target.token, {
+      stream: true,
+      input: [{ role: 'user', content: [
+        { type: 'input_text', text: 'Describe this image' },
+        { type: 'input_image', image_url: imageUrl },
+      ] }],
+    })
+    await codexProxyResponses(ctx)
+    const chunks: string[] = []
+    for await (const chunk of ctx.body) chunks.push(String(chunk))
+    const events = chunks.join('').split('\n\n').filter(Boolean)
+      .map(frame => JSON.parse(frame.split('\ndata: ')[1]))
+    expect(events[0].part.annotations).toEqual([])
+    expect(events[1].part.annotations).toEqual([])
+    expect(events[2].item.content[0].annotations).toEqual([])
+    expect(events[3].response.output[0].annotations).toBeUndefined()
+    expect(events[3].response.output[0].content[0].annotations).toEqual([])
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).input[0].content[1]).toEqual({
+      type: 'input_image', image_url: imageUrl,
+    })
   })
 
   it('does not append Grok proxy deltas before Grok prints them through stdout', async () => {

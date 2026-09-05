@@ -2497,6 +2497,8 @@ export class CodingAgentRunManager {
         ? ['--session', run.launch.agentNativeSessionId]
         : []),
       ...images.flatMap(image => ['--file', image.path]),
+      // --file consumes an array; terminate options before the message.
+      '--',
       input,
     ]
     const child = spawnCodingAgentChild(run.launch.command, args, {
@@ -2558,6 +2560,39 @@ export class CodingAgentRunManager {
     }
     const part = event.part
     if (!part || typeof part !== 'object') return
+    if (event.type === 'step_finish' && part.type === 'step-finish') {
+      // Scoped runs already record each provider call through the proxy.
+      // Native global runs report usage only in their completed step parts.
+      if (run.launch.mode === 'global' && part.id && part.tokens) {
+        const tokens = part.tokens
+        const usage = normalizeTokenUsage({
+          inputTokens: tokens.input,
+          // OpenCode separates reasoning from output; Studio includes it.
+          outputTokens: typeof tokens.output === 'number'
+            ? tokens.output + (Number(tokens.reasoning) || 0)
+            : undefined,
+          cacheReadTokens: tokens.cache?.read,
+          cacheWriteTokens: tokens.cache?.write,
+          reasoningTokens: tokens.reasoning,
+        })
+        if (!usage.isEstimated) {
+          recordSessionUsage({
+            sessionId: run.launch.sessionId,
+            runId: String(part.id),
+            source: 'coding_agent',
+            agent: 'opencode',
+            usageScope: 'model_call',
+            apiCalls: 1,
+            usage,
+            profile: run.launch.profile,
+            model: run.launch.model,
+            provider: run.launch.provider,
+            isEstimated: false,
+          })
+        }
+      }
+      return
+    }
     if (event.type === 'text' && part.type === 'text') {
       const text = String(part.text || '')
       if (!text) return

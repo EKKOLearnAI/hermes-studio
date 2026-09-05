@@ -1635,7 +1635,12 @@ function opencodeRuntimeConfig(
             apiKey: `{env:${OPENCODE_API_KEY_ENV}}`,
           },
           models: {
-            [runtime.model]: { name: displayNameForModel(runtime.model) },
+            [runtime.model]: {
+              name: displayNameForModel(runtime.model),
+              // Always forward images; let the upstream model handle support.
+              attachment: true,
+              modalities: { input: ['text', 'image'], output: ['text'] },
+            },
           },
         },
       },
@@ -3072,22 +3077,33 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       args = ['--always-approve', '--no-auto-update']
     } else if (tool.id === 'opencode') {
       const prepared = await ensureOpenCodeScopedBaseConfigFiles(scope, systemPrompt, workspaceDir)
-      promptFile = prepared.promptFile
+      // Share native configuration, but keep each conversation's dynamic
+      // instructions separate from other chats and workflow/group-chat runs.
+      promptFile = join(rootDir, 'hermes-rules.md')
+      await writeManagedPromptFile(promptFile, systemPrompt, '')
+      env = openCodeRuntimeEnv({
+        configDir: prepared.rootDir,
+        // Preserve the existing database location so native sessions can resume.
+        databasePath: join(prepared.rootDir, OPENCODE_DATABASE_FILE),
+        runtimeConfig: opencodeRuntimeConfig(scope.profile, { systemPrompt: promptFile }),
+      })
+      const launcherFile = await writeLauncherScript({
+        rootDir,
+        workspaceDir,
+        env,
+        command: tool.command,
+        args,
+      })
       files = [
         { key: 'agents', path: 'AGENTS.md', absolutePath: prepared.memoryFile },
-        { key: 'prompt', path: 'hermes-rules.md', absolutePath: prepared.promptFile },
+        { key: 'prompt', path: 'hermes-rules.md', absolutePath: promptFile },
         { key: 'config', path: OPENCODE_CONFIG_FILE, absolutePath: prepared.configFile },
         {
           key: 'launcher',
           path: process.platform === 'win32' ? WINDOWS_LAUNCHER_FILE : POSIX_LAUNCHER_FILE,
-          absolutePath: prepared.launcherFile,
+          absolutePath: launcherFile,
         },
       ]
-      env = openCodeRuntimeEnv({
-        configDir: prepared.rootDir,
-        databasePath: join(prepared.rootDir, OPENCODE_DATABASE_FILE),
-        runtimeConfig: prepared.launcherRuntimeConfig,
-      })
     } else {
       promptFile = join(rootDir, 'APPEND_SYSTEM.md')
       await writeManagedPromptFile(promptFile, systemPrompt, '')
