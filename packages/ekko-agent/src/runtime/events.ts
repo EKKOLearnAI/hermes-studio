@@ -47,7 +47,7 @@ export type AgentRuntimeEvent =
       reasoningTokens: number
       continuationContext?: EkkoBackgroundContinuationContext
     }
-  | { type: 'run.tool_failure_limit'; runId: string; failures: number }
+  | { type: 'run.tool_recovery_required'; runId: string; toolName: string; failures: number }
   | { type: 'run.completed'; runId: string; output: AgentOutputMessage; steps: number; context?: unknown; contextEstimate?: AgentRuntimeContextEstimate }
   | { type: 'run.failed'; runId: string; error: string; steps: number }
   | { type: 'run.max_steps'; runId: string; maxSteps: number }

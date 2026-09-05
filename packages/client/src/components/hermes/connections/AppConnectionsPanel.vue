@@ -20,7 +20,7 @@ import {
   updateAppRelayRoute,
   type AppRelayRoute,
 } from '@/api/studio/app-relay'
-import { fetchStudioVersionManifest, type StudioMobileRelease } from '@/api/studio/versions'
+import { fetchStudioVersionManifest, type AppAccessMode, type StudioMobileRelease } from '@/api/studio/versions'
 import SocialMessagesView from '@/views/social-messages/SocialMessagesView.vue'
 
 type AppPanelView = 'list' | 'download' | 'messages'
@@ -66,6 +66,7 @@ const dismissedAccessFailureAt = ref(readDismissedAccessFailureAt())
 const showScanModal = ref(false)
 const connectionTab = ref<'lan' | 'cloud'>('lan')
 const cloudRelayRoute = ref<AppRelayRoute>('official')
+const appAccessMode = ref<AppAccessMode | null>(null)
 const cloudRelayRouteLoading = ref(false)
 const authorizationLoading = ref<Record<'lan' | 'cloud', boolean>>({ lan: false, cloud: false })
 const deletingConnectionId = ref<number | null>(null)
@@ -93,6 +94,7 @@ const APP_RELAY_ROUTE_OPTIONS = [
 const androidVersionLabel = computed(() => formatMobileVersion(mobileRelease.value.channels.androidApk.version))
 const googlePlayVersionLabel = computed(() => formatMobileVersion(mobileRelease.value.channels.googlePlay.version))
 const iosVersionLabel = computed(() => formatMobileVersion(mobileRelease.value.channels.apple.version))
+const appPurchaseEnabled = computed(() => appAccessMode.value === 'paid')
 const androidDownloadUrl = computed(() => {
   const channel = mobileRelease.value.channels.androidApk
   const selectedUrl = downloadSource.value === 'cloudflare' ? channel.cloudflareUrl : channel.githubUrl
@@ -435,11 +437,13 @@ function ensureCurrentAuthorization(type: 'lan' | 'cloud', verifyRelaySession = 
 async function loadMobileRelease() {
   try {
     const manifest = await fetchStudioVersionManifest()
+    appAccessMode.value = manifest.accessMode || null
     mobileRelease.value = manifest.mobile
     const android = manifest.mobile.channels.androidApk
     if (!android.cloudflareUrl && android.githubUrl) downloadSource.value = 'github'
     else if (!android.githubUrl && android.cloudflareUrl) downloadSource.value = 'cloudflare'
   } catch {
+    appAccessMode.value = null
     mobileRelease.value = DEFAULT_MOBILE_RELEASE
   }
 }
@@ -675,7 +679,19 @@ onUnmounted(() => {
                 <h3>{{ t('connections.app.downloadTitle') }}</h3>
               </div>
             </div>
-            <p>{{ t('connections.app.downloadDescription') }}</p>
+            <p>{{ t(appPurchaseEnabled ? 'connections.app.downloadPaidDescription' : 'connections.app.downloadDescription') }}</p>
+            <NButton
+              v-if="appPurchaseEnabled"
+              class="app-download-purchase"
+              tag="a"
+              :href="APP_ACCESS_PURCHASE_URL"
+              target="_blank"
+              rel="noopener noreferrer"
+              size="small"
+              type="primary"
+            >
+              {{ t('connections.app.purchaseAccess') }}
+            </NButton>
             <div class="app-download-meta">
               <span>APK {{ androidVersionLabel }}</span>
               <span>Google Play {{ googlePlayVersionLabel }}</span>
@@ -1197,6 +1213,10 @@ onUnmounted(() => {
     font-size: 14px;
     line-height: 22px;
   }
+}
+
+.app-download-purchase {
+  margin-top: 14px;
 }
 
 .app-download-brand {

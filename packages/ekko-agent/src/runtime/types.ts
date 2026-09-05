@@ -73,6 +73,9 @@ export interface AgentRuntimeOptions {
   recoveryDirective?: () => AgentRuntimeRecoveryDirective
   maxSteps?: number
   maxModelRetries?: number
+  /** Ask the model to correct or change approach after one tool fails this many times in a row. */
+  toolFailureRecoveryThreshold?: number
+  /** @deprecated Use toolFailureRecoveryThreshold. Tool failures no longer terminate the run. */
   maxConsecutiveToolFailures?: number
   /** Default background delegation policy for runs that do not override it. */
   backgroundDelegationEnabled?: boolean
@@ -94,6 +97,9 @@ export interface AgentRuntimeRunInput {
   skills?: AgentSkill[]
   maxSteps?: number
   maxModelRetries?: number
+  /** Ask the model to correct or change approach after one tool fails this many times in a row. */
+  toolFailureRecoveryThreshold?: number
+  /** @deprecated Use toolFailureRecoveryThreshold. Tool failures no longer terminate the run. */
   maxConsecutiveToolFailures?: number
   toolContext?: AgentToolContext
   model?: string

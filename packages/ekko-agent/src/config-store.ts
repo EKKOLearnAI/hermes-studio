@@ -568,6 +568,12 @@ export function normalizeEkkoConfig(value: unknown): EkkoConfig {
       ...runtime,
       maxSteps: integer(runtime.maxSteps, DEFAULT_EKKO_CONFIG.runtime.maxSteps, 'runtime.maxSteps', 1),
       maxModelRetries: integer(runtime.maxModelRetries, DEFAULT_EKKO_CONFIG.runtime.maxModelRetries, 'runtime.maxModelRetries', 0),
+      toolFailureRecoveryThreshold: integer(
+        runtime.toolFailureRecoveryThreshold,
+        DEFAULT_EKKO_CONFIG.runtime.toolFailureRecoveryThreshold,
+        'runtime.toolFailureRecoveryThreshold',
+        1,
+      ),
       maxConsecutiveToolFailures: integer(
         runtime.maxConsecutiveToolFailures,
         DEFAULT_EKKO_CONFIG.runtime.maxConsecutiveToolFailures,

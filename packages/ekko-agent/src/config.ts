@@ -19,6 +19,8 @@ export const EKKO_CONFIG_FILE_NAME = 'config.json'
 
 export const DEFAULT_AGENT_MAX_STEPS = 90
 export const DEFAULT_AGENT_MODEL_MAX_RETRIES = 3
+export const DEFAULT_AGENT_TOOL_FAILURE_RECOVERY_THRESHOLD = 3
+/** @deprecated Tool failures now trigger model recovery instead of terminating the run. */
 export const DEFAULT_AGENT_MAX_CONSECUTIVE_TOOL_FAILURES = 6
 export const DEFAULT_AGENT_SUBTASK_MAX_STEPS = 30
 export const DEFAULT_MODEL_REQUEST_TIMEOUT_MS = 5 * 60 * 1_000
@@ -44,6 +46,8 @@ export const DEFAULT_COMPRESSION_PROTECT_FIRST_N = 3
 export interface EkkoRuntimeConfig {
   maxSteps: number
   maxModelRetries: number
+  toolFailureRecoveryThreshold: number
+  /** @deprecated Retained for persisted-config compatibility; it no longer terminates runs. */
   maxConsecutiveToolFailures: number
 }
 
@@ -237,6 +241,7 @@ export const DEFAULT_EKKO_CONFIG: EkkoConfig = {
   runtime: {
     maxSteps: DEFAULT_AGENT_MAX_STEPS,
     maxModelRetries: DEFAULT_AGENT_MODEL_MAX_RETRIES,
+    toolFailureRecoveryThreshold: DEFAULT_AGENT_TOOL_FAILURE_RECOVERY_THRESHOLD,
     maxConsecutiveToolFailures: DEFAULT_AGENT_MAX_CONSECUTIVE_TOOL_FAILURES,
   },
   model: {

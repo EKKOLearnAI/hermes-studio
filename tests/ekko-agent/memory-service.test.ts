@@ -688,21 +688,23 @@ describe('MemoryService', () => {
     expect((result.data as { relevant: MemoryNode[] }).relevant).toHaveLength(5)
   })
 
-  it('terminates on a failed memory mutation and never lets the model claim success', async () => {
+  it('keeps running and requests correction after repeated memory mutation failures', async () => {
+    const requests: ModelRequest[] = []
     let calls = 0
-    const create = vi.fn(async () => {
+    const create = vi.fn(async (request: ModelRequest) => {
+      requests.push(request)
       calls += 1
-      return calls === 1
+      return calls <= 3
         ? {
             content: '',
             finishReason: 'tool_calls',
             toolCalls: [{
-              id: 'unauthorized-forget',
+              id: `unauthorized-forget-${calls}`,
               name: 'memory_forget',
               arguments: { all: true, mode: 'hard', reason: 'No current-user forget request.' },
             }],
           }
-        : { content: '已经清除全部记忆。', finishReason: 'stop' }
+        : { content: '记忆未被清除；我会改用其他方案。', finishReason: 'stop' }
     })
     const client: ModelClient = {
       provider: 'test',
@@ -719,12 +721,15 @@ describe('MemoryService', () => {
       toolContext: { sessionId: 'failed-memory-mutation', profileId: 'default' },
     })
 
-    expect(create).toHaveBeenCalledTimes(1)
+    expect(create).toHaveBeenCalledTimes(4)
     expect(result.output).toMatchObject({
-      finishReason: 'memory_tool_failed',
-      content: expect.stringContaining('记忆操作未完成'),
+      finishReason: 'stop',
+      content: expect.stringContaining('记忆未被清除'),
     })
-    expect(result.output.content).not.toContain('已经清除')
+    expect(requests[3].messages).toContainEqual(expect.objectContaining({
+      role: 'system',
+      content: expect.stringContaining('Tool recovery required: "memory_forget" failed 3 consecutive times.'),
+    }))
   })
 
   it('deduplicates recaptured messages when unrelated messages shift their positions', async () => {

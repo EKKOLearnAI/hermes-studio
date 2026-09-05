@@ -977,6 +977,14 @@ export async function handleEkkoAgentRun(
         duration: Math.round(event.durationMs / 10) / 100,
         error: event.result.error,
       })
+    } else if (event.type === 'run.tool_recovery_required') {
+      emit(event.type, {
+        event: event.type,
+        run_id: event.runId,
+        tool: event.toolName,
+        name: event.toolName,
+        failures: event.failures,
+      })
     } else if (
       event.type === 'subagent.start' ||
       event.type === 'subagent.text' ||

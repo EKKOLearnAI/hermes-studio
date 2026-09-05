@@ -111,6 +111,7 @@ describe('EkkoConfigStore', () => {
     expect(config.runtime).toMatchObject({
       maxSteps: 17,
       maxModelRetries: DEFAULT_EKKO_CONFIG.runtime.maxModelRetries,
+      toolFailureRecoveryThreshold: DEFAULT_EKKO_CONFIG.runtime.toolFailureRecoveryThreshold,
       maxConsecutiveToolFailures: DEFAULT_EKKO_CONFIG.runtime.maxConsecutiveToolFailures,
     })
     expect(config.model).toMatchObject({

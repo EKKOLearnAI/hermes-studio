@@ -163,7 +163,7 @@ onBeforeUnmount(() => {
                 <NInputNumber v-model:value="form.runtime.maxModelRetries" :min="0" size="small" class="input-sm" @update:value="value => value != null && saveDebouncedChange()" />
               </SettingRow>
               <SettingRow :label="t('ekkoConfig.maxToolFailures')" :hint="t('ekkoConfig.failureLimitHint')">
-                <NInputNumber v-model:value="form.runtime.maxConsecutiveToolFailures" :min="1" size="small" class="input-sm" @update:value="value => value != null && saveDebouncedChange()" />
+                <NInputNumber v-model:value="form.runtime.toolFailureRecoveryThreshold" :min="1" size="small" class="input-sm" @update:value="value => value != null && saveDebouncedChange()" />
               </SettingRow>
               <SettingRow :label="t('ekkoConfig.backgroundDelegation')" :hint="t('ekkoConfig.featureToggleHint')">
                 <NSwitch v-model:value="form.delegation.backgroundEnabled" @update:value="saveImmediateChange" />

@@ -16,6 +16,7 @@ import {
   buildSystemPrompt,
 } from '../../packages/ekko-agent/src/index'
 import type {
+  AgentRuntimeEvent,
   AgentTool,
   AgentToolProvider,
   ModelEvent,
@@ -563,7 +564,7 @@ describe('ekko-agent runtime', () => {
       .toEqual(toolCalls.map(toolCall => toolCall.id))
   })
 
-  it('applies the failure limit in call order before crossing a serial barrier', async () => {
+  it('requests model recovery without blocking later serial tools in the same batch', async () => {
     let serialToolExecuted = false
     const tools = new AgentToolRegistry()
     tools.register({
@@ -577,30 +578,37 @@ describe('ekko-agent runtime', () => {
       definition: { name: 'serial_after_failures', description: 'serial tool', parameters: { type: 'object' } },
       async execute() {
         serialToolExecuted = true
-        return { ok: true, content: 'should not run' }
+        return { ok: true, content: 'continued after recovery request' }
       },
     })
-    const client = modelClient(() => ({
-      content: '',
-      toolCalls: [
-        { id: 'failure-1', name: 'parallel_failure', arguments: { index: 1 } },
-        { id: 'failure-2', name: 'parallel_failure', arguments: { index: 2 } },
-        { id: 'serial-after', name: 'serial_after_failures', arguments: {} },
-      ],
-      finishReason: 'tool_calls',
-    }))
+    const client = modelClient((_request, call) => call === 1
+      ? {
+          content: '',
+          toolCalls: [
+            { id: 'failure-1', name: 'parallel_failure', arguments: { index: 1 } },
+            { id: 'failure-2', name: 'parallel_failure', arguments: { index: 2 } },
+            { id: 'serial-after', name: 'serial_after_failures', arguments: {} },
+          ],
+          finishReason: 'tool_calls',
+        }
+      : { content: 'recovered', finishReason: 'stop' })
     const runtime = new AgentRuntime({
       modelClient: client,
       tools,
-      maxConsecutiveToolFailures: 2,
+      toolFailureRecoveryThreshold: 2,
+    })
+    const events: string[] = []
+
+    const result = await runtime.run({
+      messages: ['recover after failures'],
+      onEvent: event => events.push(event.type),
     })
 
-    const result = await runtime.run({ messages: ['stop after failures'] })
-
-    expect(serialToolExecuted).toBe(false)
-    expect(result.output.finishReason).toBe('tool_failure_limit')
+    expect(serialToolExecuted).toBe(true)
+    expect(result.output).toMatchObject({ content: 'recovered', finishReason: 'stop' })
     expect(result.messages.filter(message => message.role === 'tool').map(message => message.toolCallId))
-      .toEqual(['failure-1', 'failure-2'])
+      .toEqual(['failure-1', 'failure-2', 'serial-after'])
+    expect(events).toContain('run.tool_recovery_required')
   })
 
   it('waits for foreground delegated tasks and hides delegation from the child', async () => {
@@ -1072,31 +1080,73 @@ describe('ekko-agent runtime', () => {
     expect(result.output.content).toBe('handled missing tool')
   })
 
-  it('stops after consecutive tool failures', async () => {
-    const client = modelClient((_request, call) => ({
-      content: '',
-      toolCalls: [{ id: `call_missing_${call}`, name: 'missing_tool', arguments: {} }],
-    }))
+  it('asks the model to correct or change approach after the same tool fails three times', async () => {
+    const requests: ModelRequest[] = []
+    const client = modelClient((request, call) => {
+      requests.push(request)
+      return call <= 6
+        ? {
+            content: '',
+            toolCalls: [{ id: `call_missing_${call}`, name: 'missing_tool', arguments: {} }],
+          }
+        : { content: 'recovered with another approach', finishReason: 'stop' }
+    })
     const runtime = new AgentRuntime({
       modelClient: client,
       tools: new AgentToolRegistry(),
-      maxConsecutiveToolFailures: 2,
+      toolFailureRecoveryThreshold: 3,
       maxSteps: 10,
     })
-    const events: string[] = []
+    const events: AgentRuntimeEvent[] = []
 
     const result = await runtime.run({
       messages: ['call missing repeatedly'],
-      onEvent: event => events.push(event.type),
+      onEvent: event => events.push(event),
     })
 
     expect(result.output).toMatchObject({
-      content: 'Stopped after 2 consecutive tool failures.',
-      finishReason: 'tool_failure_limit',
+      content: 'recovered with another approach',
+      finishReason: 'stop',
     })
-    expect(result.steps.filter(step => step.type === 'tool')).toHaveLength(2)
-    expect(client.create).toHaveBeenCalledTimes(2)
-    expect(events).toContain('run.tool_failure_limit')
+    expect(result.steps.filter(step => step.type === 'tool')).toHaveLength(6)
+    expect(client.create).toHaveBeenCalledTimes(7)
+    expect(events.filter(event => event.type === 'run.tool_recovery_required')).toHaveLength(2)
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'run.tool_recovery_required',
+      toolName: 'missing_tool',
+      failures: 3,
+    }))
+    expect(requests[3].messages).toContainEqual(expect.objectContaining({
+      role: 'system',
+      content: expect.stringContaining('correct the arguments or prerequisites, or switch to a different tool or approach'),
+    }))
+    expect(requests[6].messages.filter(message => (
+      message.role === 'system' && message.content.includes('Tool recovery required: "missing_tool"')
+    ))).toHaveLength(2)
+  })
+
+  it('does not combine failures from different tools into one recovery streak', async () => {
+    const names = ['missing_a', 'missing_b', 'missing_a', 'missing_b']
+    const client = modelClient((_request, call) => call <= names.length
+      ? {
+          content: '',
+          toolCalls: [{ id: `missing-${call}`, name: names[call - 1], arguments: {} }],
+        }
+      : { content: 'done', finishReason: 'stop' })
+    const events: string[] = []
+
+    const result = await new AgentRuntime({
+      modelClient: client,
+      tools: new AgentToolRegistry(),
+      toolFailureRecoveryThreshold: 3,
+      maxSteps: 10,
+    }).run({
+      messages: ['try alternatives'],
+      onEvent: event => events.push(event.type),
+    })
+
+    expect(result.output.content).toBe('done')
+    expect(events).not.toContain('run.tool_recovery_required')
   })
 
   it('passes abort signals into model requests', async () => {
