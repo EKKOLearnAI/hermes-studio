@@ -99,6 +99,7 @@ const LEGACY_HERMES_MCP_COMMANDS = new Set([
   'hermes-studio-mcp',
 ])
 const HERMES_MCP_MANAGED_ENV_KEY = 'HERMES_WEB_UI_MANAGED_MCP'
+const HERMES_STUDIO_SESSION_ENV_KEY = 'HERMES_STUDIO_SESSION_ID'
 const GLOBAL_CODEX_SHADOW_LINK_DIRS = new Set(['memories', 'plugins', 'rules', 'skills', 'vendor_imports', 'visualizations'])
 
 let cachedCodexVersion: { version: string; checkedAt: number } | null = null
@@ -3111,6 +3112,8 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       files = [{ key: 'prompt', path: 'APPEND_SYSTEM.md', absolutePath: promptFile }]
       args = ['--append-system-prompt', promptFile]
     }
+    const chatSessionId = String(input.sessionId || '').trim()
+    if (chatSessionId) env[HERMES_STUDIO_SESSION_ENV_KEY] = chatSessionId
     const shellCommand = buildLaunchShellCommand({
       workspaceDir,
       env,
@@ -3516,6 +3519,8 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     args = ['--model', `${OPENCODE_PROVIDER_ID}/${model}`]
   }
 
+  const chatSessionId = String(isolatedInput.sessionId || '').trim()
+  if (chatSessionId) env[HERMES_STUDIO_SESSION_ENV_KEY] = chatSessionId
   let shellCommand = buildLaunchShellCommand({
     workspaceDir,
     env,

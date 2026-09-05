@@ -1033,6 +1033,46 @@ openapi.paths['/api/studio/chat-run/runs'] = {
   },
 }
 
+openapi.paths['/api/studio/mobile-calendar/request'] = {
+  post: {
+    tags: ['Chat Run'],
+    summary: 'Request one-time mobile calendar or reminder access',
+    description: 'Requests a user-confirmed calendar/reminder operation from the App for the exact authenticated direct-chat session. Delete, background, workflow, group-chat, and delegated use are not supported.',
+    operationId: 'requestMobileCalendar',
+    security: [{ BearerAuth: [] }],
+    requestBody: {
+      required: true,
+      content: {
+        'application/json': {
+          schema: {
+            type: 'object',
+            required: ['session_id', 'capability', 'action', 'purpose'],
+            properties: {
+              session_id: { type: 'string' },
+              capability: { type: 'string', enum: ['calendar', 'reminder'] },
+              action: { type: 'string', enum: ['list', 'create', 'update', 'complete'] },
+              purpose: { type: 'string', maxLength: 240 },
+              start_ms: { type: 'number' },
+              end_ms: { type: 'number' },
+              include_completed: { type: 'boolean' },
+              limit: { type: 'integer', minimum: 1, maximum: 100 },
+              item: { type: 'object', additionalProperties: true },
+              timeout_ms: { type: 'integer', minimum: 3000, maximum: 60000 },
+            },
+          },
+        },
+      },
+    },
+    responses: {
+      '200': { description: 'Confirmed App result, denial, or sanitized device error' },
+      '400': { $ref: '#/components/responses/BadRequest' },
+      '401': { $ref: '#/components/responses/Unauthorized' },
+      '404': { $ref: '#/components/responses/NotFound' },
+      '503': { description: 'Chat run service unavailable' },
+    },
+  },
+}
+
 // Add WebSocket terminal endpoint
 openapi.paths['/api/hermes/terminal'] = {
   'get': {
