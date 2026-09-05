@@ -80,7 +80,7 @@ const codingAgents: CodingAgentCard[] = [
     id: 'opencode',
     name: 'OpenCode',
     provider: 'OpenCode',
-    logo: '/coding-agents/opencode.svg',
+    logo: '/coding-agents/opencode.png',
     command: 'opencode',
     packageName: 'opencode-ai',
   },

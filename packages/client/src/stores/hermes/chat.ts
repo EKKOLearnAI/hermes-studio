@@ -3431,7 +3431,7 @@ export const useChatStore = defineStore('chat', () => {
       return { icon: '/coding-agents/grok.svg' }
     }
     if (codingAgentId === 'opencode') {
-      return { icon: '/coding-agents/opencode.svg' }
+      return { icon: '/coding-agents/opencode.png' }
     }
     if (codingAgentId === 'ekko-agent') {
       return { icon: '/coding-agents/ekko-agent.png' }

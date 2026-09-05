@@ -16,7 +16,7 @@ const AGENT_AVATARS = {
   codex: { label: 'Codex', src: '/coding-agents/codex-openai.png' },
   pi: { label: 'Pi', src: '/coding-agents/pi.svg' },
   grok: { label: 'Grok', src: '/coding-agents/grok.svg' },
-  opencode: { label: 'OpenCode', src: '/coding-agents/opencode.svg' },
+  opencode: { label: 'OpenCode', src: '/coding-agents/opencode.png' },
 } as const satisfies Record<string, ChatAgentAvatar>
 
 export function chatSessionAgentAvatar(session?: ChatAgentSessionIdentity | null): ChatAgentAvatar {
