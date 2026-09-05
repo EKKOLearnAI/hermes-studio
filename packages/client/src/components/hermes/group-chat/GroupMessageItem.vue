@@ -155,6 +155,12 @@ const thinkingExpanded = computed(() => {
     return false
 })
 const assistantBody = computed(() => parsedThinking.value.body || props.message.content || '')
+function resolveGroupImageUrl(path: string): string {
+    return getGroupChatAttachmentUrl({
+        roomId: props.message.roomId || groupChatStore.currentRoomId || '',
+        inviteCode: groupChatStore.inviteGuest ? groupChatStore.activeInviteCode || undefined : undefined,
+    }, path)
+}
 const contentBlocks = computed(() => {
     const content = props.message.content || ''
     const trimmed = content.trim()
@@ -815,10 +821,10 @@ onBeforeUnmount(() => {
                     </div>
                 </div>
                 <template v-if="parsedMessageReference">
-                    <MarkdownRenderer :content="referencedContentMarkdown" :mention-names="mentionNames" />
-                    <MarkdownRenderer v-if="parsedMessageReference.reply" :content="parsedMessageReference.reply" :mention-names="mentionNames" />
+                    <MarkdownRenderer :content="referencedContentMarkdown" :mention-names="mentionNames" :resolve-image-url="resolveGroupImageUrl" />
+                    <MarkdownRenderer v-if="parsedMessageReference.reply" :content="parsedMessageReference.reply" :mention-names="mentionNames" :resolve-image-url="resolveGroupImageUrl" />
                 </template>
-                <MarkdownRenderer v-else-if="renderedDisplayBody" :content="renderedDisplayBody" :mention-names="mentionNames" />
+                <MarkdownRenderer v-else-if="renderedDisplayBody" :content="renderedDisplayBody" :mention-names="mentionNames" :resolve-image-url="resolveGroupImageUrl" :defer-images="!!message.isStreaming" />
                 <ToolChangeCard
                     v-for="change in assistantWorkspaceChanges"
                     :key="change.change_id"

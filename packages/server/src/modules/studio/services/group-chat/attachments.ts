@@ -1,7 +1,8 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { constants as fsConstants, lstatSync } from 'node:fs'
 import { chmod, copyFile, lstat, mkdir, readdir, rm, stat } from 'node:fs/promises'
-import { basename, extname, resolve } from 'node:path'
+import { basename, extname, isAbsolute, resolve } from 'node:path'
+import MarkdownIt from 'markdown-it'
 import { config } from '../../public/config'
 import { isPathWithin } from '../files/path'
 
@@ -246,6 +247,28 @@ type PublishedAttachmentMessage = {
 
 type PublishedAttachmentAgent = {
     agentId?: string
+    executorType?: string
+}
+
+const publishedImageMarkdown = new MarkdownIt({ html: false, linkify: false })
+
+function publishedMarkdownImagePaths(content: unknown): string[] {
+    if (typeof content !== 'string' || !content.includes('![')) return []
+    const paths: string[] = []
+    const visit = (tokens: ReturnType<typeof publishedImageMarkdown.parse>) => {
+        for (const token of tokens) {
+            if (token.type === 'image') {
+                try {
+                    const path = decodeURIComponent(token.attrGet('src') || '')
+                    if (isAbsolute(path) && !path.startsWith('//') && !path.startsWith('/api/')
+                        && SAFE_PUBLISHED_IMAGE_EXTENSIONS.has(extname(path).toLowerCase())) paths.push(resolve(path))
+                } catch { /* Malformed image destinations do not grant file access. */ }
+            }
+            if (token.children) visit(token.children)
+        }
+    }
+    visit(publishedImageMarkdown.parse(content, {}))
+    return paths
 }
 
 const SAFE_PUBLISHED_IMAGE_EXTENSIONS = new Set(['.gif', '.jpeg', '.jpg', '.png', '.webp'])
@@ -271,11 +294,19 @@ export function findPublishedGroupChatAttachmentPath(
 ): string | null {
     if (!storedName || basename(storedName) !== storedName) return null
     const agentIds = new Set(agents.map(agent => String(agent.agentId || '')).filter(Boolean))
+    const localAgentIds = new Set(agents.filter(agent => agent.executorType !== 'remote')
+        .map(agent => String(agent.agentId || '')).filter(Boolean))
 
     for (const message of messages) {
         const isAgentMessage = (
             message.role === 'assistant' || message.role === 'tool' || message.role === 'agent_run'
         ) && agentIds.has(String(message.senderId || ''))
+        // A remote Agent's absolute path belongs to another machine and must
+        // never authorize reading a matching path on the room host.
+        if (message.role === 'assistant' && localAgentIds.has(String(message.senderId || ''))) {
+            const path = publishedMarkdownImagePaths(message.content).find(path => basename(path) === storedName)
+            if (path) return path
+        }
         for (const block of contentBlocks(message.content)) {
             if (block?.type !== 'image' || typeof block.path !== 'string') continue
             const publishedPath = resolve(block.path)

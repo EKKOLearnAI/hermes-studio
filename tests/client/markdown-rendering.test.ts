@@ -79,6 +79,29 @@ vi.mock('@/api/studio/download', async (importOriginal) => {
 import MarkdownRenderer from '@/components/hermes/chat/MarkdownRenderer.vue'
 
 describe('MarkdownRenderer', () => {
+  it('waits for the final group message before requesting its published image', async () => {
+    const resolver = vi.fn(() => '/api/studio/group-chat/invites/ROOM1/attachments/answer.png')
+    const wrapper = mount(MarkdownRenderer, { props: {
+      content: '![answer](/workspace/answer.png)', deferImages: true, resolveImageUrl: resolver,
+    } })
+    expect(wrapper.find('img').exists()).toBe(false)
+    expect(resolver).not.toHaveBeenCalled()
+    await wrapper.setProps({ deferImages: false })
+    expect(wrapper.get('img').attributes('src')).toBe('/api/studio/group-chat/invites/ROOM1/attachments/answer.png')
+    wrapper.unmount()
+  })
+  it('uses the group image resolver for local images while leaving public images alone', () => {
+    const resolveImageUrl = vi.fn(path => `/api/studio/group-chat/invites/ROOM1/attachments/${encodeURIComponent(path.split('/').pop())}`)
+    const wrapper = mount(MarkdownRenderer, { props: {
+      content: '![图片](</workspace/马年 image.png>)\n\n![public](https://example.com/photo.png)', resolveImageUrl,
+    } })
+    const images = wrapper.findAll('img')
+    expect(images[0].attributes('src')).toBe('/api/studio/group-chat/invites/ROOM1/attachments/%E9%A9%AC%E5%B9%B4%20image.png')
+    expect(images[1].attributes('src')).toBe('https://example.com/photo.png')
+    expect(resolveImageUrl).toHaveBeenCalledWith('/workspace/马年 image.png')
+    expect(downloadApiMock.getDownloadUrl).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
   afterEach(() => {
     vi.useRealTimers()
   })
