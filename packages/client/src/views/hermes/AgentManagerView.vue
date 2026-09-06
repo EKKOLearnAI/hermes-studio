@@ -3,7 +3,7 @@ import { getAgentUpdatePolicies, setAgentAutoUpdate, type AgentUpdatePolicyState
 import { computed, defineAsyncComponent, h, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { NAlert, NButton, NDrawer, NDrawerContent, NPopconfirm, NSpin, NTag, useDialog, useMessage } from 'naive-ui'
+import { NAlert, NButton, NDrawer, NDrawerContent, NPopconfirm, NSpin, NSwitch, NTag, useDialog, useMessage } from 'naive-ui'
 import {
   checkCodingAgentUpdate,
   deleteCodingAgent,
@@ -600,12 +600,7 @@ onMounted(() => {
                 >
                   {{ t('codingAgents.checkUpdate') }}
                 </NButton>
-                <label v-if="toolStatus(agent.id)?.installed && updatePolicies[agent.id]">
-                  <input type="checkbox" :checked="updatePolicies[agent.id]?.autoUpdate" @change="toggleAutoUpdate(agent.id, ($event.target as HTMLInputElement).checked)" />
-                  {{ t('agentAutoUpdate.label') }}
-                  <span v-if="['available','waiting'].includes(updatePolicies[agent.id]?.status || '')">New · {{ updatePolicies[agent.id]?.latestVersion }}</span>
-                  <small v-if="updatePolicies[agent.id]?.error">{{ updatePolicies[agent.id]?.error }}</small>
-                </label>
+
                 <NPopconfirm
                   v-if="toolStatus(agent.id)?.installed"
                   @positive-click="handleDelete(agent.id)"
@@ -623,6 +618,11 @@ onMounted(() => {
                   </template>
                   {{ t('agentManager.deleteConfirm', { name: agent.name }) }}
                 </NPopconfirm>
+              </div>
+              <div v-if="toolStatus(agent.id)?.installed && updatePolicies[agent.id]" class="agent-update-policy">
+                <div class="agent-update-policy-row"><span>{{ t('agentAutoUpdate.label') }}</span><NSwitch size="small" :value="updatePolicies[agent.id]?.autoUpdate" @update:value="toggleAutoUpdate(agent.id, $event)" /></div>
+                <small v-if="['available','waiting'].includes(updatePolicies[agent.id]?.status || '')">New · {{ updatePolicies[agent.id]?.latestVersion }}</small>
+                <small v-if="updatePolicies[agent.id]?.error" class="agent-update-error">{{ t('codingAgents.checkUpdateFailed') }}</small>
               </div>
             </section>
           </div>
@@ -915,4 +915,11 @@ onMounted(() => {
   }
 
 }
+</style>
+
+<style scoped>
+.agent-update-policy { min-width: 0; width: 100%; box-sizing: border-box; padding-top: 10px; border-top: 1px solid var(--border-color, #eee); }
+.agent-update-policy-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; font-size: 12px; }
+.agent-update-policy small { display: block; margin-top: 6px; overflow-wrap: anywhere; }
+.agent-update-error { color: #c44; }
 </style>
