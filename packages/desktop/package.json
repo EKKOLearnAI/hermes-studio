@@ -9,7 +9,7 @@
   },
   "license": "BSL-1.1",
   "private": true,
-  "main": "dist/main/index.js",
+  "main": "dist/main/entry.js",
   "scripts": {
     "build:main": "tsc -p tsconfig.json",
     "build": "npm run build:main",
