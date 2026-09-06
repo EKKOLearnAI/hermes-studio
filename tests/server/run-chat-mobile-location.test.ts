@@ -328,6 +328,7 @@ describe('external Coding Agent notifications', () => {
     server.emitExternalEvent('external','approval.requested',{approval_id:'approval-1'})
     server.emitExternalEvent('external','approval.resolved',{approval_id:'approval-1',resolved:true})
     const notices=emitted.filter(item=>item.event==='app.notification')
+    expect(notices.every(item => item.payload.agent === 'codex')).toBe(true)
     expect(notices.map(item=>[item.room,item.payload.id,item.payload.resolved])).toEqual([
       ['pending-interactions:default','external:run:run-1',false],
       ['pending-interactions:default','external:approval:approval-1',false],
