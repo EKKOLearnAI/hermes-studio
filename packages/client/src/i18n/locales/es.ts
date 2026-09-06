@@ -1923,7 +1923,11 @@ jobTriggered: 'Job ejecutado',
       themeDark: 'Oscuro',
       themeSystem: 'Sistema',
       chatInputHeight: 'Altura de entrada del chat',
-      chatInputHeightHint: 'Altura predeterminada de la entrada del chat en escritorio, en píxeles. En móvil se mantiene automática.'
+      chatInputHeightHint: 'Altura predeterminada de la entrada del chat en escritorio, en píxeles. En móvil se mantiene automática.',
+      linkOpenTarget: 'Abrir enlaces web en',
+      linkOpenTargetHint: 'Elige dónde se abren los enlaces de mensajes y vistas previas de Markdown.',
+      linkOpenTargetHermesStudio: 'Hermes Studio',
+      linkOpenTargetDefaultBrowser: 'Navegador predeterminado',
     },
     agent: {
       maxTurns: 'Turnos maximos',

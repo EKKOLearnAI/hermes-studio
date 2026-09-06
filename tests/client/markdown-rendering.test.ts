@@ -17,8 +17,23 @@ const downloadApiMock = vi.hoisted(() => ({
 }))
 
 const desktopBrowserMock = vi.hoisted(() => ({
-  openUrlInDesktopBrowser: vi.fn(() => Promise.resolve(false)),
+  openUrlInDesktopBrowser: vi.fn((_url: string) => Promise.resolve(false)),
 }))
+
+function trustedDesktopBrowserBridge() {
+  const createTab = vi.fn().mockResolvedValue({ id: 'web-tab' })
+  const methods = [
+    'getState', 'setViewport', 'closeTab', 'activateTab', 'navigate',
+    'navigationAction', 'createProfile', 'chooseProfileRootDirectory', 'renameProfile', 'profileSwitchImpact',
+    'switchProfile', 'updateProfile', 'deleteProfile', 'clearProfileData', 'cancelDownload',
+    'takeOver', 'annotate', 'cancelAnnotation', 'updateAnnotationNote',
+    'captureAnnotations', 'clearAnnotations', 'onAnnotationRequest', 'onStateChange',
+  ]
+  return {
+    ...Object.fromEntries(methods.map(method => [method, vi.fn()])),
+    createTab,
+  }
+}
 
 vi.mock('mermaid', () => ({
   default: mermaidMock,
@@ -107,6 +122,8 @@ describe('MarkdownRenderer', () => {
   })
 
   beforeEach(() => {
+    window.localStorage.clear()
+    delete (window as typeof window & { hermesDesktop?: unknown }).hermesDesktop
     mermaidMock.initialize.mockClear()
     mermaidMock.render.mockClear()
     downloadApiMock.downloadFile.mockClear()
@@ -143,6 +160,46 @@ describe('MarkdownRenderer', () => {
     expect(wrapper.get('.markdown-body').text()).toBe(`Men's "quoted" – … ©`)
   })
 
+  it('cancels native message-link navigation before desktop routing begins', () => {
+    desktopBrowserMock.openUrlInDesktopBrowser.mockResolvedValue(true)
+    const wrapper = mount(MarkdownRenderer, {
+      props: {
+        content: '[Hermes](https://example.com/docs)',
+      },
+    })
+    const click = new MouseEvent('click', { bubbles: true, cancelable: true })
+
+    wrapper.get('a').element.dispatchEvent(click)
+
+    expect(click.defaultPrevented).toBe(true)
+  })
+
+  it('applies desktop routing to case-insensitive HTTP schemes', async () => {
+    desktopBrowserMock.openUrlInDesktopBrowser.mockResolvedValue(true)
+    const wrapper = mount(MarkdownRenderer, {
+      props: {
+        content: '[Hermes](HTTPS://example.com/docs)',
+      },
+    })
+
+    await wrapper.get('a').trigger('click')
+
+    expect(desktopBrowserMock.openUrlInDesktopBrowser).toHaveBeenCalledWith('HTTPS://example.com/docs')
+  })
+
+  it('routes scheme-relative web links instead of treating them as local files', async () => {
+    desktopBrowserMock.openUrlInDesktopBrowser.mockResolvedValue(true)
+    const wrapper = mount(MarkdownRenderer, {
+      props: {
+        content: '[Hermes](//example.com/docs)',
+      },
+    })
+
+    await wrapper.get('a').trigger('click')
+
+    expect(desktopBrowserMock.openUrlInDesktopBrowser).toHaveBeenCalledWith(`${window.location.protocol}//example.com/docs`)
+  })
+
   it('opens message links in the embedded browser when the desktop bridge is available', async () => {
     desktopBrowserMock.openUrlInDesktopBrowser.mockResolvedValue(true)
     const open = vi.spyOn(window, 'open').mockImplementation(() => null)
@@ -172,6 +229,106 @@ describe('MarkdownRenderer', () => {
     expect(desktopBrowserMock.openUrlInDesktopBrowser).toHaveBeenCalledWith('https://example.com/docs')
     expect(open).toHaveBeenCalledWith('https://example.com/docs', '_blank', 'noopener,noreferrer')
     open.mockRestore()
+  })
+
+  it('uses the stored default-browser preference for a rendered message link', async () => {
+    window.localStorage.setItem('hermes_link_open_target', 'default-browser')
+    const browser = trustedDesktopBrowserBridge()
+    ;(window as typeof window & { hermesDesktop?: unknown }).hermesDesktop = { isDesktop: true, browser }
+    desktopBrowserMock.openUrlInDesktopBrowser.mockImplementation(async (url: string) => {
+      const actual = await vi.importActual<{
+        openUrlInDesktopBrowser: (targetUrl: string) => Promise<boolean>
+      }>('@/utils/desktop-browser')
+      return actual.openUrlInDesktopBrowser(url)
+    })
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null)
+    const wrapper = mount(MarkdownRenderer, {
+      props: {
+        content: '[Hermes](https://example.com/docs)',
+      },
+    })
+
+    try {
+      await wrapper.get('a').trigger('click')
+
+      expect(desktopBrowserMock.openUrlInDesktopBrowser).toHaveBeenCalledWith('https://example.com/docs')
+      expect(browser.createTab).not.toHaveBeenCalled()
+      await vi.waitFor(() => {
+        expect(open).toHaveBeenCalledWith('https://example.com/docs', '_blank', 'noopener,noreferrer')
+      })
+    } finally {
+      open.mockRestore()
+    }
+  })
+
+  it('uses desktop external-url IPC for same-origin links with the default-browser target', async () => {
+    window.localStorage.setItem('hermes_link_open_target', 'default-browser')
+    const browser = trustedDesktopBrowserBridge()
+    const openExternalUrl = vi.fn().mockResolvedValue(true)
+    ;(window as typeof window & { hermesDesktop?: unknown }).hermesDesktop = {
+      isDesktop: true,
+      browser,
+      openExternalUrl,
+    }
+    desktopBrowserMock.openUrlInDesktopBrowser.mockImplementation(async (url: string) => {
+      const actual = await vi.importActual<{
+        openUrlInDesktopBrowser: (targetUrl: string) => Promise<boolean>
+      }>('@/utils/desktop-browser')
+      return actual.openUrlInDesktopBrowser(url)
+    })
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null)
+    const sameOriginUrl = `${window.location.origin}/docs`
+    const wrapper = mount(MarkdownRenderer, {
+      props: {
+        content: `[Docs](${sameOriginUrl})`,
+      },
+    })
+
+    try {
+      await wrapper.get('a').trigger('click')
+
+      await vi.waitFor(() => {
+        expect(openExternalUrl).toHaveBeenCalledWith(sameOriginUrl)
+      })
+      expect(open).not.toHaveBeenCalled()
+    } finally {
+      open.mockRestore()
+    }
+  })
+
+  it('does not fall back to window.open when desktop default-browser IPC fails', async () => {
+    window.localStorage.setItem('hermes_link_open_target', 'default-browser')
+    const browser = trustedDesktopBrowserBridge()
+    const openExternalUrl = vi.fn().mockResolvedValue(false)
+    ;(window as typeof window & { hermesDesktop?: unknown }).hermesDesktop = {
+      isDesktop: true,
+      browser,
+      openExternalUrl,
+    }
+    desktopBrowserMock.openUrlInDesktopBrowser.mockImplementation(async (url: string) => {
+      const actual = await vi.importActual<{
+        openUrlInDesktopBrowser: (targetUrl: string) => Promise<boolean>
+      }>('@/utils/desktop-browser')
+      return actual.openUrlInDesktopBrowser(url)
+    })
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null)
+    const sameOriginUrl = `${window.location.origin}/docs`
+    const wrapper = mount(MarkdownRenderer, {
+      props: {
+        content: `[Docs](${sameOriginUrl})`,
+      },
+    })
+
+    try {
+      await wrapper.get('a').trigger('click')
+
+      await vi.waitFor(() => {
+        expect(openExternalUrl).toHaveBeenCalledWith(sameOriginUrl)
+      })
+      expect(open).not.toHaveBeenCalled()
+    } finally {
+      open.mockRestore()
+    }
   })
 
   it('highlights vue fenced blocks instead of rendering them as plain text', () => {

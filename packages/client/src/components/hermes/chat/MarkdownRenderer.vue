@@ -147,7 +147,7 @@ let renderGeneration = 0
 let unmounted = false
 
 function isLocalFilePath(path: string): boolean {
-  return path.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(path)
+  return (path.startsWith('/') && !path.startsWith('//')) || /^[a-zA-Z]:[\\/]/.test(path)
 }
 
 function normalizeLocalFilePath(path: string): string {
@@ -430,13 +430,17 @@ onBeforeUnmount(() => {
 
 async function handleMarkdownClick(event: MouseEvent): Promise<void> {
   const target = event.target as HTMLElement
-  const immediateLink = target.closest('a') as HTMLAnchorElement | null
-  const immediateHref = immediateLink?.getAttribute('href')
-  if (immediateHref && (isLocalFilePath(immediateHref) || immediateHref.startsWith('/api/studio/files/download?'))) {
-    // Native anchor navigation happens as soon as this async listener yields,
-    // so local-file links must be canceled before the first await.
+  const link = target.closest('a') as HTMLAnchorElement | null
+  const href = link?.getAttribute('href') || ''
+  const isWebLink = /^(?:https?:)?\/\//i.test(href)
+  const webUrl = href.startsWith('//') ? `${window.location.protocol}${href}` : href
+  const isLocalLink = isLocalFilePath(href) || href.startsWith('/api/studio/files/download?')
+
+  // Native anchor navigation happens as soon as this async listener yields, so
+  // cancel all links handled below before the first await.
+  if (isWebLink || isLocalLink) {
     event.preventDefault()
-    event.stopPropagation()
+    if (isLocalLink) event.stopPropagation()
   }
 
   const copyResult = await handleCodeBlockCopyClick(event)
@@ -488,23 +492,19 @@ async function handleMarkdownClick(event: MouseEvent): Promise<void> {
   }
 
   // Handle file path link clicks for download
-  const link = target.closest('a') as HTMLAnchorElement | null
   if (!link) return
-
-  const href = link.getAttribute('href')
   if (!href) return
 
-  // Desktop chat links stay inside the embedded browser. Web deployments keep
-  // using a separate browser tab so the hash-based router cannot intercept.
-  if (href.startsWith('http://') || href.startsWith('https://')) {
-    event.preventDefault()
+  // Desktop links use the configured destination. Web deployments keep using a
+  // separate browser tab so the hash-based router cannot intercept.
+  if (isWebLink) {
     try {
-      if (await openUrlInDesktopBrowser(href)) return
+      if (await openUrlInDesktopBrowser(webUrl)) return
     } catch (error) {
       message.error(`${t('browser.loadFailed')}: ${error instanceof Error ? error.message : String(error)}`)
       return
     }
-    window.open(href, '_blank', 'noopener,noreferrer')
+    window.open(webUrl, '_blank', 'noopener,noreferrer')
     return
   }
 

@@ -2424,7 +2424,11 @@ export default {
       themeDark: 'داكن',
       themeSystem: 'النظام',
       chatInputHeight: 'ارتفاع حقل إدخال المحادثة',
-      chatInputHeightHint: 'ارتفاع حقل إدخال المحادثة الافتراضي على سطح المكتب بالبكسل. يبقى الارتفاع تلقائياً على الجوال.'
+      chatInputHeightHint: 'ارتفاع حقل إدخال المحادثة الافتراضي على سطح المكتب بالبكسل. يبقى الارتفاع تلقائياً على الجوال.',
+      linkOpenTarget: 'فتح روابط الويب في',
+      linkOpenTargetHint: 'اختر مكان فتح الروابط من الرسائل ومعاينات Markdown.',
+      linkOpenTargetHermesStudio: 'Hermes Studio',
+      linkOpenTargetDefaultBrowser: 'المتصفح الافتراضي',
     },
     agent: {
       maxTurns: 'الحد الأقصى للدورات',

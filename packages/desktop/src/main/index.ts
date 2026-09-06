@@ -14,6 +14,7 @@ import {
   type MessageBoxOptions,
   type OpenDialogOptions,
   type IpcMainInvokeEvent,
+  type WebContents,
 } from 'electron'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
@@ -32,6 +33,7 @@ import { installHermesStudioCliShim, installHermesStudioMcpShim } from './cli-sh
 import { parseHermesCliArgs, runBundledHermesCli } from './hermes-cli'
 import { installSelectionContextMenu } from './selection-context-menu'
 import { groupChatAgentLinkPopupResponse } from './group-chat-agent-popup'
+import { isTrustedDesktopAppUrl, normalizeExternalHttpUrl } from './window-open-policy'
 import {
   ensureDesktopRuntime,
   isDesktopRuntimeReady,
@@ -258,7 +260,7 @@ function ensurePetWindow(): BrowserWindow {
     petWindowLoadPromise = null
   })
   petWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith('http://127.0.0.1') || url.startsWith('http://localhost')) {
+    if (isTrustedDesktopAppUrl(url, serverUrl)) {
       return { action: 'allow' }
     }
     shell.openExternal(url).catch(() => undefined)
@@ -551,7 +553,7 @@ async function createWindow(): Promise<void> {
   mainWindow.webContents.setWindowOpenHandler(({ url, frameName }) => {
     const agentLinkPopup = groupChatAgentLinkPopupResponse(url, frameName)
     if (agentLinkPopup) return agentLinkPopup
-    if (url.startsWith('http://127.0.0.1') || url.startsWith('http://localhost')) {
+    if (isTrustedDesktopAppUrl(url, serverUrl)) {
       return { action: 'allow' }
     }
     shell.openExternal(url).catch(() => undefined)
@@ -1041,6 +1043,26 @@ ipcMain.handle('hermes-desktop:open-chat-window', (event, sessionId?: unknown, p
     throw new Error('Chat windows can only be opened from the main window')
   }
   return openChatWindow(sessionId, profile)
+})
+
+function isTrustedDesktopWindowSender(sender: WebContents): boolean {
+  const windows = [mainWindow, petWindow, ...chatWindows.values()]
+  return windows.some(window => window && !window.isDestroyed() && window.webContents === sender)
+}
+
+ipcMain.handle('hermes-desktop:open-external-url', async (event, url?: unknown) => {
+  if (!isTrustedDesktopWindowSender(event.sender)) {
+    throw new Error('External URLs can only be opened from a Hermes desktop window')
+  }
+  const externalUrl = normalizeExternalHttpUrl(url)
+  if (!externalUrl) return false
+
+  try {
+    await shell.openExternal(externalUrl)
+    return true
+  } catch {
+    return false
+  }
 })
 
 function browserForEvent(event: IpcMainInvokeEvent): BrowserManager {

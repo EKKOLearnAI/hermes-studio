@@ -1923,7 +1923,11 @@ export default {
       themeDark: 'ダーク',
       themeSystem: 'システム',
       chatInputHeight: 'チャット入力欄の高さ',
-      chatInputHeightHint: 'デスクトップでの既定の入力欄高さ（px）。モバイルでは自動高さを維持します。'
+      chatInputHeightHint: 'デスクトップでの既定の入力欄高さ（px）。モバイルでは自動高さを維持します。',
+      linkOpenTarget: 'Web リンクを開く場所',
+      linkOpenTargetHint: 'メッセージと Markdown プレビュー内のリンクを開く場所を選択します。',
+      linkOpenTargetHermesStudio: 'Hermes Studio',
+      linkOpenTargetDefaultBrowser: '既定のブラウザ',
     },
     agent: {
       maxTurns: '最大ターン数',

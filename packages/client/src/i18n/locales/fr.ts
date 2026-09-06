@@ -1923,7 +1923,11 @@ jobTriggered: 'Job declenche',
       themeDark: 'Sombre',
       themeSystem: 'Systeme',
       chatInputHeight: 'Hauteur de saisie du chat',
-      chatInputHeightHint: 'Hauteur par défaut de la zone de saisie sur ordinateur, en pixels. Le mobile reste automatique.'
+      chatInputHeightHint: 'Hauteur par défaut de la zone de saisie sur ordinateur, en pixels. Le mobile reste automatique.',
+      linkOpenTarget: 'Ouvrir les liens web dans',
+      linkOpenTargetHint: 'Choisissez où ouvrir les liens des messages et des aperçus Markdown.',
+      linkOpenTargetHermesStudio: 'Hermes Studio',
+      linkOpenTargetDefaultBrowser: 'Navigateur par défaut',
     },
     agent: {
       maxTurns: 'Tours maximum',
