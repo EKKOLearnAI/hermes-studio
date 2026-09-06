@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { request as httpRequest } from 'node:http'
+import { request as httpsRequest } from 'node:https'
 import { createInterface } from 'node:readline'
 import { randomUUID } from 'node:crypto'
 import { readFileSync, statSync } from 'node:fs'
@@ -181,6 +183,33 @@ function normalizePublicHeaders(headers) {
   return normalized
 }
 
+// Mobile consent can wait five minutes before producing response headers.
+// Avoid fetch's 300-second headers deadline racing that business deadline.
+async function fetchMobileConsent(url, options) {
+  return new Promise((resolve, reject) => {
+    const target = new URL(url)
+    const transport = target.protocol === 'https:' ? httpsRequest : httpRequest
+    let timer
+    const req = transport(target, { method: options.method, headers: options.headers }, res => {
+      const chunks = []
+      res.on('data', chunk => chunks.push(chunk))
+      res.on('error', error => { clearTimeout(timer); reject(error) })
+      res.on('end', () => {
+        clearTimeout(timer)
+        const text = Buffer.concat(chunks).toString('utf8')
+        const headers = new Headers()
+        for (const [name, value] of Object.entries(res.headers)) {
+          if (value != null) headers.set(name, Array.isArray(value) ? value.join(', ') : value)
+        }
+        resolve({ status: res.statusCode || 500, headers, text: async () => text })
+      })
+    })
+    timer = setTimeout(() => req.destroy(new Error('Mobile consent transport timed out')), 330_000)
+    req.on('error', error => { clearTimeout(timer); reject(error) })
+    req.end(options.body)
+  })
+}
+
 async function requestEnvelope(path, options = {}) {
   const profile = typeof options.profile === 'string' && options.profile.trim()
     ? options.profile.trim()
@@ -194,7 +223,8 @@ async function requestEnvelope(path, options = {}) {
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...(profile ? { 'X-Hermes-Profile': profile } : {}),
   }
-  const response = await fetch(`${baseUrl()}${appendQuery(path, options.query)}`, {
+  const fetchRequest = path === '/api/studio/mobile-calendar/request' ? fetchMobileConsent : fetch
+  const response = await fetchRequest(`${baseUrl()}${appendQuery(path, options.query)}`, {
     method,
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -660,6 +690,10 @@ function pickDefined(source, keys) {
   return picked
 }
 
+function currentMobileSessionArgs(args) {
+  const sessionId = String(process.env.HERMES_STUDIO_SESSION_ID || '').trim()
+  return sessionId ? { ...args, session_id: sessionId } : args
+}
 function boundedInteger(value, fallback, min, max) {
   const parsed = Number.parseInt(String(value ?? ''), 10)
   if (!Number.isFinite(parsed)) return fallback
@@ -1288,6 +1322,37 @@ const tools = [
       }, ['session_id', 'purpose']),
   },
   {
+    name: 'hermes_studio_use_mobile_calendar',
+    toolset: 'use',
+    description: 'With the user’s explicit request, ask their mobile App to list, create, update, or delete calendar events in the current direct chat. The App always requires one-time confirmation. Single-item delete requires exact listed id, title and start_ms (calendar) or due_ms when present (reminder), with fresh App confirmation. Background access is not supported.',
+    inputSchema: inputSchema({
+      session_id: { type: 'string', description: 'Exact current Hermes Studio direct-chat session id supplied in the run context.' },
+      action: { type: 'string', enum: ['list', 'create', 'update', 'delete'], description: 'Calendar operation.' },
+      purpose: { type: 'string', description: 'Short user-visible reason for the request.' },
+      start_ms: { type: 'number', description: 'List range start as Unix milliseconds.' },
+      end_ms: { type: 'number', description: 'List range end as Unix milliseconds; maximum range is 31 days.' },
+      limit: { type: 'number', description: 'Maximum list result count, from 1 to 100.' },
+      item: { type: 'object', additionalProperties: true, description: 'Event fields for create/update: id (update), title, start_ms, end_ms, all_day, location, notes, reminder_minutes.' },
+      timeout_ms: { type: 'number', minimum: 3000, maximum: 300000, default: 300000, description: 'Wait time for user confirmation, from 3000 to 300000 milliseconds. Defaults to 5 minutes, matching the App consent card. Omit unless the user requests a shorter wait.' },
+    }, ['session_id', 'action', 'purpose']),
+  },
+  {
+    name: 'hermes_studio_use_mobile_reminders',
+    toolset: 'use',
+    description: 'With the user’s explicit request, ask their mobile App to list, create, update, complete, or delete reminders in the current direct chat. The App always requires one-time confirmation. Single-item delete requires exact listed id, title and start_ms (calendar) or due_ms when present (reminder), with fresh App confirmation. Background access is not supported.',
+    inputSchema: inputSchema({
+      session_id: { type: 'string', description: 'Exact current Hermes Studio direct-chat session id supplied in the run context.' },
+      action: { type: 'string', enum: ['list', 'create', 'update', 'complete', 'delete'], description: 'Reminder operation.' },
+      purpose: { type: 'string', description: 'Short user-visible reason for the request.' },
+      start_ms: { type: 'number', description: 'List range start as Unix milliseconds.' },
+      end_ms: { type: 'number', description: 'List range end as Unix milliseconds; maximum range is 31 days.' },
+      include_completed: { type: 'boolean', description: 'Include completed reminders when listing.' },
+      limit: { type: 'number', description: 'Maximum list result count, from 1 to 100.' },
+      item: { type: 'object', additionalProperties: true, description: 'Reminder fields: id (update/complete), title, due_ms, notes, priority, completed.' },
+      timeout_ms: { type: 'number', minimum: 3000, maximum: 300000, default: 300000, description: 'Wait time for user confirmation, from 3000 to 300000 milliseconds. Defaults to 5 minutes, matching the App consent card. Omit unless the user requests a shorter wait.' },
+    }, ['session_id', 'action', 'purpose']),
+  },
+  {
     name: 'hermes_studio_use_workflows_list',
     toolset: 'use',
     description: 'List Hermes Studio workflows for the selected or requested profile.',
@@ -1645,8 +1710,8 @@ const CATEGORY_TOOLSETS = {
   },
   use: {
     name: 'hermes_studio_use_toolset',
-    coverage: 'Explicit user-requested Studio chat/coding runs; one-time confirmed mobile location; session list/count/detail/messages/context/rename/delete; usage statistics; profiles and available models; provider add/delete; worker status; workflow CRUD and workflow run list/start/stop/rerun/delete.',
-    description: 'Discover and invoke high-level Hermes Studio operations without loading every Studio-use tool schema into the model context. Covers explicit user-requested chat or coding runs, one-time confirmed mobile location, session management and clean context, usage statistics, profiles/models/providers, worker status, workflow CRUD, and workflow run lifecycle. Never use chat/session or mobile-location operations as an internal delegation mechanism. Use action=list for the compact category catalog, action=describe for one full tool schema, then action=call with that exact tool name and arguments.',
+    coverage: 'Explicit user-requested Studio chat/coding runs; one-time confirmed mobile location, calendar and reminder operations; session list/count/detail/messages/context/rename/delete; usage statistics; profiles and available models; provider add/delete; worker status; workflow CRUD and workflow run list/start/stop/rerun/delete.',
+    description: 'Discover and invoke high-level Hermes Studio operations without loading every Studio-use tool schema into the model context. Covers explicit user-requested chat or coding runs, one-time confirmed mobile location, calendar/reminder operations, session management and clean context, usage statistics, profiles/models/providers, worker status, workflow CRUD, and workflow run lifecycle. Never use chat/session or mobile-device operations as an internal delegation mechanism. Use action=list for the compact operation catalog, action=describe for one full input schema, then action=call with that exact tool name and arguments.',
   },
 }
 
@@ -1931,6 +1996,22 @@ async function callTool(name, args = {}) {
       return jsonText(await request('/api/studio/mobile-location/request', withAuthArgs(args, {
         method: 'POST',
         body: pickDefined(args, ['session_id', 'purpose', 'accuracy', 'timeout_ms']),
+      })))
+    case 'hermes_studio_use_mobile_calendar':
+      return jsonText(await request('/api/studio/mobile-calendar/request', withAuthArgs(currentMobileSessionArgs(args), {
+        method: 'POST',
+        body: {
+          capability: 'calendar',
+          ...pickDefined(currentMobileSessionArgs(args), ['session_id', 'action', 'purpose', 'start_ms', 'end_ms', 'limit', 'item', 'timeout_ms']),
+        },
+      })))
+    case 'hermes_studio_use_mobile_reminders':
+      return jsonText(await request('/api/studio/mobile-calendar/request', withAuthArgs(currentMobileSessionArgs(args), {
+        method: 'POST',
+        body: {
+          capability: 'reminder',
+          ...pickDefined(currentMobileSessionArgs(args), ['session_id', 'action', 'purpose', 'start_ms', 'end_ms', 'include_completed', 'limit', 'item', 'timeout_ms']),
+        },
       })))
     case 'hermes_studio_use_workflows_list':
       return jsonText(await request('/api/studio/workflows', withAuthArgs(args, {

@@ -1207,6 +1207,7 @@ describe('coding agent launch preparation', () => {
     expect(codexConfig).toContain('[mcp_servers.hermes-studio-browser]')
     expect(codexConfig).toContain('[mcp_servers.hermes-studio-devices]')
     expect(codexConfig).toContain('[mcp_servers.hermes-studio-use]')
+    expect(codexConfig).toMatch(/\[mcp_servers.hermes-studio-use\][\s\S]*?tool_timeout_sec = 360/)
   })
 
   it('inherits external MCP configs for scoped Claude and Codex launches', async () => {
@@ -1335,6 +1336,7 @@ describe('coding agent launch preparation', () => {
     expect(codexConfig).toContain('[mcp_servers.hermes-studio-browser]')
     expect(codexConfig).toContain('[mcp_servers.hermes-studio-devices]')
     expect(codexConfig).toContain('[mcp_servers.hermes-studio-use]')
+    expect(codexConfig).toMatch(/\[mcp_servers.hermes-studio-use\][\s\S]*?tool_timeout_sec = 360/)
   })
 
   it('isolates Claude Code settings for hidden chat runs only', async () => {
@@ -1669,6 +1671,23 @@ describe('coding agent launch preparation', () => {
     expect(catalog.models[0].supported_reasoning_levels).toEqual(expect.arrayContaining([
       expect.objectContaining({ effort: 'max' }),
     ]))
+  })
+
+  it('binds managed mobile MCP calls to the current Studio chat session for Codex', async () => {
+    makeHome()
+
+    const result = await prepareCodingAgentLaunch('codex', {
+      profile: 'default',
+      provider: 'openrouter',
+      model: 'openai/gpt-oss-20b:free',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      apiKey: 'sk-test',
+      sessionId: 'studio-chat-session',
+    })
+
+    expect(result.env.HERMES_STUDIO_SESSION_ID).toBe('studio-chat-session')
+    expect(readFileSync(join(result.rootDir, 'launch.sh'), 'utf-8'))
+      .toContain('export HERMES_STUDIO_SESSION_ID=studio-chat-session')
   })
 
   it('runs scoped Grok through the local proxy without writing the upstream secret to disk', async () => {

@@ -99,6 +99,7 @@ const LEGACY_HERMES_MCP_COMMANDS = new Set([
   'hermes-studio-mcp',
 ])
 const HERMES_MCP_MANAGED_ENV_KEY = 'HERMES_WEB_UI_MANAGED_MCP'
+const HERMES_STUDIO_SESSION_ENV_KEY = 'HERMES_STUDIO_SESSION_ID'
 const GLOBAL_CODEX_SHADOW_LINK_DIRS = new Set(['memories', 'plugins', 'rules', 'skills', 'vendor_imports', 'visualizations'])
 
 let cachedCodexVersion: { version: string; checkedAt: number } | null = null
@@ -1371,6 +1372,7 @@ function codexMcpConfigToml(
     if (Array.isArray(server.args) && server.args.length) lines.push(`args = ${tomlStringArray(server.args.map(String))}`)
     if (disabledManaged.has(item.name)) lines.push('enabled = false')
     lines.push(`startup_timeout_sec = ${typeof server.startup_timeout_sec === 'number' ? server.startup_timeout_sec : 120}`)
+    if (item.toolset === 'use') lines.push(`tool_timeout_sec = ${Math.max(360, Number(server.tool_timeout_sec) || 0)}`)
     if (server.env && typeof server.env === 'object' && !Array.isArray(server.env)) {
       lines.push(`env = ${tomlInlineStringTable(server.env as Record<string, string>)}`)
     }
@@ -1496,7 +1498,7 @@ function piMcpConfig(profile: string, ...externalContents: Array<string | null |
     .filter(item => !disabledManaged.has(item.name))
     .map((item) => {
     const server = managedHermesMcpServerConfig('pi', profile, item.name, item.toolset)
-    const requestTimeoutMs = item.toolset === 'api' || item.toolset === 'use' ? 120_000 : 1_860_000
+    const requestTimeoutMs = item.toolset === 'api' ? 120_000 : item.toolset === 'use' ? 360_000 : 1_860_000
     return [item.name, {
       ...server,
       lifecycle: 'lazy',
@@ -1693,7 +1695,7 @@ export function getCodingAgentManagedMcpServerConfigs(
   return Object.fromEntries(HERMES_MCP_SERVERS.map((item) => {
     const server = managedHermesMcpServerConfig(id, profile || 'default', item.name, item.toolset)
     if (id === 'pi') {
-      const requestTimeoutMs = item.toolset === 'api' || item.toolset === 'use' ? 120_000 : 1_860_000
+      const requestTimeoutMs = item.toolset === 'api' ? 120_000 : item.toolset === 'use' ? 360_000 : 1_860_000
       return [item.name, {
         ...server,
         lifecycle: 'lazy',
@@ -1707,6 +1709,7 @@ export function getCodingAgentManagedMcpServerConfigs(
       return [item.name, {
         ...server,
         startup_timeout_sec: 120,
+        ...(item.toolset === 'use' ? { tool_timeout_sec: Math.max(360, Number(server.tool_timeout_sec) || 0) } : {}),
         ...(disabledManaged.has(item.name) ? { enabled: false } : {}),
       }]
     }
@@ -3111,6 +3114,8 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       files = [{ key: 'prompt', path: 'APPEND_SYSTEM.md', absolutePath: promptFile }]
       args = ['--append-system-prompt', promptFile]
     }
+    const chatSessionId = String(input.sessionId || '').trim()
+    if (chatSessionId) env[HERMES_STUDIO_SESSION_ENV_KEY] = chatSessionId
     const shellCommand = buildLaunchShellCommand({
       workspaceDir,
       env,
@@ -3516,6 +3521,8 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     args = ['--model', `${OPENCODE_PROVIDER_ID}/${model}`]
   }
 
+  const chatSessionId = String(isolatedInput.sessionId || '').trim()
+  if (chatSessionId) env[HERMES_STUDIO_SESSION_ENV_KEY] = chatSessionId
   let shellCommand = buildLaunchShellCommand({
     workspaceDir,
     env,
