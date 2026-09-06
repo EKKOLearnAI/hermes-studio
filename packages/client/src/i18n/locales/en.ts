@@ -3492,6 +3492,16 @@ export default {
 
   // Changelog
   changelog: {
+    new_0_7_18_1: 'Added OpenCode as a Coding Agent with session resume, streamed tool calls, configuration, memory, Skills, workflows, and group chat support (#2890)',
+    new_0_7_18_2: 'Group chats now connect remote Agents through cloud relay, with improved streaming order, reconnection, summary restoration, shared image access, tool folding, and mobile layout (#2927)',
+    new_0_7_18_3: 'Added one-time mobile location, calendar, and reminder capabilities; sensitive actions require consent, deletion targets the confirmed item, and consent timeouts and request origins are validated (#2820, #2926)',
+    new_0_7_18_4: 'Unified session action menus, added category creation when moving sessions, preserved collapsed categories across refreshes, and added Ctrl/Cmd + , to open settings (#2887, #2896, #2910, #2912)',
+    new_0_7_18_5: 'Added previews for uploaded images before sending, code-styled local file links, and workspace Markdown; refined message references and restored the reply arrow (#2885, #2893, #2903, #2908)',
+    new_0_7_18_6: 'Runtime download polling now runs on demand for super admins; Windows extraction uses isolated directories and falls back to Node tar when system tar is unavailable, and Bridge MCP imports work with split Hermes Runtimes (#2925)',
+    new_0_7_18_7: 'Coding Agents now isolate failed MCP Runtimes and clean up removed servers; Studio-managed MCP launchers explicitly use Node mode to avoid opening extra Electron windows (#2888, #2920)',
+    new_0_7_18_8: 'Ekko now recovers from repeated tool failures with improved retry and failure handling (#2891)',
+    new_0_7_18_9: 'Fixed empty environment values consuming the next line, preventing incorrect model URLs and credentials (#2884)',
+    new_0_7_18_10: 'Added a purchase link to the app download page, shown according to the access mode in the version manifest (#2895)',
     new_0_7_17_1: 'Coding Agent settings now give Claude, Codex, Pi, and Grok consistent navigation and full-height Preferences and Configuration editors, while Skills and MCP share the Studio card layout and controls (#2854, #2870, #2871)',
     new_0_7_17_2: 'Grok now resumes failed turns, displays its effective Runtime configuration, and installs from the official npm registry; Codex installation also uses the official registry (#2855, #2857, #2868, #2881)',
     new_0_7_17_3: 'Ekko now bounds oversized tool output, protects memory and workspace handling, and proxies MCP tool names that are unsafe for model providers (#2846, #2847, #2849)',
