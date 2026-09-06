@@ -34,7 +34,9 @@ export async function openUrlInDesktopBrowser(url: string): Promise<boolean> {
   const bridge = desktopBridge()
   if (getLinkOpenTarget() === 'default-browser') {
     if (typeof bridge?.openExternalUrl !== 'function') return false
-    return bridge.openExternalUrl(url)
+    const opened = await bridge.openExternalUrl(url)
+    if (!opened) throw new Error('Failed to open URL in the default browser')
+    return true
   }
   if (!hasDesktopBrowserBridge()) return false
   const browser = bridge?.browser
