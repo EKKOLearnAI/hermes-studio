@@ -1,29 +1,46 @@
 import { BrowserWindow } from 'electron'
 import { t } from './desktop-i18n'
+import { updateProgressHtml, normalizeDownloadProgress } from './update-progress-view'
 
 let window: BrowserWindow | null = null
+let active = false
+let hidden = false
 let state = { percent: 0, transferred: 0, total: 0, speed: 0, failed: false }
 export function updateProgressWindow(progress?: { percent: number; transferred: number; total: number; bytesPerSecond: number }, failed = false): void {
-  if (progress) state = { percent: Math.max(0, Math.min(100, progress.percent)), transferred: progress.transferred, total: progress.total, speed: progress.bytesPerSecond, failed }
+  // Update-check errors must not create a misleading download-failed window.
+  if (failed && !active) return
+  active = true
+  if (progress) state = { ...normalizeDownloadProgress(progress), failed }
   else state = { ...state, failed }
+  if (hidden) return
   if (!window || window.isDestroyed()) {
-    window = new BrowserWindow({ width: 460, height: 210, resizable: false, minimizable: true, title: t('update.checkingTitle'), webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true } })
-    window.setMenu(null)
-    window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
-    window.webContents.on('will-navigate', event => event.preventDefault())
-    void window.loadURL('data:text/html;charset=utf-8,'+encodeURIComponent('<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'"><style>body{font:14px system-ui;padding:24px}progress{width:100%;height:20px}small{display:block;margin-top:12px}</style><p id="status"></p><progress id="bar" max="100"></progress><small id="detail"></small>'))
-    window.webContents.once('did-finish-load', render)
-    window.on('closed', () => { window = null })
+    const current = new BrowserWindow({ width: 480, height: 300, useContentSize: true, show: false, resizable: false, minimizable: true, title: t('update.progressTitle'), webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true } })
+    window = current
+    current.setMenu(null)
+    current.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+    current.webContents.on('will-navigate', event => event.preventDefault())
+    current.webContents.once('did-finish-load', () => {
+      if (window !== current || current.isDestroyed()) return
+      render()
+      current.showInactive()
+    })
+    current.on('closed', () => { if (window === current) { window = null; hidden = true } })
+    void current.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(updateProgressHtml())).catch(() => undefined)
   } else render()
 }
 function render(): void {
   if (!window || window.isDestroyed() || window.webContents.isLoading()) return
-  const message = state.failed ? t('update.failedMessage') : t('update.downloading')
-  const detail = `${state.percent.toFixed(1)}% · ${(state.transferred / 1048576).toFixed(1)} / ${(state.total / 1048576).toFixed(1)} MB · ${(state.speed / 1048576).toFixed(1)} MB/s`
-  void window.webContents.executeJavaScript(`document.getElementById('status').textContent=${JSON.stringify(message)};document.getElementById('bar').value=${JSON.stringify(state.percent)};document.getElementById('detail').textContent=${JSON.stringify(detail)}`).catch(() => undefined)
+  const message = state.failed ? t('update.downloadFailed') : state.total > 0 ? t('update.downloading') : t('update.preparingDownload')
+  const detail = state.total > 0 ? `${(state.transferred / 1048576).toFixed(1)} / ${(state.total / 1048576).toFixed(1)} MB` : '— / — MB'
+  const data = {status: message,subtitle:t('update.progressTitle'),percent:state.total > 0 ? `${state.percent.toFixed(1)}%` : '—',detail,speed:state.failed || !state.total ? '—' : `${(state.speed / 1048576).toFixed(1)} MB/s`,hint:state.failed?t('update.downloadFailedHint'):t('update.downloadBackgroundHint')}
+  void window.webContents.executeJavaScript(`(()=>{const data=${JSON.stringify(data)};for(const [id,text] of Object.entries(data))document.getElementById(id).textContent=text;document.body.dataset.failed=${JSON.stringify(String(state.failed))};const bar=document.getElementById('bar');${state.total > 0 ? `bar.value=${JSON.stringify(state.percent)}` : "bar.removeAttribute('value')"};})()`).catch(() => undefined)
 }
 export function clearUpdateProgress(): void {
   for (const view of BrowserWindow.getAllWindows()) if (!view.isDestroyed()) view.setProgressBar(-1)
-  window?.close(); window = null
+  const previous = window
+  window = null
+  previous?.close()
+  active = false
+  hidden = false
   state = { percent: 0, transferred: 0, total: 0, speed: 0, failed: false }
 }
