@@ -374,6 +374,22 @@ export function getSession(id: string): HermesSessionRow | null {
   return row ? mapSessionRow(row) : null
 }
 
+/** Bounded notification text; never materialize full chat history or tool output. */
+export function getSessionNotificationPreview(id: string): { title: string; preview: string } | null {
+  if (!isSqliteAvailable()) return null
+  const row = getDb()!.prepare(`
+    SELECT SUBSTR(COALESCE(NULLIF(s.title, ''), NULLIF(s.preview, ''),
+      (SELECT SUBSTR(m.content, 1, 63) FROM ${MESSAGES_TABLE} m
+       WHERE m.session_id = s.id AND m.role = 'user' AND m.content != ''
+       ORDER BY m.timestamp, m.id LIMIT 1), ''), 1, 120) AS title,
+      COALESCE((SELECT SUBSTR(COALESCE(NULLIF(m.display_content, ''), m.content), 1, 240)
+       FROM ${MESSAGES_TABLE} m WHERE m.session_id = s.id AND m.role = 'assistant' AND m.content != ''
+       ORDER BY m.timestamp DESC, m.id DESC LIMIT 1), '') AS preview
+    FROM ${SESSIONS_TABLE} s WHERE s.id = ?
+  `).get(id) as { title: string; preview: string } | undefined
+  return row || null
+}
+
 /** Session and branch metadata without loading this session's message bodies. */
 export function getSessionMetadata(id: string): HermesSessionRow | null {
   if (!isSqliteAvailable()) return null

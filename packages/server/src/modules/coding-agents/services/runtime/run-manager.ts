@@ -3229,6 +3229,7 @@ export class CodingAgentRunManager {
     const workspaceRunChange = this.completeWorkspaceRunDiff(run)
     this.emitToChat(run.launch.sessionId, event, {
       ...(payload || { event }),
+      run_id: typeof payload?.run_id === 'string' && payload.run_id ? payload.run_id : run.id,
       ...(run.assistantMessageId ? { message_id: run.assistantMessageId } : {}),
       ...(queueRemaining > 0 ? { queue_remaining: queueRemaining } : {}),
       workspace_run_change: workspaceRunChange,

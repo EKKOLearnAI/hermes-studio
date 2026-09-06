@@ -1,3 +1,4 @@
+import { foregroundNotification, foregroundNotificationPreview, foregroundNotificationAgent } from '../services/chat-run/foreground-notification'
 import { mobileDeviceRoom, mobileDeviceId, sameMobileDevice, mobileEventAllowed, type MobileDeviceTarget } from '../services/chat-run/mobile-device-target'
 /**
  * ChatRunSocket — Socket.IO namespace /chat-run.
@@ -12,7 +13,7 @@ import type { Server, Socket } from 'socket.io'
 import { randomUUID } from 'crypto'
 import { logger } from '../public/logging'
 import { getSystemPrompt } from '../public/runs/prompt'
-import { clearSessionMessages, deleteSession, getSession, getSessionMetadata, listSessions, updateMessageDisplayContent } from '../repositories/session-store'
+import { clearSessionMessages, deleteSession, getSessionNotificationPreview, getSession, getSessionMetadata, listSessions, updateMessageDisplayContent } from '../repositories/session-store'
 import { listWorkspaceRunChangesForAssistantMessages } from '../repositories/workspace-run-changes-store'
 import { getSessionCategory } from '../repositories/session-category-store'
 import { getActiveProfileName, getProfileDir, listProfileNamesFromDisk } from '../public/profile-config'
@@ -2374,7 +2375,7 @@ export class ChatRunSocket {
       workflowNodeId: state?.webhookWorkflowNodeId,
     })
     this.observePetEvent(profile, event, tagged)
-    this.emitSessionActivity(profile, event, tagged)
+    this.emitPendingInteraction(profile, event, tagged)
     if (state?.isWorking) {
       state.events.push({ event, data: tagged })
       if (state.events.length > 200) state.events.splice(0, state.events.length - 200)
@@ -2620,6 +2621,12 @@ export class ChatRunSocket {
 
   private emitPendingInteraction(profile: string, event: string, payload: any) {
     this.emitSessionActivity(profile, event, payload)
+    const notification = foregroundNotification(event, payload || {})
+    const notificationSession = notification ? getSession(notification.sessionId) : null
+    // Group/workflow navigation is a separate contract; do not misroute it as single chat.
+    if (notification && notificationSession?.source !== 'group_chat' && notificationSession?.source !== 'workflow') {
+      this.nsp.to(`pending-interactions:${profile}`).emit('app.notification', { ...notification, agent: foregroundNotificationAgent(notificationSession?.agent), ...foregroundNotificationPreview(notification.kind, getSessionNotificationPreview(notification.sessionId) || notificationSession, payload || {}), profile })
+    }
     if (event !== 'approval.requested' && event !== 'approval.resolved'
       && event !== 'clarify.requested' && event !== 'clarify.resolved'
       && event !== 'location.requested' && event !== 'location.resolved'
