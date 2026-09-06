@@ -7,13 +7,15 @@ import { discoverHermesCliInstallations } from '../../packages/server/src/module
 const originalHermesBin = process.env.HERMES_BIN
 const temporaryDirectories: string[] = []
 
-function createCli(directory: string, version: string): string {
+function createCli(directory: string, version: string, importProbeSucceeds = true): string {
   mkdirSync(directory, { recursive: true })
   const python = join(directory, 'python3')
-  writeFileSync(python, `#!/bin/sh\nprintf '${version}\\n'\n`)
+  writeFileSync(python, importProbeSucceeds
+    ? `#!/bin/sh\nprintf '${version}\\n'\n`
+    : '#!/bin/sh\nexit 19\n')
   chmodSync(python, 0o755)
   const cli = join(directory, 'hermes')
-  writeFileSync(cli, '#!/bin/sh\nexit 97\n')
+  writeFileSync(cli, `#!/bin/sh\nprintf 'Hermes Agent v${version} (test build)\\n'\n`)
   chmodSync(cli, 0o755)
   return cli
 }
@@ -34,7 +36,7 @@ describe('Hermes CLI discovery', () => {
     const managedBin = join(managedRuntime, 'python', 'bin')
     const userBin = join(root, 'user-bin')
     const managedCli = createCli(managedBin, '0.21.0')
-    const userCli = createCli(userBin, '0.20.4')
+    const userCli = createCli(userBin, '0.20.4', false)
     process.env.HERMES_BIN = managedCli
 
     const installations = await discoverHermesCliInstallations(

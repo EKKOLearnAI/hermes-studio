@@ -284,7 +284,7 @@ export async function configurePreferredHermesRuntime(
 
     const candidateEnv = { ...cleanEnvironment }
     const candidateSelection = applyManagedRuntime(candidateEnv, runtime)
-    const probe = await probeHermesCliVersion(candidateSelection.path, candidateEnv)
+    const probe = await probeHermesCliVersion(candidateSelection.path, candidateEnv, 'managed-runtime')
     if (!probe.version) {
       managedFailures.push({
         directory: runtime.directory,

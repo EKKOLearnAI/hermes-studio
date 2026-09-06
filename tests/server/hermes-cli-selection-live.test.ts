@@ -13,7 +13,7 @@ function versionCli(root: string, name: string, version: string): string {
   writeFileSync(python, `#!/bin/sh\nprintf '${version}\\n'\n`)
   chmodSync(python, 0o755)
   const command = join(directory, 'hermes')
-  writeFileSync(command, '#!/bin/sh\nexit 97\n')
+  writeFileSync(command, `#!/bin/sh\nprintf 'Hermes Agent v${version}\\n'\n`)
   chmodSync(command, 0o755)
   return command
 }

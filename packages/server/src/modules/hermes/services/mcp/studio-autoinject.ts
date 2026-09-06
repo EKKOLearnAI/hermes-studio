@@ -168,6 +168,7 @@ function managedConfig(
   toolset: string,
   bundledScript: string | null,
 ): Record<string, unknown> {
+  const useElectronNodeFallback = isDesktopRuntime() && !runtimeNodePath()
   const env: Record<string, string> = {
     // process.execPath can be Electron. Persist Node mode for external MCP
     // clients (such as Gateway) that do not inherit the desktop server's env.
@@ -179,6 +180,7 @@ function managedConfig(
     HERMES_MCP_SERVER_NAME: serverName,
     HERMES_MCP_TOOLSET: toolset,
     [MANAGED_ENV_KEY]: '1',
+    ...(useElectronNodeFallback ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
   }
 
   return {

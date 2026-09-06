@@ -1143,6 +1143,7 @@ function hermesMcpCommandConfig(toolset: string): { command: string; args?: stri
 
 function hermesMcpServerConfig(profile: string, serverName: string, toolset: string): { command: string; args?: string[]; env: Record<string, string> } {
   const appHome = getWebUiHome()
+  const useElectronNodeFallback = isDesktopRuntime() && !runtimeNodePath()
   return {
     ...hermesMcpCommandConfig(toolset),
     env: {
@@ -1154,6 +1155,7 @@ function hermesMcpServerConfig(profile: string, serverName: string, toolset: str
       HERMES_MCP_SERVER_NAME: serverName,
       HERMES_MCP_TOOLSET: toolset,
       [HERMES_MCP_MANAGED_ENV_KEY]: '1',
+      ...(useElectronNodeFallback ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
     },
   }
 }
@@ -2485,13 +2487,21 @@ async function findCommandPaths(command: string, env: NodeJS.ProcessEnv): Promis
   }
 }
 
-async function resolveCommandForExecution(command: string, env: NodeJS.ProcessEnv): Promise<string> {
-  if (process.platform !== 'win32') return command
+async function resolveCommandCandidatesForExecution(command: string, env: NodeJS.ProcessEnv): Promise<string[]> {
   const paths = await findCommandPaths(command, env)
-  // On Windows, prioritize paths with .cmd or .bat extensions since where may return
-  // both the unix-style script (without extension) and the Windows shim (.cmd)
-  const windowsPath = paths.find(path => windowsCommandNeedsShell(path))
-  return windowsPath || paths[0] || command
+  if (paths.length === 0) return [command]
+  if (process.platform !== 'win32') return paths
+
+  // On Windows, prioritize paths with .cmd or .bat extensions since where may
+  // return both the Unix-style script and the Windows shim.
+  return [
+    ...paths.filter(path => windowsCommandNeedsShell(path)),
+    ...paths.filter(path => !windowsCommandNeedsShell(path)),
+  ]
+}
+
+async function resolveCommandForExecution(command: string, env: NodeJS.ProcessEnv): Promise<string> {
+  return (await resolveCommandCandidatesForExecution(command, env))[0] || command
 }
 
 function commandExecution(command: string, args: string[]): CommandExecution {
@@ -2600,41 +2610,50 @@ export function getCodingAgentConfigFileDefinitions(id: string): CodingAgentConf
 
 export async function getCodingAgentStatus(definition: CodingAgentDefinition): Promise<CodingAgentToolStatus> {
   let resolvedCommand = ''
+  let lastError: unknown
   try {
     const env = await commandEnv()
-    resolvedCommand = await resolveCommandForExecution(definition.command, env)
-    const execution = commandExecution(resolvedCommand, ['--version'])
-    const { stdout, stderr } = await execFileAsync(execution.command, execution.args, {
-      encoding: 'utf-8',
-      timeout: 8000,
-      windowsHide: true,
-      windowsVerbatimArguments: execution.windowsVerbatimArguments,
-      env,
-    })
-    const rawVersion = `${stdout || ''}${stderr || ''}`.trim()
-    if (definition.id === 'pi' && !existsSync(getPiMcpAdapterEntry())) {
-      const status: CodingAgentToolStatus = {
-        ...definition,
-        installed: false,
-        version: extractVersion(rawVersion),
-        rawVersion,
-        source: 'user-cli',
-        path: resolvedCommand,
-        error: `Pi MCP Adapter ${PI_MCP_ADAPTER_VERSION} is not installed`,
+    const candidates = await resolveCommandCandidatesForExecution(definition.command, env)
+    for (const candidate of candidates) {
+      resolvedCommand = candidate
+      try {
+        const execution = commandExecution(resolvedCommand, ['--version'])
+        const { stdout, stderr } = await execFileAsync(execution.command, execution.args, {
+          encoding: 'utf-8',
+          timeout: 8000,
+          windowsHide: true,
+          windowsVerbatimArguments: execution.windowsVerbatimArguments,
+          env,
+        })
+        const rawVersion = `${stdout || ''}${stderr || ''}`.trim()
+        if (definition.id === 'pi' && !existsSync(getPiMcpAdapterEntry())) {
+          const status: CodingAgentToolStatus = {
+            ...definition,
+            installed: false,
+            version: extractVersion(rawVersion),
+            rawVersion,
+            source: 'user-cli',
+            path: resolvedCommand,
+            error: `Pi MCP Adapter ${PI_MCP_ADAPTER_VERSION} is not installed`,
+          }
+          recordCodingAgentStatus(status)
+          return status
+        }
+        const status: CodingAgentToolStatus = {
+          ...definition,
+          installed: true,
+          version: extractVersion(rawVersion),
+          rawVersion,
+          source: 'user-cli',
+          path: resolvedCommand,
+        }
+        recordCodingAgentStatus(status)
+        return status
+      } catch (err) {
+        lastError = err
       }
-      recordCodingAgentStatus(status)
-      return status
     }
-    const status: CodingAgentToolStatus = {
-      ...definition,
-      installed: true,
-      version: extractVersion(rawVersion),
-      rawVersion,
-      source: 'user-cli',
-      path: resolvedCommand,
-    }
-    recordCodingAgentStatus(status)
-    return status
+    throw lastError || new Error(`${definition.command} was not found`)
   } catch (err: any) {
     const commandLocated = resolvedCommand !== definition.command || existsSync(resolvedCommand)
     const status: CodingAgentToolStatus = {
