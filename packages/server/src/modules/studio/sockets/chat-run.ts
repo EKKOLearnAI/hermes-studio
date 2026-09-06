@@ -13,7 +13,7 @@ import type { Server, Socket } from 'socket.io'
 import { randomUUID } from 'crypto'
 import { logger } from '../public/logging'
 import { getSystemPrompt } from '../public/runs/prompt'
-import { clearSessionMessages, deleteSession, getSession, getSessionMetadata, listSessions, updateMessageDisplayContent } from '../repositories/session-store'
+import { clearSessionMessages, deleteSession, getSessionNotificationPreview, getSession, getSessionMetadata, listSessions, updateMessageDisplayContent } from '../repositories/session-store'
 import { listWorkspaceRunChangesForAssistantMessages } from '../repositories/workspace-run-changes-store'
 import { getSessionCategory } from '../repositories/session-category-store'
 import { getActiveProfileName, getProfileDir, listProfileNamesFromDisk } from '../public/profile-config'
@@ -2625,7 +2625,7 @@ export class ChatRunSocket {
     const notificationSession = notification ? getSession(notification.sessionId) : null
     // Group/workflow navigation is a separate contract; do not misroute it as single chat.
     if (notification && notificationSession?.source !== 'group_chat' && notificationSession?.source !== 'workflow') {
-      this.nsp.to(`pending-interactions:${profile}`).emit('app.notification', { ...notification, ...foregroundNotificationPreview(notification.kind, notificationSession, payload || {}), profile })
+      this.nsp.to(`pending-interactions:${profile}`).emit('app.notification', { ...notification, ...foregroundNotificationPreview(notification.kind, getSessionNotificationPreview(notification.sessionId) || notificationSession, payload || {}), profile })
     }
     if (event !== 'approval.requested' && event !== 'approval.resolved'
       && event !== 'clarify.requested' && event !== 'clarify.resolved'
