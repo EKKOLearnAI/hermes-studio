@@ -2,15 +2,17 @@ import { config } from '../../studio/public/config'
 import { AgentUpdatePolicy } from './update-policy'
 import { getCodingAgentDefinitions, checkUpdateAgent, installCodingAgent } from './index'
 import { codingAgentRunManager } from './runtime/run-manager'
-import { lockAgentUpdate } from './update-lock'
+import { lockAgentUpdate, agentPreparing, agentActivityRevision } from './update-lock'
 const policy = new AgentUpdatePolicy(config.appHome, {
  ids:()=>getCodingAgentDefinitions().map(v=>v.id),
  check:checkUpdateAgent,
- busy:id=>codingAgentRunManager.hasLiveAgent(id),
+ busy:id=>agentPreparing(id) || codingAgentRunManager.isAgentBusyForUpdate(id),
+ safelyManaged:id=>getCodingAgentDefinitions().some(agent=>agent.id===id),
+ activityRevision:agentActivityRevision,
  install:async id=>{
   const release=lockAgentUpdate(id)
   try {
-   if(codingAgentRunManager.hasLiveAgent(id))throw new Error('Agent session became active; update postponed')
+   if(codingAgentRunManager.isAgentBusyForUpdate(id))throw new Error('Agent session became active; update postponed')
    return await installCodingAgent(id)
   }finally{release()}
  },

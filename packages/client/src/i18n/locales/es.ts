@@ -1,7 +1,7 @@
 import { socialMessagesEs } from '../social-messages-locales'
 
 export default {
-  agentAutoUpdate: { label: 'Actualizar automáticamente en reposo' },
+  agentAutoUpdate: { label: 'Actualizaciones automáticas' },
   ekkoConfig: {
     "settingsTitle": "Configuración",
     "settingsRuntime": "Ejecución",

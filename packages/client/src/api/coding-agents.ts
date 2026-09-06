@@ -224,6 +224,7 @@ export async function stopCodingAgentRun(sessionId: string): Promise<{ stopped: 
 
 export interface AgentUpdatePolicyState {
  autoUpdate: boolean
+ autoUpdateSupported?: boolean
  status: 'unknown'|'checking'|'current'|'available'|'waiting'|'updating'|'failed'
  currentVersion: string
  latestVersion: string

@@ -1,7 +1,7 @@
 import { socialMessagesDe } from '../social-messages-locales'
 
 export default {
-  agentAutoUpdate: { label: 'Im Leerlauf automatisch aktualisieren' },
+  agentAutoUpdate: { label: 'Automatische Updates' },
   ekkoConfig: {
     "settingsTitle": "Einstellungen",
     "settingsRuntime": "Laufzeit",

@@ -92,6 +92,11 @@ let policyTimer: ReturnType<typeof setInterval> | undefined
 async function refreshPolicies() {
   try { updatePolicies.value = (await getAgentUpdatePolicies()).agents } catch { /* unavailable to non-admin/old server */ }
 }
+function availableUpdateVersion(id: CodingAgentId): string {
+  const policy = updatePolicies.value[id]
+  if (policy) return ['available','waiting'].includes(policy.status) ? policy.latestVersion : ''
+  return updateInfo.value[id]?.updateAvailable ? updateInfo.value[id]?.latestVersion || '' : ''
+}
 async function toggleAutoUpdate(id: CodingAgentId, enabled: boolean) {
   try { updatePolicies.value = (await setAgentAutoUpdate(id, enabled)).agents } catch (error) { message.error(String(error)) }
 }
@@ -581,17 +586,17 @@ onMounted(() => {
                   {{ t('codingAgents.installNow') }}
                 </NButton>
                 <NButton
-                  v-else-if="updateInfo[agent.id]?.updateAvailable"
+                  v-else-if="availableUpdateVersion(agent.id)"
                   type="primary"
                   secondary
                   size="small"
                   :loading="installing[agent.id]"
                   @click="handleInstall(agent.id)"
                 >
-                  {{ t('agentManager.updateToVersion', { version: updateInfo[agent.id]?.latestVersion }) }}
+                  {{ t('agentManager.updateToVersion', { version: availableUpdateVersion(agent.id) }) }}
                 </NButton>
                 <NButton
-                  v-if="toolStatus(agent.id)?.installed"
+                  v-if="toolStatus(agent.id)?.installed && !availableUpdateVersion(agent.id)"
                   secondary
                   size="small"
                   :loading="checkingUpdate[agent.id]"
@@ -620,8 +625,8 @@ onMounted(() => {
                 </NPopconfirm>
               </div>
               <div v-if="toolStatus(agent.id)?.installed && updatePolicies[agent.id]" class="agent-update-policy">
-                <div class="agent-update-policy-row"><span>{{ t('agentAutoUpdate.label') }}</span><NSwitch size="small" :value="updatePolicies[agent.id]?.autoUpdate" @update:value="toggleAutoUpdate(agent.id, $event)" /></div>
-                <small v-if="['available','waiting'].includes(updatePolicies[agent.id]?.status || '')">New · {{ updatePolicies[agent.id]?.latestVersion }}</small>
+                <div class="agent-update-policy-row"><span>{{ t('agentAutoUpdate.label') }}</span><NSwitch size="small" :disabled="!updatePolicies[agent.id]?.autoUpdateSupported" :value="updatePolicies[agent.id]?.autoUpdate" @update:value="toggleAutoUpdate(agent.id, $event)" /></div>
+
                 <small v-if="updatePolicies[agent.id]?.error" class="agent-update-error">{{ t('codingAgents.checkUpdateFailed') }}</small>
               </div>
             </section>

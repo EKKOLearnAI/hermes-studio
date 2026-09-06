@@ -1,7 +1,7 @@
 import { socialMessagesEn } from '../social-messages'
 
 export default {
-  agentAutoUpdate: { label: 'Auto update when idle' },
+  agentAutoUpdate: { label: 'Automatic updates' },
   ekkoConfig: {
     "settingsTitle": "Settings",
     "settingsRuntime": "Runtime",

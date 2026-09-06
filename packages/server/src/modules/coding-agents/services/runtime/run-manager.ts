@@ -1,4 +1,4 @@
-import { agentUpdateLocked } from '../update-lock'
+import { agentUpdateLocked, noteAgentActivity } from '../update-lock'
 import { dirname, join } from 'path'
 import { existsSync, accessSync, chmodSync, constants as fsConstants, readFileSync, writeFileSync } from 'fs'
 import { homedir } from 'os'
@@ -604,6 +604,16 @@ export class CodingAgentRunManager {
     return [...this.runs.values()].some(run => run.launch.agentId === id && !run.exited)
   }
 
+  isAgentBusyForUpdate(id: string): boolean {
+    if (this.memoryExportChildren.size > 0) return true
+    return [...this.runs.values()].some(run => run.launch.agentId === id && !run.exited && (
+      childIsRunning(run.currentChild) || Boolean(run.pty) || run.turnActive === true
+      || run.state.isWorking || run.state.queue.length > 0 || Boolean(run.pendingChatCompletionEvent)
+      || Boolean(run.piUiRequests?.size) || Boolean(run.piRpcRequests?.size)
+      || run.state.events.some(entry => /^(approval|clarify|calendar|reminder)\.requested$/.test(entry.event))
+    ))
+  }
+
   isAvailable(): boolean {
     return !!pty
   }
@@ -777,6 +787,7 @@ export class CodingAgentRunManager {
   send(sessionId: string, input: string, options: CodingAgentRunSendOptions = {}): { runId: string; messageId?: number } {
     const run = this.getBySession(sessionId)
     if (!run) throw new Error('Coding agent session not found')
+    if (agentUpdateLocked(run.launch.agentId)) throw new Error('Agent is updating; retry after completion')
     const text = String(input || '').trim()
     const images = Array.isArray(options.images) ? options.images : []
     if (!text && images.length === 0) throw new Error('Input is required')
@@ -841,6 +852,7 @@ export class CodingAgentRunManager {
   }> {
     const run = this.getBySession(sessionId)
     if (!run) throw new Error('Coding agent session not found')
+    if (agentUpdateLocked(run.launch.agentId)) throw new Error('Agent is updating; retry after completion')
     if (run.launch.agentId === 'pi') {
       if (run.turnActive) throw new Error('Pi is still processing the previous input')
       if (!childIsRunning(run.currentChild)) throw new Error('Pi RPC process is not available')
@@ -1304,6 +1316,7 @@ export class CodingAgentRunManager {
   }
 
   private touch(run: ManagedCodingAgentRun) {
+    noteAgentActivity(run.launch.agentId)
     run.lastActiveAt = Date.now()
     if (run.idleTimer) clearTimeout(run.idleTimer)
     run.idleTimer = setTimeout(() => {
