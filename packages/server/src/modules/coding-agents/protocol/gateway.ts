@@ -46,7 +46,7 @@ export class AgentRunGateway {
     return fetch(request.url, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${request.apiKey}`,
+        ...(request.apiKey ? { Authorization: `Bearer ${request.apiKey}` } : {}),
         'Content-Type': 'application/json',
         ...request.headers,
       },

@@ -23,6 +23,7 @@ const isCustomProviderKey = computed(() => props.provider.provider.startsWith('c
 const isCustom = computed(() => !props.provider.builtin && isCustomProviderKey.value)
 const isConfigBackedProvider = computed(() => isCustomProviderKey.value || (!props.provider.builtin && !!props.provider.provider_source))
 const isCopilot = computed(() => props.provider.provider === 'copilot')
+const isOpenCodeFree = computed(() => props.provider.provider === 'opencode-free')
 const displayName = computed(() => props.provider.label)
 const userRole = getStoredUserRole()
 const canEditProvider = computed(() => (
@@ -305,6 +306,12 @@ async function handleRestoreModels() {
     </div>
 
     <div class="card-body">
+      <template v-if="isOpenCodeFree">
+        <p>{{ t('models.opencodeFreeHint') }}</p>
+        <p v-if="provider.catalog_status === 'loading'">{{ t('models.opencodeFreeLoading') }}</p>
+        <p v-else-if="provider.catalog_status === 'error'">{{ t('models.opencodeFreeRetry') }}</p>
+        <p v-else-if="provider.catalog_status === 'unsupported'">{{ t('models.opencodeFreeUpgrade') }}</p>
+      </template>
       <div class="info-row">
         <span class="info-label">{{ t('models.provider') }}</span>
         <code class="info-value mono">{{ provider.provider }}</code>
@@ -357,7 +364,7 @@ async function handleRestoreModels() {
       <NButton
         size="tiny"
         quaternary
-        :disabled="isDefaultProvider"
+        :disabled="isDefaultProvider || provider.models.length === 0"
         :loading="defaultingProvider"
         @click="handleSetDefaultProvider"
       >
@@ -385,7 +392,7 @@ async function handleRestoreModels() {
         {{ t('models.restoreModels') }}
       </NButton>
       <NButton v-if="canEditProvider" size="tiny" quaternary @click="showEditorModal = true">{{ t('common.edit') }}</NButton>
-      <NButton size="tiny" quaternary type="error" :loading="deleting" @click="handleDelete">{{ destructiveActionLabel }}</NButton>
+      <NButton v-if="!isOpenCodeFree" size="tiny" quaternary type="error" :loading="deleting" @click="handleDelete">{{ destructiveActionLabel }}</NButton>
     </div>
 
     <ProviderEditorModal

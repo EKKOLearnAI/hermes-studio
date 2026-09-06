@@ -28,6 +28,7 @@ import { HermesSkillInjector } from '../modules/hermes/services/skills/injector'
 import { injectBundledMcpServer } from '../modules/hermes/services/mcp/studio-autoinject'
 import { ensureProfileGatewaysRunning } from '../modules/hermes/services/gateway/autostart'
 import { refreshConfiguredProviderModelCatalogsInBackground } from '../modules/hermes/services/providers/model-catalog-cache'
+import { initializeOpenCodeFreeInBackground } from '../modules/hermes/services/providers/opencode-free'
 import {
   scanLanDevices,
   selectLanIPv4Address,
@@ -663,6 +664,7 @@ export async function bootstrap() {
     close: stopLanDiscoveryResponder,
   })
   refreshConfiguredProviderModelCatalogsInBackground('bootstrap')
+  initializeOpenCodeFreeInBackground()
 
   if (isDesktopRuntime()) {
     await startRuntimeServicesAfterListen(hermesAgentAvailable)

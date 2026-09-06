@@ -17,9 +17,10 @@ import {
 import { refreshProviderModels, restoreProviderModels } from '../services/providers/provider-model-refresh'
 import { appendProviderAuditEvent } from '../../studio/public/provider-audit'
 import { invalidateProviderRuntime } from '../../studio/public/provider-runtime'
+import { OPENCODE_FREE_PROVIDER, OPENCODE_FREE_BASE_URL, isOpenCodeFreeModel } from '../../studio/contracts/opencode-free'
 
-const OPTIONAL_API_KEY_PROVIDERS = new Set(['cliproxyapi', 'xai-oauth', 'openai-codex', 'claude-oauth', 'minimax-oauth'])
-const DIRECT_CONFIG_PROVIDERS = new Set(['xai-oauth', 'openai-codex', 'claude-oauth', 'minimax-oauth'])
+const OPTIONAL_API_KEY_PROVIDERS = new Set(['cliproxyapi', 'xai-oauth', 'openai-codex', 'claude-oauth', 'minimax-oauth', OPENCODE_FREE_PROVIDER])
+const DIRECT_CONFIG_PROVIDERS = new Set(['xai-oauth', 'openai-codex', 'claude-oauth', 'minimax-oauth', OPENCODE_FREE_PROVIDER])
 type ProviderApiMode = 'chat_completions' | 'codex_responses' | 'anthropic_messages' | 'bedrock_converse' | 'codex_app_server'
 
 function requestedProfile(ctx: any): string {
@@ -294,13 +295,16 @@ export async function create(ctx: any) {
   const normalizedName = String(name || '').trim()
   const poolKey = providerKey || `custom:${normalizedName.toLowerCase().replace(/ /g, '-')}`
   const isBuiltin = poolKey in PROVIDER_ENV_MAP
-  const effectiveBaseUrl = isBuiltin ? builtinBaseUrl(poolKey, base_url) : base_url
+  const effectiveBaseUrl = poolKey === OPENCODE_FREE_PROVIDER ? OPENCODE_FREE_BASE_URL : isBuiltin ? builtinBaseUrl(poolKey, base_url) : base_url
   const customApiMode = normalizeApiMode(api_mode)
   if (!normalizedName || !effectiveBaseUrl || !model) {
     ctx.status = 400; ctx.body = { error: 'Missing name, base_url, or model' }; return
   }
   if (!api_key && !OPTIONAL_API_KEY_PROVIDERS.has(String(providerKey || ''))) {
     ctx.status = 400; ctx.body = { error: 'Missing API key' }; return
+  }
+  if (poolKey === OPENCODE_FREE_PROVIDER && !isOpenCodeFreeModel(model)) {
+    ctx.status = 400; ctx.body = { error: 'Select an OpenCode Free model' }; return
   }
   try {
     const profile = requestedProfile(ctx)

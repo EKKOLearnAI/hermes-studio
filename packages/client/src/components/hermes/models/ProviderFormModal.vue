@@ -105,6 +105,7 @@ const isCliproxyApi = computed(() => selectedPreset.value === CLIPROXYAPI_KEY)
 const isXaiOAuth = computed(() => selectedPreset.value === XAI_OAUTH_KEY)
 const isClaudeOAuth = computed(() => selectedPreset.value === CLAUDE_OAUTH_KEY)
 const isMiniMaxOAuth = computed(() => selectedPreset.value === MINIMAX_OAUTH_KEY)
+const isOpenCodeFree = computed(() => selectedPreset.value === 'opencode-free')
 const isAlibabaCoding = computed(() => selectedPreset.value === ALIBABA_CODING_KEY)
 const alibabaCodingRegion = ref<'intl' | 'cn'>('intl')
 
@@ -175,6 +176,7 @@ function customProviderKey(name: string): string {
 
 watch(selectedPreset, (val) => {
   formData.value.model = ''
+  if (val === 'opencode-free') formData.value.api_key = ''
   alibabaCodingRegion.value = 'intl'
   if (val) {
     const group = selectedPresetProvider.value
@@ -249,7 +251,7 @@ async function fetchModels() {
       : formData.value.name.trim() || provider
     const data = await fetchProviderModels({
       base_url: base_url.trim(),
-      api_key: formData.value.api_key.trim(),
+      api_key: isOpenCodeFree.value ? '' : formData.value.api_key.trim(),
       provider,
       label,
       update_cache: !!provider,
@@ -309,7 +311,7 @@ async function handleSave() {
     message.warning(t('models.baseUrlRequired'))
     return
   }
-  if (!formData.value.api_key.trim() && !isCliproxyApi.value && !isXaiOAuth.value && !isClaudeOAuth.value && !isMiniMaxOAuth.value) {
+  if (!formData.value.api_key.trim() && !isCliproxyApi.value && !isXaiOAuth.value && !isClaudeOAuth.value && !isMiniMaxOAuth.value && !isOpenCodeFree.value) {
     message.warning(t('models.apiKeyRequired'))
     return
   }
@@ -336,7 +338,7 @@ async function handleSave() {
     await modelsStore.addProvider({
       name: providerName,
       base_url: baseUrl,
-      api_key: formData.value.api_key.trim(),
+      api_key: isOpenCodeFree.value ? '' : formData.value.api_key.trim(),
       model: formData.value.model,
       context_length: contextLength,
       api_mode: formData.value.api_mode,
@@ -532,7 +534,11 @@ function handleClose() {
         />
       </NFormItem>
 
-      <NFormItem v-if="!isCodex && !isNous && !isClaudeOAuth && !isMiniMaxOAuth" :label="t('models.apiKey')" :required="!isCliproxyApi && !isXaiOAuth">
+      <template v-if="isOpenCodeFree">
+        <p>{{ t('models.opencodeFreeHint') }}</p>
+        <p v-if="selectedPresetProvider?.catalog_status === 'unsupported'">{{ t('models.opencodeFreeUpgrade') }}</p>
+      </template>
+      <NFormItem v-if="!isCodex && !isNous && !isClaudeOAuth && !isMiniMaxOAuth && !isOpenCodeFree" :label="t('models.apiKey')" :required="!isCliproxyApi && !isXaiOAuth">
         <NInput
           v-model:value="formData.api_key"
           type="password"
@@ -584,7 +590,7 @@ function handleClose() {
     <template #footer>
       <div class="modal-footer">
         <NButton @click="handleClose">{{ t('common.cancel') }}</NButton>
-        <NButton type="primary" :loading="loading" @click="handleSave">
+        <NButton type="primary" :loading="loading" :disabled="isOpenCodeFree && selectedPresetProvider?.catalog_status === 'unsupported'" @click="handleSave">
           {{ t('common.add') }}
         </NButton>
       </div>

@@ -1,3 +1,4 @@
+import { OPENCODE_FREE_PROVIDER, openCodeFreeRuntime } from '../../studio/contracts/opencode-free'
 import { randomBytes } from 'crypto'
 import type { AgentApiMode } from './types'
 
@@ -40,6 +41,7 @@ export class AgentTargetRegistry<T extends AgentTargetInput> {
       model: input.model.trim(),
       baseUrl: input.baseUrl.trim().replace(/\/+$/, ''),
       apiMode: input.apiMode || 'chat_completions',
+      ...(input.provider.trim() === OPENCODE_FREE_PROVIDER ? openCodeFreeRuntime(input.model.trim()) : {}),
     } as NormalizedAgentTargetInput<T>
     const key = JSON.stringify(this.keyParts(normalized))
     const existing = this.targets.get(key)

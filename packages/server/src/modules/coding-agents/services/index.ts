@@ -1,3 +1,4 @@
+import { OPENCODE_FREE_PROVIDER, openCodeFreeRuntime } from '../../studio/contracts/opencode-free'
 import { execFile } from 'child_process'
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'crypto'
 import { existsSync, readdirSync, realpathSync } from 'fs'
@@ -202,10 +203,10 @@ async function decryptPiProxyApiKey(
   value: unknown,
   input: Record<string, unknown>,
   token: string,
-): Promise<string> {
+): Promise<string | null> {
   const encrypted = value as Partial<EncryptedPiProxyApiKey> | null
-  if ((encrypted?.v !== 1 && encrypted?.v !== 2) || encrypted.algorithm !== 'aes-256-gcm') return ''
-  if (!encrypted.iv || !encrypted.tag || !encrypted.ciphertext) return ''
+  if ((encrypted?.v !== 1 && encrypted?.v !== 2) || encrypted.algorithm !== 'aes-256-gcm') return null
+  if (!encrypted.iv || !encrypted.tag || typeof encrypted.ciphertext !== 'string') return null
   const key = await readOrCreatePiProxyTargetKey()
   const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(encrypted.iv, 'base64'))
   decipher.setAAD(encrypted.v === 1 ? PI_PROXY_TARGET_LEGACY_AAD : piProxyTargetAad(input, token))
@@ -742,6 +743,9 @@ async function resolveStoredProviderLaunchInput(
     ? normalizeStoredLaunchApiMode(existingSession?.api_mode)
     : undefined
   let apiMode = input.apiMode || storedApiMode
+  if (provider === OPENCODE_FREE_PROVIDER) {
+    return { ...input, profile, provider, model, workspace, ...openCodeFreeRuntime(model) }
+  }
   let canonicalProvider = provider
   const ignoredStaleProviderRuntime = belongsToDifferentBuiltinProvider(provider, baseUrl)
   if (ignoredStaleProviderRuntime) {
@@ -1861,7 +1865,7 @@ export async function restorePersistedPiProxyTargets(): Promise<number> {
           sessionId: chatSessionId,
         }, null)
         const apiKey = String(resolved.apiKey || '').trim()
-        if (!apiKey) continue
+        if (!apiKey && provider !== OPENCODE_FREE_PROVIDER) continue
         content = await serializePiProxyTarget({
           profile,
           provider,
@@ -1884,12 +1888,14 @@ export async function restorePersistedPiProxyTargets(): Promise<number> {
       const legacyApiKey = String(input?.apiKey || '').trim()
       if (!input || typeof input !== 'object' || !token) continue
       const encryptedVersion = Number(persisted?.apiKeyEncrypted?.v || 0)
-      const apiKey = legacyApiKey || String(await decryptPiProxyApiKey(persisted?.apiKeyEncrypted, input, token) || '').trim()
+      const decrypted = legacyApiKey || await decryptPiProxyApiKey(persisted?.apiKeyEncrypted, input, token)
+      if (decrypted === null) continue
+      const apiKey = decrypted.trim()
       if (!String(input.profile || '').trim()
         || !String(input.provider || '').trim()
         || !String(input.model || '').trim()
         || !String(input.baseUrl || '').trim()
-        || !apiKey) continue
+        || (!apiKey && input.provider !== OPENCODE_FREE_PROVIDER)) continue
       const restoredInput = { ...input, apiKey }
       delete restoredInput.apiKeyEncrypted
       restoreCodexProxyTarget(restoredInput, token)
@@ -1990,7 +1996,7 @@ export async function restorePersistedCodexProxyTargets(): Promise<number> {
         sessionId: chatSessionId,
       }, null)
       const apiKey = String(resolved.apiKey || '').trim()
-      if (!profile || !provider || !model || !baseUrl || !apiKey) continue
+      if (!profile || !provider || !model || !baseUrl || (!apiKey && provider !== OPENCODE_FREE_PROVIDER)) continue
       restoreCodexProxyTarget({
         profile,
         provider,
@@ -3142,7 +3148,8 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
   const provider = normalizeProviderIdentity(input.provider)
   const scope = normalizeConfigScope({ profile: input.profile, provider })
   const model = String(input.model || '').trim()
-  const apiKey = String(input.apiKey || '').trim()
+  const freeRuntime = provider === OPENCODE_FREE_PROVIDER ? openCodeFreeRuntime(model) : undefined
+  const apiKey = freeRuntime ? '' : String(input.apiKey || '').trim()
   assertScopedCodingAgentProviderAllowed(mode, provider)
   if (!model) {
     const err = new Error('Model is required')
@@ -3150,9 +3157,9 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     throw err
   }
 
-  const baseUrl = String(input.baseUrl || '').trim()
+  const baseUrl = freeRuntime?.baseUrl || String(input.baseUrl || '').trim()
   const preset = PROVIDER_PRESETS.find(item => item.value === provider)
-  const apiMode = normalizeLaunchApiMode(input.apiMode, preset?.api_mode || 'chat_completions')
+  const apiMode = freeRuntime?.apiMode || normalizeLaunchApiMode(input.apiMode, preset?.api_mode || 'chat_completions')
   const reasoningEffort = String(input.reasoningEffort || '').trim()
   const groupSystemPrompt = String(input.groupSystemPrompt || '').trim()
   const scopedSystemPrompt = tool.id === 'pi' && groupSystemPrompt ? getSystemPrompt() : groupSystemPrompt || getSystemPrompt()
@@ -3188,7 +3195,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
 
   if (tool.id === 'claude-code') {
     const contextWindow = getModelContextLength({ profile: scope.profile, provider, model })
-    const proxyTarget = baseUrl && apiKey
+    const proxyTarget = baseUrl && (apiKey || freeRuntime)
       ? registerClaudeCodeProxyTarget({
           provider,
           model,
@@ -3258,7 +3265,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       ;(err as any).status = 400
       throw err
     }
-    const proxyTarget = baseUrl && apiKey
+    const proxyTarget = baseUrl && (apiKey || freeRuntime)
       ? registerCodexProxyTarget({
           profile: scope.profile,
           provider,
@@ -3350,7 +3357,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     // Claude Code and Codex homes. Each conversation still gets an isolated
     // runs/<hash> directory containing its provider credentials and sessions.
     await ensurePiScopedBaseConfigFiles(scope)
-    const proxyTarget = baseUrl && apiKey
+    const proxyTarget = baseUrl && (apiKey || freeRuntime)
       ? registerCodexProxyTarget({
           profile: scope.profile,
           provider,
@@ -3428,7 +3435,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
         : []),
     ]
   } else if (tool.id === 'grok') {
-    const proxyTarget = baseUrl && apiKey
+    const proxyTarget = baseUrl && (apiKey || freeRuntime)
       ? registerCodexProxyTarget({
           profile: scope.profile,
           provider,
@@ -3483,7 +3490,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       ...(reasoningEffort ? ['--reasoning-effort', reasoningEffort] : []),
     ]
   } else {
-    const proxyTarget = baseUrl && apiKey
+    const proxyTarget = baseUrl && (apiKey || freeRuntime)
       ? registerCodexProxyTarget({
           profile: scope.profile,
           provider,
@@ -3592,7 +3599,7 @@ export async function startCodingAgentRun(
   const requestedMode = resolvedInput.mode === 'global' ? 'global' : 'scoped'
   const requestedProvider = String(resolvedInput.provider || '').trim().toLowerCase()
   assertScopedCodingAgentProviderAllowed(requestedMode, requestedProvider)
-  if (requestedMode !== 'global' && (!String(resolvedInput.baseUrl || '').trim() || !String(resolvedInput.apiKey || '').trim())) {
+  if (requestedMode !== 'global' && (!String(resolvedInput.baseUrl || '').trim() || (!String(resolvedInput.apiKey || '').trim() && requestedProvider !== OPENCODE_FREE_PROVIDER))) {
     const err = new Error('Coding agent provider credentials are missing. Re-select the provider/model or update the provider API key before continuing this session.')
     ;(err as any).status = 400
     throw err
