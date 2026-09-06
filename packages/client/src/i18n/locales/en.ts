@@ -1836,6 +1836,10 @@ export default {
 
   // Models
   models: {
+    opencodeFreeHint: "No account or API key required. Free models may be rate limited.",
+    opencodeFreeLoading: "Loading free models in the background…",
+    opencodeFreeRetry: "Free provider check or catalog refresh failed. Retrying automatically; cached models are retained.",
+    opencodeFreeUpgrade: "Update Hermes Agent to use OpenCode Free.",
     title: 'Models',
     searchPlaceholder: 'Search models...',
     noResults: 'No results',

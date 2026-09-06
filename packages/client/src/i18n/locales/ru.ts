@@ -1685,6 +1685,10 @@ export default {
 
 
   models: {
+    opencodeFreeHint: "Аккаунт и API-ключ не нужны. Для бесплатных моделей возможны ограничения запросов.",
+    opencodeFreeLoading: "Бесплатные модели загружаются в фоновом режиме…",
+    opencodeFreeRetry: "Ошибка проверки провайдера или обновления каталога. Повторим автоматически; кеш сохранён.",
+    opencodeFreeUpgrade: "Обновите Hermes Agent, чтобы использовать OpenCode Free.",
     title: 'Модели',
     searchPlaceholder: 'Поиск моделей...',
     noResults: 'Нет результатов',

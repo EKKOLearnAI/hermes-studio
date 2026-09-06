@@ -5,7 +5,8 @@ import { PROVIDER_PRESETS } from '../../../studio/contracts/providers'
 import { readAppConfig } from '../../../studio/public/app-config'
 import { config } from '../../../studio/public/config'
 import { logger } from '../../../studio/public/logging'
-import { fetchProviderModels } from '../../../studio/public/provider-catalog'
+import { fetchProviderModels, fetchOpenCodeFreeModels } from '../../../studio/public/provider-catalog'
+import { OPENCODE_FREE_PROVIDER, OPENCODE_FREE_BASE_URL } from '../../../studio/contracts/opencode-free'
 import { PROVIDER_ENV_MAP, readConfigYamlForProfile } from '../../../studio/public/profile-config'
 import { safeFileStore } from '../../../studio/public/safe-file-store'
 import { fetchCopilotModelsWithOAuthToken, resolveCopilotOAuthToken } from './copilot-models'
@@ -156,7 +157,7 @@ export function resolveProviderCatalogEntry(
   options: { freeOnly?: boolean; profile?: string } = {},
 ): ProviderModelCatalogEntry | undefined {
   const freeOnly = options.freeOnly === true
-  const profile = String(options.profile || '').trim()
+  const profile = provider === OPENCODE_FREE_PROVIDER ? '' : String(options.profile || '').trim()
   if (profile) {
     const scoped = cache.providers[providerModelCatalogKey(provider, baseUrl, freeOnly, profile)]
     if (scoped) return scoped
@@ -198,7 +199,7 @@ export async function writeProviderModelCatalogEntry(input: {
   const provider = input.provider.trim()
   const baseUrl = normalizeCatalogBaseUrl(input.base_url)
   const models = uniqueModels(input.models)
-  const profile = String(input.profile || '').trim()
+  const profile = provider === OPENCODE_FREE_PROVIDER ? '' : String(input.profile || '').trim()
   const key = providerModelCatalogKey(provider, baseUrl, input.free_only === true, profile || undefined)
   const now = new Date().toISOString()
   const entry: ProviderModelCatalogEntry = {
@@ -405,6 +406,7 @@ export async function fetchProviderCatalogRefreshTargetModels(
   target: ProviderCatalogRefreshTarget,
 ): Promise<string[]> {
   if (target.skip_live_fetch) return []
+  if (target.provider === OPENCODE_FREE_PROVIDER) return fetchOpenCodeFreeModels()
   if (target.provider === 'openai-codex') return fetchCodexOAuthModels(target.api_key)
   if (target.provider === 'copilot') {
     try {
@@ -588,6 +590,10 @@ export async function resolveProviderCatalogRefreshTarget(
   profile: string,
   provider: string,
 ): Promise<ProviderCatalogRefreshTarget | null> {
+  if (provider === OPENCODE_FREE_PROVIDER) {
+    return { provider, label: 'OpenCode Free', base_url: OPENCODE_FREE_BASE_URL,
+      api_key: '', fallback_models: [], profile, credential_kind: 'none' }
+  }
   const candidates = await collectRefreshCandidates([profile])
   return candidates.find(candidate => candidate.provider === provider) || null
 }
