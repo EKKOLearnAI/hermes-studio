@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { foregroundNotification as event } from '../../packages/server/src/modules/studio/services/chat-run/foreground-notification'
+import { foregroundNotification as event, foregroundNotificationPreview } from '../../packages/server/src/modules/studio/services/chat-run/foreground-notification'
 describe('foreground notification contract', () => {
   it('uses stable request and run identities without sensitive payload', () => {
     expect(event('approval.requested', { session_id:'s',approval_id:'a',command:'secret' },10)).toEqual({id:'s:approval:a',sessionId:'s',kind:'approval',resolved:false,timestamp:10})
@@ -13,3 +13,9 @@ describe('foreground notification contract', () => {
     expect(event('run.completed',{session_id:'s',run_id:'r',interrupted:true})).toBeNull()
   })
 })
+
+ it('ships bounded title and completion preview without command or error payloads', () => {
+   expect(foregroundNotificationPreview('completion', {title:'Chat',preview:'fallback'}, {output:'Done\nnow'})).toEqual({title:'Chat',content:'Done now'})
+   expect(foregroundNotificationPreview('approval', {title:'Chat'}, {command:'secret',error:'secret'})).toEqual({title:'Chat',content:''})
+   expect(foregroundNotificationPreview('completion', {title:'x'.repeat(500)}, {output:'y'.repeat(1000)}).content).toHaveLength(240)
+ })
