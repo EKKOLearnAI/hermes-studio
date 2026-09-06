@@ -13,6 +13,7 @@ const blank = (): UpdateState => ({autoUpdate:false,checkedAt:'',currentVersion:
  * while installing. Policy is host-wide, never inherited from a chat prompt. */
 export class AgentUpdatePolicy {
   private states: Record<string, UpdateState> = {}
+  private checks = new Map<string, Promise<Awaited<ReturnType<UpdateAdapter['check']>>>>()
   private running = false
   private timer?: ReturnType<typeof setInterval>
   private writes: Promise<void> = Promise.resolve()
@@ -33,6 +34,37 @@ export class AgentUpdatePolicy {
   }
   start(): void { if(this.timer)return;void this.tick();this.timer=setInterval(()=>void this.tick(),60_000);this.timer.unref?.() }
   stop(): void { if(this.timer)clearInterval(this.timer);this.timer=undefined }
+  /** One check result shared by manual requests and scheduler; never install here. */
+  async checkNow(id: string): Promise<Awaited<ReturnType<UpdateAdapter['check']>>> {
+    if (!this.adapter.ids().includes(id)) throw new Error('Invalid agent update policy')
+    const pending = this.checks.get(id)
+    if (pending) return pending
+    const state = this.states[id] ||= blank()
+    if (state.status === 'updating') throw new Error('Agent update in progress')
+    state.status = 'checking'
+    state.error = undefined
+    const job = Promise.resolve().then(() => this.adapter.check(id)).then(result => {
+      state.checkedAt = new Date().toISOString()
+      state.currentVersion = result.tool.version
+      if (!result.success) {
+        state.status = 'failed'
+        state.error = result.message || 'Update check failed'
+      } else {
+        state.latestVersion = result.latestVersion
+        state.status = result.tool.installed && result.updateAvailable ? 'available' : 'current'
+        state.error = undefined
+      }
+      return result
+    }).catch(error => {
+      state.checkedAt = new Date().toISOString()
+      state.status = 'failed'
+      state.error = error instanceof Error ? error.message : 'Update check failed'
+      throw error
+    }).finally(() => { this.checks.delete(id) })
+    this.checks.set(id, job)
+    return job
+  }
+
   async tick(force=false): Promise<void> {
     if(this.running)return;this.running=true
     try {
@@ -40,11 +72,8 @@ export class AgentUpdatePolicy {
         const state=this.states[id] ||= blank()
         try {
           if(force||!state.checkedAt||Date.now()-Date.parse(state.checkedAt)>=6*60*60_000) {
-            state.status='checking';state.error=undefined
-            const result=await this.adapter.check(id);state.checkedAt=new Date().toISOString()
-            if(!result.success)throw new Error(result.message||'Update check failed')
-            state.currentVersion=result.tool.version;state.latestVersion=result.latestVersion
-            state.status=result.tool.installed&&result.updateAvailable?'available':'current'
+            const result = await this.checkNow(id)
+            if (!result.success) continue
           }
           if(!state.autoUpdate||!['available','waiting'].includes(state.status))continue
           if(this.adapter.busy(id)){state.status='waiting';continue}

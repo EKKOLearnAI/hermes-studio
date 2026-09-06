@@ -17,3 +17,27 @@ it('persists one opt-in switch, waits while busy, stops installing after revocat
  await policy.set('codex',true);await policy.tick();expect(adapter.install).toHaveBeenCalledTimes(1)
 })
 it('validates policy and prevents concurrent scheduler execution',async()=>{const {policy,adapter}=await setup();await expect(policy.set('other',true)).rejects.toThrow();await expect(policy.set('codex','true')).rejects.toThrow();await Promise.all([policy.tick(),policy.tick()]);expect(adapter.check).toHaveBeenCalledTimes(1)})
+
+it('manual success clears a background failure in shared state and does not install', async () => {
+  const { policy, adapter } = await setup()
+  adapter.check.mockRejectedValueOnce(new Error('temporary failure'))
+  await policy.tick()
+  expect(policy.snapshot().codex.status).toBe('failed')
+  await policy.checkNow('codex')
+  expect(policy.snapshot().codex).toMatchObject({status:'available',latestVersion:'2',error:undefined})
+  expect(adapter.install).not.toHaveBeenCalled()
+  await policy.tick()
+  expect(policy.snapshot().codex.error).toBeUndefined()
+})
+it('concurrent manual/background checks share one result rather than overwrite with stale failure', async () => {
+  const { policy, adapter } = await setup()
+  let resolveCheck!: (value: Awaited<ReturnType<typeof adapter.check>>) => void
+  adapter.check.mockImplementationOnce(() => new Promise(resolve => { resolveCheck=resolve }))
+  const tick = policy.tick()
+  const manual = policy.checkNow('codex')
+  await Promise.resolve()
+  expect(adapter.check).toHaveBeenCalledTimes(1)
+  resolveCheck({success:true,tool:{installed:true,version:'1'},latestVersion:'2',updateAvailable:true})
+  await Promise.all([tick,manual])
+  expect(policy.snapshot().codex.status).toBe('available')
+})

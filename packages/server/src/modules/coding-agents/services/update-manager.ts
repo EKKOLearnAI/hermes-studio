@@ -15,8 +15,18 @@ const policy = new AgentUpdatePolicy(config.appHome, {
   }finally{release()}
  },
 })
+let loaded: Promise<void>|null=null
+function loadPolicy(): Promise<void> {
+  if (!loaded) loaded = policy.load()
+  return loaded
+}
+// Manual checking publishes the shared result but must not start auto-install.
+export async function checkAgentUpdateAndPublish(id: string) {
+  await loadPolicy()
+  return policy.checkNow(id)
+}
 let started: Promise<void>|null=null
 export async function getAgentUpdateManager():Promise<AgentUpdatePolicy>{
- if(!started)started=policy.load().then(()=>policy.start())
+ if(!started)started=loadPolicy().then(()=>policy.start())
  await started;return policy
 }

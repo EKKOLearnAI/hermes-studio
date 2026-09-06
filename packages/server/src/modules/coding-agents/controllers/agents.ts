@@ -1,7 +1,6 @@
-import { getAgentUpdateManager } from '../services/update-manager'
+import { getAgentUpdateManager, checkAgentUpdateAndPublish } from '../services/update-manager'
 import type { Context } from 'koa'
 import {
-  checkUpdateAgent,
   deleteCodingAgent,
   getCodingAgentsStatus,
   installCodingAgent,
@@ -50,7 +49,7 @@ export async function install(ctx: Context) {
 
 export async function checkUpdate(ctx: Context) {
   try {
-    ctx.body = await checkUpdateAgent(ctx.params.id)
+    ctx.body = await checkAgentUpdateAndPublish(ctx.params.id)
   } catch (err: any) {
     ctx.status = err.status || 500
     ctx.body = { error: err.message || 'Failed to check coding agent update' }
