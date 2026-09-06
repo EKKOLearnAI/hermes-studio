@@ -31,7 +31,7 @@ describe('desktop updater helpers', () => {
     expect(updaterSource).toContain('autoUpdater.autoDownload = false')
     expect(updaterSource).toContain('autoUpdater.autoInstallOnAppQuit = true')
     expect(updaterSource).toContain("buttons: [t('update.download'), t('update.later')]")
-    expect(updaterSource).toContain('if (response === 0) {\n    await autoUpdater.downloadUpdate()')
+    expect(updaterSource).toMatch(/if \(response === 0\) \{\s*clearUpdateProgress\(\)\s*updateProgressWindow\(\)\s*await autoUpdater.downloadUpdate\(\)/)
     expect(updaterSource).not.toContain('setInterval(')
   })
 
