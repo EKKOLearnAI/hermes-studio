@@ -1923,7 +1923,11 @@ export default {
       themeDark: '다크',
       themeSystem: '시스템',
       chatInputHeight: '채팅 입력 높이',
-      chatInputHeightHint: '데스크톱 채팅 입력창 기본 높이(px). 모바일은 자동 높이를 유지합니다.'
+      chatInputHeightHint: '데스크톱 채팅 입력창 기본 높이(px). 모바일은 자동 높이를 유지합니다.',
+      linkOpenTarget: '웹 링크 열기 위치',
+      linkOpenTargetHint: '메시지와 Markdown 미리보기의 링크를 열 위치를 선택합니다.',
+      linkOpenTargetHermesStudio: 'Hermes Studio',
+      linkOpenTargetDefaultBrowser: '기본 브라우저',
     },
     agent: {
       maxTurns: '최대 턴 수',

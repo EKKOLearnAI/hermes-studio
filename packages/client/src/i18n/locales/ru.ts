@@ -2186,7 +2186,11 @@ export default {
       themeDark: 'Тёмная',
       themeSystem: 'Системная',
       chatInputHeight: 'Высота поля ввода чата',
-      chatInputHeightHint: 'Высота поля ввода чата на рабочем столе в пикселях. На мобильных остается авто.'
+      chatInputHeightHint: 'Высота поля ввода чата на рабочем столе в пикселях. На мобильных остается авто.',
+      linkOpenTarget: 'Открывать веб-ссылки в',
+      linkOpenTargetHint: 'Выберите, где открывать ссылки из сообщений и предпросмотров Markdown.',
+      linkOpenTargetHermesStudio: 'Hermes Studio',
+      linkOpenTargetDefaultBrowser: 'Браузер по умолчанию',
     },
     agent: {
       maxTurns: 'Максимум ходов',

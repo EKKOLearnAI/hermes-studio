@@ -20,6 +20,7 @@ function browserBridge() {
 
 afterEach(() => {
   delete (window as typeof window & { hermesDesktop?: unknown }).hermesDesktop
+  window.localStorage.clear()
   vi.resetModules()
 })
 
@@ -43,6 +44,33 @@ describe('desktop browser open helpers', () => {
     expect(browser.createHtmlPreviewTab).toHaveBeenCalledWith('<h1>Hello</h1>', 'report.html', true)
     expect(listener).toHaveBeenCalledTimes(2)
     window.removeEventListener(OPEN_DESKTOP_BROWSER_PANEL_EVENT, listener)
+  })
+
+  it('leaves a message URL for the system browser when that target is stored', async () => {
+    const browser = browserBridge()
+    ;(window as typeof window & { hermesDesktop?: unknown }).hermesDesktop = {
+      isDesktop: true,
+      browser,
+    }
+    window.localStorage.setItem('hermes_link_open_target', 'default-browser')
+    const { openHtmlInDesktopBrowser, openUrlInDesktopBrowser } = await import('../../packages/client/src/utils/desktop-browser')
+
+    await expect(openUrlInDesktopBrowser('https://example.com')).resolves.toBe(false)
+    await expect(openHtmlInDesktopBrowser('<h1>Hello</h1>', 'report.html')).resolves.toBe(true)
+    expect(browser.createTab).not.toHaveBeenCalled()
+    expect(browser.createHtmlPreviewTab).toHaveBeenCalledWith('<h1>Hello</h1>', 'report.html', true)
+  })
+
+  it('persists a validated link-opening target for later message clicks', async () => {
+    const module = await import('../../packages/client/src/utils/desktop-browser') as unknown as Record<string, unknown>
+    expect(module.setLinkOpenTarget).toBeTypeOf('function')
+
+    const setLinkOpenTarget = module.setLinkOpenTarget as (target: 'hermes-studio' | 'default-browser') => void
+    const getLinkOpenTarget = module.getLinkOpenTarget as () => 'hermes-studio' | 'default-browser'
+    setLinkOpenTarget('default-browser')
+
+    expect(window.localStorage.getItem('hermes_link_open_target')).toBe('default-browser')
+    expect(getLinkOpenTarget()).toBe('default-browser')
   })
 
   it('leaves Web UI behavior untouched without the desktop bridge', async () => {

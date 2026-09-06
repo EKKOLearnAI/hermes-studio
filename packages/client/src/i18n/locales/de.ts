@@ -1923,7 +1923,11 @@ jobTriggered: 'Job ausgelost',
       themeDark: 'Dunkel',
       themeSystem: 'System',
       chatInputHeight: 'Chat-Eingabehöhe',
-      chatInputHeightHint: 'Standardhöhe der Chat-Eingabe auf dem Desktop in Pixeln. Mobil bleibt die Höhe automatisch.'
+      chatInputHeightHint: 'Standardhöhe der Chat-Eingabe auf dem Desktop in Pixeln. Mobil bleibt die Höhe automatisch.',
+      linkOpenTarget: 'Weblinks öffnen in',
+      linkOpenTargetHint: 'Wählen Sie, wo Links aus Nachrichten und Markdown-Vorschauen geöffnet werden.',
+      linkOpenTargetHermesStudio: 'Hermes Studio',
+      linkOpenTargetDefaultBrowser: 'Standardbrowser',
     },
     agent: {
       maxTurns: 'Maximale Runden',

@@ -2374,7 +2374,11 @@ export default {
       themeDark: '暗色',
       themeSystem: '跟隨系統',
       chatInputHeight: '聊天輸入框高度',
-      chatInputHeightHint: '桌面端聊天輸入框預設高度（像素）。行動端保持自動高度。'
+      chatInputHeightHint: '桌面端聊天輸入框預設高度（像素）。行動端保持自動高度。',
+      linkOpenTarget: '網頁連結開啟方式',
+      linkOpenTargetHint: '選擇訊息與 Markdown 預覽中的網頁連結要在哪裡開啟。',
+      linkOpenTargetHermesStudio: 'Hermes Studio',
+      linkOpenTargetDefaultBrowser: '預設瀏覽器',
     },
     agent: {
       maxTurns: '最大輪次',

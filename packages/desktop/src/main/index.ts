@@ -32,6 +32,7 @@ import { installHermesStudioCliShim, installHermesStudioMcpShim } from './cli-sh
 import { parseHermesCliArgs, runBundledHermesCli } from './hermes-cli'
 import { installSelectionContextMenu } from './selection-context-menu'
 import { groupChatAgentLinkPopupResponse } from './group-chat-agent-popup'
+import { isTrustedDesktopAppUrl } from './window-open-policy'
 import {
   ensureDesktopRuntime,
   isDesktopRuntimeReady,
@@ -258,7 +259,7 @@ function ensurePetWindow(): BrowserWindow {
     petWindowLoadPromise = null
   })
   petWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith('http://127.0.0.1') || url.startsWith('http://localhost')) {
+    if (isTrustedDesktopAppUrl(url, serverUrl)) {
       return { action: 'allow' }
     }
     shell.openExternal(url).catch(() => undefined)
@@ -551,7 +552,7 @@ async function createWindow(): Promise<void> {
   mainWindow.webContents.setWindowOpenHandler(({ url, frameName }) => {
     const agentLinkPopup = groupChatAgentLinkPopupResponse(url, frameName)
     if (agentLinkPopup) return agentLinkPopup
-    if (url.startsWith('http://127.0.0.1') || url.startsWith('http://localhost')) {
+    if (isTrustedDesktopAppUrl(url, serverUrl)) {
       return { action: 'allow' }
     }
     shell.openExternal(url).catch(() => undefined)

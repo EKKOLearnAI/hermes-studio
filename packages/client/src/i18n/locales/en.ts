@@ -2430,7 +2430,11 @@ export default {
       themeDark: 'Dark',
       themeSystem: 'System',
       chatInputHeight: 'Chat input height',
-      chatInputHeightHint: 'Default desktop chat input height in pixels. Mobile keeps auto height.'
+      chatInputHeightHint: 'Default desktop chat input height in pixels. Mobile keeps auto height.',
+      linkOpenTarget: 'Open web links in',
+      linkOpenTargetHint: 'Choose where links from messages and Markdown previews open.',
+      linkOpenTargetHermesStudio: 'Hermes Studio',
+      linkOpenTargetDefaultBrowser: 'Default browser',
     },
     agent: {
       maxTurns: 'Max Turns',
