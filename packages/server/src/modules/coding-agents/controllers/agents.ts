@@ -1,9 +1,8 @@
-import { getAgentUpdateManager, checkAgentUpdateAndPublish } from '../services/update-manager'
+import { getAgentUpdateManager, checkAgentUpdateAndPublish, installAgentAndPublish } from '../services/update-manager'
 import type { Context } from 'koa'
 import {
   deleteCodingAgent,
   getCodingAgentsStatus,
-  installCodingAgent,
   openCodingAgentNativeTerminal,
   prepareCodingAgentLaunch,
   readCodingAgentConfigFile,
@@ -39,7 +38,7 @@ export async function status(ctx: Context) {
 
 export async function install(ctx: Context) {
   try {
-    const result = await installCodingAgent(ctx.params.id)
+    const result = await installAgentAndPublish(ctx.params.id)
     ctx.body = result
   } catch (err: any) {
     ctx.status = err.status || 500

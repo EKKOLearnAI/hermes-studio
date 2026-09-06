@@ -10,3 +10,9 @@ it('keeps update settings out of action buttons and hides raw process errors',()
  expect(s).not.toContain('{{ updatePolicies[agent.id]?.error }}')
  expect(s).toContain("t('codingAgents.checkUpdateFailed')")
 })
+
+it('update button formats target version with the same v prefix as installed version',()=>{
+ const s=readFileSync('packages/client/src/views/hermes/AgentManagerView.vue','utf8')
+ expect(s).toContain('version: formatVersion(availableUpdateVersion(agent.id))')
+ expect(s).toContain('if (result.updateState) updatePolicies.value[id] = result.updateState')
+})

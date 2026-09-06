@@ -361,6 +361,7 @@ async function handleInstall(id: CodingAgentId) {
   try {
     const result = await installCodingAgent(id)
     tools.value = result.tools
+    if (result.updateState) updatePolicies.value[id] = result.updateState
     if (!result.success) throw new Error(result.message || t('codingAgents.installFailed'))
     updateInfo.value[id] = null
     message.success(t('codingAgents.installSuccess'))
@@ -593,7 +594,7 @@ onMounted(() => {
                   :loading="installing[agent.id]"
                   @click="handleInstall(agent.id)"
                 >
-                  {{ t('agentManager.updateToVersion', { version: availableUpdateVersion(agent.id) }) }}
+                  {{ t('agentManager.updateToVersion', { version: formatVersion(availableUpdateVersion(agent.id)) }) }}
                 </NButton>
                 <NButton
                   v-if="toolStatus(agent.id)?.installed && !availableUpdateVersion(agent.id)"

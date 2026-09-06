@@ -32,3 +32,8 @@ export async function getAgentUpdateManager():Promise<AgentUpdatePolicy>{
  if(!started)started=loadPolicy().then(()=>policy.start())
  await started;return policy
 }
+
+export async function installAgentAndPublish(id: string) {
+  await loadPolicy()
+  return policy.installAndRefresh(id, () => installCodingAgent(id))
+}

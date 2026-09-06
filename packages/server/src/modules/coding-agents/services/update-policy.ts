@@ -17,6 +17,7 @@ export class AgentUpdatePolicy {
   private states: Record<string, UpdateState> = {}
   private checks = new Map<string, Promise<Awaited<ReturnType<UpdateAdapter['check']>>>>()
   private idle = new Map<string, { since: number; revision: number }>()
+  private manualInstalls = new Set<string>()
   private running = false
   private timer?: ReturnType<typeof setInterval>
   private writes: Promise<void> = Promise.resolve()
@@ -37,11 +38,36 @@ export class AgentUpdatePolicy {
     this.writes=this.writes.catch(()=>{}).then(async()=>{await mkdir(this.home,{recursive:true});const path=join(this.home,'agent-update-policy.json');await writeFile(path+'.tmp',value,{mode:0o600});await rename(path+'.tmp',path)})
     await this.writes
   }
+  async installAndRefresh<T extends { success: boolean; tool: { version: string }; message?: string }>(id: string, install: () => Promise<T>): Promise<T & { updateState: UpdateState }> {
+    if (!this.adapter.ids().includes(id)) throw new Error('Invalid agent update policy')
+    if (this.manualInstalls.has(id) || this.states[id]?.status === 'updating') throw new Error('Agent update in progress')
+    this.manualInstalls.add(id)
+    this.idle.delete(id)
+    try {
+      // Drain an older check before mutation so it cannot overwrite the readback.
+      await this.checks.get(id)?.catch(() => undefined)
+      const state = this.states[id] ||= blank()
+      state.status = 'updating'; state.error = undefined
+      const result = await install()
+      state.currentVersion = result.tool.version
+      state.status = 'unknown'; state.checkedAt = ''
+      if (result.success) {
+        try { await this.checkNow(id, true) } catch { /* checkNow records failed/unknown freshness */ }
+      } else { state.status = 'failed'; state.error = result.message || 'Install failed' }
+      return { ...result, updateState: { ...state } }
+    } catch (error) {
+      const state = this.states[id] ||= blank()
+      state.status = 'failed'; state.error = error instanceof Error ? error.message : 'Install failed'
+      throw error
+    } finally { this.manualInstalls.delete(id) }
+  }
+
   start(): void { if(this.timer)return;void this.tick();this.timer=setInterval(()=>void this.tick(),60_000);this.timer.unref?.() }
   stop(): void { if(this.timer)clearInterval(this.timer);this.timer=undefined }
   /** One check result shared by manual requests and scheduler; never install here. */
-  async checkNow(id: string): Promise<Awaited<ReturnType<UpdateAdapter['check']>>> {
+  async checkNow(id: string, afterInstall = false): Promise<Awaited<ReturnType<UpdateAdapter['check']>>> {
     if (!this.adapter.ids().includes(id)) throw new Error('Invalid agent update policy')
+    if (this.manualInstalls.has(id) && !afterInstall) throw new Error('Agent install in progress')
     const pending = this.checks.get(id)
     if (pending) return pending
     const state = this.states[id] ||= blank()
@@ -76,6 +102,7 @@ export class AgentUpdatePolicy {
       for(const id of this.adapter.ids()) {
         const state=this.states[id] ||= blank()
         try {
+          if (this.manualInstalls.has(id)) continue
           if(force||!state.checkedAt||Date.now()-Date.parse(state.checkedAt)>=6*60*60_000) {
             const result = await this.checkNow(id)
             if (!result.success) continue

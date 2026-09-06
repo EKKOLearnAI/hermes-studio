@@ -68,6 +68,7 @@ export interface CodingAgentsStatus {
 }
 
 export interface CodingAgentMutationResult extends CodingAgentsStatus {
+  updateState?: AgentUpdatePolicyState
   success: boolean
   tool: CodingAgentToolStatus
   message?: string
