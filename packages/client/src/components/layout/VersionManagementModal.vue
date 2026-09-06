@@ -25,7 +25,7 @@ const emit = defineEmits<{ (event: 'update:show', value: boolean): void }>()
 
 const { t } = useI18n()
 const message = useMessage()
-const { requestRuntimeRestart } = useRuntimeRestartPrompt()
+const { requestRuntimeRestart, checkRuntimeDownloads } = useRuntimeRestartPrompt()
 
 const status = ref<RuntimeVersionStatus | null>(null)
 const jobs = ref<VersionDownloadJob[]>([])
@@ -89,6 +89,7 @@ async function loadAll() {
   loadError.value = ''
   try {
     await Promise.all([loadStatus(), loadJobs()])
+    checkRuntimeDownloads()
     if (hasRunningJobs()) startPolling()
   } catch (err) {
     loadError.value = err instanceof Error ? err.message : String(err)
@@ -215,6 +216,7 @@ async function startRuntimeDownload(version: string, source: VersionDownloadSour
   await runAction(`download-runtime-${source}-${version}`, async () => {
     const response = await downloadRuntimeVersion(version, source)
     jobs.value = [response.job, ...jobs.value.filter(job => job.id !== response.job.id)]
+    checkRuntimeDownloads()
     message.success(t('runtimeVersions.downloadStarted'))
     startPolling()
   })

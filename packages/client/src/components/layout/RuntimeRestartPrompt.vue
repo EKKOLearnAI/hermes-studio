@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { NButton, NCard, NModal, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import {
@@ -7,6 +7,7 @@ import {
   restartWebUiAfterRuntimeChange,
 } from '@/api/hermes/runtime-versions'
 import { useRuntimeRestartPrompt } from '@/composables/useRuntimeRestartPrompt'
+import { isStoredSuperAdmin } from '@/api/client'
 import { desktopBridge } from '@/utils/desktop-bridge'
 
 const POLL_INTERVAL_MS = 2000
@@ -15,13 +16,17 @@ const HANDLED_JOBS_KEY = 'hermes-runtime-restart-handled-jobs'
 const { t } = useI18n()
 const message = useMessage()
 const {
+  runtimeDownloadCheckRevision,
   pendingRuntimeRestart,
   requestRuntimeRestart,
   clearRuntimeRestart,
 } = useRuntimeRestartPrompt()
 const restarting = ref(false)
 const handledJobIds = new Set<string>()
-let pollTimer: ReturnType<typeof setInterval> | null = null
+let mounted = false
+let checking = false
+let checkRequested = false
+let pollTimer: ReturnType<typeof setTimeout> | null = null
 let restartWaitTimer: ReturnType<typeof setInterval> | null = null
 
 function restoreHandledJobs() {
@@ -45,9 +50,26 @@ function rememberHandledJob(jobId?: string) {
   }
 }
 
+function stopPolling() {
+  if (pollTimer) clearTimeout(pollTimer)
+  pollTimer = null
+}
+
 async function checkCompletedRuntimeDownloads() {
+  stopPolling()
+  if (!mounted || !isStoredSuperAdmin()) return
+  if (checking) {
+    checkRequested = true
+    return
+  }
+  checking = true
+  let hasRunningJobs = false
   try {
     const response = await fetchVersionDownloadJobs()
+    if (!mounted || !isStoredSuperAdmin()) return
+    hasRunningJobs = response.jobs.some(job =>
+      job.kind === 'runtime' && (job.status === 'queued' || job.status === 'running'),
+    )
     const completed = response.jobs.filter(job =>
       job.kind === 'runtime'
       && job.status === 'completed'
@@ -61,9 +83,27 @@ async function checkCompletedRuntimeDownloads() {
     for (const job of completed.slice(1)) rememberHandledJob(job.id)
     requestRuntimeRestart(completed[0].version, completed[0].id)
   } catch {
-    // Authentication and transient network failures are retried by the poller.
+    // Stop on errors, including denied access. Opening version management or
+    // starting a download explicitly retries without an endless error loop.
+    checkRequested = false
+  } finally {
+    checking = false
+    if (mounted && isStoredSuperAdmin()) {
+      if (checkRequested) {
+        checkRequested = false
+        void checkCompletedRuntimeDownloads()
+      } else if (hasRunningJobs) {
+        pollTimer = setTimeout(() => {
+          void checkCompletedRuntimeDownloads()
+        }, POLL_INTERVAL_MS)
+      }
+    }
   }
 }
+
+watch(runtimeDownloadCheckRevision, () => {
+  void checkCompletedRuntimeDownloads()
+})
 
 function restartStandaloneWebUi() {
   let attempts = 0
@@ -89,7 +129,7 @@ function restartStandaloneWebUi() {
 }
 
 async function restartNow() {
-  if (!pendingRuntimeRestart.value || restarting.value) return
+  if (!isStoredSuperAdmin() || !pendingRuntimeRestart.value || restarting.value) return
   restarting.value = true
   try {
     const bridge = desktopBridge()
@@ -113,15 +153,14 @@ function restartLater() {
 }
 
 onMounted(() => {
+  mounted = true
   restoreHandledJobs()
   void checkCompletedRuntimeDownloads()
-  pollTimer = setInterval(() => {
-    void checkCompletedRuntimeDownloads()
-  }, POLL_INTERVAL_MS)
 })
 
 onBeforeUnmount(() => {
-  if (pollTimer) clearInterval(pollTimer)
+  mounted = false
+  stopPolling()
   if (restartWaitTimer) clearInterval(restartWaitTimer)
 })
 </script>
