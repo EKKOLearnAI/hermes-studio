@@ -37,4 +37,13 @@ describe('desktop preload auth', () => {
     expect(preloadSource).toContain("ipcRenderer.invoke('hermes-desktop:browser-cancel-download'")
     expect(mainSource).toContain("ipcMain.handle('hermes-desktop:browser-cancel-download'")
   })
+
+  it('exposes the validated system-browser URL bridge', () => {
+    const preloadSource = readFileSync(resolve('packages/desktop/src/preload/index.ts'), 'utf-8')
+    const mainSource = readFileSync(resolve('packages/desktop/src/main/index.ts'), 'utf-8')
+
+    expect(preloadSource).toContain("ipcRenderer.invoke('hermes-desktop:open-external-url'")
+    expect(mainSource).toContain("ipcMain.handle('hermes-desktop:open-external-url'")
+    expect(mainSource).toContain('normalizeExternalHttpUrl')
+  })
 })

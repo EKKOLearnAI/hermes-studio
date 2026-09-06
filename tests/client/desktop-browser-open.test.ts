@@ -61,6 +61,23 @@ describe('desktop browser open helpers', () => {
     expect(browser.createHtmlPreviewTab).toHaveBeenCalledWith('<h1>Hello</h1>', 'report.html', true)
   })
 
+  it('uses the desktop external-url bridge when the system browser target is stored', async () => {
+    const browser = browserBridge()
+    const openExternalUrl = vi.fn().mockResolvedValue(true)
+    ;(window as typeof window & { hermesDesktop?: unknown }).hermesDesktop = {
+      isDesktop: true,
+      browser,
+      openExternalUrl,
+    }
+    window.localStorage.setItem('hermes_link_open_target', 'default-browser')
+    const { openUrlInDesktopBrowser } = await import('../../packages/client/src/utils/desktop-browser')
+
+    await expect(openUrlInDesktopBrowser('http://127.0.0.1:8748/docs')).resolves.toBe(true)
+
+    expect(openExternalUrl).toHaveBeenCalledWith('http://127.0.0.1:8748/docs')
+    expect(browser.createTab).not.toHaveBeenCalled()
+  })
+
   it('persists a validated link-opening target for later message clicks', async () => {
     const module = await import('../../packages/client/src/utils/desktop-browser') as unknown as Record<string, unknown>
     expect(module.setLinkOpenTarget).toBeTypeOf('function')

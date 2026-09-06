@@ -261,6 +261,41 @@ describe('MarkdownRenderer', () => {
     }
   })
 
+  it('uses desktop external-url IPC for same-origin links with the default-browser target', async () => {
+    window.localStorage.setItem('hermes_link_open_target', 'default-browser')
+    const browser = trustedDesktopBrowserBridge()
+    const openExternalUrl = vi.fn().mockResolvedValue(true)
+    ;(window as typeof window & { hermesDesktop?: unknown }).hermesDesktop = {
+      isDesktop: true,
+      browser,
+      openExternalUrl,
+    }
+    desktopBrowserMock.openUrlInDesktopBrowser.mockImplementation(async (url: string) => {
+      const actual = await vi.importActual<{
+        openUrlInDesktopBrowser: (targetUrl: string) => Promise<boolean>
+      }>('@/utils/desktop-browser')
+      return actual.openUrlInDesktopBrowser(url)
+    })
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null)
+    const sameOriginUrl = `${window.location.origin}/docs`
+    const wrapper = mount(MarkdownRenderer, {
+      props: {
+        content: `[Docs](${sameOriginUrl})`,
+      },
+    })
+
+    try {
+      await wrapper.get('a').trigger('click')
+
+      await vi.waitFor(() => {
+        expect(openExternalUrl).toHaveBeenCalledWith(sameOriginUrl)
+      })
+      expect(open).not.toHaveBeenCalled()
+    } finally {
+      open.mockRestore()
+    }
+  })
+
   it('highlights vue fenced blocks instead of rendering them as plain text', () => {
     const wrapper = mount(MarkdownRenderer, {
       props: {

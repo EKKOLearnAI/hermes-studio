@@ -10,3 +10,17 @@ export function isTrustedDesktopAppUrl(url: string, webUiUrl: string | null | un
     return false
   }
 }
+
+export function normalizeExternalHttpUrl(url: unknown): string | null {
+  if (typeof url !== 'string') return null
+  const trimmed = url.trim()
+  if (!trimmed) return null
+
+  try {
+    const candidate = new URL(trimmed)
+    if (candidate.protocol !== 'http:' && candidate.protocol !== 'https:') return null
+    return candidate.href
+  } catch {
+    return null
+  }
+}

@@ -31,9 +31,13 @@ function revealDesktopBrowserPanel(): void {
 }
 
 export async function openUrlInDesktopBrowser(url: string): Promise<boolean> {
-  if (getLinkOpenTarget() === 'default-browser') return false
+  const bridge = desktopBridge()
+  if (getLinkOpenTarget() === 'default-browser') {
+    if (typeof bridge?.openExternalUrl !== 'function') return false
+    return bridge.openExternalUrl(url)
+  }
   if (!hasDesktopBrowserBridge()) return false
-  const browser = desktopBridge()?.browser
+  const browser = bridge?.browser
   if (!browser) return false
   await browser.createTab(url, true)
   revealDesktopBrowserPanel()
