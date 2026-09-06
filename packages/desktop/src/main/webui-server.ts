@@ -33,6 +33,7 @@ import {
   withDesktopHermesSelection,
   type DesktopManagedHermesRuntime,
 } from './hermes-environment-selection'
+import { canBindTcpPort, releaseOccupiedWebUiPort } from './webui-port'
 
 const DEFAULT_PORT = 8748
 const DEFAULT_READY_TIMEOUT_MS = 120_000
@@ -549,17 +550,6 @@ async function getFreeTcpPort(): Promise<number> {
   })
 }
 
-async function canBindTcpPort(port: number): Promise<boolean> {
-  return await new Promise((resolveCanBind) => {
-    const server = createServer()
-    server.unref()
-    server.once('error', () => resolveCanBind(false))
-    server.listen(port, '127.0.0.1', () => {
-      server.close(() => resolveCanBind(true))
-    })
-  })
-}
-
 async function getFreeTcpPortInRange(min: number, max: number): Promise<number> {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     const port = min + (randomBytes(2).readUInt16BE(0) % (max - min + 1))
@@ -735,6 +725,11 @@ export async function startWebUiServer(port = DEFAULT_PORT): Promise<string> {
     // available after selection without influencing which Hermes wins.
     PATH: runtimePath,
   }, hermesSelection)
+
+  const released = await releaseOccupiedWebUiPort(port, token)
+  if (released) {
+    console.warn(`[webui] released an orphaned Desktop Web UI on port ${port}`)
+  }
 
   const fallbackWebUiDir = defaultWebuiDir()
   try {
