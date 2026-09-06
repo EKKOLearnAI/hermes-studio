@@ -1052,6 +1052,7 @@ function makeSocket(url, options) {
       for (const handler of handlers) handler(payload)
     },
   }
+  socket.volatile = socket
   state.allSockets = state.allSockets || []
   state.allSockets.push(socket)
   if (String(url).endsWith('/chat-run') || String(url).endsWith('/global-agent')) {

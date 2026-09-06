@@ -15,6 +15,12 @@ import { detectThinkingBoundary } from '@/utils/thinking-parser'
 import { isKnownBridgeSessionCommand } from '@/utils/hermes/bridge-session-commands'
 import { responseErrorMessage } from '@/utils/http-error'
 import {
+  createResponseAnnotationDisplayEnvelope,
+  formatResponseAnnotationsForAgent,
+  type ResponseAnnotation,
+  type ResponseAnnotationFile,
+} from '@/utils/chat-response-annotations'
+import {
   isPendingInteractionExpiredError,
   notifyPendingInteractionExpired,
   pendingInteractionDeadline,
@@ -71,6 +77,8 @@ export interface Attachment {
   context?: string
   /** Original video attachment id when this file is a model-only representative frame. */
   videoFrameFor?: string
+  /** Draft response annotation that owns this file. */
+  annotationId?: string
 }
 
 export interface Message {
@@ -606,6 +614,37 @@ async function uploadFiles(attachments: Attachment[]): Promise<{ name: string; p
   return data.files
 }
 
+function materializeResponseAnnotationFiles(
+  annotations: readonly ResponseAnnotation[],
+  attachments: readonly Attachment[],
+  uploadedFiles: readonly { name: string; path: string }[],
+): ResponseAnnotation[] {
+  const filesByAnnotationId = new Map<string, ResponseAnnotationFile[]>()
+  attachments.forEach((attachment, index) => {
+    if (!attachment.annotationId) return
+    const uploaded = uploadedFiles[index]
+    if (!uploaded) return
+    const file: ResponseAnnotationFile = {
+      id: attachment.id,
+      name: uploaded.name,
+      type: attachment.type,
+      size: attachment.size,
+      path: uploaded.path,
+    }
+    const owned = filesByAnnotationId.get(attachment.annotationId) || []
+    owned.push(file)
+    filesByAnnotationId.set(attachment.annotationId, owned)
+  })
+  return annotations.map((annotation, index) => ({
+    ...annotation,
+    ordinal: index + 1,
+    files: [
+      ...annotation.files.map(file => ({ ...file })),
+      ...(filesByAnnotationId.get(annotation.id) || []),
+    ],
+  }))
+}
+
 export async function buildContentBlocks(
   content: string,
   attachments?: Attachment[],
@@ -634,6 +673,7 @@ export async function buildContentBlocks(
           media_type: attachment.type,
           ...(attachment.context?.trim() ? { context: attachment.context.trim() } : {}),
           ...(attachment.videoFrameFor ? { video_frame: true } : {}),
+          ...(attachment.annotationId ? { annotation_id: attachment.annotationId } : {}),
         })
       } else {
         // Other files
@@ -643,6 +683,7 @@ export async function buildContentBlocks(
           path: uploaded.path,
           media_type: attachment?.type,
           ...(attachment?.context?.trim() ? { context: attachment.context.trim() } : {}),
+          ...(attachment?.annotationId ? { annotation_id: attachment.annotationId } : {}),
         })
       }
       if (includeContextText && attachment?.context?.trim()) {
@@ -3463,8 +3504,13 @@ export const useChatStore = defineStore('chat', () => {
     })
   }
 
-  async function sendMessage(content: string, attachments?: Attachment[]) {
-    if ((!content.trim() && !(attachments && attachments.length > 0))) return
+  async function sendMessage(
+    content: string,
+    attachments?: Attachment[],
+    responseAnnotations: ResponseAnnotation[] = [],
+  ): Promise<boolean> {
+    const hasResponseAnnotations = responseAnnotations.length > 0
+    if ((!content.trim() && !(attachments && attachments.length > 0) && !hasResponseAnnotations)) return false
 
     primeNotificationSoundIfEnabled()
 
@@ -3481,7 +3527,7 @@ export const useChatStore = defineStore('chat', () => {
       ? activeSession.value.messageCount == null || activeSession.value.messageCount === 0
       : false
     const isCodingAgentSession = isCodingAgentLikeSession(activeSession.value)
-    const isBridgeSlashCommand = !isCodingAgentSession && isKnownBridgeSessionCommand(trimmedContent)
+    const isBridgeSlashCommand = !hasResponseAnnotations && !isCodingAgentSession && isKnownBridgeSessionCommand(trimmedContent)
     const isBridgeCompressCommand = isBridgeSlashCommand && /^\/compress(?:\s|$)/i.test(trimmedContent)
     const isBridgePlanCommand = isBridgeSlashCommand && /^\/plan(?:\s|$)/i.test(trimmedContent)
     const isBridgeSkillCommand = isBridgeSlashCommand && /^\/skill(?:\s|$)/i.test(trimmedContent)
@@ -3493,10 +3539,19 @@ export const useChatStore = defineStore('chat', () => {
     const submittedContent = messageReference
       ? formatMessageWithReference(messageReference, trimmedContent)
       : trimmedContent
+    let materializedResponseAnnotations = responseAnnotations.map((annotation, index) => ({
+      ...annotation,
+      ordinal: index + 1,
+      files: annotation.files.map(file => ({ ...file })),
+    }))
+    let modelSubmittedContent = formatResponseAnnotationsForAgent(submittedContent, materializedResponseAnnotations)
+    let displaySubmittedContent = hasResponseAnnotations
+      ? createResponseAnnotationDisplayEnvelope(submittedContent, materializedResponseAnnotations)
+      : submittedContent
     const shouldOptimisticallyShowRunStatus = !isCodingAgentSession && !isBridgeForkCommand
     const wasLiveBeforeSend = isSessionLive(sid)
     if (isBridgeForkCommand) {
-      if (pendingForkCommands.value.has(sid)) return
+      if (pendingForkCommands.value.has(sid)) return false
       pendingForkCommands.value = new Set(pendingForkCommands.value).add(sid)
     }
     const shouldQueue = wasLiveBeforeSend && (
@@ -3510,11 +3565,11 @@ export const useChatStore = defineStore('chat', () => {
       settleRuntimeDisplayForCommand(sid)
     }
 
-    const visibleAttachments = attachments?.filter(attachment => !attachment.videoFrameFor)
+    const visibleAttachments = attachments?.filter(attachment => !attachment.videoFrameFor && !attachment.annotationId)
     const userMsg: Message = {
       id: uid(),
       role: isBridgeSlashCommand ? 'command' : 'user',
-      content: submittedContent,
+      content: displaySubmittedContent,
       timestamp: Date.now(),
       attachments: visibleAttachments && visibleAttachments.length > 0 ? visibleAttachments : undefined,
       queued: shouldQueue,
@@ -3539,9 +3594,20 @@ export const useChatStore = defineStore('chat', () => {
       // Build input in Anthropic format
       let input: string | ContentBlock[]
       let displayInput: string | ContentBlock[] | undefined
+      let storageMessage: string | undefined
       if (attachments && attachments.length > 0) {
         // Has attachments: upload first, then build content blocks
         const uploaded = await uploadFiles(attachments)
+
+        if (hasResponseAnnotations) {
+          materializedResponseAnnotations = materializeResponseAnnotationFiles(
+            materializedResponseAnnotations,
+            attachments,
+            uploaded,
+          )
+          modelSubmittedContent = formatResponseAnnotationsForAgent(submittedContent, materializedResponseAnnotations)
+          displaySubmittedContent = createResponseAnnotationDisplayEnvelope(submittedContent, materializedResponseAnnotations)
+        }
 
         // Update attachment URLs on the user message for display
         const urlMap = new Map(uploaded.map(f => {
@@ -3565,13 +3631,27 @@ export const useChatStore = defineStore('chat', () => {
         }
 
         // Build content blocks with uploaded file paths
-        input = await buildContentBlocks(submittedContent, attachments, uploaded)
-        if (attachments.some(attachment => attachment.context?.trim())) {
+        input = await buildContentBlocks(modelSubmittedContent, attachments, uploaded)
+        if (hasResponseAnnotations) {
+          displayInput = await buildContentBlocks(displaySubmittedContent, attachments, uploaded, false)
+          storageMessage = JSON.stringify(input)
+          userMsg.content = JSON.stringify(displayInput)
+          userMsg.attachments = undefined
+          if (shouldQueue) {
+            updateQueuedUserMessage(sid, userMsg.id, { content: userMsg.content, attachments: undefined })
+          } else {
+            updateMessage(sid, userMsg.id, { content: userMsg.content, attachments: undefined })
+          }
+        } else if (attachments.some(attachment => attachment.context?.trim())) {
           displayInput = await buildContentBlocks(submittedContent, attachments, uploaded, false)
         }
       } else {
         // No attachments: use plain text format
-        input = submittedContent
+        input = modelSubmittedContent
+        if (hasResponseAnnotations) {
+          displayInput = displaySubmittedContent
+          storageMessage = modelSubmittedContent
+        }
       }
 
       const appStore = useAppStore()
@@ -3612,6 +3692,7 @@ export const useChatStore = defineStore('chat', () => {
       const runPayload: StartRunRequest = {
         input,
         ...(displayInput ? { display_input: displayInput } : {}),
+        ...(storageMessage ? { storage_message: storageMessage } : {}),
         session_id: sid,
         profile: sessionProfile,
         model: isCodingAgentExecution
@@ -4393,7 +4474,11 @@ export const useChatStore = defineStore('chat', () => {
           activeRunMarker = null
         },
         undefined,
-        { onReconnectResume: applyReconnectResume, transport: runtimeTransport() },
+        {
+          onReconnectResume: applyReconnectResume,
+          transport: runtimeTransport(),
+          ...(hasResponseAnnotations ? { trackAcceptance: true } : {}),
+        },
       )
       runSubmitted = true
 
@@ -4403,6 +4488,18 @@ export const useChatStore = defineStore('chat', () => {
       } else if (!isBridgeSlashCommand || isBridgeCompressCommand || isBridgePlanCommand || isBridgeGoalCommand) {
         streamStates.value.set(sid, ctrl)
       }
+      const accepted = hasResponseAnnotations && 'accepted' in ctrl
+        ? await ctrl.accepted
+        : true
+      if (!accepted) {
+        if (shouldQueue) dropQueuedUserMessage(sid, userMsg.id)
+        else {
+          const target = sessions.value.find(session => session.id === sid)
+          if (target) target.messages = target.messages.filter(message => message.id !== userMsg.id)
+          serverWorking.value.delete(sid)
+        }
+      }
+      return accepted
     } catch (err: any) {
       if (isBridgeForkCommand) {
         const nextPendingForkCommands = new Set(pendingForkCommands.value)
@@ -4414,6 +4511,10 @@ export const useChatStore = defineStore('chat', () => {
       }
       if (!shouldQueue && !runSubmitted) {
         serverWorking.value.delete(sid)
+        if (hasResponseAnnotations) {
+          const target = sessions.value.find(session => session.id === sid)
+          if (target) target.messages = target.messages.filter(message => message.id !== userMsg.id)
+        }
       }
       addMessage(sid, {
         id: uid(),
@@ -4421,6 +4522,7 @@ export const useChatStore = defineStore('chat', () => {
         content: `Error: ${err.message}`,
         timestamp: Date.now(),
       })
+      return false
     }
   }
 
