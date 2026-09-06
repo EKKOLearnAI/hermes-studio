@@ -626,7 +626,7 @@ onMounted(() => {
                 </NPopconfirm>
               </div>
               <div v-if="toolStatus(agent.id)?.installed && updatePolicies[agent.id]" class="agent-update-policy">
-                <div class="agent-update-policy-row"><span>{{ t('agentAutoUpdate.label') }}</span><NSwitch size="small" :disabled="!updatePolicies[agent.id]?.autoUpdateSupported" :value="updatePolicies[agent.id]?.autoUpdate" @update:value="toggleAutoUpdate(agent.id, $event)" /></div>
+                <div class="agent-update-policy-row"><span>{{ t('agentAutoUpdate.label') }}</span><NSwitch class="agent-update-switch" size="small" :theme-overrides="{ railHeightSmall: '16px', railWidthSmall: '28px', buttonHeightSmall: '12px', buttonWidthSmall: '12px' }" :disabled="!updatePolicies[agent.id]?.autoUpdateSupported" :value="updatePolicies[agent.id]?.autoUpdate" @update:value="toggleAutoUpdate(agent.id, $event)" /></div>
 
                 <small v-if="updatePolicies[agent.id]?.error" class="agent-update-error">{{ t('codingAgents.checkUpdateFailed') }}</small>
               </div>
