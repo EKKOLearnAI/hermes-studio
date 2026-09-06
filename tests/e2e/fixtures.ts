@@ -905,6 +905,11 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
       return
     }
 
+    if (pathname === '/api/coding-agents/update-policies' && request.method() === 'GET') {
+      await route.fulfill({ json: { agents: {} } })
+      return
+    }
+
     if (pathname === '/api/coding-agents' && request.method() === 'GET') {
       await route.fulfill(jsonResponse({ tools: [] }))
       return

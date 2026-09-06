@@ -15,6 +15,7 @@ vi.mock('../../packages/server/src/modules/studio/infrastructure/database/index'
   isSqliteAvailable: () => groupChatDbMock.current !== null,
 }))
 vi.mock('../../packages/server/src/modules/studio/middleware/auth', () => ({
+  requireAdmin: vi.fn(async (_ctx: unknown, next: () => Promise<void>) => next()),
   isAuthEnabled: vi.fn(async () => groupChatAuthMock.enabled),
   authenticateUserToken: vi.fn(async () => groupChatAuthMock.user),
 }))
