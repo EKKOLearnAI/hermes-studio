@@ -6,6 +6,7 @@ import { formatChatTimestamp } from '@/utils/chat-timestamp'
 import type { ChatMessage, MemberInfo, RoomAgent } from '@/api/studio/group-chat'
 import { groupMessageAgent, parseStoredAvatar } from '@/utils/group-agent-avatar'
 import GroupMessageItem from './GroupMessageItem.vue'
+import ToolRunSummary from '../chat/ToolRunSummary.vue'
 import GroupAgentMessageAvatar from './GroupAgentMessageAvatar.vue'
 import GroupAgentRobotIcon from './GroupAgentRobotIcon.vue'
 
@@ -32,6 +33,7 @@ const items = computed(() =>
 const runToolItems = computed(() =>
     items.value.filter(item => item.role === 'tool').reverse()
 )
+const toolsActive = computed(() => !!props.message.isStreaming || runToolItems.value.some(item => item.toolStatus === 'running'))
 const transcriptItems = computed(() =>
     runToolItems.value.length > 0
         ? items.value.filter(item => item.role !== 'tool')
@@ -105,32 +107,39 @@ function handleToolListWheel(event: WheelEvent): void {
                 <GroupAgentRobotIcon v-if="agentInfo" class="run-agent-icon" />
             </div>
             <div class="run-card" :class="{ streaming: message.isStreaming }">
-                <div
+                <ToolRunSummary
                     v-if="runToolItems.length"
-                    class="run-tool-list"
-                    tabindex="0"
-                    role="region"
-                    :aria-label="t('chat.showToolCalls')"
-                    :data-agent-id="stableAgentId"
-                    :data-run-id="message.run_id || undefined"
-                    @wheel="handleToolListWheel"
+                    class="run-tools"
+                    :run-id="message.run_id || message.id"
+                    :tools="runToolItems"
+                    :active="toolsActive"
                 >
                     <div
-                        v-for="item in runToolItems"
-                        :key="item.id"
-                        class="run-tool-item"
-                        :data-message-id="item.id"
+                        class="run-tool-list"
+                        tabindex="0"
+                        role="region"
+                        :aria-label="t('chat.showToolCalls')"
+                        :data-agent-id="stableAgentId"
+                        :data-run-id="message.run_id || undefined"
+                        @wheel="handleToolListWheel"
                     >
-                        <GroupMessageItem
-                            :message="item"
-                            :agents="agents"
-                            :members="members"
-                            :current-user-id="currentUserId"
-                            :allow-speech="props.allowSpeech"
-                            embedded
-                        />
+                        <div
+                            v-for="item in runToolItems"
+                            :key="item.id"
+                            class="run-tool-item"
+                            :data-message-id="item.id"
+                        >
+                            <GroupMessageItem
+                                :message="item"
+                                :agents="agents"
+                                :members="members"
+                                :current-user-id="currentUserId"
+                                :allow-speech="props.allowSpeech"
+                                embedded
+                            />
+                        </div>
                     </div>
-                </div>
+                </ToolRunSummary>
                 <div v-if="transcriptItems.length" class="run-transcript">
                     <div
                         v-for="item in transcriptItems"
@@ -297,6 +306,11 @@ function handleToolListWheel(event: WheelEvent): void {
     }
 }
 
+.run-tools {
+    box-sizing: border-box;
+    padding: 6px;
+}
+
 .run-tool-list {
     display: flex;
     flex-direction: column;
@@ -323,7 +337,7 @@ function handleToolListWheel(event: WheelEvent): void {
     min-width: 0;
 }
 
-.run-tool-list + .run-transcript {
+.run-tools + .run-transcript {
     border-top: 1px solid rgba(var(--text-primary-rgb), 0.08);
 }
 
@@ -342,11 +356,11 @@ function handleToolListWheel(event: WheelEvent): void {
     backdrop-filter: blur(8px) saturate(110%);
 }
 
-@media (max-width: 768px) {
+@media (max-width: $breakpoint-mobile) {
     .run-column {
-        min-width: min(260px, calc(100% - 46px));
+        min-width: 0;
         width: fit-content;
-        max-width: calc(100% - 46px);
+        max-width: 100%;
     }
 }
 </style>

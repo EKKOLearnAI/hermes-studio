@@ -19,7 +19,7 @@ const previewPng = Buffer.from(
   'base64',
 )
 
-async function mockInviteSocket(page: Page, joinFailure: { code: string, error: string } | null = null, workerContent = 'How can I help?') {
+async function mockInviteSocket(page: Page, joinFailure: { code: string, error: string } | null = null, workerContent = 'How can I help?', withTools = false) {
   const joinFailureJson = JSON.stringify(joinFailure)
   await page.route('**/node_modules/.vite/deps/socket__io-client.js*', async (route) => {
     await route.fulfill({
@@ -71,13 +71,19 @@ export function io(url, options) {
             content: 'Welcome to the shared room',
             timestamp: 1,
             role: 'user',
-          }, {
+          }, ...${JSON.stringify(withTools ? [{
+            id: 'shared-tool-1', roomId: 'room-shared', senderId: 'agent-worker',
+            senderName: 'Worker', role: 'tool', run_id: 'shared-run',
+            content: 'File contents', timestamp: 2, tool_name: 'read_file',
+            tool_call_id: 'read-call',
+          }] : [])}, {
             id: 'shared-message-2',
             roomId: 'room-shared',
             senderId: 'agent-worker',
             senderName: 'Worker',
+            run_id: 'shared-run',
             content: ${JSON.stringify(workerContent)},
-            timestamp: 2,
+            timestamp: 3,
             role: 'assistant',
           }],
           agents: [{
@@ -96,9 +102,9 @@ export function io(url, options) {
             invited: 1,
           }],
           rooms: ['room-shared'],
-          total: 2,
+          total: ${withTools ? 3 : 2},
           offset: 0,
-          limit: 2,
+          limit: ${withTools ? 3 : 2},
           hasMore: false,
           typingUsers: [],
           contextStatuses: [],
@@ -180,6 +186,30 @@ async function mockInviteApi(page: Page, valid = true, delayMs = 0) {
 }
 
 test.describe('invite-only group chat share page', () => {
+  test('folds group tool calls with the same summary used in single chat', async ({ page }) => {
+    await mockInviteSocket(page, null, 'Read the project files.', true)
+    await mockInviteApi(page)
+    await page.goto('/#/share/group-chat/ROOM1')
+    await page.locator('#group-chat-guest-name input').fill('Visitor')
+    await page.getByRole('button', { name: 'Enter room' }).click()
+
+    const card = page.locator('.group-agent-run').filter({ has: page.locator('.tool-run-card') })
+    const toggle = card.locator('.tool-run-header')
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    await expect(toggle).toContainText('read_file')
+    await expect(card.locator('.run-tool-list')).toHaveCount(0)
+    await toggle.click()
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    await expect(card.locator('.run-tool-item')).toHaveCount(1)
+    await expect(card.locator('.run-tool-list')).toBeVisible()
+    await card.locator('.tool-line').click()
+    await expect(card.locator('.tool-details')).toContainText('File contents')
+    await toggle.press('Enter')
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    await expect(card.locator('.run-tool-list')).toHaveCount(0)
+    await expect(page.getByText('Read the project files.', { exact: true })).toBeVisible()
+  })
+
   test('loads an Agent Markdown image through the room invite without filesystem API access', async ({ page }) => {
     await mockInviteSocket(page, null, 'Here is the image: ![result](/Users/owner/workspace/agent-result.png)')
     const protectedRequests = await mockInviteApi(page)
