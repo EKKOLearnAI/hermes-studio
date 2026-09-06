@@ -1499,4 +1499,18 @@ onBeforeUnmount(() => {
         transform: scale(1);
     }
 }
+@media (max-width: $breakpoint-mobile) {
+    .group-message .msg-body {
+        min-width: 0;
+        max-width: 100%;
+    }
+
+    .group-message.embedded {
+        .msg-content,
+        &.agent .msg-content.agent-content,
+        &.self .msg-content {
+            padding: 10px 14px;
+        }
+    }
+}
 </style>
