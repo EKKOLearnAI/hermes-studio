@@ -36,6 +36,7 @@ import PendingInteractionCountdown from '@/components/hermes/chat/PendingInterac
 import FolderPicker from '@/components/hermes/chat/FolderPicker.vue'
 import ProfileAvatar from '@/components/hermes/profiles/ProfileAvatar.vue'
 import PageSidebarNav from '@/components/layout/PageSidebarNav.vue'
+import LanguageSwitch from '@/components/layout/LanguageSwitch.vue'
 import { copyToClipboard } from '@/utils/clipboard'
 import type { Attachment } from '@/stores/hermes/chat'
 import type {
@@ -2164,6 +2165,7 @@ function handleClarifyKeydown(event: KeyboardEvent) {
                     </svg>
                     <span>{{ t('sidebar.settings') }}</span>
                 </button>
+                <LanguageSwitch />
             </div>
         </div>
 
@@ -2275,6 +2277,7 @@ function handleClarifyKeydown(event: KeyboardEvent) {
                         </svg>
                     </button>
                     <span class="connection-dot" :class="{ connected: store.connected, disconnected: !store.connected }"></span>
+                    <LanguageSwitch v-if="props.standalone" class="standalone-language-switch" />
                 </div>
             </div>
 
@@ -3922,6 +3925,11 @@ export default defineComponent({ components: { CreateRoomForm } })
     display: flex;
     align-items: center;
     gap: 8px;
+
+    .language-switch {
+        flex: 0 0 auto;
+        width: 96px;
+    }
 }
 
 .page-sidebar-menu-btn {
@@ -4622,6 +4630,10 @@ export default defineComponent({ components: { CreateRoomForm } })
         align-items: center;
         gap: 8px;
         flex-shrink: 0;
+    }
+
+    .standalone-language-switch {
+        width: 96px;
     }
 
     .workspace-badge {
