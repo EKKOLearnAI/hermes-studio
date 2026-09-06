@@ -3334,7 +3334,13 @@ export class GroupChatServer {
         if (this.notifiedGroupMessages.size > 2000) this.notifiedGroupMessages.delete(this.notifiedGroupMessages.values().next().value!)
         for (const socket of this.nsp.sockets.values()) {
             // Recheck membership/permissions at emission time, not just on connect.
-            if (this.canSocketObserveRoom(socket, roomId)) socket.emit('app.group-notification', notice)
+            if (this.canSocketObserveRoom(socket, roomId)) {
+                const agents = this.storage.getRoomAgents(roomId)
+                const visible = agents.length > 4 ? agents.slice(0, 3) : agents.slice(0, 4)
+                socket.emit('app.group-notification', { ...notice, agentCount: agents.length,
+                    agents: visible.map(agent => ({ id: agent.id, name: agent.name.slice(0, 80), agent: agent.agent,
+                        avatar: typeof agent.avatar === 'string' && agent.avatar.length <= 65536 ? agent.avatar : '' })) })
+            }
         }
     }
 
