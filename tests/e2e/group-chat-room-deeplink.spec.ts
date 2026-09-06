@@ -628,12 +628,15 @@ test.describe('group chat room deep links', () => {
     const outer = page.locator('.group-message-list .virtual-message-list')
     await expect(panel).toBeVisible()
     await expect(panel.locator('.tool-message')).toHaveCount(12)
+    const historicalRun = page.locator('.group-agent-run[data-run-id="run-history-tools"]')
+    const historicalToggle = historicalRun.locator('.tool-run-header')
     const historicalPanel = page.locator('.run-tool-list[data-run-id="run-history-tools"]')
+    await expect(historicalToggle).toHaveAttribute('aria-expanded', 'false')
+    await expect(historicalPanel).toHaveCount(0)
+    await historicalToggle.click()
     await expect(historicalPanel).toBeVisible()
     await expect(historicalPanel.locator('.tool-name')).toHaveText('historical_tool')
-    await expect.poll(() => page.locator('.group-agent-run[data-run-id="run-history-tools"] .run-card').evaluate(
-      element => Array.from(element.children, child => child.className),
-    )).toEqual(['run-tool-list', 'run-transcript'])
+    await expect(historicalRun.locator('.run-card > .run-tools + .run-transcript')).toContainText('Historical run finished.')
 
     const dimensions = await panel.evaluate(element => ({
       clientHeight: element.clientHeight,
@@ -916,7 +919,7 @@ test.describe('group chat room deep links', () => {
     await expect(page.locator('.room-title-text', { hasText: 'Beta Room' })).toBeVisible()
   })
 
-  test('keeps runtime Tools bounded, newest-first, and stable after completion and refresh', async ({ page }) => {
+  test('folds runtime Tools after completion and refresh while preserving newest-first details', async ({ page }) => {
     const api = await setup(page, '/#/hermes/group-chat/room/room-beta')
     await expect(page.getByText('Beta room message')).toBeVisible()
 
@@ -991,12 +994,14 @@ test.describe('group chat room deep links', () => {
       status: 'ready',
     })
 
+    const toggle = runCard.locator('.tool-run-header')
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    await expect(panel).toHaveCount(0)
+    await toggle.click()
     await expect(panel).toBeVisible()
     await expect(panel.locator('.tool-name')).toHaveText(['terminal', 'read_file'])
     await expect(runCard.locator('.tool-message')).toHaveCount(2)
-    await expect.poll(() => runCard.locator('.run-card').evaluate(
-      element => Array.from(element.children, child => child.className),
-    )).toEqual(['run-tool-list', 'run-transcript'])
+    await expect(runCard.locator('.run-card > .run-tools + .run-transcript')).toBeVisible()
 
     api.setRoomMessages({
       ...messagesByRoom,
@@ -1030,13 +1035,15 @@ test.describe('group chat room deep links', () => {
     const refreshedRunCard = page.locator('.group-agent-run[data-run-id="run-runtime-tools"]')
     const refreshedPanel = page.locator('.run-tool-list[data-agent-id="agent-row-runtime"][data-run-id="run-runtime-tools"]')
     await expect(refreshedRunCard).toHaveCount(1)
+    const refreshedToggle = refreshedRunCard.locator('.tool-run-header')
+    await expect(refreshedToggle).toHaveAttribute('aria-expanded', 'false')
+    await expect(refreshedPanel).toHaveCount(0)
+    await expect(refreshedRunCard.locator('.run-card > .run-tools + .run-transcript')).toContainText('Finished.')
+    await refreshedToggle.click()
     await expect(refreshedPanel).toBeVisible()
     await expect(refreshedPanel.locator('.tool-name')).toHaveText(['terminal', 'read_file'])
     await expect(refreshedRunCard.locator('.tool-message')).toHaveCount(2)
     await expect(page.locator('.group-message-list > .tool-message')).toHaveCount(0)
-    await expect.poll(() => refreshedRunCard.locator('.run-card').evaluate(
-      element => Array.from(element.children, child => child.className),
-    )).toEqual(['run-tool-list', 'run-transcript'])
   })
 
   test('shows a selected room link when browser clipboard APIs cannot copy', async ({ page }) => {
