@@ -1,8 +1,11 @@
+import { requireAdmin } from '../../studio/public/auth'
 import Router from '@koa/router'
 import * as ctrl from '../controllers/agents'
 
 export const codingAgentRoutes = new Router()
 
+codingAgentRoutes.get('/api/coding-agents/update-policies', requireAdmin, ctrl.updatePolicies)
+codingAgentRoutes.put('/api/coding-agents/:id/update-policy', requireAdmin, ctrl.setUpdatePolicy)
 codingAgentRoutes.get('/api/coding-agents', ctrl.status)
 codingAgentRoutes.post('/api/coding-agents/:id/install', ctrl.install)
 codingAgentRoutes.post('/api/coding-agents/:id/check-update', ctrl.checkUpdate)

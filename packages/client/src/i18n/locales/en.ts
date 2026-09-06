@@ -1,6 +1,7 @@
 import { socialMessagesEn } from '../social-messages'
 
 export default {
+  agentAutoUpdate: { label: 'Automatic updates' },
   ekkoConfig: {
     "settingsTitle": "Settings",
     "settingsRuntime": "Runtime",

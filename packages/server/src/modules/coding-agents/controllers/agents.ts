@@ -1,9 +1,8 @@
+import { getAgentUpdateManager, checkAgentUpdateAndPublish, installAgentAndPublish } from '../services/update-manager'
 import type { Context } from 'koa'
 import {
-  checkUpdateAgent,
   deleteCodingAgent,
   getCodingAgentsStatus,
-  installCodingAgent,
   openCodingAgentNativeTerminal,
   prepareCodingAgentLaunch,
   readCodingAgentConfigFile,
@@ -39,7 +38,7 @@ export async function status(ctx: Context) {
 
 export async function install(ctx: Context) {
   try {
-    const result = await installCodingAgent(ctx.params.id)
+    const result = await installAgentAndPublish(ctx.params.id)
     ctx.body = result
   } catch (err: any) {
     ctx.status = err.status || 500
@@ -49,7 +48,7 @@ export async function install(ctx: Context) {
 
 export async function checkUpdate(ctx: Context) {
   try {
-    ctx.body = await checkUpdateAgent(ctx.params.id)
+    ctx.body = await checkAgentUpdateAndPublish(ctx.params.id)
   } catch (err: any) {
     ctx.status = err.status || 500
     ctx.body = { error: err.message || 'Failed to check coding agent update' }
@@ -239,4 +238,15 @@ export async function stopRun(ctx: Context) {
     ctx.status = err.status || 500
     ctx.body = { error: err.message || 'Failed to stop coding agent run' }
   }
+}
+
+export async function updatePolicies(ctx: Context) {
+  ctx.body = { agents: (await getAgentUpdateManager()).snapshot() }
+}
+export async function setUpdatePolicy(ctx: Context) {
+  try {
+    const manager = await getAgentUpdateManager()
+    await manager.set(ctx.params.id, (ctx.request.body as any)?.autoUpdate)
+    ctx.body = { agents: manager.snapshot() }
+  } catch (error) { ctx.status=400;ctx.body={error:error instanceof Error?error.message:'Invalid policy'} }
 }

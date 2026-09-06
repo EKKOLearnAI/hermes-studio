@@ -1,4 +1,5 @@
 import { OPENCODE_FREE_PROVIDER, openCodeFreeRuntime } from '../../studio/contracts/opencode-free'
+import { beginAgentPreparation } from './update-lock'
 import { execFile } from 'child_process'
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'crypto'
 import { existsSync, readdirSync, realpathSync } from 'fs'
@@ -3575,7 +3576,12 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
   }
 }
 
-export async function startCodingAgentRun(
+export async function startCodingAgentRun(id: string, input: CodingAgentLaunchInput & { sessionId: string }, state?: SessionState): Promise<CodingAgentRunStartResult> {
+  const release = beginAgentPreparation(id)
+  try { return await startCodingAgentRunInternal(id, input, state) } finally { release() }
+}
+
+async function startCodingAgentRunInternal(
   id: string,
   input: CodingAgentLaunchInput & { sessionId: string },
   state?: SessionState,
