@@ -297,3 +297,21 @@ describe('ChatRunSocket mobile location', () => {
     })).toThrow('Mobile location is available only in direct chats')
   })
 })
+
+
+describe('App notification room delivery', () => {
+  it('broadcasts only minimal stable identity to the authorized profile room', async () => {
+    const { ChatRunSocket } = await import('../../packages/server/src/modules/studio/sockets/chat-run')
+    const { io, emitted } = createHarness()
+    sessionStoreMock.getSession.mockReturnValue({ id:'s',profile:'default',source:'cli' })
+    const server = new ChatRunSocket(io as any)
+    ;(server as any).emitPendingInteraction('default','approval.requested',{session_id:'s',approval_id:'a',command:'secret'})
+    const event = emitted.find(item => item.event === 'app.notification')
+    expect(event?.room).toBe('pending-interactions:default')
+    expect(event?.payload).toMatchObject({id:'s:approval:a',sessionId:'s',profile:'default',kind:'approval',resolved:false})
+    expect(event?.payload).not.toHaveProperty('command')
+    sessionStoreMock.getSession.mockReturnValue({id:'g',profile:'default',source:'group_chat'})
+    ;(server as any).emitPendingInteraction('default','run.completed',{session_id:'g',run_id:'r'})
+    expect(emitted.filter(item => item.event === 'app.notification')).toHaveLength(1)
+  })
+})

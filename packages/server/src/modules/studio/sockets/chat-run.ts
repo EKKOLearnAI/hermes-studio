@@ -1,3 +1,4 @@
+import { foregroundNotification } from '../services/chat-run/foreground-notification'
 import { mobileDeviceRoom, mobileDeviceId, sameMobileDevice, mobileEventAllowed, type MobileDeviceTarget } from '../services/chat-run/mobile-device-target'
 /**
  * ChatRunSocket — Socket.IO namespace /chat-run.
@@ -2620,6 +2621,12 @@ export class ChatRunSocket {
 
   private emitPendingInteraction(profile: string, event: string, payload: any) {
     this.emitSessionActivity(profile, event, payload)
+    const notification = foregroundNotification(event, payload || {})
+    const notificationSession = notification ? getSession(notification.sessionId) : null
+    // Group/workflow navigation is a separate contract; do not misroute it as single chat.
+    if (notification && notificationSession?.source !== 'group_chat' && notificationSession?.source !== 'workflow') {
+      this.nsp.to(`pending-interactions:${profile}`).emit('app.notification', { ...notification, profile })
+    }
     if (event !== 'approval.requested' && event !== 'approval.resolved'
       && event !== 'clarify.requested' && event !== 'clarify.resolved'
       && event !== 'location.requested' && event !== 'location.resolved'
