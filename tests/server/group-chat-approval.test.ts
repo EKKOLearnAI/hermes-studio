@@ -41,6 +41,25 @@ describe('group chat approval and context baseline', () => {
     vi.restoreAllMocks()
   })
 
+  it('group reply notifications recheck visibility, never replay duplicate messages', () => {
+    const allowed = { id: 'notice-allowed', emit: vi.fn() }
+    const denied = { id: 'notice-denied', emit: vi.fn() }
+    const server = groupServer as any
+    const old = server.nsp.sockets
+    server.nsp.sockets = new Map([[allowed.id, allowed], [denied.id, denied]])
+    const access = vi.spyOn(server, 'canSocketObserveRoom').mockImplementation((socket: any) => socket.id === allowed.id)
+    try {
+      const message = { id:'notice-message', roomId:'room-1', senderName:'Pi', senderType:'agent', role:'assistant', content:'Done' }
+      server.notifyGroupReply('room-1', message)
+      server.notifyGroupReply('room-1', message)
+      expect(allowed.emit).toHaveBeenCalledTimes(1)
+      expect(denied.emit).not.toHaveBeenCalled()
+      access.mockReturnValue(false)
+      server.notifyGroupReply('room-1', { ...message, id:'second-message' })
+      expect(allowed.emit).toHaveBeenCalledTimes(1)
+    } finally { server.nsp.sockets = old }
+  })
+
   async function joinPair() {
     const agentSessionId = groupRuntimeSessionId('room-1', 'default', 'Agent')
     const agent = await connectGroupChatClient(port, 'agent-1', 'Agent', {

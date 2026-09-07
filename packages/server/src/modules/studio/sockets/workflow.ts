@@ -61,6 +61,7 @@ export class WorkflowSocketServer {
   private readonly nsp: ReturnType<Server['of']>
   private readonly manager: WorkflowManager
   private readonly removeStatusListener: () => void
+  private readonly notifiedRuns = new Set<string>()
 
   constructor(io: Server, manager: WorkflowManager = getWorkflowManager()) {
     this.manager = manager
@@ -191,7 +192,26 @@ export class WorkflowSocketServer {
 
   private emitRuntimeStatus(status: WorkflowRuntimeStatus): void {
     try {
-      this.nsp.to(this.workflowRoom(status.workflowId)).emit('workflow.status.updated', this.statusWithEvidence(status))
+      const snapshot = this.statusWithEvidence(status)
+      this.nsp.to(this.workflowRoom(status.workflowId)).emit('workflow.status.updated', snapshot)
+      if (!status.runId || !snapshot.run || !['completed', 'failed'].includes(status.status)
+        || snapshot.run.status !== status.status || this.notifiedRuns.has(status.runId)) return
+      const workflow = this.manager.get(status.workflowId)
+      if (!workflow) return
+      this.notifiedRuns.add(status.runId)
+      if (this.notifiedRuns.size > 2000) this.notifiedRuns.delete(this.notifiedRuns.values().next().value!)
+      const notice = {
+        id: `workflow:${status.workflowId}:run:${status.runId}`, target: 'workflow',
+        workflowId: status.workflowId, runId: status.runId, profile: workflow.profile || 'default',
+        title: workflow.name.slice(0, 120), kind: status.status === 'failed' ? 'failure' : 'completion',
+        resolved: false, timestamp: Date.now(),
+      }
+      for (const socket of this.nsp.sockets.values()) {
+        const user = socket.data.user as AuthenticatedUser | undefined
+        // Foreground notifications require authenticated profile access even
+        // when ordinary local workflow routes are configured without auth.
+        if (user && canAccessProfile(user, workflow.profile)) socket.emit('app.workflow-notification', notice)
+      }
     } catch (err: any) {
       logger.error(err, '[workflow-socket] failed to load persisted execution evidence for workflow %s', status.workflowId)
       this.nsp.to(this.workflowRoom(status.workflowId)).emit('workflow.status.error', {

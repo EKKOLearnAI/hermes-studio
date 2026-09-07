@@ -31,6 +31,7 @@ vi.mock('../../packages/server/src/modules/studio/public/logging', () => ({
 
 const sessionStoreMock = vi.hoisted(() => ({
   getSession: vi.fn(),
+  getSessionNotificationPreview: vi.fn(() => null),
   getSessionMetadata: vi.fn(() => null),
   getSessionDetail: vi.fn(() => null),
 }))
@@ -295,5 +296,47 @@ describe('ChatRunSocket mobile location', () => {
       profile: 'default',
       purpose: 'test',
     })).toThrow('Mobile location is available only in direct chats')
+  })
+})
+
+
+describe('App notification room delivery', () => {
+  it('broadcasts only minimal stable identity to the authorized profile room', async () => {
+    const { ChatRunSocket } = await import('../../packages/server/src/modules/studio/sockets/chat-run')
+    const { io, emitted } = createHarness()
+    sessionStoreMock.getSession.mockReturnValue({ id:'s',profile:'default',source:'cli' })
+    const server = new ChatRunSocket(io as any)
+    ;(server as any).emitPendingInteraction('default','approval.requested',{session_id:'s',approval_id:'a',command:'secret'})
+    const event = emitted.find(item => item.event === 'app.notification')
+    expect(event?.room).toBe('pending-interactions:default')
+    expect(event?.payload).toMatchObject({id:'s:approval:a',sessionId:'s',profile:'default',kind:'approval',resolved:false})
+    expect(event?.payload).not.toHaveProperty('command')
+    sessionStoreMock.getSession.mockReturnValue({id:'g',profile:'default',source:'group_chat'})
+    ;(server as any).emitPendingInteraction('default','run.completed',{session_id:'g',run_id:'r'})
+    expect(emitted.filter(item => item.event === 'app.notification')).toHaveLength(1)
+  })
+})
+
+
+describe('external Coding Agent notifications', () => {
+  it('forwards terminal and approval events through the profile notification path', async () => {
+    const { ChatRunSocket } = await import('../../packages/server/src/modules/studio/sockets/chat-run')
+    const { io, emitted } = createHarness()
+    sessionStoreMock.getSession.mockReturnValue({ id:'external',profile:'default',source:'coding_agent',agent:'codex' })
+    const server = new ChatRunSocket(io as any)
+    server.emitExternalEvent('external','run.completed',{run_id:'run-1'})
+    server.emitExternalEvent('external','approval.requested',{approval_id:'approval-1'})
+    server.emitExternalEvent('external','approval.resolved',{approval_id:'approval-1',resolved:true})
+    const notices=emitted.filter(item=>item.event==='app.notification')
+    expect(notices.every(item => item.payload.agent === 'codex')).toBe(true)
+    expect(notices.map(item=>[item.room,item.payload.id,item.payload.resolved])).toEqual([
+      ['pending-interactions:default','external:run:run-1',false],
+      ['pending-interactions:default','external:approval:approval-1',false],
+      ['pending-interactions:default','external:approval:approval-1',true],
+    ])
+    expect(emitted.filter(item=>item.event==='session.activity')).toHaveLength(1)
+    server.emitExternalEvent('external','run.completed',{run_id:'run-2',queue_remaining:1})
+    server.emitExternalEvent('external','abort.completed',{run_id:'run-3'})
+    expect(emitted.filter(item=>item.event==='app.notification')).toHaveLength(3)
   })
 })

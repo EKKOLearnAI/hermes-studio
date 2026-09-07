@@ -1,3 +1,4 @@
+import { groupReplyNotification } from '../services/group-chat/foreground-notification'
 import { Server, Socket, Namespace } from 'socket.io'
 import type { Server as HttpServer } from 'http'
 import { mkdirSync } from 'fs'
@@ -3322,6 +3323,27 @@ export class GroupChatServer {
             : []
     }
 
+    private readonly notifiedGroupMessages = new Set<string>()
+
+    private notifyGroupReply(roomId: string, message: ChatMessage): void {
+        const room = this.storage.getRoom(roomId)
+        if (!room) return
+        const notice = groupReplyNotification(room, message)
+        if (!notice || this.notifiedGroupMessages.has(notice.id)) return
+        this.notifiedGroupMessages.add(notice.id)
+        if (this.notifiedGroupMessages.size > 2000) this.notifiedGroupMessages.delete(this.notifiedGroupMessages.values().next().value!)
+        for (const socket of this.nsp.sockets.values()) {
+            // Recheck membership/permissions at emission time, not just on connect.
+            if (this.canSocketObserveRoom(socket, roomId)) {
+                const agents = this.storage.getRoomAgents(roomId)
+                const visible = agents.length > 4 ? agents.slice(0, 3) : agents.slice(0, 4)
+                socket.emit('app.group-notification', { ...notice, agentCount: agents.length,
+                    agents: visible.map(agent => ({ id: agent.id, name: agent.name.slice(0, 80), agent: agent.agent,
+                        avatar: typeof agent.avatar === 'string' && agent.avatar.length <= 65536 ? agent.avatar : '' })) })
+            }
+        }
+    }
+
     private broadcastExecutionQueue(roomId: string): void {
         this.nsp.to(roomId).emit('execution_queue_updated', {
             roomId,
@@ -4609,6 +4631,7 @@ export class GroupChatServer {
         const totalTokens = saved.totalTokens
 
         this.nsp.to(roomId).emit('message', buildOutboundGroupMessage(savedMsg))
+        this.notifyGroupReply(roomId, savedMsg)
         this.nsp.to(roomId).emit('room_updated', { roomId, totalTokens })
         ack?.({ id: savedMsg.id })
 
