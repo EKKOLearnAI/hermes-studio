@@ -1,4 +1,5 @@
-import { foregroundNotification, foregroundNotificationPreview, foregroundNotificationAgent } from '../services/chat-run/foreground-notification'
+import { bindLegacyAppEvents } from '../services/webhooks/legacy-app-events'
+import { bindAppEventSubscription } from '../services/webhooks/app-events'
 import { mobileDeviceRoom, mobileDeviceId, sameMobileDevice, mobileEventAllowed, type MobileDeviceTarget } from '../services/chat-run/mobile-device-target'
 /**
  * ChatRunSocket — Socket.IO namespace /chat-run.
@@ -13,7 +14,7 @@ import type { Server, Socket } from 'socket.io'
 import { randomUUID } from 'crypto'
 import { logger } from '../public/logging'
 import { getSystemPrompt } from '../public/runs/prompt'
-import { clearSessionMessages, deleteSession, getSessionNotificationPreview, getSession, getSessionMetadata, listSessions, updateMessageDisplayContent } from '../repositories/session-store'
+import { clearSessionMessages, deleteSession, getSession, getSessionMetadata, listSessions, updateMessageDisplayContent } from '../repositories/session-store'
 import { listWorkspaceRunChangesForAssistantMessages } from '../repositories/workspace-run-changes-store'
 import { getSessionCategory } from '../repositories/session-category-store'
 import { getActiveProfileName, getProfileDir, listProfileNamesFromDisk } from '../public/profile-config'
@@ -549,7 +550,7 @@ export class ChatRunSocket {
     if (!user) {
       return next(new Error('Authentication failed'))
     }
-    const socketProfile = String(socket.handshake.query?.profile || '').trim()
+    const socketProfile = String(socket.handshake.query?.profile || 'default').trim() || 'default'
     if (socketProfile && !this.canAccessProfile(user, socketProfile)) {
       return next(new Error('Profile access denied'))
     }
@@ -560,6 +561,12 @@ export class ChatRunSocket {
   // --- Connection handler ---
 
   private onConnection(socket: Socket) {
+    bindAppEventSubscription(socket)
+    bindLegacyAppEvents(socket, 'chat', event => {
+      const user = socket.data.user as AuthenticatedUser | undefined
+      return Boolean(user && this.canAccessProfile(user, event.profile)
+        && socket.rooms.has(`pending-interactions:${event.profile}`))
+    })
     const socketUser = socket.data.user as AuthenticatedUser | undefined
     const socketProfile = (socket.handshake.query?.profile as string) || 'default'
     const currentProfile = () => socketProfile || getActiveProfileName() || 'default'
@@ -2621,12 +2628,6 @@ export class ChatRunSocket {
 
   private emitPendingInteraction(profile: string, event: string, payload: any) {
     this.emitSessionActivity(profile, event, payload)
-    const notification = foregroundNotification(event, payload || {})
-    const notificationSession = notification ? getSession(notification.sessionId) : null
-    // Group/workflow navigation is a separate contract; do not misroute it as single chat.
-    if (notification && notificationSession?.source !== 'group_chat' && notificationSession?.source !== 'workflow') {
-      this.nsp.to(`pending-interactions:${profile}`).emit('app.notification', { ...notification, agent: foregroundNotificationAgent(notificationSession?.agent), ...foregroundNotificationPreview(notification.kind, getSessionNotificationPreview(notification.sessionId) || notificationSession, payload || {}), profile })
-    }
     if (event !== 'approval.requested' && event !== 'approval.resolved'
       && event !== 'clarify.requested' && event !== 'clarify.resolved'
       && event !== 'location.requested' && event !== 'location.resolved'

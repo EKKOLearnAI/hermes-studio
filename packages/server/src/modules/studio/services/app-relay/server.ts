@@ -47,6 +47,8 @@ const ALLOWED_REQUEST_HEADERS = new Set([
   'x-request-id',
 ])
 const ALLOWED_CHAT_RUN_CLIENT_EVENTS = new Set([
+  'app.events.subscribe',
+  'app.events.unsubscribe',
   'run',
   'resume',
   'app.resume',

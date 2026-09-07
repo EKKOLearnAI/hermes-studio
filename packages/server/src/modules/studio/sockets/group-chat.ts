@@ -1,4 +1,5 @@
-import { groupReplyNotification } from '../services/group-chat/foreground-notification'
+import { bindLegacyAppEvents } from '../services/webhooks/legacy-app-events'
+import { publishGroupMessage, registerGroupEventAccess } from '../services/webhooks/app-events'
 import { Server, Socket, Namespace } from 'socket.io'
 import type { Server as HttpServer } from 'http'
 import { mkdirSync } from 'fs'
@@ -3259,6 +3260,10 @@ export class GroupChatServer {
         })
         servers.slice(1).forEach((httpServer) => this.io.attach(httpServer))
         this.nsp = this.io.of('/group-chat')
+        const removeGroupEventAccess = registerGroupEventAccess({ canReceive: (user, roomId) => this.canSocketObserveRoom({
+            id: '', data: { authUser: user },
+        } as unknown as Socket, roomId) })
+        for (const server of servers) server.once('close', removeGroupEventAccess)
         this.nsp.use(this.authMiddleware.bind(this))
         this.nsp.on('connection', this.onConnection.bind(this))
 
@@ -3328,20 +3333,11 @@ export class GroupChatServer {
     private notifyGroupReply(roomId: string, message: ChatMessage): void {
         const room = this.storage.getRoom(roomId)
         if (!room) return
-        const notice = groupReplyNotification(room, message)
-        if (!notice || this.notifiedGroupMessages.has(notice.id)) return
-        this.notifiedGroupMessages.add(notice.id)
+        // Publish persisted message facts; the App adapter chooses which replies notify.
+        if (this.notifiedGroupMessages.has(message.id)) return
+        this.notifiedGroupMessages.add(message.id)
         if (this.notifiedGroupMessages.size > 2000) this.notifiedGroupMessages.delete(this.notifiedGroupMessages.values().next().value!)
-        for (const socket of this.nsp.sockets.values()) {
-            // Recheck membership/permissions at emission time, not just on connect.
-            if (this.canSocketObserveRoom(socket, roomId)) {
-                const agents = this.storage.getRoomAgents(roomId)
-                const visible = agents.length > 4 ? agents.slice(0, 3) : agents.slice(0, 4)
-                socket.emit('app.group-notification', { ...notice, agentCount: agents.length,
-                    agents: visible.map(agent => ({ id: agent.id, name: agent.name.slice(0, 80), agent: agent.agent,
-                        avatar: typeof agent.avatar === 'string' && agent.avatar.length <= 65536 ? agent.avatar : '' })) })
-            }
-        }
+        publishGroupMessage(room, message as unknown as Record<string, unknown>, this.storage.getRoomAgents(roomId))
     }
 
     private broadcastExecutionQueue(roomId: string): void {
@@ -3902,6 +3898,7 @@ export class GroupChatServer {
     // ─── Connection ─────────────────────────────────────────────
 
     private onConnection(socket: Socket): void {
+        bindLegacyAppEvents(socket, 'group', event => Boolean(event.subject.room_id && this.canSocketObserveRoom(socket, event.subject.room_id)))
         const auth = socket.handshake.auth as { userId?: string; name?: string; description?: string; source?: string; agentSocketSecret?: string; authUserId?: number }
         const requestedSource = auth.source === 'agent' && auth.agentSocketSecret === GROUP_CHAT_AGENT_SOCKET_SECRET ? 'agent' : 'human'
         const authenticatedUser = socket.data.authUser as AuthenticatedUser | undefined

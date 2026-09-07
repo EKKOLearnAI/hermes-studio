@@ -1,3 +1,5 @@
+import { bindLegacyAppEvents } from '../services/webhooks/legacy-app-events'
+import { publishDomainEvent } from '../services/webhooks/app-events'
 import type { Server, Socket } from 'socket.io'
 import { authenticateUserToken, isAuthEnabled, type AuthenticatedUser } from '../public/auth'
 import { listUserProfiles } from '../repositories/users-store'
@@ -103,6 +105,10 @@ export class WorkflowSocketServer {
   }
 
   private onConnection(socket: Socket): void {
+    bindLegacyAppEvents(socket, 'workflow', event => {
+      const user = socket.data.user as AuthenticatedUser | undefined
+      return Boolean(user && canAccessProfile(user, event.profile))
+    })
     socket.on('workflows.list', (request: WorkflowListRequest | Ack<{ workflows: WorkflowRecord[] }> | undefined, ack?: Ack<{ workflows: WorkflowRecord[] }>) => {
       const callback = typeof request === 'function' ? request : ack
       const payload = typeof request === 'function' ? {} : request || {}
@@ -200,18 +206,7 @@ export class WorkflowSocketServer {
       if (!workflow) return
       this.notifiedRuns.add(status.runId)
       if (this.notifiedRuns.size > 2000) this.notifiedRuns.delete(this.notifiedRuns.values().next().value!)
-      const notice = {
-        id: `workflow:${status.workflowId}:run:${status.runId}`, target: 'workflow',
-        workflowId: status.workflowId, runId: status.runId, profile: workflow.profile || 'default',
-        title: workflow.name.slice(0, 120), kind: status.status === 'failed' ? 'failure' : 'completion',
-        resolved: false, timestamp: Date.now(),
-      }
-      for (const socket of this.nsp.sockets.values()) {
-        const user = socket.data.user as AuthenticatedUser | undefined
-        // Foreground notifications require authenticated profile access even
-        // when ordinary local workflow routes are configured without auth.
-        if (user && canAccessProfile(user, workflow.profile)) socket.emit('app.workflow-notification', notice)
-      }
+      publishDomainEvent(status.status === 'failed' ? 'workflow.run.failed' : 'workflow.run.completed', workflow.profile || 'default', { workflow_id: status.workflowId, run_id: status.runId }, { title: workflow.name.slice(0,120), preview: '' })
     } catch (err: any) {
       logger.error(err, '[workflow-socket] failed to load persisted execution evidence for workflow %s', status.workflowId)
       this.nsp.to(this.workflowRoom(status.workflowId)).emit('workflow.status.error', {
