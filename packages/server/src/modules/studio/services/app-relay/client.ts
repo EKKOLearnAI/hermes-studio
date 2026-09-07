@@ -357,7 +357,8 @@ export class AppRelayClient {
       void this.emitLocalSocketEvent(request).then(response => ack?.(response))
     })
     this.socket.on('app.socket.close', (request: AppRelaySocketCloseRequest, ack?: (response: AppRelaySocketResponse) => void) => {
-      ack?.(this.closeLocalSocket(request))
+      const response = this.closeLocalSocket(request)
+      ack?.(response)
     })
   }
 
