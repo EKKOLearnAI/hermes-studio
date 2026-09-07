@@ -37,7 +37,7 @@ import {
   useMessage,
   type DropdownOption,
 } from "naive-ui";
-import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, provide, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { copyToClipboard } from "@/utils/clipboard";
@@ -77,6 +77,8 @@ const props = withDefaults(defineProps<{
   initialComposerText: "",
   composerPersistDraft: true,
 });
+
+provide('hermesWorkspaceFilePreview', true);
 
 const FilesPanel = defineAsyncComponent(async () => (await import('./FilesPanel.vue')).default);
 const ConnectionsPanel = defineAsyncComponent(async () => (await import('@/components/hermes/connections/ConnectionsPanel.vue')).default);
@@ -412,7 +414,13 @@ function workspacePreviewPath(filePath: string): string | null {
 }
 
 function handleWorkspaceFilePreviewRequest(event: Event) {
-  const customEvent = event as CustomEvent<{ path?: string; fileName?: string; previewOnly?: boolean }>;
+  const customEvent = event as CustomEvent<{
+    path?: string
+    fileName?: string
+    previewOnly?: boolean
+    startLine?: number
+    endLine?: number
+  }>;
   const sessionId = activePreviewSessionId.value;
   const filePath = typeof customEvent.detail?.path === "string" ? customEvent.detail.path : "";
   const previewPath = workspacePreviewPath(filePath);
@@ -422,13 +430,27 @@ function handleWorkspaceFilePreviewRequest(event: Event) {
   const requestSeq = ++workspacePreviewRequestSeq;
   workspacePreviewRequestPending = true;
   const fileName = customEvent.detail?.fileName || previewPath.split("/").pop() || previewPath;
+  const requestedStartLine = customEvent.detail?.startLine;
+  const startLine = Number.isInteger(requestedStartLine) && requestedStartLine! > 0
+    ? requestedStartLine
+    : undefined;
+  const requestedEndLine = customEvent.detail?.endLine;
+  const endLine = startLine && Number.isInteger(requestedEndLine) && requestedEndLine! >= startLine
+    ? requestedEndLine
+    : startLine;
   filesStore.closePreview();
   toolPanelStore.closeWorkspaceDiff();
   selectedSubagent.value = null;
   const previewOnly = customEvent.detail?.previewOnly === true;
   previewOnlyFileOpen.value = previewOnly;
   if (previewOnly) showToolPanel.value = true;
-  void filesStore.openSessionWorkspacePreview(sessionId, previewPath, fileName)
+  void filesStore.openSessionWorkspacePreview(
+    sessionId,
+    previewPath,
+    fileName,
+    -1,
+    startLine ? { startLine, endLine } : undefined,
+  )
     .then(() => {
       if (requestSeq === workspacePreviewRequestSeq) workspacePreviewRequestPending = false;
     })

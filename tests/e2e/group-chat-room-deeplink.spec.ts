@@ -34,7 +34,7 @@ const groupWorkspaceDiff = {
 const messagesByRoom: Record<string, unknown[]> = {
   'room-alpha': [
     { id: 'alpha-msg', roomId: 'room-alpha', senderId: 'user-1', senderName: 'Alice', content: 'Alpha room message', timestamp: 1_790_000_000, role: 'user' },
-    { id: 'alpha-file', roomId: 'room-alpha', senderId: 'agent-1', senderName: 'Worker', content: '[package.json](/tmp/alpha/package.json)', timestamp: 1_790_000_001, role: 'assistant' },
+    { id: 'alpha-file', roomId: 'room-alpha', senderId: 'agent-1', senderName: 'Worker', content: '[package.json:2](/tmp/alpha/package.json#L2)', timestamp: 1_790_000_001, role: 'assistant' },
     { id: 'alpha-diff', roomId: 'room-alpha', senderId: 'agent-1', senderName: 'Worker', content: JSON.stringify(groupWorkspaceDiff), timestamp: 1_790_000_002, role: 'tool', tool_name: 'workspace_diff', tool_call_id: 'workspace_diff:alpha' },
     { id: 'alpha-reasoning', roomId: 'room-alpha', senderId: 'agent-1', senderName: 'Worker', content: 'Reasoning is available on demand.', reasoning: 'Inspecting several possible approaches.', isStreaming: true, timestamp: 1_790_000_003, role: 'assistant' },
     ...Array.from({ length: 12 }, (_, index) => ({
@@ -339,7 +339,7 @@ async function mockGroupChatApi(page: Page, offlinePresence = false) {
       return route.fulfill({
         status: 200,
         contentType: 'text/plain; charset=utf-8',
-        body: '{"name":"group-preview"}\n',
+        body: '{\n  "name": "group-preview"\n}\n',
       })
     }
 
@@ -1079,21 +1079,23 @@ test.describe('group chat room deep links', () => {
     }))).toEqual({ start: 0, end: expectedLink.length })
   })
 
-  test('previewable room files open in the group workspace panel instead of downloading', async ({ page }) => {
+  test('line-linked room files open at the requested line in the group workspace panel', async ({ page }) => {
     await setup(page, '/#/hermes/group-chat/room/room-alpha')
-    const fileCard = page.locator('.markdown-file-card', { hasText: 'package.json' })
-    await expect(fileCard).toBeVisible()
-    await fileCard.click()
+    const fileLink = page.locator('.markdown-file-link', { hasText: 'package.json:2' })
+    await expect(fileLink).toBeVisible({ timeout: 15_000 })
+    await fileLink.click()
 
     const panel = page.locator('.group-workspace-panel')
     await expect(panel.locator('.file-preview')).toBeVisible()
-    await expect(panel.locator('.preview-code')).toContainText('group-preview')
+    const target = panel.locator('.preview-source-line[data-line="2"]')
+    await expect(target).toContainText('group-preview')
+    await expect(target).toHaveClass(/is-target-line/)
     await expect(panel.locator('.preview-filename')).toHaveText('package.json')
   })
 
   test('keeps the workspace drawer seam and resize direction aligned in LTR and RTL', async ({ page }) => {
     await setup(page, '/#/hermes/group-chat/room/room-alpha')
-    await page.locator('.markdown-file-card', { hasText: 'package.json' }).click()
+    await page.locator('.markdown-file-link', { hasText: 'package.json:2' }).click()
 
     const wrapper = page.locator('.group-chat-content-wrapper')
     const panel = page.locator('.group-workspace-panel')
