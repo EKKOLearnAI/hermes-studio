@@ -111,6 +111,16 @@ describe('useSpeech WebSpeech playback', () => {
     wrapper.unmount()
   })
 
+  it('preserves semantic symbols while filtering speech noise', () => {
+    const speech = useSpeech()
+
+    expect(speech.extractReadableText(
+      '跌幅 -3%，反弹 +8.3%，09:30 开盘，日期 2026-09-03，比例 3:1，区间 5~6，A/B = 0.5。🙂 # *',
+    )).toBe(
+      '跌幅 -3%，反弹 +8.3%，09:30 开盘，日期 2026-09-03，比例 3:1，区间 5~6，A/B = 0.5。',
+    )
+  })
+
   it('does not crash when Web Speech is unavailable', () => {
     Object.defineProperty(window, 'speechSynthesis', {
       configurable: true,
