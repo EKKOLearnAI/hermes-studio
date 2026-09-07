@@ -1815,6 +1815,7 @@ describe('Group Chat member/agent identity sync', () => {
 
   it('routes trusted @mentions and always checks persisted public messages', async () => {
     const server = Object.create(GroupChatServer.prototype) as any
+    server.notifiedGroupMessages = new Set<string>()
     const emit = vi.fn()
     server.rooms = new Map([
       ['room-1', {
