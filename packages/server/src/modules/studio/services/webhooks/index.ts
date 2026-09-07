@@ -1,7 +1,6 @@
 import { randomUUID } from 'crypto'
-import { getChatWebhookDispatcher } from './dispatcher'
-import { logger } from '../../public/logging'
-import { notifySessionPush } from '../../public/social-messages'
+import { businessEvents } from './business-events'
+import { ensureBusinessConsumers } from './business-consumers'
 import {
   stableChatWebhookEventId,
   truncateChatWebhookContent,
@@ -67,12 +66,6 @@ const EVENT_MAPPING: Record<string, { type: ChatWebhookEventType; status: ChatWe
   'run.failed': { type: 'chat.run.failed', status: 'failed' },
 }
 
-const SESSION_PUSH_EVENTS = new Set([
-  'run.completed',
-  'approval.requested',
-  'clarify.requested',
-])
-
 function messageRole(value: unknown): ChatWebhookMessageRole {
   return value === 'command' ? 'command' : value === 'assistant' ? 'assistant' : 'user'
 }
@@ -107,7 +100,7 @@ export function observeChatRunWebhookEvent(input: ObserveChatRunWebhookEventInpu
   const toolCallId = identifierValue(payload.tool_call_id) || identifierValue(payload.call_id)
   const approvalId = identifierValue(payload.approval_id)
   const clarificationId = identifierValue(payload.clarify_id)
-  const occurrenceKey = messageId || toolCallId || approvalId || clarificationId || runId || queueId || randomUUID()
+  const occurrenceKey = approvalId || clarificationId || (input.event.startsWith('run.') ? runId || queueId || messageId : messageId || toolCallId || runId || queueId) || randomUUID()
   const dedupeKey = `${mapping.type}:${sessionId}:${occurrenceKey}`
   const rawContent = input.event === 'run.completed'
     ? stringValue(payload.output)
@@ -159,12 +152,9 @@ export function observeChatRunWebhookEvent(input: ObserveChatRunWebhookEventInpu
     content_truncated: content.truncated,
     content_role: input.event === 'message.created' ? role : input.event === 'run.completed' ? 'assistant' : undefined,
   }
-  if (SESSION_PUSH_EVENTS.has(input.event)) {
-    void notifySessionPush(sessionId, input.event, payload, input.agent).catch(error => {
-      logger.warn({ error, sessionId, event: input.event }, '[chat-webhooks] failed to dispatch session push')
-    })
-  }
-  return getChatWebhookDispatcher().enqueue(event)
+  ensureBusinessConsumers()
+  return businessEvents.publish({ schema_version: 1, id: event.id, type: event.type, occurred_at: event.occurred_at,
+    profile: event.profile.trim() || 'default', source: event.source, subject: event.subject, payload, chat: event })
 }
 
 export * from './dispatcher'

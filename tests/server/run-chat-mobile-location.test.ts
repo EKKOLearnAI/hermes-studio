@@ -31,6 +31,7 @@ vi.mock('../../packages/server/src/modules/studio/public/logging', () => ({
 
 const sessionStoreMock = vi.hoisted(() => ({
   getSession: vi.fn(),
+  getSessionNotificationPreview: vi.fn(() => null),
   getSessionMetadata: vi.fn(() => null),
   getSessionDetail: vi.fn(() => null),
 }))
@@ -295,5 +296,26 @@ describe('ChatRunSocket mobile location', () => {
       profile: 'default',
       purpose: 'test',
     })).toThrow('Mobile location is available only in direct chats')
+  })
+})
+
+
+describe('App business event production', () => {
+  it('normalizes external Coding Agent terminal and interaction events on the common bus', async () => {
+    const { ChatRunSocket } = await import('../../packages/server/src/modules/studio/sockets/chat-run')
+    const { businessEvents } = await import('../../packages/server/src/modules/studio/services/webhooks/business-events')
+    const events: any[] = []
+    const stop = businessEvents.subscribe('test-producer', event => events.push(event))
+    const { io } = createHarness()
+    sessionStoreMock.getSession.mockReturnValue({id:'external',profile:'default',source:'coding_agent',agent:'codex'})
+    const server = new ChatRunSocket(io as any)
+    try {
+      server.emitExternalEvent('external','run.completed',{run_id:'run-1'})
+      server.emitExternalEvent('external','approval.requested',{approval_id:'a'})
+      server.emitExternalEvent('external','approval.resolved',{approval_id:'a',resolved:true})
+      expect(events.map(event=>event.type)).toEqual(['chat.run.completed','chat.approval.requested','chat.approval.resolved'])
+      expect(events[1].subject.approval_id).toBe(events[2].subject.approval_id)
+      expect(events[1].id).not.toBe(events[2].id)
+    } finally { stop() }
   })
 })

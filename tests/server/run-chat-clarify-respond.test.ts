@@ -40,6 +40,7 @@ vi.mock('../../packages/server/src/modules/studio/public/logging', () => ({
 }))
 
 const sessionStoreMock = vi.hoisted(() => ({
+  getSessionNotificationPreview: vi.fn(() => null),
   getSession: vi.fn(() => ({ id: 'session-1', profile: 'default' })),
   getSessionMetadata: vi.fn(() => null),
   getSessionDetail: vi.fn(() => null),

@@ -1,3 +1,5 @@
+import { bindLegacyAppEvents } from '../services/webhooks/legacy-app-events'
+import { bindAppEventSubscription } from '../services/webhooks/app-events'
 import { mobileDeviceRoom, mobileDeviceId, sameMobileDevice, mobileEventAllowed, type MobileDeviceTarget } from '../services/chat-run/mobile-device-target'
 /**
  * ChatRunSocket — Socket.IO namespace /chat-run.
@@ -548,7 +550,7 @@ export class ChatRunSocket {
     if (!user) {
       return next(new Error('Authentication failed'))
     }
-    const socketProfile = String(socket.handshake.query?.profile || '').trim()
+    const socketProfile = String(socket.handshake.query?.profile || 'default').trim() || 'default'
     if (socketProfile && !this.canAccessProfile(user, socketProfile)) {
       return next(new Error('Profile access denied'))
     }
@@ -559,6 +561,12 @@ export class ChatRunSocket {
   // --- Connection handler ---
 
   private onConnection(socket: Socket) {
+    bindAppEventSubscription(socket)
+    bindLegacyAppEvents(socket, 'chat', event => {
+      const user = socket.data.user as AuthenticatedUser | undefined
+      return Boolean(user && this.canAccessProfile(user, event.profile)
+        && socket.rooms.has(`pending-interactions:${event.profile}`))
+    })
     const socketUser = socket.data.user as AuthenticatedUser | undefined
     const socketProfile = (socket.handshake.query?.profile as string) || 'default'
     const currentProfile = () => socketProfile || getActiveProfileName() || 'default'
@@ -2374,7 +2382,7 @@ export class ChatRunSocket {
       workflowNodeId: state?.webhookWorkflowNodeId,
     })
     this.observePetEvent(profile, event, tagged)
-    this.emitSessionActivity(profile, event, tagged)
+    this.emitPendingInteraction(profile, event, tagged)
     if (state?.isWorking) {
       state.events.push({ event, data: tagged })
       if (state.events.length > 200) state.events.splice(0, state.events.length - 200)

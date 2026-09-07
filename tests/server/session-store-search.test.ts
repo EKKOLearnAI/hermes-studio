@@ -23,6 +23,16 @@ describe('session store filtering', () => {
     vi.resetModules()
   })
 
+  it('resolves notification title for untitled sessions and bounds assistant preview', async () => {
+    const { createSession, addMessage, getSessionNotificationPreview } = await import('../../packages/server/src/modules/studio/repositories/session-store')
+    createSession({ id: 'untitled-notice', profile: 'default', source: 'coding_agent' })
+    addMessage({ session_id: 'untitled-notice', role: 'user', content: 'First user question', timestamp: 1 })
+    addMessage({ session_id: 'untitled-notice', role: 'assistant', content: 'a'.repeat(1000), timestamp: 2 })
+    addMessage({ session_id: 'untitled-notice', role: 'tool', content: 'private tool output', timestamp: 3 })
+    expect(getSessionNotificationPreview('untitled-notice')).toEqual({ title: 'First user question', preview: 'a'.repeat(240) })
+    expect(getSessionNotificationPreview('missing')).toBeNull()
+  })
+
   it('finds rendered text when Markdown markers split the stored phrase', async () => {
     const { addMessage, createSession, searchSessions } = await import(
       '../../packages/server/src/modules/studio/repositories/session-store'

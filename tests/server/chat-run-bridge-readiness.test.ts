@@ -84,6 +84,7 @@ vi.mock('../../packages/server/src/modules/studio/public/runs/prompt', () => ({
 }))
 
 vi.mock('../../packages/server/src/modules/studio/repositories/session-store', () => ({
+  getSessionNotificationPreview: vi.fn(() => null),
   getSession: getSessionMock,
   getSessionMetadata: getSessionMock,
   getSessionDetail: vi.fn(() => null),
