@@ -1933,6 +1933,21 @@ export const useChatStore = defineStore('chat', () => {
     return session
   }
 
+  function findSession(sessionId: string): Session | null {
+    return sessions.value.find(session => session.id === sessionId)
+      || (activeSession.value?.id === sessionId ? activeSession.value : null)
+  }
+
+  function isLocalOnlySession(sessionId: string): boolean {
+    return findSession(sessionId)?.isLocalOnly === true
+  }
+
+  function markSessionPersisted(sessionId: string): void {
+    const target = sessions.value.find(session => session.id === sessionId)
+    if (target) target.isLocalOnly = false
+    if (activeSession.value?.id === sessionId) activeSession.value.isLocalOnly = false
+  }
+
   async function switchSession(sessionId: string, focusId?: string | null) {
     activeSelectionSequence++
     const requestSequence = ++switchSessionRequestSequence
@@ -1946,6 +1961,10 @@ export const useChatStore = defineStore('chat', () => {
     clearSessionCompletedUnread(sessionId)
 
     if (!activeSession.value) return
+
+    // A newly created client-only session is persisted by its first run. Resuming
+    // it before then asks the server for a session row that cannot exist yet.
+    if (isLocalOnlySession(sessionId)) return
 
     beginMessageLoad(sessionId, requestSequence)
     let backgroundPendingOnResume = 0
@@ -3840,6 +3859,7 @@ export const useChatStore = defineStore('chat', () => {
           if (eventRunMarker) activeRunMarker = eventRunMarker
           switch (evt.event) {
             case 'run.started':
+              markSessionPersisted(sid)
               clearSessionCompletedUnread(sid)
               serverWorking.value.add(sid)
               setRunStartedAt(sid, Date.now())
@@ -4542,6 +4562,7 @@ export const useChatStore = defineStore('chat', () => {
         }
 
         case 'run.started':
+          markSessionPersisted(sid)
           clearSessionCompletedUnread(sid)
           serverWorking.value.add(sid)
           setRunStartedAt(sid, Date.now())
@@ -5183,7 +5204,7 @@ export const useChatStore = defineStore('chat', () => {
       }
       if (document.visibilityState === 'visible' && activeSessionId.value && !isStreaming.value) {
         const sid = activeSessionId.value
-        if (sid && !streamStates.value.has(sid)) {
+        if (sid && !streamStates.value.has(sid) && !isLocalOnlySession(sid)) {
           // Re-load messages via resume (server loads from DB)
           resumeSession(sid, (data) => {
             if (data.isWorking) {
