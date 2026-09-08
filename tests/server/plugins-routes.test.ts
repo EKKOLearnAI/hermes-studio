@@ -41,7 +41,7 @@ describe('plugin routes', () => {
   })
 
   it('keeps plugin import behind the super-admin guard', async () => {
-    const { pluginRoutes } = await import('../../packages/server/src/routes/hermes/plugins')
+    const { pluginRoutes } = await import('../../packages/server/src/modules/hermes/routes/plugins')
     const layer = pluginRoutes.stack.find((entry: any) => entry.path === '/api/hermes/plugins/import')
 
     expect(layer.methods).toContain('POST')

@@ -15,7 +15,7 @@ describe('plugin import', () => {
   beforeEach(() => {
     vi.resetModules()
     home = mkdtempSync(join(tmpdir(), 'hermes-plugin-import-'))
-    vi.doMock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+    vi.doMock('../../packages/server/src/modules/hermes/services/profiles/profile', () => ({
       getActiveProfileDir: () => home,
       getProfileDir: (profile: string) => join(home, 'profiles', profile),
     }))
@@ -23,7 +23,7 @@ describe('plugin import', () => {
 
   afterEach(() => {
     rmSync(home, { recursive: true, force: true })
-    vi.doUnmock('../../packages/server/src/services/hermes/hermes-profile')
+    vi.doUnmock('../../packages/server/src/modules/hermes/services/profiles/profile')
     vi.resetModules()
   })
 
@@ -36,7 +36,7 @@ describe('plugin import', () => {
   }
 
   async function service() {
-    return import('../../packages/server/src/services/hermes/plugin-import')
+    return import('../../packages/server/src/modules/hermes/services/plugins/import')
   }
 
   it('installs a plugin whose archive holds one top-level directory', async () => {
