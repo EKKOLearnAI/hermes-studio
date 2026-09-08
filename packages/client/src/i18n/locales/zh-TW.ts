@@ -835,6 +835,16 @@ export default {
 
   // 對話
   chat: {
+    runFailure: {
+      "title": "回覆意外中斷",
+      "unavailable": "服務商未能完成本次回覆。已產生的內容保留在上方。",
+      "timeout": "請求逾時，回覆未完成。",
+      "authentication": "服務商拒絕了身分驗證或存取請求。",
+      "rate_limit": "已觸發服務商的請求頻率限制。",
+      "unknown": "執行失敗，暫無可安全顯示的具體原因。",
+      "details": "安全詳細資訊",
+      "privacy": "不顯示上游私密回應及請求資料。"
+},
     contextRemaining: '剩餘',
     contextClickToEdit: '點擊編輯上下文長度',
     contextEditTitle: '編輯上下文長度',

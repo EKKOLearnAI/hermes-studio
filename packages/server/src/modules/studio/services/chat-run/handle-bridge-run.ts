@@ -5,7 +5,7 @@
 
 import type { Server, Socket } from 'socket.io'
 import { getSystemPrompt } from '../../public/runs/prompt'
-import { getFirstSessionMessageByRole, getSession, getSessionMessageCountByRole, createSession, addMessage, updateSession, updateSessionStats } from '../../repositories/session-store'
+import { persistRunFailure, getFirstSessionMessageByRole, getSession, getSessionMessageCountByRole, createSession, addMessage, updateSession, updateSessionStats } from '../../repositories/session-store'
 import { logger, bridgeLogger } from '../../public/logging'
 import { normalizeTokenUsage, recordSessionUsage } from '../usage/usage-recorder'
 import type {
@@ -209,6 +209,8 @@ export function bridgeTerminalError(chunk: Pick<AgentBridgeOutput, 'status' | 'e
   const resultMessage = result ? stringValue(result.message) : ''
   const finalResponse = result ? stringValue(result.final_response) : ''
 
+  if (result?.interrupted === true || chunk.status === 'interrupted') return null
+
   if (chunk.status === 'error') {
     return stringValue(chunk.error) || resultError || resultMessage || finalResponse || 'Agent run failed'
   }
@@ -217,7 +219,7 @@ export function bridgeTerminalError(chunk: Pick<AgentBridgeOutput, 'status' | 'e
     return resultError || resultMessage || finalResponse || 'Agent reported failure'
   }
 
-  if (resultError && looksLikeAgentFailure(resultError)) return resultError
+  if (resultError) return resultError
   if (result?.completed === true) return null
   if (!finalResponse && resultMessage && looksLikeAgentFailure(resultMessage)) return resultMessage
   if (finalResponse && looksLikeStandaloneAgentFailure(finalResponse)) return finalResponse
@@ -604,7 +606,12 @@ export async function handleBridgeRun(
       },
     })
   }
+  let failureRunId = runMarker
   const emit = (event: string, payload: any) => {
+    if (event === 'run.failed') {
+      const failure = persistBridgeFailure(state, session_id, payload.run_id || failureRunId, payload.error)
+      payload = { ...payload, run_id: payload.run_id || failureRunId, failure, error: `Agent run failed (${failure.code})`, result: undefined, output: undefined }
+    }
     const tagged = { ...payload, session_id }
     observePetEvent(profile, event, tagged)
     data.onEvent?.(event, tagged)
@@ -762,6 +769,7 @@ export async function handleBridgeRun(
       },
     )
     state.runId = started.run_id
+    failureRunId = started.run_id
     if (data.background_delegation_id && data.background_claim_id) {
       await bridge.completeBackgroundNotification(
         session_id,
@@ -890,6 +898,13 @@ export async function handleBridgeRun(
     }
     if (state.activeRunMarker !== runMarker) return
     if (!state.isWorking) return
+    if (state.isAborting) {
+      await markAbortCompleted(nsp, socket, session_id, failureRunId, sessionMap, (queuedSocket, queuedSessionId, next, fallbackProfile) => {
+        sessionMap.get(queuedSessionId)?.queue.unshift(next)
+        dequeueNextQueuedRun(queuedSocket, queuedSessionId, fallbackProfile)
+      })
+      return
+    }
     const queueLen = state.queue?.length ?? 0
     state.isWorking = false
     state.isAborting = false
@@ -987,6 +1002,10 @@ export async function resumeBridgeRun(
   state.bridgeToolCounter = state.bridgeToolCounter || 0
 
   const emit = (event: string, payload: any) => {
+    if (event === 'run.failed') {
+      const failure = persistBridgeFailure(state, sessionId, runId, payload.error)
+      payload = { ...payload, run_id: runId, failure, error: `Agent run failed (${failure.code})`, result: undefined, output: undefined }
+    }
     const tagged = { ...payload, session_id: sessionId }
     observePetEvent(profile, event, tagged)
     args.onEvent?.(event, tagged)
@@ -1086,6 +1105,15 @@ export async function resumeBridgeRun(
     }
   } catch (err) {
     if (state.activeRunMarker !== runMarker) return
+    if (state.isAborting) {
+      await markAbortCompleted(nsp, socket, sessionId, runId, sessionMap, (queuedSocket, queuedSessionId, next, fallbackProfile) => {
+        sessionMap.get(queuedSessionId)?.queue.unshift(next)
+        dequeueNextQueuedRun(queuedSocket, queuedSessionId, fallbackProfile)
+      })
+      return
+    }
+    flushBridgePendingToDb(state, sessionId, runMarker)
+    updateSessionStats(sessionId)
     state.isWorking = false
     state.isAborting = false
     state.profile = undefined
@@ -1106,6 +1134,14 @@ export async function resumeBridgeRun(
       }
     }
   }
+}
+
+function persistBridgeFailure(state: SessionState, sessionId: string, runId: string, error: unknown) {
+  const failure = persistRunFailure(sessionId, runId, error)
+  if (!state.messages.some(message => message.role === 'run_failure' && message.runMarker === runId)) {
+    state.messages.push({ id: failure.id, session_id: sessionId, role: 'run_failure', content: JSON.stringify({ code: failure.code, ...(failure.status ? { status: failure.status } : {}) }), runMarker: runId, timestamp: Date.now() / 1000 })
+  }
+  return failure
 }
 
 function observePetEvent(profile: string, event: string, payload: Record<string, unknown>): void {

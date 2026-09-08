@@ -815,6 +815,25 @@ export function getSessionDetail(id: string): HermesSessionDetailRow | null {
 
 // --- Message CRUD ---
 
+/** UI-only terminal metadata. Never store upstream bodies, URLs, or arbitrary error text. */
+export function persistRunFailure(sessionId: string, runMarker: string, error: unknown) {
+  const db = getDb()
+  if (!db) throw new Error('Session storage unavailable')
+  const existing = db.prepare(`SELECT id, content FROM ${MESSAGES_TABLE} WHERE session_id = ? AND run_marker = ? AND role = 'run_failure' LIMIT 1`).get(sessionId, runMarker) as { id: number; content: string } | undefined
+  if (existing) return { id: String(existing.id), runMarker, ...JSON.parse(existing.content) }
+  const text = typeof error === 'string' ? error : error instanceof Error ? error.message : ''
+  const statusMatch = text.match(/\b(?:HTTP(?: status)?|status(?: code)?)\s*[:=]?\s*(4\d\d|5\d\d)\b/i)
+  const status = statusMatch ? Number(statusMatch[1]) : undefined
+  const code = status === 401 || status === 403 ? 'authentication'
+    : status === 429 || /rate.?limit|限流/i.test(text) ? 'rate_limit'
+    : /timed? ?out|timeout/i.test(text) ? 'timeout'
+    : (status && status >= 500) || /no available channel|无可用渠道/i.test(text) ? 'unavailable'
+    : 'unknown'
+  const failure = { code, ...(status ? { status } : {}) }
+  const id = addMessage({ session_id: sessionId, role: 'run_failure', content: JSON.stringify(failure), run_marker: runMarker, timestamp: Date.now() / 1000 })
+  return { id: String(id), runMarker, ...failure }
+}
+
 export function addMessage(msg: {
   session_id: string
   role: string

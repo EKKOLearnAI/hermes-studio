@@ -203,6 +203,7 @@ function assistantMessageBody(message: Message): string {
 
 function hasRenderableAssistantContent(message: Message): boolean {
   return !!(
+    message.failure ||
     assistantMessageBody(message) ||
     message.attachments?.length ||
     message.workspaceChanges?.length

@@ -62,6 +62,16 @@ describe('MessageItem tool details', () => {
     })
   })
 
+  it('renders a localized terminal notice with native keyboard-accessible safe details, not model-message actions', () => {
+    const wrapper = mount(MessageItem, { props: { message: { id: 'f1', role: 'assistant', content: '', timestamp: 1, systemType: 'error', failure: { id: 'f1', runMarker: 'run-1', code: 'unavailable', status: 503 } } }, global: { stubs: { MarkdownRenderer: true } } })
+    expect(wrapper.find('.run-failure-notice').exists()).toBe(true)
+    expect(wrapper.get('.run-failure-notice').text()).toContain('chat.runFailure.unavailable')
+    expect(wrapper.get('details summary').text()).toBe('chat.runFailure.details')
+    expect(wrapper.get('details').attributes('open')).toBeUndefined()
+    expect(wrapper.get('details').text()).toContain('HTTP 503')
+    expect(wrapper.find('.reference-bubble-btn').exists()).toBe(false)
+  })
+
   it('renders the profile name and avatar above a user message', () => {
     const avatar = {
       type: 'image' as const,

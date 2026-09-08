@@ -821,6 +821,16 @@ export default {
 
   // Chat
   chat: {
+    runFailure: {
+      "title": "A resposta parou inesperadamente",
+      "unavailable": "O provedor não conseguiu concluir a resposta. A resposta parcial é mantida acima.",
+      "timeout": "A solicitação excedeu o tempo limite antes do fim da resposta.",
+      "authentication": "O provedor rejeitou a autenticação ou o acesso.",
+      "rate_limit": "O limite de solicitações do provedor foi atingido.",
+      "unknown": "A execução falhou, mas não há um motivo específico que possa ser exibido com segurança.",
+      "details": "Detalhes seguros",
+      "privacy": "Respostas privadas do provedor e dados da solicitação não são exibidos."
+},
     contextRemaining: 'restante',
     contextClickToEdit: 'Clique para editar o tamanho do contexto',
     contextEditTitle: 'Editar tamanho do contexto',

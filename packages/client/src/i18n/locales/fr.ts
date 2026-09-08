@@ -821,6 +821,16 @@ export default {
 
   // Chat
   chat: {
+    runFailure: {
+      "title": "Réponse interrompue de manière inattendue",
+      "unavailable": "Le fournisseur n’a pas pu terminer cette réponse. La réponse partielle est conservée ci-dessus.",
+      "timeout": "La requête a expiré avant la fin de la réponse.",
+      "authentication": "Le fournisseur a refusé l’authentification ou l’accès.",
+      "rate_limit": "La limite de requêtes du fournisseur a été atteinte.",
+      "unknown": "L’exécution a échoué, mais aucun motif précis ne peut être affiché en toute sécurité.",
+      "details": "Détails sécurisés",
+      "privacy": "Les réponses privées du fournisseur et les données de requête ne sont pas affichées."
+},
     contextRemaining: 'restant',
     contextClickToEdit: 'Cliquez pour modifier la longueur du contexte',
     contextEditTitle: 'Modifier la longueur du contexte',

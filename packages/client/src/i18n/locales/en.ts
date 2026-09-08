@@ -842,6 +842,16 @@ export default {
 
   // Chat
   chat: {
+    runFailure: {
+      "title": "Response stopped unexpectedly",
+      "unavailable": "The provider could not complete this response. Any partial response is kept above.",
+      "timeout": "The request timed out before the response finished.",
+      "authentication": "The provider rejected authentication or access.",
+      "rate_limit": "The provider rate limit was reached.",
+      "unknown": "The run failed, but no safe specific reason is available.",
+      "details": "Safe details",
+      "privacy": "Private upstream responses and request data are not shown."
+},
     contextRemaining: 'remaining',
     contextClickToEdit: 'Click to edit context length',
     contextEditTitle: 'Edit Context Length',

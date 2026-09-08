@@ -74,7 +74,21 @@ export interface Attachment {
   videoFrameFor?: string
 }
 
+export interface RunFailure {
+  id: string
+  runMarker: string
+  code: 'authentication' | 'rate_limit' | 'timeout' | 'unavailable' | 'unknown'
+  status?: number
+}
+
+function readRunFailure(value: any): RunFailure | undefined {
+  if (!value || typeof value.id !== 'string' || typeof value.runMarker !== 'string') return
+  const code = ['authentication', 'rate_limit', 'timeout', 'unavailable'].includes(value.code) ? value.code : 'unknown'
+  return { id: value.id, runMarker: value.runMarker, code, ...(Number.isInteger(value.status) && value.status >= 400 && value.status <= 599 ? { status: value.status } : {}) }
+}
+
 export interface Message {
+  failure?: RunFailure
   taskPlan?: TaskPlanSnapshot
   id: string
   role: 'user' | 'assistant' | 'system' | 'tool' | 'command'
@@ -1094,6 +1108,14 @@ function mapHermesMessages(msgs: HermesMessage[], taskPlans: unknown[] = [], pre
       continue
     }
 
+    if ((msg.role as string) === 'run_failure') {
+      let metadata: any = {}
+      try { metadata = JSON.parse(msg.content || '{}') } catch { /* Old/corrupt metadata gets a generic notice. */ }
+      const failure = readRunFailure({ ...metadata, id: String(msg.id), runMarker: readRunMarker(msg) || String(msg.id) })
+      result.push({ id: String(msg.id), role: 'assistant', content: '', systemType: 'error', timestamp: Math.round(msg.timestamp * 1000), failure, runMarker: failure?.runMarker })
+      continue
+    }
+
     // Normal user/assistant/command messages
     const displayRole = msg.display_role || msg.role
     const displayContent = msg.display_content ?? msg.content
@@ -2067,7 +2089,7 @@ export const useChatStore = defineStore('chat', () => {
                 clearPendingClarify({ ...e, session_id: sessionId } as RunEvent)
               } else if (e.event === 'run.failed') {
                 handleTerminalWorkspaceRunChange(sessionId, e)
-                addAgentErrorMessage(sessionId, e.error)
+                addAgentErrorMessage(sessionId, e.error, (e as any).failure)
                 serverWorking.value.delete(sessionId)
                 queueLengths.value.delete(sessionId)
               } else if (e.event === 'plan.updated' || e.event === 'agent.event' || e.event === 'run.reattach_failed') {
@@ -2749,18 +2771,24 @@ export const useChatStore = defineStore('chat', () => {
     })
   }
 
-  function addAgentErrorMessage(sessionId: string, error?: unknown) {
+  function addAgentErrorMessage(sessionId: string, error?: unknown, metadata?: unknown) {
+    const failure = readRunFailure(metadata)
+    if (failure) {
+      const messages = getSessionMsgs(sessionId)
+      if (messages.some(message => message.failure?.runMarker === failure.runMarker)) return
+      for (const message of messages) {
+        if (message.isStreaming) updateMessage(sessionId, message.id, { isStreaming: false })
+      }
+      addMessage(sessionId, { id: failure.id, role: 'assistant', content: '', timestamp: Date.now(), systemType: 'error', failure, runMarker: failure.runMarker })
+      return
+    }
     const message = errorMessageText(error)
     const content = message ? `Error: ${message}` : 'Run failed'
     const msgs = getSessionMsgs(sessionId)
     const last = msgs[msgs.length - 1]
     if (last?.isStreaming) {
-      // If the streaming message already has substantial content (the assistant
-      // produced a meaningful reply before the error), don't overwrite it —
-      // just close the stream and append a separate error message. Only
-      // overwrite when the message is still empty or trivially short, meaning
-      // the run failed before producing useful output.
-      const hasSubstantialContent = (last.content || '').trim().length > 100
+      // Preserve even a short partial response or reasoning when a run fails.
+      const hasSubstantialContent = Boolean((last.content || '').trim() || last.reasoning)
       if (hasSubstantialContent) {
         updateMessage(sessionId, last.id, { isStreaming: false })
         // fall through to append a separate error message
@@ -3822,7 +3850,7 @@ export const useChatStore = defineStore('chat', () => {
                 break
               case 'run.failed':
                 handleTerminalWorkspaceRunChange(sid, e)
-                if (!isQueueInsertionInterruption(e)) addAgentErrorMessage(sid, e.error)
+                if (!isQueueInsertionInterruption(e)) addAgentErrorMessage(sid, e.error, (e as any).failure)
                 break
               case 'plan.updated':
               case 'agent.event':
@@ -4350,7 +4378,7 @@ export const useChatStore = defineStore('chat', () => {
                 if (failedAssistant?.isStreaming) updateMessage(sid, failedAssistant.id, { isStreaming: false })
                 settleRunningTools(sid, 'done')
               } else {
-                addAgentErrorMessage(sid, evt.error)
+                addAgentErrorMessage(sid, evt.error, (evt as any).failure)
                 settleRunningTools(sid, 'error')
               }
               if ((evt as any).queue_remaining > 0) {
@@ -5015,7 +5043,7 @@ export const useChatStore = defineStore('chat', () => {
             if (failedAssistant?.isStreaming) updateMessage(sid, failedAssistant.id, { isStreaming: false })
             settleRunningTools(sid, 'done')
           } else {
-            addAgentErrorMessage(sid, evt.error)
+            addAgentErrorMessage(sid, evt.error, (evt as any).failure)
             settleRunningTools(sid, 'error')
           }
           if (!hasQueue && !hasBackground) {

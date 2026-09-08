@@ -85,6 +85,131 @@ describe('chat-run socket reconnect handling', () => {
     socketState.sockets = []
   })
 
+  it.each(['run.failed', 'run.completed'])('ignores a late failure after %s without deleting the new run handlers', async terminalEvent => {
+    const { startRunViaSocket } = await import('../../packages/client/src/api/studio/chat')
+    const onEvent = vi.fn()
+    startRunViaSocket({ session_id: 'session-1', input: 'hello', profile: 'default', source: 'cli' }, onEvent, vi.fn(), vi.fn())
+    const socket = socketState.sockets[0]
+    socket.__trigger('run.started', { event: 'run.started', session_id: 'session-1', run_id: 'old-run' })
+    socket.__trigger(terminalEvent, { event: terminalEvent, session_id: 'session-1', run_id: 'old-run', queue_remaining: 1 })
+    socket.__trigger('run.started', { event: 'run.started', session_id: 'session-1', run_id: 'new-run' })
+    onEvent.mockClear()
+    socket.__trigger('run.failed', { event: 'run.failed', session_id: 'session-1', run_id: 'old-run', queue_remaining: 0 })
+    expect(onEvent).not.toHaveBeenCalled()
+    socket.__trigger('message.delta', { event: 'message.delta', session_id: 'session-1', run_id: 'new-run', delta: 'Still working' })
+    expect(onEvent).toHaveBeenCalledWith(expect.objectContaining({ delta: 'Still working' }))
+  })
+
+  it.each([
+    ['run.completed', false],
+    ['run.completed', true],
+    ['run.failed', false],
+    ['run.failed', true],
+  ] as const)('ignores late %s run failure after manual handler replacement (new run started: %s)', async (terminalEvent, started) => {
+    const { startRunViaSocket } = await import('../../packages/client/src/api/studio/chat')
+    const body = { session_id: 'session-1', input: 'hello', profile: 'default', source: 'cli' as const }
+    const oldDone = vi.fn()
+    startRunViaSocket(body, vi.fn(), oldDone, vi.fn())
+    const socket = socketState.sockets[0]
+    socket.__trigger('run.started', { event: 'run.started', session_id: body.session_id, run_id: 'old-run' })
+    socket.__trigger(terminalEvent, { event: terminalEvent, session_id: body.session_id, run_id: 'old-run', queue_remaining: 0 })
+    expect(oldDone).toHaveBeenCalledOnce()
+
+    const onEvent = vi.fn()
+    const onDone = vi.fn()
+    const onError = vi.fn()
+    startRunViaSocket(body, onEvent, onDone, onError)
+    const newStarted = { event: 'run.started', session_id: body.session_id, run_id: 'new-run' }
+    if (started) socket.__trigger('run.started', newStarted)
+    onEvent.mockClear()
+    socket.__trigger('run.failed', { event: 'run.failed', session_id: body.session_id, run_id: 'old-run', queue_remaining: 0 })
+    expect(onEvent).not.toHaveBeenCalled()
+    expect(onDone).not.toHaveBeenCalled()
+    expect(onError).not.toHaveBeenCalled()
+
+    if (!started) socket.__trigger('run.started', newStarted)
+    const delta = { event: 'message.delta', session_id: body.session_id, run_id: 'new-run', delta: 'Still working' }
+    socket.__trigger('message.delta', delta)
+    expect(onEvent).toHaveBeenCalledWith(delta)
+    const completed = { event: 'run.completed', session_id: body.session_id, run_id: 'new-run', output: 'Still working', queue_remaining: 0 }
+    socket.__trigger('run.completed', completed)
+    expect(onEvent).toHaveBeenCalledWith(completed)
+    expect(onDone).toHaveBeenCalledOnce()
+    expect(onError).not.toHaveBeenCalled()
+  })
+
+  it.each(['new-setup-marker', undefined])('delivers a manual replacement setup failure with run identity %s', async runId => {
+    const { startRunViaSocket } = await import('../../packages/client/src/api/studio/chat')
+    const body = { session_id: 'session-1', input: 'hello', profile: 'default', source: 'cli' as const }
+    startRunViaSocket(body, vi.fn(), vi.fn(), vi.fn())
+    const socket = socketState.sockets[0]
+    socket.__trigger('run.completed', { event: 'run.completed', session_id: body.session_id, run_id: 'old-run' })
+    const onEvent = vi.fn()
+    const onDone = vi.fn()
+    startRunViaSocket(body, onEvent, onDone, vi.fn())
+    socket.__trigger('run.failed', { event: 'run.failed', session_id: body.session_id, run_id: 'old-run' })
+    expect(onEvent).not.toHaveBeenCalled()
+    const failure = { event: 'run.failed', session_id: body.session_id, run_id: runId, error: 'Setup failed' }
+    socket.__trigger('run.failed', failure)
+    expect(onEvent).toHaveBeenCalledExactlyOnceWith(failure)
+    expect(onDone).toHaveBeenCalledOnce()
+  })
+
+  it('clears settled identities on explicit disconnect', async () => {
+    const { disconnectChatRun, startRunViaSocket } = await import('../../packages/client/src/api/studio/chat')
+    const body = { session_id: 'session-1', input: 'hello', profile: 'default', source: 'cli' as const }
+    startRunViaSocket(body, vi.fn(), vi.fn(), vi.fn())
+    socketState.sockets[0].__trigger('run.completed', { event: 'run.completed', session_id: body.session_id, run_id: 'run-1' })
+    disconnectChatRun()
+    const onEvent = vi.fn()
+    startRunViaSocket(body, onEvent, vi.fn(), vi.fn())
+    const failure = { event: 'run.failed', session_id: body.session_id, run_id: 'run-1', error: 'New connection setup failed' }
+    socketState.sockets[1].__trigger('run.failed', failure)
+    expect(onEvent).toHaveBeenCalledExactlyOnceWith(failure)
+  })
+
+  it.each(['session', 'profile', 'transport'] as const)('scopes settled identities by %s', async scope => {
+    const { startRunViaSocket } = await import('../../packages/client/src/api/studio/chat')
+    const body = { session_id: 'session-1', input: 'hello', profile: 'default', source: 'cli' as const }
+    startRunViaSocket(body, vi.fn(), vi.fn(), vi.fn())
+    socketState.sockets[0].__trigger('run.completed', { event: 'run.completed', session_id: body.session_id, run_id: 'run-1' })
+    const nextBody = { ...body, ...(scope === 'session' ? { session_id: 'session-2' } : {}), ...(scope === 'profile' ? { profile: 'research' } : {}) }
+    const onEvent = vi.fn()
+    startRunViaSocket(nextBody, onEvent, vi.fn(), vi.fn(), undefined, { transport: scope === 'transport' ? 'global-agent' : 'chat-run' })
+    const failure = { event: 'run.failed', session_id: nextBody.session_id, run_id: 'run-1', error: 'Independent setup failed' }
+    socketState.sockets.at(-1).__trigger('run.failed', failure)
+    expect(onEvent).toHaveBeenCalledExactlyOnceWith(failure)
+  })
+
+  it('bounds settled identity retention across completed manual runs', async () => {
+    const { startRunViaSocket } = await import('../../packages/client/src/api/studio/chat')
+    const body = { session_id: 'session-1', input: 'hello', profile: 'default', source: 'cli' as const }
+    for (let index = 0; index <= 256; index++) {
+      startRunViaSocket(body, vi.fn(), vi.fn(), vi.fn())
+      socketState.sockets[0].__trigger('run.completed', { event: 'run.completed', session_id: body.session_id, run_id: `run-${index}` })
+    }
+    const onEvent = vi.fn()
+    startRunViaSocket(body, onEvent, vi.fn(), vi.fn())
+    const socket = socketState.sockets[0]
+    socket.__trigger('run.failed', { event: 'run.failed', session_id: body.session_id, run_id: 'run-256' })
+    expect(onEvent).not.toHaveBeenCalled()
+    const evicted = { event: 'run.failed', session_id: body.session_id, run_id: 'run-0' }
+    socket.__trigger('run.failed', evicted)
+    expect(onEvent).toHaveBeenCalledExactlyOnceWith(evicted)
+  })
+
+  it('delivers a new queued run setup failure before run.started has arrived', async () => {
+    const { startRunViaSocket } = await import('../../packages/client/src/api/studio/chat')
+    const onEvent = vi.fn()
+    startRunViaSocket({ session_id: 'session-1', input: 'hello', profile: 'default', source: 'cli' }, onEvent, vi.fn(), vi.fn())
+    const socket = socketState.sockets[0]
+    socket.__trigger('run.started', { event: 'run.started', session_id: 'session-1', run_id: 'old-run' })
+    socket.__trigger('run.failed', { event: 'run.failed', session_id: 'session-1', run_id: 'old-run', queue_remaining: 1 })
+    onEvent.mockClear()
+    socket.__trigger('run.failed', { event: 'run.failed', session_id: 'session-1', run_id: 'new-setup-marker', queue_remaining: 0 })
+    expect(onEvent).toHaveBeenCalledWith(expect.objectContaining({ run_id: 'new-setup-marker' }))
+  })
+
   it('keeps transient mobile disconnects alive and resumes after reconnect', async () => {
     const { startRunViaSocket } = await import('../../packages/client/src/api/studio/chat')
     const onEvent = vi.fn()
