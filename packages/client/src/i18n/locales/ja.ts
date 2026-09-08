@@ -3075,6 +3075,7 @@ export default {
   },
 
   files: {
+    collapseTree: 'ファイルツリーを折りたたむ', expandTree: 'ファイルツリーを展開',
     attachToChat: 'チャットに追加', attachFailed: 'ファイルをチャットに追加できませんでした',
     previewMode: 'プレビュー', sourceMode: 'ソース', tableMode: '表', worksheet: 'ワークシート',
     htmlPreviewTitle: '分離された HTML プレビュー', previewLoading: 'プレビューを読み込み中...', previewFailed: 'プレビューできません',

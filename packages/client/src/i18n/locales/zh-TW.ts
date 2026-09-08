@@ -3366,6 +3366,8 @@ export default {
   files: {
     title: '檔案',
     fileTree: '檔案樹',
+    collapseTree: '收合檔案樹',
+    expandTree: '展開檔案樹',
     tree: '目錄樹',
     list: '檔案清單',
     breadcrumbRoot: '根目錄',
