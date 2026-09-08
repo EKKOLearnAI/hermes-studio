@@ -81,7 +81,7 @@ download.
 Add a bounded binary read path for session workspaces, for example:
 
 ```text
-GET /api/hermes/sessions/:id/workspace-file/content?path=<relative-path>
+GET /api/studio/sessions/:id/workspace-file/content?path=<relative-path>
 ```
 
 The endpoint must reuse the existing session access check and workspace path

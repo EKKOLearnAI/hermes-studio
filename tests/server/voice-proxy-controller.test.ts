@@ -13,23 +13,24 @@ beforeEach(async () => {
   hermesHome = await mkdtemp(join(tmpdir(), 'hermes-studio-voice-proxy-'))
   process.env.HERMES_HOME = hermesHome
   await writeFile(join(hermesHome, 'config.yaml'), '{}\n', 'utf-8')
+  await import('../../packages/server/src/bootstrap/agent-profile-adapter')
 
   const { DatabaseSync } = await import('node:sqlite')
   db = new DatabaseSync(':memory:')
-  vi.doMock('../../packages/server/src/db/index', () => ({
+  vi.doMock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
     getDb: () => db,
     getStoragePath: () => ':memory:',
   }))
-  const schemas = await import('../../packages/server/src/db/hermes/schemas')
+  const schemas = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
   schemas.initAllHermesTables()
 })
 
 afterEach(async () => {
   db?.close()
   db = null
-  vi.doUnmock('../../packages/server/src/db/index')
-  vi.doUnmock('../../packages/server/src/services/hermes/tts-providers')
-  vi.doUnmock('../../packages/server/src/services/hermes/stt-providers')
+  vi.doUnmock('../../packages/server/src/modules/studio/infrastructure/database/index')
+  vi.doUnmock('../../packages/server/src/modules/studio/services/voice/tts/providers')
+  vi.doUnmock('../../packages/server/src/modules/studio/services/voice/stt')
   vi.resetModules()
   if (originalHermesHome === undefined) delete process.env.HERMES_HOME
   else process.env.HERMES_HOME = originalHermesHome
@@ -78,17 +79,17 @@ describe('Hermes Studio voice proxy controllers', () => {
       engine: 'edge',
       provider: 'edge',
     }))
-    vi.doMock('../../packages/server/src/services/hermes/tts-providers', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/services/voice/tts/providers', () => ({
       getTtsProvider: (provider: string) => provider === 'edge' ? { id: 'edge', synthesize } : undefined,
     }))
 
-    const store = await import('../../packages/server/src/db/hermes/tts-settings-store')
+    const store = await import('../../packages/server/src/modules/studio/repositories/tts-settings-store')
     store.saveTtsProviderSetting('default', 'edge', {
       settings: { voice: 'zh-CN-YunjianNeural', rate: 1 },
     })
     store.saveActiveTtsProvider('default', 'edge')
 
-    const ctrl = await import('../../packages/server/src/controllers/hermes/tts')
+    const ctrl = await import('../../packages/server/src/modules/studio/controllers/tts')
     const ctx = ttsCtx('default', '你好，Hermes Studio')
     await ctrl.synthesizeVoiceProxy(ctx)
 
@@ -114,12 +115,12 @@ describe('Hermes Studio voice proxy controllers', () => {
       durationMs: 12,
     }))
     class SttProviderConfigError extends Error {}
-    vi.doMock('../../packages/server/src/services/hermes/stt-providers', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/services/voice/stt', () => ({
       SttProviderConfigError,
       transcribeWithProvider,
     }))
 
-    const store = await import('../../packages/server/src/db/hermes/stt-settings-store')
+    const store = await import('../../packages/server/src/modules/studio/repositories/stt-settings-store')
     store.saveSttProviderSetting('default', 'custom', {
       settings: {
         baseUrl: 'https://stt.example/v1/audio/transcriptions',
@@ -130,7 +131,7 @@ describe('Hermes Studio voice proxy controllers', () => {
     store.saveActiveSttProvider('default', 'custom')
 
     const boundary = 'voice-proxy-boundary'
-    const ctrl = await import('../../packages/server/src/controllers/hermes/stt')
+    const ctrl = await import('../../packages/server/src/modules/studio/controllers/stt')
     const ctx = {
       request: {},
       params: { profile: 'default' },
@@ -160,7 +161,7 @@ describe('Hermes Studio voice proxy controllers', () => {
   })
 
   it('rejects a profile that is not present in Hermes', async () => {
-    const ctrl = await import('../../packages/server/src/controllers/hermes/tts')
+    const ctrl = await import('../../packages/server/src/modules/studio/controllers/tts')
     const ctx = ttsCtx('missing-profile', 'hello')
 
     await ctrl.synthesizeVoiceProxy(ctx)

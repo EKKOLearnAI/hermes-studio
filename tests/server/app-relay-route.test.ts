@@ -5,7 +5,7 @@ const { readAppConfig, writeAppConfig } = vi.hoisted(() => ({
   writeAppConfig: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/services/app-config', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/config/app-config', () => ({
   readAppConfig,
   writeAppConfig,
 }))
@@ -20,7 +20,7 @@ describe('App Relay route configuration', () => {
 
   it('defaults old configs to the official route', async () => {
     const { getAppRelayRoute, appRelayUrlForRoute } = await import(
-      '../../packages/server/src/services/app-relay/route'
+      '../../packages/server/src/modules/studio/services/app-relay/route'
     )
 
     expect(await getAppRelayRoute()).toBe('official')
@@ -29,7 +29,7 @@ describe('App Relay route configuration', () => {
 
   it('persists and maps the Cloudflare route', async () => {
     const { setAppRelayRoute, appRelayUrlForRoute } = await import(
-      '../../packages/server/src/services/app-relay/route'
+      '../../packages/server/src/modules/studio/services/app-relay/route'
     )
 
     await setAppRelayRoute('cloudflare')

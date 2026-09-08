@@ -1,7 +1,7 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
-import * as petsApi from '@/api/hermes/pets'
-import type { ActivePet, WebPetPosition } from '@/api/hermes/pets'
+import * as petsApi from '@/api/studio/pets'
+import type { ActivePet, WebPetPosition } from '@/api/studio/pets'
 
 export const usePetsStore = defineStore('pets', () => {
   const activePet = ref<ActivePet | null>(null)

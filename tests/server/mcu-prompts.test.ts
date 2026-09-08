@@ -10,7 +10,7 @@ import {
   mcuPromptUrl,
   resolveMcuAudioPath,
   type McuPromptId,
-} from '../../packages/server/src/services/hermes/mcu-prompts'
+} from '../../packages/server/src/modules/studio/services/voice/mcu/prompts'
 
 describe('mcu prompts', () => {
   it('serves bundled 24k prompt assets through local MCU audio URLs', async () => {
@@ -19,7 +19,7 @@ describe('mcu prompts', () => {
     for (const id of Object.keys(MCU_PROMPTS) as McuPromptId[]) {
       const fileName = mcuPromptFileName(id)
       expect(fileName).toMatch(/-24k\.s16le\.pcm$/)
-      expect(mcuPromptUrl(id)).toBe(`/api/hermes/mcu/audio/${fileName}`)
+      expect(mcuPromptUrl(id)).toBe(`/api/studio/mcu/audio/${fileName}`)
       expect(mcuPromptText(id)).toBeTruthy()
       expect(isValidMcuAudioFileName(fileName)).toBe(true)
 

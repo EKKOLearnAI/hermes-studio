@@ -27,8 +27,8 @@ Voice has two control planes:
 Selecting a Web UI-managed provider writes only the `hermes-studio` command provider into the active profile. Existing native provider blocks are merged and preserved. The command calls a profile-scoped loopback URL:
 
 ```text
-/api/hermes/voice/proxy/:profile/v1/tts
-/api/hermes/voice/proxy/:profile/v1/audio/transcriptions
+/api/studio/voice/proxy/:profile/v1/tts
+/api/studio/voice/proxy/:profile/v1/audio/transcriptions
 ```
 
 Encoding the profile in the URL makes routing deterministic for simultaneous gateways. The loopback command authenticates with a Web UI-owned curl config under `HERMES_WEB_UI_HOME`; upstream provider keys are never copied to the Hermes profile or its `.env`.

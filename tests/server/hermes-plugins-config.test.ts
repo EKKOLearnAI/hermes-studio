@@ -83,7 +83,7 @@ describe('Hermes plugin configuration', () => {
       '',
     ].join('\n'))
 
-    const { setHermesPluginEnabled } = await import('../../packages/server/src/services/hermes/plugins')
+    const { setHermesPluginEnabled } = await import('../../packages/server/src/modules/hermes/services/plugins/plugins')
     await expect(setHermesPluginEnabled(undefined, 'local-plugin', true)).resolves.toEqual({
       key: 'local-plugin',
       enabled: true,
@@ -104,7 +104,7 @@ describe('Hermes plugin configuration', () => {
       '',
     ].join('\n'))
 
-    const { setHermesPluginEnabled } = await import('../../packages/server/src/services/hermes/plugins')
+    const { setHermesPluginEnabled } = await import('../../packages/server/src/modules/hermes/services/plugins/plugins')
     await expect(setHermesPluginEnabled(undefined, 'local-plugin', false)).resolves.toEqual({
       key: 'local-plugin',
       enabled: false,
@@ -137,7 +137,7 @@ describe('Hermes plugin configuration', () => {
       metadata: { hermesAgentRoot: '', pythonExecutable: '', cwd: '', projectPluginsEnabled: false },
     })
 
-    const { setHermesPluginEnabled } = await import('../../packages/server/src/services/hermes/plugins')
+    const { setHermesPluginEnabled } = await import('../../packages/server/src/modules/hermes/services/plugins/plugins')
     await expect(setHermesPluginEnabled(undefined, 'bundled-plugin', false)).rejects.toThrow('cannot be managed')
   })
 })

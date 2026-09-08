@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 
 describe('group Agent preset UI and API', () => {
   it('exposes CRUD and snapshot conversion without secret fields', async () => {
-    const api = await import('../../packages/client/src/api/hermes/group-chat')
+    const api = await import('../../packages/client/src/api/studio/group-chat')
     const preset: api.GroupAgentPreset = {
       id: 'preset-1',
       agent: 'codex',

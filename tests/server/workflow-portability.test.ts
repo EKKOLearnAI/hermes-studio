@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { compileWorkflowGraphPreflight } from '../../packages/server/src/services/workflow-manager'
-import { cancelWorkflowImport, exportWorkflowDefinition, previewWorkflowImport, confirmWorkflowImport } from '../../packages/server/src/services/workflow-portability'
+import { compileWorkflowGraphPreflight } from '../../packages/server/src/modules/studio/services/workflow/manager'
+import { cancelWorkflowImport, exportWorkflowDefinition, previewWorkflowImport, confirmWorkflowImport } from '../../packages/server/src/modules/studio/services/workflow/portability'
 
 const workflow = {
   id: 'wf-secret-id', name: 'Portable flow', profile: 'private-profile', workspace: '/private/workspace',
@@ -31,6 +31,28 @@ describe('workflow portability', () => {
     expect(JSON.stringify(exported)).not.toContain('secret')
     expect(JSON.stringify(exported)).not.toContain('/private/path')
     expect(JSON.stringify(exported)).not.toContain('custom:test')
+  })
+
+  it('preserves global CLI mode while stripping scoped runtime bindings', () => {
+    const exported = exportWorkflowDefinition({
+      id: 'wf-global', name: 'Portable global CLI', profile: 'private', workspace: '/private/path',
+      nodes: [{ id: 'n', type: 'agent', position: { x: 0, y: 0 }, data: {
+        title: 'Global Codex', agent: 'codex', agentMode: 'global',
+        provider: 'must-not-export', model: 'must-not-export', apiMode: 'chat_completions',
+        reasoningEffort: 'high', input: 'work',
+      } }], edges: [], viewport: null,
+    } as any)
+    expect(exported.definition.nodes[0].data).toEqual({
+      title: 'Global Codex',
+      agent: 'codex',
+      agentMode: 'global',
+      input: 'work',
+    })
+    expect(JSON.stringify(exported)).not.toContain('must-not-export')
+
+    const preview = previewWorkflowImport(JSON.stringify(exported), options('global-owner', 'default'))
+    const imported = confirmWorkflowImport(preview.token, options('global-owner', 'default'))
+    expect(imported.nodes[0].data).toMatchObject({ agent: 'codex', agentMode: 'global', input: 'work' })
   })
 
   it('sanitizes source-environment bindings from legacy v1 documents before import', () => {

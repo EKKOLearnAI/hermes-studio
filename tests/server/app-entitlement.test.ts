@@ -7,7 +7,7 @@ import {
   APP_ENTITLEMENT_TOKEN_TYPE,
   inspectAppEntitlementToken,
   verifyAppEntitlementToken,
-} from '../../packages/server/src/services/app-entitlement'
+} from '../../packages/server/src/modules/studio/services/auth/app-entitlement'
 
 const keyPair = generateKeyPairSync('rsa', { modulusLength: 2048 })
 const now = Date.UTC(2026, 7, 15, 8, 0, 0)

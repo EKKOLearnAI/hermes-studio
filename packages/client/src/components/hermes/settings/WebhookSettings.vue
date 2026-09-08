@@ -31,7 +31,7 @@ import {
   type ChatWebhookEndpoint,
   type ChatWebhookEventType,
   type LocalChatWebhookTestEvent,
-} from '@/api/hermes/chat-webhooks'
+} from '@/api/studio/chat-webhooks'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 
 const { t } = useI18n()

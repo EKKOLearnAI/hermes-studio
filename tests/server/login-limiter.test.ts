@@ -8,10 +8,10 @@ async function loadLimiter() {
     mkdir: vi.fn(),
   }))
   vi.doMock('fs', () => ({ writeFileSync: vi.fn() }))
-  vi.doMock('../../packages/server/src/config', () => ({
+  vi.doMock('../../packages/server/src/modules/studio/public/config', () => ({
     config: { appHome: '/tmp/hermes-web-ui-test' },
   }))
-  return import('../../packages/server/src/services/login-limiter')
+  return import('../../packages/server/src/modules/studio/services/auth/login-limiter')
 }
 
 describe('login limiter', () => {
@@ -24,7 +24,7 @@ describe('login limiter', () => {
     vi.useRealTimers()
     vi.doUnmock('fs/promises')
     vi.doUnmock('fs')
-    vi.doUnmock('../../packages/server/src/config')
+    vi.doUnmock('../../packages/server/src/modules/studio/public/config')
     vi.resetModules()
   })
 

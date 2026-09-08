@@ -10,7 +10,7 @@ const disableMock = vi.fn(async (ctx: any) => {
   ctx.body = { key: ctx.params.key, enabled: false }
 })
 
-vi.mock('../../packages/server/src/controllers/hermes/plugins', () => ({
+vi.mock('../../packages/server/src/modules/hermes/controllers/plugins', () => ({
   list: listMock,
   enable: enableMock,
   disable: disableMock,
@@ -25,7 +25,7 @@ describe('plugin routes', () => {
   })
 
   it('registers the plugins inventory and mutation routes', async () => {
-    const { pluginRoutes } = await import('../../packages/server/src/routes/hermes/plugins')
+    const { pluginRoutes } = await import('../../packages/server/src/modules/hermes/routes/plugins')
     const paths = pluginRoutes.stack.map((entry: any) => entry.path)
 
     expect(paths).toEqual(expect.arrayContaining([
@@ -36,7 +36,7 @@ describe('plugin routes', () => {
   })
 
   it('delegates plugin listing to the controller', async () => {
-    const { pluginRoutes } = await import('../../packages/server/src/routes/hermes/plugins')
+    const { pluginRoutes } = await import('../../packages/server/src/modules/hermes/routes/plugins')
     const layer = pluginRoutes.stack.find((entry: any) => entry.path === '/api/hermes/plugins')
     const ctx: any = { body: null, params: {}, query: {} }
 
@@ -47,7 +47,7 @@ describe('plugin routes', () => {
   })
 
   it('delegates plugin enable and disable to the controller', async () => {
-    const { pluginRoutes } = await import('../../packages/server/src/routes/hermes/plugins')
+    const { pluginRoutes } = await import('../../packages/server/src/modules/hermes/routes/plugins')
     const enableLayer = pluginRoutes.stack.find((entry: any) => entry.path === '/api/hermes/plugins/:key/enable')
     const disableLayer = pluginRoutes.stack.find((entry: any) => entry.path === '/api/hermes/plugins/:key/disable')
     const enableCtx: any = { body: null, params: { key: 'local-plugin' }, query: {} }

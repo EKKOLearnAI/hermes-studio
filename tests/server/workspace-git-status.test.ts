@@ -7,7 +7,7 @@ import {
   decorateWorkspaceEntries,
   getWorkspaceFileGitDiff,
   parseWorkspaceGitStatus,
-} from '../../packages/server/src/services/hermes/workspace-git-status'
+} from '../../packages/server/src/modules/studio/services/files/workspace-git-status'
 
 describe('workspace git status', () => {
   const tempDirs: string[] = []

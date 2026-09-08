@@ -43,7 +43,7 @@ const {
   messageApi: { success: vi.fn(), error: vi.fn() },
 }))
 
-vi.mock('@/api/social-messages', () => ({
+vi.mock('@/api/studio/social-messages', () => ({
   clearSocialMessageCredentials: clearCredentials,
   fetchFeishuQrCode,
   fetchFeishuRecipients,

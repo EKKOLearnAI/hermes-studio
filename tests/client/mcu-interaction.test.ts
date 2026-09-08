@@ -5,8 +5,8 @@ import {
   mcuEventsFromRunEvent,
   startMcuVoiceInteraction,
   type McuInteractionTransport,
-} from '@/api/hermes/mcu-interaction'
-import type { RunEvent } from '@/api/hermes/chat'
+} from '@/api/studio/mcu-interaction'
+import type { RunEvent } from '@/api/studio/chat'
 
 describe('mcu interaction helpers', () => {
   it('segments assistant output for speech without tool content', () => {

@@ -22,14 +22,14 @@ const groupChatApiMock = vi.hoisted(() => ({
   updateInviteCode: vi.fn(),
 }))
 
-vi.mock('@/api/hermes/group-chat', () => groupChatApiMock)
+vi.mock('@/api/studio/group-chat', () => groupChatApiMock)
 vi.mock('@/api/client', () => ({
   getApiKey: vi.fn(() => 'token'),
   getActiveProfileName: vi.fn(() => 'default'),
   getStoredUsername: vi.fn(() => null),
 }))
-vi.mock('@/api/auth', () => ({ fetchCurrentUser: vi.fn(async () => { throw new Error('no user') }) }))
-vi.mock('@/api/hermes/download', () => ({ getDownloadUrl: vi.fn((path: string) => `/download?path=${path}`) }))
+vi.mock('@/api/studio/auth', () => ({ fetchCurrentUser: vi.fn(async () => { throw new Error('no user') }) }))
+vi.mock('@/api/studio/download', () => ({ getDownloadUrl: vi.fn((path: string) => `/download?path=${path}`) }))
 
 describe('group chat store workspace', () => {
   beforeEach(() => {

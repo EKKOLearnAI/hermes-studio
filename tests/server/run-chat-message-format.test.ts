@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-vi.mock('../../packages/server/src/services/logger', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/logging', () => ({
   logger: {
     info: vi.fn(),
     warn: vi.fn(),
@@ -10,8 +10,8 @@ vi.mock('../../packages/server/src/services/logger', () => ({
 import {
   handleMessage,
   isAssistantMessageSendable,
-} from '../../packages/server/src/services/hermes/run-chat/message-format'
-import type { SessionMessage } from '../../packages/server/src/services/hermes/run-chat/types'
+} from '../../packages/server/src/modules/studio/services/chat-run/message-format'
+import type { SessionMessage } from '../../packages/server/src/modules/studio/services/chat-run/types'
 
 describe('run-chat message formatting', () => {
   it('drops stale empty assistant messages loaded from the session database', () => {

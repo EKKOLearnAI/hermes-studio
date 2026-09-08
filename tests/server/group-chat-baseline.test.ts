@@ -13,19 +13,20 @@ import {
 import {
   defaultGroupChatWorkspace,
   type GroupChatServer,
-} from '../../packages/server/src/services/hermes/group-chat'
+} from '../../packages/server/src/modules/studio/sockets/group-chat'
 import {
   GroupAgentRelayServer,
+  GroupAgentOutboundRelayManager,
   redactRelaySecrets,
   relayRoomWorkspace,
   validateRelayRunRequest,
-} from '../../packages/server/src/services/hermes/group-chat/agent-relay'
-import { AgentClient } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
+} from '../../packages/server/src/modules/studio/services/group-chat/agent-relay'
+import { AgentClient } from '../../packages/server/src/modules/studio/services/group-chat/agent-clients'
 import {
   authenticateRemoteWorkspaceGrant,
   resetRemoteWorkspaceGrantsForTest,
-} from '../../packages/server/src/services/hermes/group-chat/remote-workspace-auth'
-import { performRemoteWorkspaceAction } from '../../packages/server/src/services/hermes/group-chat/remote-workspace-files'
+} from '../../packages/server/src/modules/studio/services/group-chat/remote-workspace-auth'
+import { performRemoteWorkspaceAction } from '../../packages/server/src/modules/studio/services/group-chat/remote-workspace-files'
 
 describe('group chat baseline behavior', () => {
   let harness: Awaited<ReturnType<typeof createTestGroupChatServer>>
@@ -124,6 +125,20 @@ describe('group chat baseline behavior', () => {
     expect(joined.members).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: 'Alice', connectionStatus: 'online' }),
     ]))
+  })
+
+  it('includes the current summary state when entering or reconnecting to a room', async () => {
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-summary', 'Summary Room', 'SUMMARY1')
+    const summary = groupServer.getRoomSummaryService().getState('room-summary')
+    expect(storage.claimRoomSummaryRun('room-summary', summary, 'summary-run', Date.now() + 60_000)).toBe(true)
+    const guest = await connectGroupChatClient(port, 'summary-guest', 'Guest')
+    harness.sockets.push(guest)
+    const joined = await emitAck<any>(guest, 'join', { roomId: 'room-summary', inviteCode: 'SUMMARY1' })
+    expect(joined.roomSummary).toMatchObject({ roomId: 'room-summary', status: 'summarizing' })
+    storage.saveRoomSummary({ ...joined.roomSummary, status: 'success', summary: 'Updated summary', updatedAt: Date.now() })
+    const rejoined = await emitAck<any>(guest, 'join', { roomId: 'room-summary', inviteCode: 'SUMMARY1' })
+    expect(rejoined.roomSummary).toMatchObject({ status: 'success', summary: 'Updated summary' })
   })
 
   it('honors the requested initial history page size when joining', async () => {
@@ -415,7 +430,7 @@ describe('group chat baseline behavior', () => {
   })
 
   it('keeps pairing tickets single-use and replaces them with revocable reconnect credentials', async () => {
-    const relayStore = await import('../../packages/server/src/services/hermes/group-chat/agent-relay-store')
+    const relayStore = await import('../../packages/server/src/modules/studio/services/group-chat/agent-relay-store')
     const storage = groupServer.getStorage()
     storage.saveRoom('room-1', 'Shared Room', 'ROOM1')
     storage.updateRoomGuestAgentPolicy('room-1', {
@@ -492,7 +507,7 @@ describe('group chat baseline behavior', () => {
     )).toBeNull()
     expect(storage.getRoomAgents('room-1')).toEqual([])
 
-    const { getDb } = await import('../../packages/server/src/db')
+    const { getDb } = await import('../../packages/server/src/modules/studio/infrastructure/database/index')
     getDb()!.prepare('UPDATE gc_room_agents SET removedAt = 0 WHERE id = ?').run(roomAgent.id)
     expect(storage.getRoomAgents('room-1')).toHaveLength(1)
     storage.init()
@@ -500,7 +515,7 @@ describe('group chat baseline behavior', () => {
   })
 
   it('keeps Agent handoffs draft until the target service submits the selected Agent', async () => {
-    const relayStore = await import('../../packages/server/src/services/hermes/group-chat/agent-relay-store')
+    const relayStore = await import('../../packages/server/src/modules/studio/services/group-chat/agent-relay-store')
     const requestSecret = 'request_secret_abcdefghijklmnopqrstuvwxyz123456'
     const pairingTicket = 'pairing_ticket_abcdefghijklmnopqrstuvwxyz123456'
     const draft = relayStore.createGroupAgentPairingHandoff({
@@ -556,8 +571,60 @@ describe('group chat baseline behavior', () => {
     expect(relayStore.claimGroupAgentPairingTicket(pairingTicket, 1_300)).toBeNull()
   })
 
+  it('connects and edits an approved Agent through the real outbound and inbound relay sockets', async () => {
+    const relayStore = await import('../../packages/server/src/modules/studio/services/group-chat/agent-relay-store')
+    const storage = groupServer.getStorage()
+    storage.saveRoom('room-approved', 'Approved Room', 'APPROVED1')
+    storage.updateRoomGuestAgentPolicy('room-approved', {
+      allowGuestAgents: true,
+      maxGuestAgentsPerMember: 1,
+      allowRemoteWorkspaceAccess: false,
+    })
+    const agent = relayStore.normalizeRemoteGroupAgentDescriptor({
+      agent: 'hermes', profile: 'default', name: 'Approved Agent',
+    })
+    const created = relayStore.createGroupAgentPairingRequest({
+      roomId: 'room-approved', ownerMemberId: 'guest-approved', ownerName: 'Guest',
+      targetOrigin: 'http://127.0.0.1:8648', agent,
+    })
+    relayStore.decideGroupAgentPairingRequest(created.request.id, true, 1)
+    vi.spyOn(AgentClient.prototype, 'connect').mockResolvedValue()
+    vi.spyOn(AgentClient.prototype, 'joinRoom').mockResolvedValue({
+      roomId: 'room-approved', roomName: 'Approved Room', inviteCode: 'APPROVED1',
+      members: [], messages: [], rooms: ['room-approved'],
+    })
+    const relayServer = new GroupAgentRelayServer(groupServer.getIO(), groupServer)
+    const manager = new GroupAgentOutboundRelayManager(() => null)
+    const persist = vi.spyOn(manager, 'persist').mockResolvedValue()
+    try {
+      const connected = await manager.connect({
+        cloudOrigin: `http://127.0.0.1:${port}`, targetOrigin: 'http://127.0.0.1:8648',
+        pairingTicket: created.pairingTicket, agent,
+      })
+      expect(connected.roomId).toBe('room-approved')
+      expect(persist).toHaveBeenCalledWith(expect.objectContaining({ agent }))
+      expect(relayStore.getGroupAgentPairingRequest(created.request.id)?.status).toBe('consumed')
+      const updated = await manager.updateConnection(connected.connectorId, { ...agent, description: 'Updated remotely' })
+      expect(updated.agent.description).toBe('Updated remotely')
+      expect(storage.getRoomAgents('room-approved')[0].description).toBe('Updated remotely')
+    } finally {
+      manager.shutdown()
+      relayServer.shutdown()
+    }
+  })
+
+  it('identifies whether missing Agent data came from the connection request or relay confirmation', async () => {
+    const { normalizeRemoteGroupAgentDescriptor } = await import('../../packages/server/src/modules/studio/services/group-chat/agent-relay-store')
+    for (const value of [undefined, null, 'hermes', []]) {
+      expect(() => normalizeRemoteGroupAgentDescriptor(value, 'connection request'))
+        .toThrow('Invalid remote Agent in connection request')
+      expect(() => normalizeRemoteGroupAgentDescriptor(value, 'relay confirmation'))
+        .toThrow('Invalid remote Agent in relay confirmation')
+    }
+  })
+
   it('releases a pairing claim after an origin mismatch and accepts the intended target once', async () => {
-    const relayStore = await import('../../packages/server/src/services/hermes/group-chat/agent-relay-store')
+    const relayStore = await import('../../packages/server/src/modules/studio/services/group-chat/agent-relay-store')
     const storage = groupServer.getStorage()
     const relayWorkspace = mkdtempSync(join(tmpdir(), 'group-chat-relay-diff-'))
     temporaryDirectories.push(relayWorkspace)
@@ -775,6 +842,43 @@ describe('group chat baseline behavior', () => {
         }),
       ],
     })
+
+    const { OutboundRelayEventSink, supportsAgentEventBatching } = await import('../../packages/server/src/modules/studio/services/group-chat/agent-relay-event-sink')
+    const streamStart = vi.spyOn(AgentClient.prototype, 'emitMessageStreamStart').mockImplementation(() => {})
+    const streamDelta = vi.spyOn(AgentClient.prototype, 'emitMessageStreamDelta').mockImplementation(() => {})
+    const reasoningDelta = vi.spyOn(AgentClient.prototype, 'emitMessageReasoningDelta').mockImplementation(() => {})
+    const streamEnd = vi.spyOn(AgentClient.prototype, 'emitMessageStreamEnd').mockImplementation(() => {})
+    const batchRunRequested = once<any>(intendedTarget as any, 'run.request', 2_000)
+    const batchReply = executor.replyToMention('room-relay', {
+      messageId: 'batch-source', content: 'burst output', senderName: 'Relay Guest',
+      senderId: 'guest-relay', timestamp: Date.now(), role: 'user',
+    })
+    const batchRun = await batchRunRequested
+    intendedTarget.emit('run.accepted', { runId: batchRun.runId })
+    expect(supportsAgentEventBatching(readyPayload, false)).toBe(true)
+    const sink = new OutboundRelayEventSink(intendedTarget, data => data)
+    sink.setBatching(true)
+    sink.begin(batchRun.runId)
+    sink.emit('message_stream_start', { id: 'batch-message' })
+    for (let i = 0; i < 200; i++) {
+      sink.emit('message_reasoning_delta', { id: 'batch-message', delta: '思考' })
+      sink.emit('message_stream_delta', { id: 'batch-message', delta: String(i) })
+    }
+    await sink.sendMessage('room-relay', 'complete batch answer', 'batch-message', { role: 'assistant' })
+    sink.emit('message_stream_end', { id: 'batch-message' })
+    await sink.drain()
+    intendedTarget.emit('run.completed', { runId: batchRun.runId })
+    await batchReply
+    sink.end(batchRun.runId)
+    const mappedMessageId = streamStart.mock.calls[0][1]
+    expect(reasoningDelta).toHaveBeenCalledTimes(200)
+    expect(streamDelta.mock.calls.map(call => call[2])).toEqual(Array.from({ length: 200 }, (_, i) => String(i)))
+    expect(streamDelta.mock.calls.every(call => call[1] === mappedMessageId)).toBe(true)
+    expect(proxySendMessage).toHaveBeenCalledWith('room-relay', 'complete batch answer', mappedMessageId, expect.objectContaining({ role: 'assistant' }), undefined)
+    expect(streamEnd).toHaveBeenCalledWith('room-relay', mappedMessageId, undefined)
+    for (const events of [[], Array.from({ length: 65 }, () => ({ runId: 'invalid', seq: 1 })), [{ runId: 'invalid', seq: 1, data: { delta: 'x'.repeat(16 * 1024) } }]]) {
+      await expect(emitAck<any>(intendedTarget as any, 'agent.events', { events })).resolves.toEqual({ error: 'Invalid remote Agent event batch' })
+    }
 
     const interactionRunRequested = once<any>(intendedTarget as any, 'run.request', 2_000)
     const interactionReply = executor.replyToMention('room-relay', {

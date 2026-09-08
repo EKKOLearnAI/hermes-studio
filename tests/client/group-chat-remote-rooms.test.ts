@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { LocalGroupAgentConnection } from '../../packages/client/src/api/hermes/group-chat-agent-link'
+import type { LocalGroupAgentConnection } from '../../packages/client/src/api/studio/group-chat-agent-link'
 import { buildRemoteGroupChatRooms } from '../../packages/client/src/utils/group-chat-remote-rooms'
 
 function connection(input: Partial<LocalGroupAgentConnection>): LocalGroupAgentConnection {

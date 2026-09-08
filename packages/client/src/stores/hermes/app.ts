@@ -1,13 +1,11 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import {
-  checkHealth,
   fetchAvailableModels,
   addCustomModel as persistCustomModel,
   removeCustomModel as deletePersistedCustomModel,
   updateDefaultModel,
   updateModelVisibility,
-  triggerUpdate,
   updateModelAlias,
   type AvailableModelGroup,
   type AvailableModelsResponse,
@@ -15,6 +13,7 @@ import {
   type ModelVisibility,
   type ModelVisibilityRule,
 } from '@/api/hermes/system'
+import { checkHealth, triggerUpdate } from '@/api/studio/system'
 import { hasApiKey } from '@/api/client'
 
 const WEB_UI_VERSION = __APP_VERSION__
