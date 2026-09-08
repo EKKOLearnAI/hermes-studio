@@ -79,6 +79,7 @@ vi.mock('../../packages/server/src/modules/studio/public/agent-status-registry',
 }))
 
 import * as hermesCli from '../../packages/server/src/modules/hermes/services/runtime/cli'
+import { AgentBridgeClient } from '../../packages/server/src/modules/hermes/services/bridge'
 
 describe('Profile Routes', () => {
   const originalHermesHome = process.env.HERMES_HOME
@@ -570,6 +571,31 @@ describe('Profile Routes', () => {
       expect(agentBridgeMocks.destroyProfile).toHaveBeenCalledWith('work')
       expect(agentBridgeMocks.destroyAll).not.toHaveBeenCalled()
       expect(sessionDeleterMocks.switchProfile).toHaveBeenCalledWith('work')
+    })
+  })
+
+  describe('profile runtime restart', () => {
+    it('uses the configurable bridge timeout for explicit profile cleanup', async () => {
+      vi.mocked(hermesCli.listProfiles).mockResolvedValue([{
+        name: 'work',
+        active: true,
+        model: 'gpt-test',
+        alias: '',
+      }] as any)
+      gatewayAutostartMocks.getGatewayRuntimeStatusForProfile.mockResolvedValue({
+        running: false,
+        profile: 'work',
+      })
+      agentBridgeMocks.destroyProfile.mockResolvedValue({ destroyed: 2 })
+      const { restartProfileRuntime } = await import('../../packages/server/src/modules/hermes/controllers/profiles')
+      const ctx: any = { params: { name: 'work' }, status: 200, body: undefined }
+
+      await restartProfileRuntime(ctx)
+
+      expect(ctx.status).toBe(200)
+      expect(ctx.body).toMatchObject({ success: true, destroyed: 2 })
+      expect(vi.mocked(AgentBridgeClient)).toHaveBeenNthCalledWith(1, { connectRetryMs: 0 })
+      expect(agentBridgeMocks.destroyProfile).toHaveBeenCalledWith('work')
     })
   })
 
