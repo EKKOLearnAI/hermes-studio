@@ -203,7 +203,7 @@ describe('Profile Routes', () => {
         await mkdir(join(hermesHome, 'profiles', name), { recursive: true })
         return 'Profile created'
       })
-      const { create } = await import('../../packages/server/src/controllers/hermes/profiles')
+      const { create } = await import('../../packages/server/src/modules/hermes/controllers/profiles')
       const ctx: any = {
         request: { body: { name: 'cloned', cloneFrom: 'work' } },
         status: 200,
@@ -244,7 +244,7 @@ describe('Profile Routes', () => {
         await mkdir(join(hermesHome, 'profiles', name), { recursive: true })
         return 'Profile created'
       })
-      const { create } = await import('../../packages/server/src/controllers/hermes/profiles')
+      const { create } = await import('../../packages/server/src/modules/hermes/controllers/profiles')
       const ctx: any = {
         request: { body: { name: 'cloned', cloneFrom: 'work' } },
         status: 200,
@@ -267,7 +267,7 @@ describe('Profile Routes', () => {
         await mkdir(join(hermesHome, 'profiles', name), { recursive: true })
         return 'Profile created'
       })
-      const { create } = await import('../../packages/server/src/controllers/hermes/profiles')
+      const { create } = await import('../../packages/server/src/modules/hermes/controllers/profiles')
       const ctx: any = {
         request: { body: { name: 'cloned', clone: true } },
         status: 200,
@@ -286,7 +286,7 @@ describe('Profile Routes', () => {
       process.env.HERMES_HOME = hermesHome
       await writeFile(join(hermesHome, 'active_profile'), 'default\n', 'utf-8')
       vi.mocked(hermesCli.createProfile).mockResolvedValue('Profile created')
-      const { create } = await import('../../packages/server/src/controllers/hermes/profiles')
+      const { create } = await import('../../packages/server/src/modules/hermes/controllers/profiles')
       const ctx: any = {
         request: { body: { name: 'cloned', cloneFrom: 'ghost' } },
         status: 200,
@@ -306,7 +306,7 @@ describe('Profile Routes', () => {
       process.env.HERMES_HOME = hermesHome
       await writeFile(join(hermesHome, 'active_profile'), 'default\n', 'utf-8')
       vi.mocked(hermesCli.createProfile).mockResolvedValue('Profile created')
-      const { create } = await import('../../packages/server/src/controllers/hermes/profiles')
+      const { create } = await import('../../packages/server/src/modules/hermes/controllers/profiles')
       const ctx: any = {
         request: { body: { name: 'cloned', cloneFrom: '../../etc' } },
         status: 200,
