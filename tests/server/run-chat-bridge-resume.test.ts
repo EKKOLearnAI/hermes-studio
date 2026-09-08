@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const addMessageMock = vi.fn()
+const persistRunFailureMock = vi.fn((_sid, runMarker) => ({ id: 'failure-42', runMarker, code: 'unavailable', status: 503 }))
 const updateSessionStatsMock = vi.fn()
 const updateUsageMock = vi.fn()
 const calcAndUpdateUsageMock = vi.fn()
@@ -10,6 +11,7 @@ const estimateUsageTokensFromMessagesMock = vi.fn()
 
 vi.mock('../../packages/server/src/modules/studio/repositories/session-store', () => ({
   addMessage: addMessageMock,
+  persistRunFailure: persistRunFailureMock,
   createSession: vi.fn(),
   getSession: vi.fn(() => ({ id: 'session-resume', profile: 'default', model: 'gpt-test', provider: 'openai' })),
   updateSession: vi.fn(),
@@ -87,6 +89,58 @@ describe('resumeBridgeRun', () => {
       { role: 'assistant', content: 'Hello world' },
     ])
     estimateUsageTokensFromMessagesMock.mockReturnValue({ inputTokens: 3, outputTokens: 2 })
+  })
+
+  it.each(['terminal', 'exception'])('persists %s failures with exact identity and only safe outbound metadata', async (kind) => {
+    const { resumeBridgeRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-bridge-run')
+    const { nsp, emitted } = createNamespace()
+    const sessionMap = new Map<string, any>([['session-resume', { messages: [], isWorking: true, events: [], queue: [] }]])
+    const error = 'HTTP 503 https://user:secret@api.test/?token=private'
+    const bridge = {
+      getResult: vi.fn(async () => ({ status: 'running', deltas: [], events: [] })),
+      getOutput: vi.fn().mockResolvedValueOnce({ run_id: 'run-resume', status: 'running', done: false, delta: 'I will check.', cursor: 1, events: [] }).mockImplementation(async () => {
+        if (kind === 'exception') throw new Error(error)
+        return { run_id: 'run-resume', status: 'complete', done: true, delta: '', cursor: 1, events: [], result: { completed: false, error, final_response: error } }
+      }),
+      contextEstimate: vi.fn(async () => ({})),
+    }
+    await resumeBridgeRun(nsp as any, { connected: true, emit: vi.fn() } as any, {
+      sessionId: 'session-resume', runId: 'run-resume', profile: 'default', instructions: '', source: 'workflow',
+    } as any, sessionMap, bridge as any, vi.fn())
+    expect(persistRunFailureMock).toHaveBeenCalledWith('session-resume', 'run-resume', error)
+    expect(addMessageMock).toHaveBeenCalledWith(expect.objectContaining({ role: 'assistant', content: 'I will check.' }))
+    const terminal = emitted.find(item => item.event === 'run.failed')!.payload
+    expect(terminal.failure).toEqual({ id: 'failure-42', runMarker: 'run-resume', code: 'unavailable', status: 503 })
+    expect(JSON.stringify(terminal)).not.toMatch(/secret|private|api.test/)
+    expect(sessionMap.get('session-resume').messages.filter((m: any) => m.role === 'run_failure')).toHaveLength(1)
+  })
+
+  it('does not persist a recovered transient error or a tool error as terminal failure', async () => {
+    const { resumeBridgeRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-bridge-run')
+    const { nsp, emitted } = createNamespace()
+    const sessionMap = new Map<string, any>([['session-resume', { messages: [], isWorking: true, events: [], queue: [] }]])
+    const bridge = {
+      getResult: vi.fn(async () => ({ deltas: [], events: [] })),
+      getOutput: vi.fn().mockResolvedValueOnce({ run_id: 'run-retry', done: false, status: 'running', error: 'Retrying HTTP 503', cursor: 1, events: [{ event: 'status', message: 'tool failed; retrying' }] }).mockResolvedValue({ run_id: 'run-retry', done: true, status: 'complete', cursor: 1, events: [], result: { completed: true, final_response: 'Recovered successfully.' } }),
+      contextEstimate: vi.fn(async () => ({})),
+    }
+    await resumeBridgeRun(nsp as any, { connected: true, emit: vi.fn() } as any, { sessionId: 'session-resume', runId: 'run-retry', profile: 'default', source: 'workflow' } as any, sessionMap, bridge as any, vi.fn())
+    expect(persistRunFailureMock).not.toHaveBeenCalled()
+    expect(emitted.some(item => item.event === 'run.completed')).toBe(true)
+  })
+
+  it('does not persist a polling exception racing with an explicit user stop', async () => {
+    const { resumeBridgeRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-bridge-run')
+    const { nsp, emitted } = createNamespace()
+    const state: any = { messages: [], isWorking: true, events: [], queue: [] }
+    const sessionMap = new Map([['session-resume', state]])
+    const bridge = {
+      getResult: vi.fn(async () => ({ deltas: [], events: [] })),
+      getOutput: vi.fn(async () => { state.isAborting = true; throw new Error('Connection lost while stopping') }),
+    }
+    await resumeBridgeRun(nsp as any, { connected: true, emit: vi.fn() } as any, { sessionId: 'session-resume', runId: 'run-stop', profile: 'default', source: 'workflow' } as any, sessionMap, bridge as any, vi.fn())
+    expect(persistRunFailureMock).not.toHaveBeenCalled()
+    expect(emitted.some(item => item.event === 'run.failed')).toBe(false)
   })
 
   it('continues polling a resumed workflow run without judging goals when a cli continuation is queued', async () => {

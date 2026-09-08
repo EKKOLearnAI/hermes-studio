@@ -820,6 +820,16 @@ export default {
 
   // Chat
   chat: {
+    runFailure: {
+      "title": "Antwort unerwartet gestoppt",
+      "unavailable": "Der Anbieter konnte die Antwort nicht abschließen. Die bisherige Antwort bleibt oben erhalten.",
+      "timeout": "Die Anfrage hat vor Abschluss der Antwort das Zeitlimit überschritten.",
+      "authentication": "Der Anbieter hat die Authentifizierung oder den Zugriff abgelehnt.",
+      "rate_limit": "Das Anfragelimit des Anbieters wurde erreicht.",
+      "unknown": "Der Lauf ist fehlgeschlagen. Ein sicher anzeigbarer genauer Grund ist nicht verfügbar.",
+      "details": "Sichere Details",
+      "privacy": "Private Anbieterantworten und Anfragedaten werden nicht angezeigt."
+},
     contextRemaining: 'übrig',
     contextClickToEdit: 'Klicken zum Bearbeiten der Kontextlänge',
     contextEditTitle: 'Kontextlänge bearbeiten',

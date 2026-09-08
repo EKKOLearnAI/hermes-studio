@@ -820,6 +820,16 @@ export default {
 
   // 채팅
   chat: {
+    runFailure: {
+      "title": "응답이 예기치 않게 중단되었습니다",
+      "unavailable": "제공자가 응답을 완료하지 못했습니다. 부분 응답은 위에 보존됩니다.",
+      "timeout": "응답이 완료되기 전에 요청 시간이 초과되었습니다.",
+      "authentication": "제공자가 인증 또는 접근을 거부했습니다.",
+      "rate_limit": "제공자의 요청 속도 제한에 도달했습니다.",
+      "unknown": "실행에 실패했지만 안전하게 표시할 구체적인 이유가 없습니다.",
+      "details": "안전한 세부 정보",
+      "privacy": "비공개 제공자 응답과 요청 데이터는 표시하지 않습니다."
+},
     contextRemaining: '남음',
     contextClickToEdit: '클릭하여 컨텍스트 길이 편집',
     contextEditTitle: '컨텍스트 길이 편집',

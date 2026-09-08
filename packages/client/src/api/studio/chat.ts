@@ -248,6 +248,22 @@ const sessionEventHandlers = new Map<string, {
   onClarifyResolved?: (event: RunEvent) => void
 }>()
 
+// Keep recent terminal identities beyond disposable handlers, including the gap
+// before a replacement manual run starts. Bound retention across all sessions.
+const settledRunKeys = new Set<string>()
+const MAX_SETTLED_RUN_KEYS = 256
+
+function rememberSettledRun(event: RunEvent): boolean {
+  if (!event.run_id) return false
+  const key = JSON.stringify([chatRunSocketTransport, chatRunSocketProfile, event.session_id, event.run_id])
+  if (settledRunKeys.has(key)) return true
+  settledRunKeys.add(key)
+  if (settledRunKeys.size > MAX_SETTLED_RUN_KEYS) {
+    settledRunKeys.delete(settledRunKeys.values().next().value!)
+  }
+  return false
+}
+
 const peerUserMessageHandlers = new Set<(event: RunEvent) => void>()
 const sessionCommandHandlers = new Set<(event: RunEvent) => void>()
 const sessionTitleUpdatedHandlers = new Set<(event: RunEvent) => void>()
@@ -381,6 +397,7 @@ function globalRunCompletedHandler(event: RunEvent): void {
   if (!sid) return
 
   const handlers = sessionEventHandlers.get(sid)
+  rememberSettledRun(event)
   if (handlers?.onRunCompleted) {
     handlers.onRunCompleted(event)
   }
@@ -398,6 +415,7 @@ function globalRunFailedHandler(event: RunEvent): void {
   if (!sid) return
 
   const handlers = sessionEventHandlers.get(sid)
+  if (rememberSettledRun(event)) return
   if (handlers?.onRunFailed) {
     handlers.onRunFailed(event)
   }
@@ -869,6 +887,7 @@ export function connectChatRun(requestedProfile?: string | null, transport: Chat
 }
 
 export function disconnectChatRun(): void {
+  settledRunKeys.clear()
   if (chatRunSocket) {
     chatRunSocket.disconnect()
     chatRunSocket = null

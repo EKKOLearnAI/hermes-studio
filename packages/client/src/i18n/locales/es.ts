@@ -820,6 +820,16 @@ export default {
 
   // Chat
   chat: {
+    runFailure: {
+      "title": "La respuesta se detuvo inesperadamente",
+      "unavailable": "El proveedor no pudo completar la respuesta. La respuesta parcial se conserva arriba.",
+      "timeout": "La solicitud agotó el tiempo de espera antes de terminar la respuesta.",
+      "authentication": "El proveedor rechazó la autenticación o el acceso.",
+      "rate_limit": "Se alcanzó el límite de solicitudes del proveedor.",
+      "unknown": "La ejecución falló, pero no hay un motivo específico que se pueda mostrar de forma segura.",
+      "details": "Detalles seguros",
+      "privacy": "No se muestran respuestas privadas del proveedor ni datos de la solicitud."
+},
     contextRemaining: 'restante',
     contextClickToEdit: 'Haz clic para editar la longitud del contexto',
     contextEditTitle: 'Editar longitud del contexto',

@@ -7,6 +7,7 @@ const getSystemPromptMock = vi.fn()
 const getSessionMock = vi.fn()
 const createSessionMock = vi.fn()
 const addMessageMock = vi.fn()
+const persistRunFailureMock = vi.fn((_sid, runMarker) => ({ id: 'failure-1', runMarker, code: 'timeout' }))
 const updateSessionMock = vi.fn()
 const updateSessionStatsMock = vi.fn()
 const updateUsageMock = vi.fn()
@@ -60,6 +61,7 @@ vi.mock('../../packages/server/src/modules/studio/repositories/session-store', (
   getSession: getSessionMock,
   createSession: createSessionMock,
   addMessage: addMessageMock,
+  persistRunFailure: persistRunFailureMock,
   updateSession: updateSessionMock,
   updateSessionStats: updateSessionStatsMock,
 }))
@@ -626,6 +628,30 @@ describe('bridge run final context usage', () => {
       isEstimated: false,
     }))
     expect(updateUsageMock).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['terminal', 'exception', 'setup', 'stop'])('handles live %s failure lifecycle safely', async (kind) => {
+    const emit = vi.fn()
+    const state = makeState()
+    const sessionMap = new Map([['session-1', state]])
+    const bridge = {
+      chat: vi.fn(async () => { if (kind === 'setup') throw new Error('Connection timed out'); return { run_id: 'run-1' } }),
+      contextEstimate: vi.fn(async () => ({ fixed_context_tokens: 0 })),
+      streamOutput: vi.fn(async function* () {
+        if (kind === 'stop') state.isAborting = true
+        if (kind !== 'terminal') throw new Error('Connection timed out')
+        yield { run_id: 'run-1', done: true, status: 'complete', events: [], result: { completed: true, error: 'Connection timed out', final_response: 'I will check.' } }
+      }),
+    } as any
+    const { handleBridgeRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-bridge-run')
+    await handleBridgeRun(makeNamespace(emit), makeSocket(), { input: 'hello', session_id: 'session-1' }, 'default', sessionMap, bridge, false, vi.fn(), vi.fn())
+    if (kind === 'stop') {
+      expect(persistRunFailureMock).not.toHaveBeenCalled()
+      expect(emit.mock.calls.some(([event]) => event === 'run.failed')).toBe(false)
+    } else {
+      expect(persistRunFailureMock).toHaveBeenCalledWith('session-1', kind === 'setup' ? expect.stringMatching(/^cli_run_/) : 'run-1', 'Connection timed out')
+      expect(emit).toHaveBeenCalledWith('run.failed', expect.objectContaining({ failure: expect.objectContaining({ code: 'timeout' }) }))
+    }
   })
 
   it('does not synthesize non-moa assistant output from result.final_response', async () => {
@@ -1767,7 +1793,7 @@ describe('bridge run final context usage', () => {
       contextTokens: 54321,
     }))
     expect(emit).toHaveBeenCalledWith('run.failed', expect.objectContaining({
-      error: 'bridge timeout',
+      failure: expect.objectContaining({ code: 'timeout' }),
       inputTokens: 11,
       outputTokens: 7,
       contextTokens: 54321,
@@ -2020,7 +2046,7 @@ describe('bridge run final context usage', () => {
     )
     expect(emit).toHaveBeenCalledWith('run.failed', expect.objectContaining({
       delegation_id: 'delegation-after-restart',
-      error: expect.stringContaining('origin context is unavailable'),
+      failure: expect.objectContaining({ code: 'timeout', runMarker: expect.stringMatching(/^cli_run_/) }),
     }))
   })
 })

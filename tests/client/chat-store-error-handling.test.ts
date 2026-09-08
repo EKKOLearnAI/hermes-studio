@@ -105,6 +105,42 @@ describe('chat store error handling - #1644', () => {
     })
   })
 
+  it.each(['正在写 PRD', ''])('keeps partial %s and deduplicates durable terminal failures on replay', async (partial) => {
+    const store = useChatStore()
+    const session = makeSession('session-1')
+    store.sessions = [session]
+    store.activeSessionId = session.id
+    store.activeSession = session
+    await store.sendMessage('write a PRD')
+    const onEvent = chatApi.startRunViaSocket.mock.calls[0][1] as (event: any) => void
+    onEvent({ event: 'run.started', session_id: session.id, run_id: 'run-1' })
+    if (partial) onEvent({ event: 'message.delta', session_id: session.id, run_id: 'run-1', delta: partial, output: partial })
+    const failure = { id: 'failure-1', runMarker: 'run-1', code: 'unavailable', status: 503 }
+    const event = { event: 'run.failed', session_id: session.id, run_id: 'run-1', failure, error: 'safe fallback' }
+    onEvent(event)
+    onEvent({ ...event })
+    const messages = store.activeSession!.messages
+    expect(messages.filter((m: any) => m.failure)).toHaveLength(1)
+    expect((messages.find((m: any) => m.failure) as any).failure).toEqual(failure)
+    if (partial) expect(messages.some(m => m.content === partial)).toBe(true)
+    expect(messages.every(m => !m.isStreaming)).toBe(true)
+  })
+
+  it('maps persisted UI-only failures when reopening a session', async () => {
+    const store = useChatStore()
+    const session = makeSession('session-1')
+    store.sessions = [session]
+    chatApi.resumeSession.mockImplementation((sessionId, callback) => {
+      callback({ session_id: sessionId, isWorking: false, events: [], messages: [
+        { id: 1, role: 'assistant', content: '正在写 PRD', timestamp: 1 },
+        { id: 2, role: 'run_failure', content: JSON.stringify({ code: 'timeout' }), run_marker: 'run-1', timestamp: 2 },
+      ] })
+    })
+    await store.switchSession(session.id)
+    expect((store.activeSession!.messages.find((m: any) => m.failure) as any)?.failure).toEqual({ id: '2', runMarker: 'run-1', code: 'timeout' })
+    expect(store.activeSession!.messages[0].content).toBe('正在写 PRD')
+  })
+
   it('primes approval sound on direct send when completion sound is disabled', async () => {
     const store = useChatStore()
     const settingsStore = useSettingsStore()
@@ -303,7 +339,7 @@ describe('chat store error handling - #1644', () => {
     expect(errorMessage?.content).toBe('Error: Socket disconnected')
   })
 
-  it('overwrites empty streaming message when run.failed fires (no substantial content)', async () => {
+  it('preserves short partial text when run.failed fires', async () => {
     const store = useChatStore()
     const session = makeSession('session-1')
     store.sessions = [session]
@@ -337,8 +373,9 @@ describe('chat store error handling - #1644', () => {
     const msgs = store.activeSession?.messages || []
     const assistantMsg = msgs.find((m: Message) => m.role === 'assistant')
     expect(assistantMsg).toBeDefined()
-    expect(assistantMsg?.content).toBe('Error: Something went wrong')
-    expect(assistantMsg?.systemType).toBe('error')
+    expect(assistantMsg?.content).toBe('Hi')
+    expect(assistantMsg?.systemType).toBeUndefined()
+    expect(msgs.find(m => m.systemType === 'error')?.content).toBe('Error: Something went wrong')
     expect(assistantMsg?.isStreaming).toBe(false)
   })
 

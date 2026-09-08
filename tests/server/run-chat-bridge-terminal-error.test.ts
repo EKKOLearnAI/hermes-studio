@@ -3,6 +3,14 @@ import { describe, expect, it } from 'vitest'
 import { bridgeTerminalError } from '../../packages/server/src/modules/studio/services/chat-run/handle-bridge-run'
 
 describe('bridge terminal error detection', () => {
+  it.each(['error', 'exception'])('honors an explicit generic result %s even with completed true', field => {
+    expect(bridgeTerminalError({ status: 'complete', result: { completed: true, [field]: 'Connection timed out', final_response: 'I will check.' } } as any)).toBe('Connection timed out')
+  })
+
+  it('does not classify an explicit interruption as failure', () => {
+    expect(bridgeTerminalError({ status: 'complete', result: { interrupted: true, completed: false, error: 'Operation interrupted' } } as any)).toBeNull()
+  })
+
   it('uses bridge status errors directly', () => {
     expect(bridgeTerminalError({
       status: 'error',

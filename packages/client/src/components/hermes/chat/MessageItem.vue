@@ -1007,6 +1007,15 @@ onBeforeUnmount(() => {
         </div>
       </Transition>
     </template>
+    <div v-else-if="message.failure" class="run-failure-notice" role="note">
+      <strong>{{ t('chat.runFailure.title') }}</strong>
+      <p>{{ t(`chat.runFailure.${message.failure.code}`) }}</p>
+      <details>
+        <summary>{{ t('chat.runFailure.details') }}</summary>
+        <p v-if="message.failure.status">HTTP {{ message.failure.status }}</p>
+        <p>{{ t('chat.runFailure.privacy') }}</p>
+      </details>
+    </div>
     <template v-else>
       <div class="msg-body">
         <div class="msg-content" :class="message.role">
@@ -1323,6 +1332,21 @@ onBeforeUnmount(() => {
 
 <style scoped lang="scss">
 @use "@/styles/variables" as *;
+.run-failure-notice {
+  width: 100%;
+  padding: 14px 16px;
+  border: 1px solid var(--error-color, #c65b55);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--error-color, #c65b55) 7%, transparent);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  strong { font-weight: 600; }
+  p { margin: 5px 0; }
+  details { margin-top: 8px; color: var(--text-secondary); }
+  summary { cursor: pointer; width: fit-content; }
+  summary:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+}
 
 .message {
   display: flex;

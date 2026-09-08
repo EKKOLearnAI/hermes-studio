@@ -820,6 +820,16 @@ export default {
 
   // チャット
   chat: {
+    runFailure: {
+      "title": "応答が予期せず停止しました",
+      "unavailable": "プロバイダーが応答を完了できませんでした。途中の応答は上に保持されています。",
+      "timeout": "応答が完了する前にリクエストがタイムアウトしました。",
+      "authentication": "プロバイダーが認証またはアクセスを拒否しました。",
+      "rate_limit": "プロバイダーのレート制限に達しました。",
+      "unknown": "実行に失敗しましたが、安全に表示できる具体的な理由はありません。",
+      "details": "安全な詳細",
+      "privacy": "非公開の上流応答やリクエストデータは表示されません。"
+},
     contextRemaining: '残り',
     contextClickToEdit: 'クリックしてコンテキスト長を編集',
     contextEditTitle: 'コンテキスト長を編集',

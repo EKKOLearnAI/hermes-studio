@@ -841,6 +841,16 @@ export default {
 
   // 对话
   chat: {
+    runFailure: {
+      "title": "回复意外中断",
+      "unavailable": "服务商未能完成本次回复。已生成的内容保留在上方。",
+      "timeout": "请求超时，回复未完成。",
+      "authentication": "服务商拒绝了身份验证或访问请求。",
+      "rate_limit": "已触发服务商的请求频率限制。",
+      "unknown": "运行失败，暂无可安全展示的具体原因。",
+      "details": "安全详情",
+      "privacy": "不展示上游私密响应及请求数据。"
+},
     contextRemaining: '剩余',
     contextClickToEdit: '点击编辑上下文长度',
     contextEditTitle: '编辑上下文长度',
