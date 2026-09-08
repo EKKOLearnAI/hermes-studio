@@ -8,7 +8,7 @@ describe('user avatar storage and controller', () => {
     vi.stubEnv('AUTH_JWT_SECRET', 'test-secret')
     const { DatabaseSync } = await import('node:sqlite')
     db = new DatabaseSync(':memory:')
-    vi.doMock('../../packages/server/src/db/index', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
       getDb: () => db,
       getStoragePath: () => ':memory:',
     }))
@@ -17,19 +17,19 @@ describe('user avatar storage and controller', () => {
   afterEach(() => {
     db?.close()
     db = null
-    vi.doUnmock('../../packages/server/src/db/index')
-    vi.doUnmock('../../packages/server/src/services/hermes/hermes-profile')
+    vi.doUnmock('../../packages/server/src/modules/studio/infrastructure/database/index')
+    vi.doUnmock('../../packages/server/src/modules/studio/public/profile-config')
     vi.unstubAllEnvs()
     vi.resetModules()
   })
 
   async function initUsers() {
-    const schemas = await import('../../packages/server/src/db/hermes/schemas')
+    const schemas = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
     schemas.initAllHermesTables()
     return {
       schemas,
-      users: await import('../../packages/server/src/db/hermes/users-store'),
-      ctrl: await import('../../packages/server/src/controllers/auth'),
+      users: await import('../../packages/server/src/modules/studio/repositories/users-store'),
+      ctrl: await import('../../packages/server/src/modules/studio/controllers/auth'),
     }
   }
 

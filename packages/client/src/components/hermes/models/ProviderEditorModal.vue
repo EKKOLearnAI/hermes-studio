@@ -15,11 +15,11 @@ import {
 import { useI18n } from 'vue-i18n'
 import type {
   AvailableModelGroup,
-  ProviderApiMode,
   ProviderEditableField,
   ProviderEditorDetail,
   ProviderEditorPatch,
 } from '@/api/hermes/system'
+import type { ProviderApiMode } from '@/api/studio/provider-api-mode'
 import * as systemApi from '@/api/hermes/system'
 import { useModelsStore } from '@/stores/hermes/models'
 

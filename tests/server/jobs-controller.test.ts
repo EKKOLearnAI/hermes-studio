@@ -11,7 +11,7 @@ const testState = vi.hoisted(() => ({
   resolvedProfiles: [] as string[],
 }))
 
-vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/profiles/profile', () => ({
   getActiveProfileName: () => 'default',
   getProfileDir: (profile: string) => {
     testState.resolvedProfiles.push(profile)
@@ -19,7 +19,7 @@ vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
   },
 }))
 
-vi.mock('../../packages/server/src/services/hermes/hermes-path', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/runtime/path', () => ({
   getHermesBin: () => '/fake/bin/hermes',
 }))
 
@@ -31,7 +31,7 @@ vi.mock('child_process', () => ({
 const mockFetch = vi.fn()
 vi.stubGlobal('fetch', mockFetch)
 
-import { create, deliveryTargets, pause, remove, resume, run as runJob, update } from '../../packages/server/src/controllers/hermes/jobs'
+import { create, deliveryTargets, pause, remove, resume, run as runJob, update } from '../../packages/server/src/modules/hermes/controllers/jobs'
 
 function createMockCtx(overrides: Record<string, any> = {}) {
   const ctx: any = {

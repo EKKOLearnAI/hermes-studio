@@ -11,6 +11,7 @@ const fetchSkillsMock = vi.hoisted(() => vi.fn())
 const fetchSkillBundlesMock = vi.hoisted(() => vi.fn())
 const deleteSkillBundleApiMock = vi.hoisted(() => vi.fn())
 const dialogWarningMock = vi.hoisted(() => vi.fn())
+const extractRepresentativeVideoFramesMock = vi.hoisted(() => vi.fn())
 
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (key: string) => key }),
@@ -45,7 +46,7 @@ vi.mock('naive-ui', () => ({
   useDialog: () => ({ warning: dialogWarningMock }),
 }))
 
-vi.mock('@/api/hermes/sessions', () => ({
+vi.mock('@/api/studio/sessions', () => ({
   fetchContextLength: vi.fn().mockResolvedValue(256000),
   setSessionReasoningEffort: vi.fn().mockResolvedValue(true),
 }))
@@ -76,10 +77,19 @@ vi.mock('@/composables/useToolTraceVisibility', () => ({
   useToolTraceVisibility: () => ({ toolTraceVisible: { value: true }, toggleToolTraceVisible: vi.fn() }),
 }))
 
+vi.mock('@/utils/video-frame-extraction', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@/utils/video-frame-extraction')>()
+  return {
+    ...original,
+    extractRepresentativeVideoFrames: extractRepresentativeVideoFramesMock,
+  }
+})
+
 function mountForSession(
   sessionId: string,
   sessionOverrides: Partial<ReturnType<typeof useChatStore>['sessions'][number]> = {},
   displayOverrides: Record<string, any> = {},
+  componentProps: { initialText?: string; persistDraft?: boolean } = {},
 ) {
   const pinia = createTestingPinia({ stubActions: false, createSpy: vi.fn })
   const chatStore = useChatStore()
@@ -90,7 +100,7 @@ function mountForSession(
   chatStore.activeSessionId = sessionId
   chatStore.activeSession = chatStore.sessions[0]
   settingsStore.display = displayOverrides
-  return mount(ChatInput, { global: { plugins: [pinia] } })
+  return mount(ChatInput, { props: componentProps, global: { plugins: [pinia] } })
 }
 
 describe('ChatInput draft persistence', () => {
@@ -104,6 +114,8 @@ describe('ChatInput draft persistence', () => {
     deleteSkillBundleApiMock.mockReset()
     deleteSkillBundleApiMock.mockResolvedValue(undefined)
     dialogWarningMock.mockReset()
+    extractRepresentativeVideoFramesMock.mockReset()
+    extractRepresentativeVideoFramesMock.mockResolvedValue([])
     Object.defineProperty(URL, 'createObjectURL', {
       configurable: true,
       value: vi.fn(() => 'blob:chat-attachment'),
@@ -130,6 +142,65 @@ describe('ChatInput draft persistence', () => {
 
     expect(paste.defaultPrevented).toBe(true)
     expect(wrapper.get('.attachment-file').text()).toContain('notes.txt')
+  })
+
+  it('shows the full uploaded image in a lightbox before sending', async () => {
+    const wrapper = mountForSession('session-image-preview')
+    const image = new File(['image'], 'wide-screenshot.png', { type: 'image/png' })
+    const input = wrapper.get('input[type="file"]')
+    Object.defineProperty(input.element, 'files', { configurable: true, value: [image] })
+
+    await input.trigger('change')
+    await nextTick()
+
+    const thumb = wrapper.get('.attachment-thumb')
+    expect(thumb.attributes('src')).toBe('blob:chat-attachment')
+    expect(wrapper.get('.attachment-thumb-button').attributes('aria-label')).toBe('wide-screenshot.png')
+
+    await wrapper.get('.attachment-thumb-button').trigger('click')
+    await nextTick()
+
+    const lightbox = document.body.querySelector('.image-preview-overlay')
+    expect(lightbox).not.toBeNull()
+    expect(lightbox?.querySelector('img')?.getAttribute('src')).toBe('blob:chat-attachment')
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await nextTick()
+    expect(document.body.querySelector('.image-preview-overlay')).toBeNull()
+  })
+
+  it('sends extracted video frames to the model without showing them as separate attachments', async () => {
+    const wrapper = mountForSession('session-video')
+    const chatStore = useChatStore()
+    const sendMessage = vi.spyOn(chatStore, 'sendMessage').mockResolvedValue(undefined)
+    const video = new File(['video'], 'demo.mp4', { type: 'video/mp4' })
+    const frame = new File(['frame'], 'demo-video-frame-01.jpg', { type: 'image/jpeg' })
+    let resolveFrames!: (frames: File[]) => void
+    extractRepresentativeVideoFramesMock.mockReturnValue(new Promise<File[]>((resolve) => {
+      resolveFrames = resolve
+    }))
+    const input = wrapper.get('input[type="file"]')
+    Object.defineProperty(input.element, 'files', { configurable: true, value: [video] })
+
+    await input.trigger('change')
+    await nextTick()
+
+    expect(wrapper.findAll('.attachment-preview')).toHaveLength(1)
+    expect(wrapper.get('.attachment-preview').text()).toContain('demo.mp4')
+
+    await wrapper.get('.send-button').trigger('click')
+    expect(sendMessage).not.toHaveBeenCalled()
+    resolveFrames([frame])
+    await flushPromises()
+
+    expect(sendMessage).toHaveBeenCalledWith('', [
+      expect.objectContaining({ name: 'demo.mp4', type: 'video/mp4' }),
+      expect.objectContaining({
+        name: 'demo-video-frame-01.jpg',
+        type: 'image/jpeg',
+        videoFrameFor: expect.any(String),
+      }),
+    ])
   })
 
   it('restores unsent text for the active session after the chat view is remounted', async () => {
@@ -166,6 +237,25 @@ describe('ChatInput draft persistence', () => {
     const remountedA = mountForSession('session-a')
     await nextTick()
     expect((remountedA.get('textarea').element as HTMLTextAreaElement).value).toBe('draft for session a')
+  })
+
+  it('prefills a transient help prompt without overwriting the session draft', async () => {
+    localStorage.setItem('hermes_chat_input_drafts_v1', JSON.stringify({
+      'session-help': 'existing user draft',
+    }))
+    const wrapper = mountForSession('session-help', {}, {}, {
+      initialText: 'diagnose this installation error',
+      persistDraft: false,
+    })
+    await nextTick()
+
+    expect((wrapper.get('textarea').element as HTMLTextAreaElement).value)
+      .toBe('diagnose this installation error')
+    await wrapper.get('textarea').setValue('edited help prompt')
+    await nextTick()
+
+    expect(JSON.parse(localStorage.getItem('hermes_chat_input_drafts_v1') || '{}'))
+      .toEqual({ 'session-help': 'existing user draft' })
   })
 
   it('shows and cancels the active session message reference', async () => {
@@ -245,6 +335,7 @@ describe('ChatInput draft persistence', () => {
       source: 'coding_agent',
       agent: 'codex',
       codingAgentId: 'codex',
+      codingAgentMode: 'scoped',
     })
     await nextTick()
 
@@ -252,6 +343,19 @@ describe('ChatInput draft persistence', () => {
     expect(wrapper.find('.n-slider-stub').exists()).toBe(true)
     expect(wrapper.get('.n-slider-stub').attributes('min')).toBe('0')
     expect(wrapper.get('.n-slider-stub').attributes('max')).toBe('7')
+  })
+
+  it('hides the reasoning effort selector for global coding-agent sessions', async () => {
+    const wrapper = mountForSession('session-global-codex', {
+      source: 'coding_agent',
+      agent: 'codex',
+      codingAgentId: 'codex',
+      codingAgentMode: 'global',
+    })
+    await nextTick()
+
+    expect(wrapper.find('.reasoning-effort-button').exists()).toBe(false)
+    expect(wrapper.find('.n-slider-stub').exists()).toBe(false)
   })
 
   it('hides the reasoning effort selector for MoA sessions', async () => {

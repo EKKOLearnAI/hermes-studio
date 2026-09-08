@@ -7,12 +7,16 @@ import type {
 } from './types'
 import { createBrowserTools } from './browser'
 import { createClarificationToolProvider } from './clarify'
-import { CodeExecTool } from './code-exec'
+import { CodeExecTool, type CodeExecToolOptions } from './code-exec'
 import { createDelegationTools } from './delegation'
 import { createFileTools } from './files'
+import { createImageTools } from './images'
 import { createMcpToolProvider } from './mcp'
+import { createRecoveryTools } from './recovery'
 import { createSkillTools } from './skills'
 import { createTerminalTools } from './terminal'
+import type { EkkoExternalSkillDirectory } from '../skills/external-directories'
+import type { EkkoRecoveryService } from '../recovery'
 
 export class AgentToolRegistry {
   private readonly tools = new Map<string, AgentTool>()
@@ -100,23 +104,36 @@ export class AgentToolRegistry {
 
 export interface DefaultToolRegistryOptions {
   skillDirectory?: string
+  externalSkillDirectories?: EkkoExternalSkillDirectory[]
+  disabledSkillNames?: string[]
   authorizer?: AgentToolAuthorizer
+  executionTimeoutMs?: number
+  codeExec?: (CodeExecToolOptions & { enabled?: boolean }) | false
+  recovery?: EkkoRecoveryService
 }
 
 export function createDefaultToolRegistry(options: DefaultToolRegistryOptions = {}): AgentToolRegistry {
   const registry = new AgentToolRegistry(options.authorizer)
   for (const tool of [
     ...createFileTools(),
-    ...createTerminalTools(),
+    ...createImageTools(),
+    ...createTerminalTools({ timeoutMs: options.executionTimeoutMs }),
     ...createBrowserTools(),
     ...createDelegationTools(),
-    ...createSkillTools(options.skillDirectory),
+    ...(options.recovery ? createRecoveryTools(options.recovery) : []),
+    ...createSkillTools(options.skillDirectory, {
+      externalSkillDirectories: options.externalSkillDirectories,
+      disabledSkillNames: options.disabledSkillNames,
+    }),
   ]) {
     registry.register(tool)
   }
-  registry.register(new CodeExecTool({
-    dispatch: (name, input, context) => registry.execute(name, input, context),
-  }))
+  if (options.codeExec !== false && options.codeExec?.enabled !== false) {
+    registry.register(new CodeExecTool({
+      ...options.codeExec,
+      dispatch: (name, input, context) => registry.execute(name, input, context),
+    }))
+  }
   registry.registerProvider(createClarificationToolProvider())
   registry.registerProvider(createMcpToolProvider())
   return registry

@@ -9,7 +9,7 @@ import {
   listSkillBundles,
   SkillBundleConflictError,
   SkillBundleValidationError,
-} from '../../packages/server/src/services/hermes/skill-bundles'
+} from '../../packages/server/src/modules/hermes/services/skill-bundles/skill-bundles'
 
 describe('skill bundle service', () => {
   let root = ''

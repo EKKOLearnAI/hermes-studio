@@ -23,18 +23,18 @@ const compressorCompressMock = vi.fn()
 const readConfigYamlForProfileMock = vi.fn()
 const compressorConstructorMock = vi.fn()
 
-vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/session-store', () => ({
   getSessionDetail: getSessionDetailMock,
   getSession: getSessionMock,
   getSessionContextMessages: getSessionContextMessagesMock,
   getSessionContextMessage: getSessionContextMessageMock,
 }))
 
-vi.mock('../../packages/server/src/db/hermes/compression-snapshot', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/compression-snapshot', () => ({
   getCompressionSnapshot: getCompressionSnapshotMock,
 }))
 
-vi.mock('../../packages/server/src/lib/context-compressor', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/context-compressor', () => ({
   SUMMARY_PREFIX: '[Previous context summary]',
   ChatContextCompressor: class {
     constructor(opts?: any) {
@@ -44,15 +44,15 @@ vi.mock('../../packages/server/src/lib/context-compressor', () => ({
   },
 }))
 
-vi.mock('../../packages/server/src/services/hermes/model-context', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/provider-runtime', () => ({
   getModelContextLength: getModelContextLengthMock,
 }))
 
-vi.mock('../../packages/server/src/services/config-helpers', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/profile-config', () => ({
   readConfigYamlForProfile: readConfigYamlForProfileMock,
 }))
 
-vi.mock('../../packages/server/src/services/logger', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/logging', () => ({
   logger: {
     info: vi.fn(),
     warn: vi.fn(),
@@ -67,13 +67,13 @@ vi.mock('../../packages/server/src/services/logger', () => ({
   },
 }))
 
-vi.mock('../../packages/server/src/services/hermes/run-chat/usage', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/chat-run/usage', () => ({
   calcAndUpdateUsage: calcAndUpdateUsageMock,
   estimateUsageTokensFromMessages: estimateUsageTokensFromMessagesMock,
   updateMessageContextTokenUsage: updateMessageContextTokenUsageMock,
 }))
 
-vi.mock('../../packages/server/src/services/hermes/run-chat/message-format', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/chat-run/message-format', () => ({
   isAssistantMessageSendable: vi.fn(() => true),
 }))
 
@@ -141,7 +141,7 @@ describe('run chat compression trigger', () => {
       ],
     })
 
-    const { buildCompressedHistory } = await import('../../packages/server/src/services/hermes/run-chat/compression')
+    const { buildCompressedHistory } = await import('../../packages/server/src/modules/studio/services/chat-run/compression')
     const history = await buildCompressedHistory(
       'session-1',
       'default',
@@ -169,7 +169,7 @@ describe('run chat compression trigger', () => {
       ],
     })
 
-    const { buildCompressedHistory } = await import('../../packages/server/src/services/hermes/run-chat/compression')
+    const { buildCompressedHistory } = await import('../../packages/server/src/modules/studio/services/chat-run/compression')
     const history = await buildCompressedHistory(
       'session-1',
       'default',
@@ -220,7 +220,7 @@ describe('run chat compression trigger', () => {
     calcAndUpdateUsageMock.mockResolvedValue({ inputTokens: 100, outputTokens: 100 })
     estimateUsageTokensFromMessagesMock.mockReturnValue({ inputTokens: 100, outputTokens: 100 })
 
-    const { buildCompressedHistory } = await import('../../packages/server/src/services/hermes/run-chat/compression')
+    const { buildCompressedHistory } = await import('../../packages/server/src/modules/studio/services/chat-run/compression')
     const history = await buildCompressedHistory(
       'session-1',
       'default',
@@ -270,7 +270,7 @@ describe('run chat compression trigger', () => {
       ],
     })
 
-    const { buildDbHistory } = await import('../../packages/server/src/services/hermes/run-chat/compression')
+    const { buildDbHistory } = await import('../../packages/server/src/modules/studio/services/chat-run/compression')
     await expect(buildDbHistory('session-1')).resolves.toEqual([
       { role: 'user', content: 'start' },
       { role: 'assistant', content: 'final answer' },
@@ -294,7 +294,7 @@ describe('run chat compression trigger', () => {
     }
     getSessionDetailMock.mockReturnValue(detail)
 
-    const { buildDbHistory } = await import('../../packages/server/src/services/hermes/run-chat/compression')
+    const { buildDbHistory } = await import('../../packages/server/src/modules/studio/services/chat-run/compression')
     const history = await buildDbHistory('session-1')
     const projected = String(history[0]?.content || '')
 
@@ -332,7 +332,7 @@ describe('run chat compression trigger', () => {
     }))
     const contextTokenEstimator = vi.fn(async (_messages: any[], messageTokens: number) => messageTokens)
 
-    const { buildCompressedHistory } = await import('../../packages/server/src/services/hermes/run-chat/compression')
+    const { buildCompressedHistory } = await import('../../packages/server/src/modules/studio/services/chat-run/compression')
     const history = await buildCompressedHistory(
       'session-1',
       'default',
@@ -370,7 +370,7 @@ describe('run chat compression trigger', () => {
     }))
     getSessionDetailMock.mockReturnValue({ messages })
 
-    const { buildCompressedHistory } = await import('../../packages/server/src/services/hermes/run-chat/compression')
+    const { buildCompressedHistory } = await import('../../packages/server/src/modules/studio/services/chat-run/compression')
     const history = await buildCompressedHistory(
       'session-1',
       'default',
@@ -416,7 +416,7 @@ describe('run chat compression trigger', () => {
       },
     })
 
-    const { buildCompressedHistory } = await import('../../packages/server/src/services/hermes/run-chat/compression')
+    const { buildCompressedHistory } = await import('../../packages/server/src/modules/studio/services/chat-run/compression')
     const history = await buildCompressedHistory(
       'session-1',
       'default',
@@ -453,7 +453,7 @@ describe('run chat compression trigger', () => {
     })
     const state = { messages: [], isWorking: true, events: [], queue: [] }
     const sessionMap = new Map([['session-1', state as any]])
-    const { compressHistory } = await import('../../packages/server/src/services/hermes/run-chat/compression')
+    const { compressHistory } = await import('../../packages/server/src/modules/studio/services/chat-run/compression')
 
     await compressHistory(
       Array.from({ length: 5 }, (_, index) => ({
@@ -521,7 +521,7 @@ describe('run chat compression trigger', () => {
       },
     })
 
-    const { buildCompressedHistory } = await import('../../packages/server/src/services/hermes/run-chat/compression')
+    const { buildCompressedHistory } = await import('../../packages/server/src/modules/studio/services/chat-run/compression')
     await buildCompressedHistory(
       'session-1',
       'default',
@@ -580,7 +580,7 @@ describe('run chat compression trigger', () => {
       },
     })
 
-    const { buildCompressedHistory } = await import('../../packages/server/src/services/hermes/run-chat/compression')
+    const { buildCompressedHistory } = await import('../../packages/server/src/modules/studio/services/chat-run/compression')
     await buildCompressedHistory(
       'session-1',
       'default',
@@ -643,7 +643,7 @@ describe('run chat compression trigger', () => {
       },
     })
 
-    const { buildCompressedHistory } = await import('../../packages/server/src/services/hermes/run-chat/compression')
+    const { buildCompressedHistory } = await import('../../packages/server/src/modules/studio/services/chat-run/compression')
     await buildCompressedHistory(
       'session-1',
       'default',
@@ -693,7 +693,7 @@ describe('run chat compression trigger', () => {
     })
 
     const emit = vi.fn()
-    const { buildCompressedHistory } = await import('../../packages/server/src/services/hermes/run-chat/compression')
+    const { buildCompressedHistory } = await import('../../packages/server/src/modules/studio/services/chat-run/compression')
     const history = await buildCompressedHistory(
       'session-1',
       'default',
@@ -734,7 +734,7 @@ describe('run chat compression trigger', () => {
     const emit = vi.fn()
     const contextTokenEstimator = vi.fn(async () => 19_379)
 
-    const { buildCompressedHistory } = await import('../../packages/server/src/services/hermes/run-chat/compression')
+    const { buildCompressedHistory } = await import('../../packages/server/src/modules/studio/services/chat-run/compression')
     const history = await buildCompressedHistory(
       'session-1',
       'default',
@@ -785,7 +785,7 @@ describe('run chat compression trigger', () => {
     const emit = vi.fn()
     const contextTokenEstimator = vi.fn(async (_messages, messageTokens: number) => 20_000 + messageTokens)
 
-    const { buildCompressedHistory } = await import('../../packages/server/src/services/hermes/run-chat/compression')
+    const { buildCompressedHistory } = await import('../../packages/server/src/modules/studio/services/chat-run/compression')
     await buildCompressedHistory(
       'session-1',
       'default',
@@ -837,7 +837,7 @@ describe('run chat compression trigger', () => {
     })
     const emit = vi.fn()
 
-    const { buildCompressedHistory } = await import('../../packages/server/src/services/hermes/run-chat/compression')
+    const { buildCompressedHistory } = await import('../../packages/server/src/modules/studio/services/chat-run/compression')
     await buildCompressedHistory(
       'session-1',
       'default',
@@ -867,7 +867,7 @@ describe('run chat compression trigger', () => {
     getSessionDetailMock.mockReturnValue({ messages: [] })
     const emit = vi.fn()
 
-    const { buildCompressedHistory, ContextWindowTooSmallError } = await import('../../packages/server/src/services/hermes/run-chat/compression')
+    const { buildCompressedHistory, ContextWindowTooSmallError } = await import('../../packages/server/src/modules/studio/services/chat-run/compression')
 
     await expect(buildCompressedHistory(
       'session-1',
@@ -900,7 +900,7 @@ describe('run chat compression trigger', () => {
     getSessionDetailMock.mockReturnValue({ messages })
     calcAndUpdateUsageMock.mockResolvedValue({ inputTokens: 1_000, outputTokens: 0 })
 
-    const { buildCompressedHistory, ContextWindowTooSmallError } = await import('../../packages/server/src/services/hermes/run-chat/compression')
+    const { buildCompressedHistory, ContextWindowTooSmallError } = await import('../../packages/server/src/modules/studio/services/chat-run/compression')
 
     await expect(buildCompressedHistory(
       'session-1',
@@ -946,7 +946,7 @@ describe('run chat compression trigger', () => {
       },
     })
 
-    const { buildCompressedHistory } = await import('../../packages/server/src/services/hermes/run-chat/compression')
+    const { buildCompressedHistory } = await import('../../packages/server/src/modules/studio/services/chat-run/compression')
     await buildCompressedHistory(
       'session-1',
       'default',
@@ -991,7 +991,7 @@ describe('run chat compression trigger', () => {
     })
     estimateUsageTokensFromMessagesMock.mockReturnValue({ inputTokens: 1_000, outputTokens: 0 })
 
-    const { buildCompressedHistory } = await import('../../packages/server/src/services/hermes/run-chat/compression')
+    const { buildCompressedHistory } = await import('../../packages/server/src/modules/studio/services/chat-run/compression')
     const history = await buildCompressedHistory(
       'session-1',
       'default',
@@ -1047,7 +1047,7 @@ describe('run chat compression trigger', () => {
       },
     })
 
-    const { buildCompressedHistory } = await import('../../packages/server/src/services/hermes/run-chat/compression')
+    const { buildCompressedHistory } = await import('../../packages/server/src/modules/studio/services/chat-run/compression')
     const history = await buildCompressedHistory(
       'session-1',
       'default',
@@ -1086,7 +1086,7 @@ describe('run chat compression trigger', () => {
     })
     calcAndUpdateUsageMock.mockResolvedValue({ inputTokens: 180_000, outputTokens: 0 })
 
-    const { buildCompressedHistory } = await import('../../packages/server/src/services/hermes/run-chat/compression')
+    const { buildCompressedHistory } = await import('../../packages/server/src/modules/studio/services/chat-run/compression')
     const history = await buildCompressedHistory(
       'session-1',
       'default',

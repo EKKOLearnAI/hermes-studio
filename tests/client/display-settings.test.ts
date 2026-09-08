@@ -27,6 +27,11 @@ const notificationMock = vi.hoisted(() => ({
   showCompletionNotification: vi.fn(async () => true),
 }))
 
+const messageMock = vi.hoisted(() => ({
+  success: vi.fn(),
+  error: vi.fn(),
+}))
+
 vi.mock('@/utils/completion-notification', () => notificationMock)
 
 vi.mock('@/stores/hermes/settings', () => ({
@@ -69,24 +74,52 @@ vi.mock('naive-ui', async () => {
         })
       },
     }),
+    NSelect: defineComponent({
+      inheritAttrs: false,
+      props: ['value', 'options'],
+      emits: ['update:value'],
+      setup(props, { attrs, emit }) {
+        return () => h('select', {
+          ...attrs,
+          value: props.value,
+          onChange: (event: Event) => emit('update:value', (event.target as HTMLSelectElement).value),
+        }, (props.options as Array<{ label: string; value: string }>).map(option => (
+          h('option', { value: option.value }, option.label)
+        )))
+      },
+    }),
     NButton: defineComponent({
       emits: ['click'],
       setup(_props, { emit, slots }) {
         return () => h('button', { type: 'button', onClick: () => emit('click') }, slots.default?.())
       },
     }),
-    useMessage: () => ({
-      success: vi.fn(),
-      error: vi.fn(),
-    }),
+    useMessage: () => messageMock,
   }
 })
 
 import DisplaySettings from '@/components/hermes/settings/DisplaySettings.vue'
 
+function mountDesktopDisplaySettings() {
+  ;(window as typeof window & { hermesDesktop?: unknown }).hermesDesktop = { isDesktop: true }
+  return mount(DisplaySettings, {
+    global: {
+      stubs: {
+        SettingRow: {
+          props: ['label', 'hint'],
+          template: '<div class="setting-row"><div>{{ label }}</div><div>{{ hint }}</div><slot /></div>',
+        },
+        NSwitch: true,
+      },
+    },
+  })
+}
+
 describe('DisplaySettings', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    window.localStorage.clear()
+    delete (window as typeof window & { hermesDesktop?: unknown }).hermesDesktop
     mockSettingsStore.display.chat_input_height = 160
     mockSettingsStore.display.notify_on_approval = false
     mockSettingsStore.saveSection.mockResolvedValue(undefined)
@@ -191,6 +224,48 @@ describe('DisplaySettings', () => {
 
     expect(wrapper.text()).not.toContain('settings.display.busyInputMode')
     expect(wrapper.text()).not.toContain('settings.display.busyInputModeHint')
+  })
+
+  it('shows and persists the desktop link-opening target', async () => {
+    const wrapper = mountDesktopDisplaySettings()
+
+    expect(wrapper.text()).toContain('settings.display.linkOpenTarget')
+    expect(wrapper.text()).toContain('settings.display.linkOpenTargetHint')
+    const select = wrapper.get('[data-testid="link-open-target-select"]')
+    expect((select.element as HTMLSelectElement).value).toBe('hermes-studio')
+
+    await select.setValue('default-browser')
+
+    expect(window.localStorage.getItem('hermes_link_open_target')).toBe('default-browser')
+  })
+
+  it('keeps the previous link-opening target when local storage is unavailable', async () => {
+    const originalStorage = window.localStorage
+    const blockedStorage = {
+      getItem: vi.fn(() => null),
+      setItem: vi.fn(() => {
+        throw new Error('storage blocked')
+      }),
+    }
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      value: blockedStorage,
+    })
+    const wrapper = mountDesktopDisplaySettings()
+    const select = wrapper.get('[data-testid="link-open-target-select"]')
+
+    try {
+      await select.setValue('default-browser')
+
+      expect(window.localStorage.getItem('hermes_link_open_target')).toBeNull()
+      expect(messageMock.success).not.toHaveBeenCalled()
+      expect(messageMock.error).toHaveBeenCalledWith('settings.saveFailed')
+    } finally {
+      Object.defineProperty(window, 'localStorage', {
+        configurable: true,
+        value: originalStorage,
+      })
+    }
   })
 
   it('saves a clamped chat input height and can reset back to automatic height', async () => {

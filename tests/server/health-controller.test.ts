@@ -45,7 +45,7 @@ async function loadHealthController(options: LoadHealthControllerOptions = {}) {
   }
 
   const getVersion = vi.fn().mockResolvedValue('Hermes Agent v0.11.0\n')
-  vi.doMock('../../packages/server/src/services/hermes/hermes-cli', () => ({
+  vi.doMock('../../packages/server/src/modules/hermes/services/runtime/cli', () => ({
     getVersion,
   }))
 
@@ -61,14 +61,14 @@ async function loadHealthController(options: LoadHealthControllerOptions = {}) {
     ? vi.fn(() => { throw options.managerError })
     : vi.fn(() => ({ checkReadiness, getRuntimeState }))
 
-  vi.doMock('../../packages/server/src/services/hermes/agent-bridge/manager', () => ({
+  vi.doMock('../../packages/server/src/modules/hermes/services/bridge/manager', () => ({
     getAgentBridgeManager,
   }))
-  vi.doMock('../../packages/server/src/services/runtime-environment', () => ({
+  vi.doMock('../../packages/server/src/modules/studio/public/runtime-environment', () => ({
     isDockerContainer: () => options.isDocker === true,
   }))
 
-  const health = await import('../../packages/server/src/controllers/health')
+  const health = await import('../../packages/server/src/bootstrap/health')
 
   return {
     ...health,

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import type { ActivePet } from '@/api/hermes/pets'
+import type { ActivePet } from '@/api/studio/pets'
 
 const mockPetsApi = vi.hoisted(() => ({
   fetchActivePet: vi.fn(),
@@ -9,7 +9,7 @@ const mockPetsApi = vi.hoisted(() => ({
   updateActivePetPreferences: vi.fn(),
 }))
 
-vi.mock('@/api/hermes/pets', () => mockPetsApi)
+vi.mock('@/api/studio/pets', () => mockPetsApi)
 
 import { usePetsStore } from '@/stores/hermes/pets'
 

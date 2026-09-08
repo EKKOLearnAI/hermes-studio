@@ -1,22 +1,23 @@
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   closeGlobalEkkoAgent,
   createGlobalEkkoAgent,
+  getGlobalEkkoAgent,
   GlobalEkkoAgent,
   setupGlobalEkkoAgent,
-} from '../../packages/server/src/services/ekko-agent/manager'
+} from '../../packages/server/src/modules/ekko/services/manager'
 import { EkkoFileLogReader, setupEkkoAgent } from '../../packages/ekko-agent/src'
 import type { EkkoAgentSetup, ModelClient, ModelRequest } from '../../packages/ekko-agent/src'
 
 const getHermesBaseDirMock = vi.hoisted(() => vi.fn())
 
-vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
-  getHermesBaseDir: getHermesBaseDirMock,
-  listProfileNamesFromDisk: vi.fn(() => ['default']),
+vi.mock('../../packages/server/src/modules/studio/public/profile-config', () => ({
+  getProfilesBaseDir: getHermesBaseDirMock,
+  listProfileNames: vi.fn(() => ['default']),
 }))
 
 let baseDirectory = ''
@@ -75,6 +76,10 @@ describe('GlobalEkkoAgent', () => {
     const setup = setupGlobalEkkoAgent({
       baseDirectory,
       profiles: ['default', 'work'],
+      config: {
+        runtime: { maxSteps: 48 },
+        compression: { threshold: 0.65 },
+      },
       env: { NODE_ENV: 'test' },
     })
 
@@ -84,6 +89,88 @@ describe('GlobalEkkoAgent', () => {
     expect(existsSync(join(baseDirectory, '.ekko', 'logs', 'work'))).toBe(true)
     expect(existsSync(join(baseDirectory, '.ekko', 'workspace', 'work'))).toBe(true)
     expect(setup.memory.isEnabled).toBe(true)
+    expect(setup.config.read()).toMatchObject({
+      runtime: { maxSteps: 48 },
+      compression: { threshold: 0.65 },
+    })
+  })
+
+  it('automatically reopens persistent storage after a repaired fallback database', async () => {
+    const ekkoRoot = join(baseDirectory, '.ekko')
+    const databasePath = join(ekkoRoot, 'ekko.db')
+    const initial = setupEkkoAgent({ baseDirectory, env: { NODE_ENV: 'test' } })
+    initial.close()
+    await rm(databasePath)
+    await mkdir(databasePath, { recursive: true })
+    await chmod(ekkoRoot, 0o500)
+
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const degradedSetup = setupGlobalEkkoAgent({
+      baseDirectory,
+      profiles: ['default'],
+      env: { NODE_ENV: 'test' },
+    })
+    const degradedAgent = getGlobalEkkoAgent()
+    const repairClient = modelClient('database repaired automatically')
+
+    try {
+      expect(degradedSetup.database.databasePath).toBe(':memory:')
+      await chmod(ekkoRoot, 0o700)
+      await rm(databasePath, { recursive: true })
+
+      await expect(degradedAgent.run({
+        messages: ['Repair the persistent database.'],
+        modelClient: repairClient,
+      })).resolves.toMatchObject({ output: { content: 'database repaired automatically' } })
+      expect(vi.mocked(repairClient.create).mock.calls[0]?.[0]).toMatchObject({
+        toolChoice: undefined,
+      })
+
+      const recoveredSetup = setupGlobalEkkoAgent()
+      const recoveredAgent = getGlobalEkkoAgent()
+      expect(recoveredSetup).not.toBe(degradedSetup)
+      expect(recoveredAgent).not.toBe(degradedAgent)
+      expect(recoveredSetup.database.databasePath).toBe(databasePath)
+      expect(recoveredSetup.recovery.snapshot()).toMatchObject({
+        status: 'ok',
+        capabilities: {
+          database: {
+            activeStorage: 'persistent',
+            targetReady: true,
+            restartRequired: false,
+          },
+        },
+      })
+
+      await expect(recoveredAgent.run({
+        messages: ['Continue after recovery.'],
+        modelClient: modelClient('persistent again'),
+      })).resolves.toMatchObject({ output: { content: 'persistent again' } })
+      expect(recoveredAgent.status()).toMatchObject({ memoryDatabasePath: databasePath })
+    } finally {
+      await chmod(ekkoRoot, 0o700)
+      warning.mockRestore()
+    }
+  })
+
+  it('accepts a config patch when creating a Studio global agent', () => {
+    const agent = createGlobalEkkoAgent({
+      setup: createTestSetup(),
+      memory: false,
+      config: {
+        compression: {
+          enabled: false,
+          threshold: 0.75,
+          protectLastN: 8,
+        },
+        prompt: { instructions: ['Studio global instruction.'] },
+      },
+    })
+
+    expect(agent.readConfig()).toMatchObject({
+      compression: { enabled: false, threshold: 0.75, protectLastN: 8 },
+      prompt: { instructions: ['Studio global instruction.'] },
+    })
   })
 
   it('is created once and handles repeated runs through the same runtime', async () => {
@@ -100,6 +187,21 @@ describe('GlobalEkkoAgent', () => {
     expect(firstClient.create).toHaveBeenCalledTimes(1)
     expect(secondClient.create).toHaveBeenCalledTimes(1)
     expect(existsSync(join(baseDirectory, '.ekko', 'skills', 'default'))).toBe(true)
+  })
+
+  it('recreates the cached runtime after settings change', async () => {
+    const setup = createTestSetup()
+    const createRuntime = vi.spyOn(setup, 'createRuntime')
+    const agent = createGlobalEkkoAgent({ setup, memory: false })
+
+    await agent.run({ messages: ['first'], modelClient: modelClient('first') })
+    expect(createRuntime).toHaveBeenCalledTimes(1)
+    setup.config.update({ logging: { maxBytes: 2_048 } })
+    expect(agent.refreshRuntime()).toBe('refreshed')
+    await agent.run({ messages: ['second'], modelClient: modelClient('second') })
+
+    expect(createRuntime).toHaveBeenCalledTimes(2)
+    expect(createRuntime.mock.calls[1]?.[0]?.logWriter).toMatchObject({ maxBytes: 2_048 })
   })
 
   it('exposes the runtime-owned boundary interrupt without creating queue policy', async () => {
@@ -139,7 +241,7 @@ describe('GlobalEkkoAgent', () => {
     })
   })
 
-  it('imports Hermes profile skills when the Ekko skills root does not exist', async () => {
+  it('does not import Hermes profile skills when the Ekko skills root does not exist', async () => {
     const hermesRoot = join(baseDirectory, 'hermes')
     await mkdir(join(hermesRoot, 'skills', 'default-skill'), { recursive: true })
     await mkdir(join(hermesRoot, 'profiles', 'work', 'skills', 'work-skill'), { recursive: true })
@@ -148,8 +250,10 @@ describe('GlobalEkkoAgent', () => {
 
     const agent = createTestAgent({ memory: false, profile: 'work' })
     try {
-      expect(existsSync(join(baseDirectory, '.ekko', 'skills', 'default', 'default-skill', 'SKILL.md'))).toBe(true)
-      expect(existsSync(join(baseDirectory, '.ekko', 'skills', 'work', 'work-skill', 'SKILL.md'))).toBe(true)
+      expect(existsSync(join(baseDirectory, '.ekko', 'skills', 'default', 'default-skill'))).toBe(false)
+      expect(existsSync(join(baseDirectory, '.ekko', 'skills', 'work', 'work-skill'))).toBe(false)
+      expect(existsSync(join(hermesRoot, 'skills', 'default-skill', 'SKILL.md'))).toBe(true)
+      expect(existsSync(join(hermesRoot, 'profiles', 'work', 'skills', 'work-skill', 'SKILL.md'))).toBe(true)
     } finally {
       agent.close()
     }

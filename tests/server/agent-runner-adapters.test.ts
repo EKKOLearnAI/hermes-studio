@@ -6,25 +6,27 @@ import {
   responseToolNamespaceForName,
   responsesToAnthropicMessages,
   responsesToOpenAiChat,
+  stripHistoricalResponsesInlineImages,
   truncateResponsesToolOutputs,
-} from '../../packages/server/src/services/coding-agents/shared/adapters/responses'
+} from '../../packages/server/src/modules/coding-agents/protocol/adapters/responses'
 import {
   anthropicToOpenAiChat,
   anthropicToOpenAiResponses,
   openAiResponsesToAnthropicMessage,
   openAiToAnthropicMessage,
-} from '../../packages/server/src/services/coding-agents/shared/adapters/anthropic'
+} from '../../packages/server/src/modules/coding-agents/protocol/adapters/anthropic'
 import {
   openAiChatSseToAnthropicEvents,
   openAiResponsesSseToAnthropicEvents,
   type AnthropicStreamEvent,
-} from '../../packages/server/src/services/coding-agents/shared/adapters/anthropic-stream'
+} from '../../packages/server/src/modules/coding-agents/protocol/adapters/anthropic-stream'
 import {
   anthropicMessagesSseToResponsesEvents,
+  normalizeResponsesSseEvents,
   openAiChatSseToResponsesEvents,
   openAiResponsesSseToResponsesEvents,
   type CanonicalResponsesEvent,
-} from '../../packages/server/src/services/coding-agents/shared/adapters/responses-stream'
+} from '../../packages/server/src/modules/coding-agents/protocol/adapters/responses-stream'
 
 const target = { model: 'test-model' }
 const codexTarget = { model: 'test-model', annotateMcpToolNamespaces: true }
@@ -73,6 +75,69 @@ describe('agent runner Responses adapters', () => {
     expect(Buffer.byteLength(cjkTruncated, 'utf8')).toBeLessThanOrEqual(32 * 1024)
     expect(cjkTruncated).toContain(`original_bytes=${Buffer.byteLength(cjkOutput, 'utf8')}`)
     expect(cjkTruncated.endsWith('TAIL_MARKER')).toBe(true)
+  })
+
+  it('strips every historical inline image while preserving the full current turn', () => {
+    const oldUserImage = 'data:image/png;base64,OLD_USER'
+    const oldToolImage = 'data:image/jpeg;base64,OLD_TOOL'
+    const currentImageA = 'data:image/png;base64,CURRENT_A'
+    const currentImageB = 'data:image/png;base64,CURRENT_B'
+    const currentToolImage = 'data:image/webp;base64,CURRENT_TOOL'
+    const remoteHistoricalImage = 'https://example.com/old.png'
+    const body = {
+      input: [
+        {
+          role: 'user',
+          content: [
+            { type: 'input_text', text: 'old turn' },
+            { type: 'input_image', image_url: oldUserImage },
+            { type: 'input_image', image_url: remoteHistoricalImage },
+          ],
+        },
+        {
+          type: 'function_call_output',
+          call_id: 'old-tool',
+          output: [{ type: 'input_image', image_url: { url: oldToolImage } }],
+        },
+        {
+          role: 'user',
+          content: [
+            { type: 'input_text', text: 'current turn' },
+            { type: 'input_image', image_url: currentImageA },
+            { type: 'input_image', image_url: { url: currentImageB } },
+          ],
+        },
+        {
+          type: 'function_call_output',
+          call_id: 'current-tool',
+          output: [{ type: 'input_image', image_url: currentToolImage }],
+        },
+      ],
+    }
+
+    const sanitized = stripHistoricalResponsesInlineImages(body)
+    const serialized = JSON.stringify(sanitized)
+
+    expect(sanitized).not.toBe(body)
+    expect(serialized).not.toContain(oldUserImage)
+    expect(serialized).not.toContain(oldToolImage)
+    expect(serialized).toContain(remoteHistoricalImage)
+    expect(serialized).toContain(currentImageA)
+    expect(serialized).toContain(currentImageB)
+    expect(serialized).toContain(currentToolImage)
+    expect(serialized.match(/historical inline image omitted before provider request/g)).toHaveLength(2)
+    expect(body.input[0].content[1]).toEqual({ type: 'input_image', image_url: oldUserImage })
+    expect(body.input[1].output[0]).toEqual({ type: 'input_image', image_url: { url: oldToolImage } })
+    expect(sanitized.input[2]).toBe(body.input[2])
+    expect(sanitized.input[3]).toBe(body.input[3])
+  })
+
+  it('does not strip inline images when no current user turn boundary exists', () => {
+    const body = {
+      input: [{ type: 'function_call_output', output: [{ type: 'input_image', image_url: 'data:image/png;base64,ONLY' }] }],
+    }
+
+    expect(stripHistoricalResponsesInlineImages(body)).toBe(body)
   })
 
   it('converts Responses input to OpenAI Chat messages and tools', () => {
@@ -757,7 +822,17 @@ describe('agent runner Responses stream adapters', () => {
 	    expect(events[6].data).toMatchObject({ delta: 'llo', output_index: 1 })
 	    expect(events[7].data).toMatchObject({
 	      output_index: 2,
-	      item: { type: 'function_call', call_id: 'call_1', name: 'lookup' },
+	      item: { type: 'function_call', call_id: 'call_1', name: 'lookup', status: 'in_progress' },
+	    })
+	    expect(events[14].data).toMatchObject({
+	      output_index: 2,
+	      item: {
+	        type: 'function_call',
+	        call_id: 'call_1',
+	        name: 'lookup',
+	        arguments: '{"id":1}',
+	        status: 'completed',
+	      },
 	    })
 	    expect(events[10].data).toMatchObject({
 	      output_index: 0,
@@ -777,7 +852,7 @@ describe('agent runner Responses stream adapters', () => {
 	        output: [
 	          { type: 'reasoning', summary: [{ type: 'summary_text', text: 'think' }] },
 	          { type: 'message', content: [{ type: 'output_text', text: 'hello' }] },
-	          { type: 'function_call', call_id: 'call_1', name: 'lookup', arguments: '{"id":1}' },
+	          { type: 'function_call', call_id: 'call_1', name: 'lookup', arguments: '{"id":1}', status: 'completed' },
         ],
       },
     })
@@ -964,6 +1039,50 @@ describe('agent runner Responses stream adapters', () => {
         data: { type: 'response.output_text.delta', delta: 'hi' },
       },
     ])
+  })
+
+  it('fills fields required by strict Responses stream clients', async () => {
+    const events = await collectEvents(normalizeResponsesSseEvents(openAiResponsesSseToResponsesEvents(encodedChunks([
+      'event: response.created\ndata: {"response":{"id":"resp_strict","object":"response","status":"in_progress","model":"test-model","output":[]}}\n\n',
+      'data: {"type":"response.output_text.delta","delta":"hi"}\n\n',
+      'data: {"type":"response.completed","response":{"id":"resp_strict","object":"response","status":"completed","model":"test-model","output":[]}}\n\n',
+    ]))))
+
+    expect(events.map(event => event.data.sequence_number)).toEqual([0, 1, 2])
+    expect((events[0].data.response as any).created_at).toEqual(expect.any(Number))
+    expect((events[2].data.response as any).created_at).toBe((events[0].data.response as any).created_at)
+  })
+
+  it.each([undefined, null])('fills absent text annotations throughout native Responses streams (%s)', async annotations => {
+    const part = { type: 'output_text', text: 'An image description', ...(annotations === null ? { annotations } : {}) }
+    const item = { type: 'message', id: 'msg_image', role: 'assistant', content: [part] }
+    const frames = [
+      { type: 'response.content_part.added', part },
+      { type: 'response.content_part.done', part },
+      { type: 'response.output_item.added', item },
+      { type: 'response.output_item.done', item },
+      { type: 'response.completed', response: { id: 'resp_image', output: [item] } },
+    ]
+    const events = await collectEvents(normalizeResponsesSseEvents(openAiResponsesSseToResponsesEvents(encodedChunks(
+      frames.map(frame => `data: ${JSON.stringify(frame)}\n\n`),
+    ))))
+    const parts = events.flatMap(({ data }: any) => data.part ? [data.part] : data.item?.content || data.response.output[0].content)
+    expect(parts).toHaveLength(5)
+    for (const result of parts) expect(result).toEqual({ ...part, annotations: [] })
+  })
+
+  it('preserves provider annotations and leaves non-text content unchanged', async () => {
+    const citation = { type: 'url_citation', start_index: 0, end_index: 4, url: 'https://example.com', title: 'Source' }
+    const text = { type: 'output_text', text: 'Look', annotations: [citation] }
+    const refusal = { type: 'refusal', refusal: 'Cannot answer' }
+    const source = {
+      type: 'response.completed',
+      data: { response: { id: 'resp_citation', output: [{ type: 'message', content: [text, refusal] }] } },
+    }
+    const original = structuredClone(source)
+    const events = await collectEvents(normalizeResponsesSseEvents((async function* () { yield source })()))
+    expect((events[0].data.response as any).output[0].content).toEqual([text, refusal])
+    expect(source).toEqual(original)
   })
 })
 

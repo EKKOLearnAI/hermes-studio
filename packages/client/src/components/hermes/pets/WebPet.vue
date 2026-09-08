@@ -6,8 +6,8 @@ import { usePetsStore } from '@/stores/hermes/pets'
 import { usePetStateStore } from '@/stores/hermes/pet-state'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import { desktopBridge, type DesktopWindowBounds } from '@/utils/desktop-bridge'
-import type { ActivePet, WebPetPosition } from '@/api/hermes/pets'
-import type { PetState } from '@/api/hermes/pet-state'
+import type { ActivePet, WebPetPosition } from '@/api/studio/pets'
+import type { PetState } from '@/api/studio/pet-state'
 
 const MIN_SCALE = 0.18
 const MAX_SCALE = 1.2

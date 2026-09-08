@@ -15,7 +15,12 @@ const mockProfilesApi = vi.hoisted(() => ({
   deleteProfileAvatar: vi.fn(),
 }))
 
+const mockAgentStatusApi = vi.hoisted(() => ({
+  fetchAgentStatusSnapshot: vi.fn(),
+}))
+
 vi.mock('@/api/hermes/profiles', () => mockProfilesApi)
+vi.mock('@/api/agent-status', () => mockAgentStatusApi)
 
 import { useProfilesStore } from '@/stores/hermes/profiles'
 
@@ -23,6 +28,52 @@ describe('Profiles Store', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
+    mockAgentStatusApi.fetchAgentStatusSnapshot.mockResolvedValue({
+      revision: 1,
+      updatedAt: new Date(0).toISOString(),
+      agents: [{
+        id: 'hermes',
+        installed: false,
+        source: 'not-installed',
+        path: '',
+        version: '',
+      }],
+    })
+  })
+
+  it('tracks Hermes availability from the server Agent status snapshot', async () => {
+    mockProfilesApi.fetchProfiles.mockResolvedValue([
+      { name: 'default', active: true, model: 'gpt-4', alias: '' },
+    ])
+    mockAgentStatusApi.fetchAgentStatusSnapshot.mockResolvedValue({
+      revision: 2,
+      updatedAt: new Date().toISOString(),
+      agents: [{
+        id: 'hermes',
+        installed: true,
+        source: 'user-cli',
+        path: '/usr/local/bin/hermes',
+        version: '0.20.4',
+      }],
+    })
+
+    const store = useProfilesStore()
+    await store.fetchHermesProfiles()
+
+    expect(store.hermesAvailable).toBe(true)
+  })
+
+  it('keeps profiles usable but hides Hermes-only actions when Agent status fails', async () => {
+    mockProfilesApi.fetchProfiles.mockResolvedValue([
+      { name: 'default', active: true, model: 'gpt-4', alias: '' },
+    ])
+    mockAgentStatusApi.fetchAgentStatusSnapshot.mockRejectedValue(new Error('status unavailable'))
+
+    const store = useProfilesStore()
+    await store.fetchHermesProfiles()
+
+    expect(store.profiles).toHaveLength(1)
+    expect(store.hermesAvailable).toBe(false)
   })
 
   it('fetchProfiles loads profiles and sets active', async () => {

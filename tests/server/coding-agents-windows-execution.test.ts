@@ -24,7 +24,7 @@ vi.mock('child_process', () => ({
   execFile: execState.execFile,
 }))
 
-import { getCodingAgentStatus } from '../../packages/server/src/services/coding-agents'
+import { getCodingAgentStatus } from '../../packages/server/src/bootstrap/coding-agents'
 
 const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
 

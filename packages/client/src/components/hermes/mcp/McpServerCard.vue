@@ -7,6 +7,15 @@ import type { McpServerInfo } from '@/api/hermes/mcp'
 const props = defineProps<{
   server: McpServerInfo
   toolsByServer: Record<string, Array<{ name: string; description?: string }>>
+  readonly?: boolean
+  showManageTools?: boolean
+  showReload?: boolean
+  contextLabel?: string
+  testing?: boolean
+  allowReadonlyToggle?: boolean
+  allowReadonlyRemove?: boolean
+  allowReadonlyEdit?: boolean
+  readonlyToolsView?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -22,11 +31,13 @@ const { t } = useI18n()
 
 function statusClass(server: McpServerInfo) {
   if (server.raw_config.enabled === false) return 'disabled'
+  if (props.testing) return 'testing'
   return server.connected ? 'connected' : 'disconnected'
 }
 
 function statusLabel(server: McpServerInfo) {
   if (server.raw_config.enabled === false) return t('mcp.disabledStatus')
+  if (props.testing) return t('mcp.loading')
   return server.connected ? t('mcp.connectedStatus') : t('mcp.disconnectedStatus')
 }
 
@@ -35,12 +46,20 @@ const MAX_VISIBLE_TOOLS = 20
 </script>
 
 <template>
-  <div class="mcp-card" :class="{ disconnected: !server.connected, disabled: server.raw_config.enabled === false }">
+  <div
+    class="mcp-card"
+    :class="{
+      testing,
+      disconnected: !testing && server.raw_config.enabled !== false && !server.connected,
+      disabled: server.raw_config.enabled === false,
+    }"
+  >
     <!-- 第一行：标题 + 标签 -->
     <div class="card-header">
       <h3 class="server-name">{{ server.name }}</h3>
       <div class="server-badges">
         <span class="type-badge transport">{{ server.transport }}</span>
+        <span v-if="contextLabel" class="type-badge context">{{ contextLabel }}</span>
         <span class="type-badge" :class="statusClass(server)">{{ statusLabel(server) }}</span>
       </div>
     </div>
@@ -80,11 +99,13 @@ const MAX_VISIBLE_TOOLS = 20
     <!-- 底部：按钮 + 开关 -->
     <div class="card-footer">
       <div class="card-actions">
-        <NButton size="tiny" quaternary @click="emit('edit', server)">{{ t('mcp.edit') }}</NButton>
-        <NButton size="tiny" quaternary :disabled="!server.connected" @click="emit('manageTools', server)">{{ t('mcp.manageTools') }}</NButton>
-        <NButton size="tiny" quaternary @click="emit('test', server)">{{ t('mcp.test') }}</NButton>
-        <NButton size="tiny" quaternary @click="emit('reload', server.name)">{{ t('mcp.reload') }}</NButton>
-        <NPopconfirm @positive-click="emit('remove', server)">
+        <NButton v-if="!readonly || allowReadonlyEdit" size="tiny" quaternary @click="emit('edit', server)">{{ t('mcp.edit') }}</NButton>
+        <NButton v-if="showManageTools !== false" size="tiny" quaternary @click="emit('manageTools', server)">
+          {{ readonlyToolsView ? t('mcp.toolList') : t('mcp.manageTools') }}
+        </NButton>
+        <NButton size="tiny" quaternary :loading="testing" @click="emit('test', server)">{{ t('mcp.test') }}</NButton>
+        <NButton v-if="showReload !== false" size="tiny" quaternary @click="emit('reload', server.name)">{{ t('mcp.reload') }}</NButton>
+        <NPopconfirm v-if="!readonly || allowReadonlyRemove" @positive-click="emit('remove', server)">
           <template #trigger>
             <NButton size="tiny" quaternary type="error">{{ t('mcp.remove') }}</NButton>
           </template>
@@ -94,6 +115,7 @@ const MAX_VISIBLE_TOOLS = 20
       <NSwitch
         :value="server.raw_config.enabled !== false"
         size="small"
+        :disabled="readonly && !allowReadonlyToggle"
         @update:value="() => emit('toggleEnabled', server)"
       />
     </div>
@@ -116,6 +138,10 @@ const MAX_VISIBLE_TOOLS = 20
 
   &.disconnected {
     border-color: rgba(var(--error-rgb), 0.3);
+  }
+
+  &.testing {
+    border-color: rgba(var(--accent-primary-rgb), 0.3);
   }
 
   &.disabled {
@@ -166,9 +192,19 @@ const MAX_VISIBLE_TOOLS = 20
     color: $success;
   }
 
+  &.context {
+    background: rgba(var(--accent-primary-rgb), 0.08);
+    color: $text-secondary;
+  }
+
   &.disconnected {
     background: rgba(var(--error-rgb), 0.12);
     color: $error;
+  }
+
+  &.testing {
+    background: rgba(var(--accent-primary-rgb), 0.12);
+    color: $accent-primary;
   }
 
   &.disabled {

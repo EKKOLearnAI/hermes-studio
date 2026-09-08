@@ -2,7 +2,7 @@
 import { ref, onMounted, computed } from 'vue'
 import { NSelect, NButton, NSpin, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
-import { fetchLogFiles, fetchLogs, type LogEntry } from '@/api/hermes/logs'
+import { fetchLogFiles, fetchLogs, type LogEntry } from '@/api/studio/logs'
 
 const { t } = useI18n()
 const message = useMessage()
@@ -85,6 +85,16 @@ async function loadLogs() {
 
 onMounted(async () => {
   logFiles.value = await fetchLogFiles()
+  if (!logFiles.value.some(file => file.name === selectedLog.value)) {
+    selectedLog.value = logFiles.value.find(file => file.name === 'webui')?.name
+      || logFiles.value.find(file => file.name === 'ekko-agent')?.name
+      || logFiles.value[0]?.name
+      || ''
+  }
+  if (!selectedLog.value) {
+    entries.value = []
+    return
+  }
   await loadLogs()
 })
 </script>

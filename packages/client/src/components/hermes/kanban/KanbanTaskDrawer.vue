@@ -10,7 +10,7 @@ import { useFilesStore } from '@/stores/hermes/files'
 import { withDefaultAssignee } from '@/utils/hermes/kanban-assignees'
 import HistoryMessageList from '@/components/hermes/chat/HistoryMessageList.vue'
 import FilePreview from '@/components/hermes/files/FilePreview.vue'
-import { fetchAuthenticatedBlob, saveBlob } from '@/api/hermes/binary-content'
+import { fetchAuthenticatedBlob, saveBlob } from '@/api/studio/binary-content'
 import type { Session, Message } from '@/stores/hermes/chat'
 import type { KanbanAttachment, KanbanTaskDetail } from '@/api/hermes/kanban'
 

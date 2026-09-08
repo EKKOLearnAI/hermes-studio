@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 const issueModelRunJwtMock = vi.hoisted(() => vi.fn(async () => 'model-run-token'))
 const homes: string[] = []
 
-vi.mock('../../packages/server/src/middleware/user-auth', () => ({
+vi.mock('../../packages/server/src/modules/studio/middleware/auth', () => ({
   issueModelRunJwt: issueModelRunJwtMock,
 }))
 
@@ -21,7 +21,7 @@ describe('model run prompt', () => {
     homes.push(home)
     process.env.HERMES_WEB_UI_HOME = home
 
-    const { writeModelRunProfileToken, modelRunProfileTokenPath } = await import('../../packages/server/src/services/hermes/run-chat/model-run-prompt')
+    const { writeModelRunProfileToken, modelRunProfileTokenPath } = await import('../../packages/server/src/modules/studio/services/chat-run/model-run-prompt')
     await writeModelRunProfileToken({ id: 1, username: 'admin', role: 'super_admin' }, 'default')
     const tokenPath = modelRunProfileTokenPath('default')
 
@@ -35,7 +35,7 @@ describe('model run prompt', () => {
     homes.push(home)
     process.env.HERMES_WEB_UI_HOME = home
 
-    const { writeModelRunProfileToken, modelRunProfileTokenPath } = await import('../../packages/server/src/services/hermes/run-chat/model-run-prompt')
+    const { writeModelRunProfileToken, modelRunProfileTokenPath } = await import('../../packages/server/src/modules/studio/services/chat-run/model-run-prompt')
     await writeModelRunProfileToken(undefined, 'research')
 
     expect(existsSync(modelRunProfileTokenPath('research'))).toBe(false)

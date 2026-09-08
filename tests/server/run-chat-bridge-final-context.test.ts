@@ -52,11 +52,11 @@ const startWorkspaceRunCheckpointMock = vi.fn()
 const completeWorkspaceRunCheckpointMock = vi.fn()
 const homes: string[] = []
 
-vi.mock('../../packages/server/src/lib/llm-prompt', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/runs/prompt', () => ({
   getSystemPrompt: getSystemPromptMock,
 }))
 
-vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/session-store', () => ({
   getSession: getSessionMock,
   createSession: createSessionMock,
   addMessage: addMessageMock,
@@ -64,16 +64,16 @@ vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
   updateSessionStats: updateSessionStatsMock,
 }))
 
-vi.mock('../../packages/server/src/db/hermes/usage-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/usage-store', () => ({
   updateUsage: updateUsageMock,
 }))
 
-vi.mock('../../packages/server/src/services/logger', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/logging', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
   bridgeLogger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }))
 
-vi.mock('../../packages/server/src/services/hermes/run-chat/compression', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/chat-run/compression', () => ({
   buildCompressedHistory: buildCompressedHistoryMock,
   buildDbHistory: buildDbHistoryMock,
   buildSnapshotAwareHistory: buildSnapshotAwareHistoryMock,
@@ -83,7 +83,7 @@ vi.mock('../../packages/server/src/services/hermes/run-chat/compression', () => 
   forceCompressBridgeHistory: forceCompressBridgeHistoryMock,
 }))
 
-vi.mock('../../packages/server/src/services/hermes/run-chat/usage', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/chat-run/usage', () => ({
   calcAndUpdateUsage: calcAndUpdateUsageMock,
   estimateUsageTokensFromMessages: estimateUsageTokensFromMessagesMock,
   getCachedBridgeContextOverhead: getCachedBridgeContextOverheadMock,
@@ -92,7 +92,7 @@ vi.mock('../../packages/server/src/services/hermes/run-chat/usage', () => ({
   updateMessageContextTokenUsage: updateMessageContextTokenUsageMock,
 }))
 
-vi.mock('../../packages/server/src/services/hermes/run-chat/bridge-message', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/chat-run/bridge-message', () => ({
   flushBridgePendingToDb: flushBridgePendingToDbMock,
   ensureOpenBridgeAssistantMessage: ensureOpenBridgeAssistantMessageMock,
   syncBridgeReasoningToMessage: syncBridgeReasoningToMessageMock,
@@ -101,20 +101,20 @@ vi.mock('../../packages/server/src/services/hermes/run-chat/bridge-message', () 
   recordBridgeMoaDisplayTool: recordBridgeMoaDisplayToolMock,
 }))
 
-vi.mock('../../packages/server/src/services/hermes/run-chat/model-config', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/chat-run/model-config', () => ({
   resolveBridgeRunModelConfig: resolveBridgeRunModelConfigMock,
 }))
 
-vi.mock('../../packages/server/src/services/hermes/run-chat/workspace-diff-tracker', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/chat-run/workspace-diff-tracker', () => ({
   startWorkspaceRunCheckpoint: startWorkspaceRunCheckpointMock,
   completeWorkspaceRunCheckpoint: completeWorkspaceRunCheckpointMock,
 }))
 
-vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/profile-config', () => ({
   getProfileDir: (profile: string) => `/tmp/hermes-bridge-final-context/${profile || 'default'}`,
 }))
 
-vi.mock('../../packages/server/src/middleware/user-auth', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/auth', () => ({
   issueModelRunJwt: issueModelRunJwtMock,
 }))
 
@@ -235,7 +235,7 @@ describe('bridge run final context usage', () => {
       }),
     } as any
 
-    const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+    const { handleBridgeRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-bridge-run')
     await handleBridgeRun(
       nsp,
       socket,
@@ -296,7 +296,7 @@ describe('bridge run final context usage', () => {
     } as any
 
     const composed = 'system prompt\nAGENT SOUL'
-    const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+    const { handleBridgeRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-bridge-run')
     await handleBridgeRun(
       nsp,
       socket,
@@ -335,7 +335,7 @@ describe('bridge run final context usage', () => {
       }),
     } as any
 
-    const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+    const { handleBridgeRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-bridge-run')
     await handleBridgeRun(
       nsp,
       socket,
@@ -412,7 +412,7 @@ describe('bridge run final context usage', () => {
       }),
     } as any
 
-    const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+    const { handleBridgeRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-bridge-run')
     await handleBridgeRun(
       nsp,
       socket,
@@ -511,7 +511,7 @@ describe('bridge run final context usage', () => {
       }),
     } as any
 
-    const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+    const { handleBridgeRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-bridge-run')
     await handleBridgeRun(
       nsp,
       socket,
@@ -592,7 +592,7 @@ describe('bridge run final context usage', () => {
       }),
     } as any
 
-    const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+    const { handleBridgeRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-bridge-run')
     await handleBridgeRun(
       nsp,
       socket,
@@ -654,7 +654,7 @@ describe('bridge run final context usage', () => {
       }),
     } as any
 
-    const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+    const { handleBridgeRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-bridge-run')
     await handleBridgeRun(
       nsp,
       socket,
@@ -704,7 +704,7 @@ describe('bridge run final context usage', () => {
       }),
     } as any
 
-    const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+    const { handleBridgeRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-bridge-run')
     await handleBridgeRun(
       nsp,
       socket,
@@ -766,7 +766,7 @@ describe('bridge run final context usage', () => {
       goalEvaluate,
     } as any
 
-    const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+    const { handleBridgeRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-bridge-run')
     await handleBridgeRun(
       nsp,
       socket,
@@ -813,7 +813,7 @@ describe('bridge run final context usage', () => {
       }),
     } as any
 
-    const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+    const { handleBridgeRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-bridge-run')
     await handleBridgeRun(
       nsp,
       socket,
@@ -860,7 +860,7 @@ describe('bridge run final context usage', () => {
       }),
     } as any
 
-    const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+    const { handleBridgeRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-bridge-run')
     await handleBridgeRun(
       nsp,
       socket,
@@ -902,7 +902,7 @@ describe('bridge run final context usage', () => {
 
     getSessionMock.mockReturnValue(undefined)
 
-    const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+    const { handleBridgeRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-bridge-run')
     await handleBridgeRun(
       nsp,
       socket,
@@ -966,7 +966,7 @@ describe('bridge run final context usage', () => {
       }),
     } as any
 
-    const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+    const { handleBridgeRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-bridge-run')
     await handleBridgeRun(
       nsp,
       socket,
@@ -1024,7 +1024,7 @@ describe('bridge run final context usage', () => {
         }),
       } as any
 
-      const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+      const { handleBridgeRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-bridge-run')
       await handleBridgeRun(
         nsp,
         socket,
@@ -1089,7 +1089,7 @@ describe('bridge run final context usage', () => {
         }),
       } as any
 
-      const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+      const { handleBridgeRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-bridge-run')
       await handleBridgeRun(
         nsp,
         socket,
@@ -1150,7 +1150,7 @@ describe('bridge run final context usage', () => {
       }),
     } as any
 
-    const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+    const { handleBridgeRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-bridge-run')
     await handleBridgeRun(
       nsp,
       socket,
@@ -1226,7 +1226,7 @@ describe('bridge run final context usage', () => {
       }),
     } as any
 
-    const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+    const { handleBridgeRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-bridge-run')
     await handleBridgeRun(
       nsp,
       socket,
@@ -1274,7 +1274,7 @@ describe('bridge run final context usage', () => {
       }),
     } as any
 
-    const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+    const { handleBridgeRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-bridge-run')
     await handleBridgeRun(
       nsp,
       socket,
@@ -1342,7 +1342,7 @@ describe('bridge run final context usage', () => {
       }),
     } as any
 
-    const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+    const { handleBridgeRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-bridge-run')
     await handleBridgeRun(
       nsp,
       socket,
@@ -1415,7 +1415,7 @@ describe('bridge run final context usage', () => {
       }),
     } as any
 
-    const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+    const { handleBridgeRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-bridge-run')
     await handleBridgeRun(
       nsp,
       socket,
@@ -1497,7 +1497,7 @@ describe('bridge run final context usage', () => {
         }),
       } as any
 
-      const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+      const { handleBridgeRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-bridge-run')
       await handleBridgeRun(
         nsp,
         socket,
@@ -1560,7 +1560,7 @@ describe('bridge run final context usage', () => {
       }),
     } as any
 
-    const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+    const { handleBridgeRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-bridge-run')
     await handleBridgeRun(
       nsp,
       socket,
@@ -1624,7 +1624,7 @@ describe('bridge run final context usage', () => {
       }),
     } as any
 
-    const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+    const { handleBridgeRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-bridge-run')
     await handleBridgeRun(
       nsp,
       socket,
@@ -1686,7 +1686,7 @@ describe('bridge run final context usage', () => {
       }),
     } as any
 
-    const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+    const { handleBridgeRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-bridge-run')
     await handleBridgeRun(
       nsp,
       socket,
@@ -1747,7 +1747,7 @@ describe('bridge run final context usage', () => {
       streamOutput: vi.fn(),
     } as any
 
-    const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+    const { handleBridgeRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-bridge-run')
     await handleBridgeRun(
       nsp,
       socket,
@@ -1801,7 +1801,7 @@ describe('bridge run final context usage', () => {
       }),
     } as any
 
-    const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+    const { handleBridgeRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-bridge-run')
     await handleBridgeRun(
       nsp,
       socket,
@@ -1871,7 +1871,7 @@ describe('bridge run final context usage', () => {
       }),
     } as any
 
-    const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+    const { handleBridgeRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-bridge-run')
     await handleBridgeRun(
       nsp,
       socket,
@@ -1939,7 +1939,7 @@ describe('bridge run final context usage', () => {
       }),
     } as any
 
-    const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+    const { handleBridgeRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-bridge-run')
     await handleBridgeRun(
       nsp,
       socket,
@@ -1990,7 +1990,7 @@ describe('bridge run final context usage', () => {
       completeBackgroundNotification: vi.fn().mockResolvedValue(undefined),
     } as any
 
-    const { handleBridgeRun } = await import('../../packages/server/src/services/hermes/run-chat/handle-bridge-run')
+    const { handleBridgeRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-bridge-run')
     await handleBridgeRun(
       nsp,
       socket,

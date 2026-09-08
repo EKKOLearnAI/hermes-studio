@@ -122,7 +122,7 @@ vi.mock('naive-ui', () => ({
   useMessage: () => ({ error: vi.fn(), success: vi.fn() }),
 }))
 
-vi.mock('@/api/hermes/sessions', () => ({
+vi.mock('@/api/studio/sessions', () => ({
   fetchContextLength: vi.fn().mockResolvedValue(256000),
 }))
 
@@ -176,7 +176,7 @@ vi.mock('@/composables/useSpeech', () => ({
   }),
 }))
 
-vi.mock('@/api/hermes/stt', () => ({
+vi.mock('@/api/studio/stt', () => ({
   transcribeSpeech: transcribeSpeechMock,
   startLocalSttStream: startLocalSttStreamMock,
   pushLocalSttStreamChunk: pushLocalSttStreamChunkMock,

@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { join, resolve } from 'path'
 import { tmpdir } from 'os'
 import { mkdir, mkdtemp, rm, symlink } from 'fs/promises'
-import { normalizePlatformPath, validatePath } from '../../packages/server/src/services/hermes/file-provider'
-import { isNearestExistingRealPathWithin, isPathWithin, isRealPathWithin, relativePathFromBase } from '../../packages/server/src/services/hermes/hermes-path'
+import { normalizePlatformPath, validatePath } from '../../packages/server/src/modules/studio/services/files/file-provider'
+import { isNearestExistingRealPathWithin, isPathWithin, isRealPathWithin, relativePathFromBase } from '../../packages/server/src/modules/studio/services/files/path'
 
 describe('file provider platform path normalization', () => {
   it('converts MSYS drive paths to Windows absolute paths on Windows', () => {

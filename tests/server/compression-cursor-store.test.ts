@@ -7,25 +7,25 @@ describe('compression cursor persistence', () => {
     vi.resetModules()
     const { DatabaseSync } = await import('node:sqlite')
     db = new DatabaseSync(':memory:')
-    vi.doMock('../../packages/server/src/db/index', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
       getDb: () => db,
       isSqliteAvailable: () => true,
       getStoragePath: () => ':memory:',
     }))
-    const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
+    const { initAllHermesTables } = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
     initAllHermesTables()
   })
 
   afterEach(() => {
     db?.close()
     db = null
-    vi.doUnmock('../../packages/server/src/db/index')
+    vi.doUnmock('../../packages/server/src/modules/studio/infrastructure/database/index')
     vi.resetModules()
   })
 
   it('stores a stable cursor while retaining legacy diagnostics', async () => {
-    const { addMessage, createSession } = await import('../../packages/server/src/db/hermes/session-store')
-    const { getCompressionSnapshot, saveCompressionSnapshot } = await import('../../packages/server/src/db/hermes/compression-snapshot')
+    const { addMessage, createSession } = await import('../../packages/server/src/modules/studio/repositories/session-store')
+    const { getCompressionSnapshot, saveCompressionSnapshot } = await import('../../packages/server/src/modules/studio/repositories/compression-snapshot')
     createSession({ id: 'session-1', source: 'cli' })
     const headId = addMessage({ session_id: 'session-1', role: 'user', content: 'head' })!
     addMessage({ session_id: 'session-1', role: 'assistant', content: 'middle' })
@@ -48,8 +48,8 @@ describe('compression cursor persistence', () => {
   })
 
   it('invalidates a snapshot transactionally and rejects an in-flight stale write after clear', async () => {
-    const { addMessage, clearSessionMessages, createSession, getSession } = await import('../../packages/server/src/db/hermes/session-store')
-    const { getCompressionSnapshot, saveCompressionSnapshot } = await import('../../packages/server/src/db/hermes/compression-snapshot')
+    const { addMessage, clearSessionMessages, createSession, getSession } = await import('../../packages/server/src/modules/studio/repositories/session-store')
+    const { getCompressionSnapshot, saveCompressionSnapshot } = await import('../../packages/server/src/modules/studio/repositories/compression-snapshot')
     createSession({ id: 'session-clear', source: 'cli' })
     const boundaryId = addMessage({ session_id: 'session-clear', role: 'user', content: 'old' })!
     expect(saveCompressionSnapshot('session-clear', 'old summary', 0, 1, {
@@ -75,12 +75,12 @@ describe('compression cursor persistence', () => {
       createSession,
       deleteSession,
       getSessionContextMessages,
-    } = await import('../../packages/server/src/db/hermes/session-store')
+    } = await import('../../packages/server/src/modules/studio/repositories/session-store')
     const {
       copyCompressionSnapshot,
       getCompressionSnapshot,
       saveCompressionSnapshot,
-    } = await import('../../packages/server/src/db/hermes/compression-snapshot')
+    } = await import('../../packages/server/src/modules/studio/repositories/compression-snapshot')
 
     createSession({ id: 'parent', source: 'cli' })
     const parentHead = addMessage({ session_id: 'parent', role: 'user', content: 'head', timestamp: 1 })!
@@ -135,7 +135,7 @@ describe('compression cursor persistence', () => {
       VALUES (?, ?, ?, ?, ?)`
     ).run('legacy', 'legacy summary', 42, 50, 1)
 
-    const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
+    const { initAllHermesTables } = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
     initAllHermesTables()
     const row = db.prepare('SELECT * FROM chat_compression_snapshots WHERE session_id = ?').get('legacy') as any
     expect(row).toEqual(expect.objectContaining({
@@ -149,10 +149,10 @@ describe('compression cursor persistence', () => {
   })
 
   it('reads only protected head and post-cursor context for a 15,000-row session', async () => {
-    const { addMessages, createSession, getSessionContextMessages } = await import('../../packages/server/src/db/hermes/session-store')
-    const { getCompressionSnapshot, saveCompressionSnapshot } = await import('../../packages/server/src/db/hermes/compression-snapshot')
-    const { readCursorSnapshotParts } = await import('../../packages/server/src/services/hermes/run-chat/context-history')
-    const { buildDbExportHistory } = await import('../../packages/server/src/lib/context-compressor/export-compressor')
+    const { addMessages, createSession, getSessionContextMessages } = await import('../../packages/server/src/modules/studio/repositories/session-store')
+    const { getCompressionSnapshot, saveCompressionSnapshot } = await import('../../packages/server/src/modules/studio/repositories/compression-snapshot')
+    const { readCursorSnapshotParts } = await import('../../packages/server/src/modules/studio/services/chat-run/context-history')
+    const { buildDbExportHistory } = await import('../../packages/server/src/modules/studio/services/context-compressor/export-compressor')
     createSession({ id: 'large', source: 'cli' })
     addMessages(Array.from({ length: 15_000 }, (_, index) => ({
       session_id: 'large',

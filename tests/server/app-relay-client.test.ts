@@ -42,20 +42,20 @@ const { mockIo, sockets } = vi.hoisted(() => {
 })
 
 vi.mock('socket.io-client', () => ({ io: mockIo }))
-vi.mock('../../packages/server/src/services/system-info', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/system-info', () => ({
   createDeviceSignature: vi.fn(async () => 'machine-signature'),
 }))
 
 describe('AppRelayClient', () => {
   beforeEach(async () => {
-    const { stopAppRelayClient } = await import('../../packages/server/src/services/app-relay/client')
+    const { stopAppRelayClient } = await import('../../packages/server/src/modules/studio/services/app-relay/client')
     stopAppRelayClient()
     sockets.length = 0
     vi.clearAllMocks()
   })
 
   it('connects with a signed machine identity independent of the MCU relay', async () => {
-    const { startAppRelayClient } = await import('../../packages/server/src/services/app-relay/client')
+    const { startAppRelayClient } = await import('../../packages/server/src/modules/studio/services/app-relay/client')
     const publicKey = '-----BEGIN PUBLIC KEY-----\nmachine-public-key\n-----END PUBLIC KEY-----\n'
     const client = startAppRelayClient({
       relayUrl: 'https://relay.example.com',
@@ -85,11 +85,62 @@ describe('AppRelayClient', () => {
     expect(auth.timestamp).toEqual(expect.any(Number))
   })
 
+  it('bridges Agent events and preserves acknowledgements from the source Studio', async () => {
+    const { startAppRelayClient } = await import('../../packages/server/src/modules/studio/services/app-relay/client')
+    startAppRelayClient({ relayUrl: 'https://relay.example', machineId: 'hwui_machine_1234567890', publicKey: 'key', localBaseUrl: 'http://127.0.0.1:8648', fetchImpl: vi.fn() as any })
+    const remote = sockets[0]
+    remote.connected = true
+    const openAck = vi.fn()
+    remote.__handlers.get('app.socket.open')({ id: 'agent-bridge', namespace: '/group-chat-agent-relay', auth: { pairingTicket: 'target-ticket' } }, openAck)
+    const local = sockets[1]
+    expect(local.__url).toBe('http://127.0.0.1:8648/group-chat-agent-relay')
+    expect(local.__options.auth).toEqual({ pairingTicket: 'target-ticket' })
+    expect(openAck).toHaveBeenCalledWith(expect.objectContaining({ ok: true }))
+    local.emit.mockImplementation((_event: string, payload: unknown, ack?: Function) => { ack?.({ accepted: payload }); return local })
+    const eventAck = vi.fn()
+    remote.__handlers.get('app.socket.event')({ id: 'agent-bridge', event: 'agent.config.update', payload: { name: 'Updated' }, ack: true }, eventAck)
+    await vi.waitFor(() => expect(eventAck).toHaveBeenCalledWith(expect.objectContaining({ ok: true, payload: { accepted: { name: 'Updated' } } })))
+    remote.emit.mockImplementation((_event: string, _payload: unknown, ack?: Function) => { ack?.(null, { ok: true }); return remote })
+    const approvalAck = vi.fn()
+    local.__onAny('approval.respond', { decision: 'allow' }, approvalAck)
+    expect(remote.emit).toHaveBeenCalledWith('app.socket.event', { id: 'agent-bridge', namespace: '/group-chat-agent-relay', event: 'approval.respond', payload: { decision: 'allow' } }, expect.any(Function))
+    expect(approvalAck).toHaveBeenCalledWith({ ok: true })
+    const denied = vi.fn()
+    remote.__handlers.get('app.socket.event')({ id: 'agent-bridge', event: 'run', payload: {} }, denied)
+    await vi.waitFor(() => expect(denied).toHaveBeenCalledWith(expect.objectContaining({ ok: false })))
+  })
+
+  it('forwards single Agent payloads without Socket.IO recovery offsets', async () => {
+    const { startAppRelayClient } = await import('../../packages/server/src/modules/studio/services/app-relay/client')
+    startAppRelayClient({ relayUrl: 'https://relay.example', machineId: 'hwui_machine_1234567890', publicKey: 'key', localBaseUrl: 'http://127.0.0.1:8648', fetchImpl: vi.fn() as any })
+    const remote = sockets[0]
+    remote.connected = true
+    remote.__handlers.get('app.socket.open')({ id: 'agent-recovery', namespace: '/group-chat-agent-relay', auth: {} }, vi.fn())
+    const local = sockets[1]
+    for (const event of ['relay.ready', 'run.request', 'run.interrupt', 'room.metadata', 'connector.revoked']) {
+      const payload = { agent: { name: 'Remote Agent' }, runId: 'run-1' }
+      local.__onAny(event, payload, 'recovery-offset')
+      expect(remote.emit).toHaveBeenLastCalledWith('app.socket.event', {
+        id: 'agent-recovery', namespace: '/group-chat-agent-relay', event, payload,
+      })
+    }
+  })
+
+  it('forwards target-issued Agent request secrets and workspace hash preconditions', async () => {
+    const { startAppRelayClient } = await import('../../packages/server/src/modules/studio/services/app-relay/client')
+    const fetchImpl = vi.fn(async () => new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } }))
+    startAppRelayClient({ relayUrl: 'https://relay.example', machineId: 'hwui_machine_1234567890', publicKey: 'key', localBaseUrl: 'http://127.0.0.1:8648', fetchImpl: fetchImpl as any })
+    const ack = vi.fn()
+    sockets[0].__handlers.get('app.http.request')({ id: 'agent-status', method: 'GET', path: '/api/studio/group-chat/invites/code/agent-links/request', headers: { 'x-group-agent-request-secret': 'request-secret', 'x-expected-sha256': 'hash' } }, ack)
+    await vi.waitFor(() => expect(ack).toHaveBeenCalled())
+    expect(Object.fromEntries((fetchImpl.mock.calls as any)[0][1].headers.entries())).toMatchObject({ 'x-group-agent-request-secret': 'request-secret', 'x-expected-sha256': 'hash' })
+  })
+
   it('marks development Web UI relay hosts as non-preemptive', async () => {
     const { shouldReplaceExistingAppRelayHost } = await import(
-      '../../packages/server/src/services/app-relay/connection'
+      '../../packages/server/src/modules/studio/services/app-relay/connection'
     )
-    const { startAppRelayClient } = await import('../../packages/server/src/services/app-relay/client')
+    const { startAppRelayClient } = await import('../../packages/server/src/modules/studio/services/app-relay/client')
 
     expect(shouldReplaceExistingAppRelayHost({ NODE_ENV: 'development' })).toBe(false)
     expect(shouldReplaceExistingAppRelayHost({ NODE_ENV: 'test' })).toBe(false)
@@ -110,7 +161,7 @@ describe('AppRelayClient', () => {
   })
 
   it('keeps waiting across transient connect errors while Socket.IO retries', async () => {
-    const { startAppRelayClient } = await import('../../packages/server/src/services/app-relay/client')
+    const { startAppRelayClient } = await import('../../packages/server/src/modules/studio/services/app-relay/client')
     const client = startAppRelayClient({
       relayUrl: 'https://relay.example.com',
       machineId: 'hwui_machine_1234567890',
@@ -128,8 +179,39 @@ describe('AppRelayClient', () => {
     await expect(connected).resolves.toBe(true)
   })
 
+  it('remembers the latest cloud access failure reported by the relay', async () => {
+    const { startAppRelayClient } = await import('../../packages/server/src/modules/studio/services/app-relay/client')
+    const client = startAppRelayClient({
+      relayUrl: 'https://relay.example.com',
+      machineId: 'hwui_machine_1234567890',
+      publicKey: 'machine-public-key',
+      localBaseUrl: 'http://127.0.0.1:8648',
+      fetchImpl: vi.fn() as any,
+    })!
+    const remote = sockets[0]
+    remote.__handlers.get('connection.access.failed')?.({
+      machineId: 'hwui_machine_1234567890',
+      deviceCode: 'app-device-1',
+      deviceName: 'Phone',
+      appUserId: 7,
+      plan: 'paid',
+      code: 'cloud_subscription_required',
+      occurredAt: 123456,
+    })
+
+    expect(client.getLatestAccessFailure(123457)).toEqual({
+      code: 'cloud_subscription_required',
+      deviceCode: 'app-device-1',
+      deviceName: 'Phone',
+      cloudUserId: 7,
+      connectionType: 'cloud',
+      plan: 'paid',
+      occurredAt: 123456,
+    })
+  })
+
   it('forwards local API requests with safe headers and binary support', async () => {
-    const fetchImpl = vi.fn(async (url: string) => url.endsWith('/api/hermes/tts/synthesize')
+    const fetchImpl = vi.fn(async (url: string) => url.endsWith('/api/studio/tts/synthesize')
       ? new Response(Uint8Array.from([7, 8, 9]), {
           status: 200,
           headers: { 'content-type': 'audio/mpeg' },
@@ -138,7 +220,7 @@ describe('AppRelayClient', () => {
           status: 200,
           headers: { 'content-type': 'application/json' },
         }))
-    const { startAppRelayClient } = await import('../../packages/server/src/services/app-relay/client')
+    const { startAppRelayClient } = await import('../../packages/server/src/modules/studio/services/app-relay/client')
     startAppRelayClient({
       relayUrl: 'https://relay.example.com',
       machineId: 'hwui_machine_1234567890',
@@ -151,7 +233,7 @@ describe('AppRelayClient', () => {
     remote.__handlers.get('app.http.request')({
       id: 'http-1',
       method: 'POST',
-      path: '/api/hermes/sessions?profile=default',
+      path: '/api/studio/sessions?profile=default',
       headers: {
         authorization: 'Bearer local-user-token',
         'content-type': 'application/json',
@@ -167,7 +249,7 @@ describe('AppRelayClient', () => {
       body: '{"ok":true}',
     })))
     expect(fetchImpl).toHaveBeenCalledWith(
-      'http://127.0.0.1:8648/api/hermes/sessions?profile=default',
+      'http://127.0.0.1:8648/api/studio/sessions?profile=default',
       expect.objectContaining({ method: 'POST', body: JSON.stringify({ title: 'App session' }) }),
     )
     const headers = fetchImpl.mock.calls[0][1]?.headers as Headers
@@ -179,7 +261,7 @@ describe('AppRelayClient', () => {
     remote.__handlers.get('app.http.request')({
       id: 'binary-1',
       method: 'POST',
-      path: '/api/hermes/tts/synthesize',
+      path: '/api/studio/tts/synthesize',
       headers: { 'content-type': 'application/octet-stream' },
       bodyBytes: Uint8Array.from([1, 2, 3]),
     }, binaryAck)
@@ -194,12 +276,131 @@ describe('AppRelayClient', () => {
     expect(Buffer.from(binaryResponse)).toEqual(Buffer.from([7, 8, 9]))
   })
 
+  it('uses the cloud media limit for downloads and applies live limit updates before reading the body', async () => {
+    const apkBytes = new Uint8Array(23 * 1024 * 1024)
+    const fetchImpl = vi.fn(async () => new Response(apkBytes, {
+      status: 200,
+      headers: {
+        'content-type': 'application/vnd.android.package-archive',
+        'content-length': String(apkBytes.byteLength),
+      },
+    }))
+    const { startAppRelayClient } = await import('../../packages/server/src/modules/studio/services/app-relay/client')
+    const client = startAppRelayClient({
+      relayUrl: 'https://relay.example.com',
+      machineId: 'hwui_machine_1234567890',
+      publicKey: 'machine-public-key',
+      localBaseUrl: 'http://127.0.0.1:8648',
+      fetchImpl: fetchImpl as any,
+    })!
+    const remote = sockets[0]
+    remote.__handlers.get('relay.ready')?.({
+      limits: {
+        mediaMaxMegabytes: 30,
+        mediaTransferMegabytesPerSecond: 2,
+        controlTransferMegabytesPerSecond: 2,
+      },
+    })
+
+    const allowed = await client.handleHttpRequest({
+      id: 'apk-allowed',
+      method: 'GET',
+      path: '/api/studio/files/download?path=test.apk',
+    })
+    expect(allowed.error).toBeUndefined()
+    expect(allowed.bodyBytes?.byteLength).toBe(apkBytes.byteLength)
+
+    remote.__handlers.get('relay.limits.updated')?.({
+      limits: {
+        mediaMaxMegabytes: 20,
+        mediaTransferMegabytesPerSecond: 2,
+        controlTransferMegabytesPerSecond: 2,
+      },
+    })
+    const rejected = await client.handleHttpRequest({
+      id: 'apk-rejected',
+      method: 'GET',
+      path: '/api/studio/files/download?path=test.apk',
+    })
+    expect(rejected).toMatchObject({
+      id: 'apk-rejected',
+      status: 413,
+      error: {
+        code: 'download_too_large',
+        message: 'Cloud relay media files are limited to 20MB',
+      },
+    })
+    expect(rejected.bodyBytes).toBeUndefined()
+  })
+
+  it('streams opted-in binary downloads in bounded chunks when the cloud advertises support', async () => {
+    const fetchImpl = vi.fn(async () => new Response(Uint8Array.from([1, 2, 3, 4, 5]), {
+      status: 200,
+      headers: {
+        'content-type': 'application/octet-stream',
+        'content-length': '5',
+      },
+    }))
+    const { startAppRelayClient } = await import('../../packages/server/src/modules/studio/services/app-relay/client')
+    startAppRelayClient({
+      relayUrl: 'https://relay.example.com',
+      machineId: 'hwui_machine_1234567890',
+      publicKey: 'machine-public-key',
+      localBaseUrl: 'http://127.0.0.1:8648',
+      fetchImpl: fetchImpl as any,
+    })
+    const remote = sockets[0]
+    remote.__handlers.get('relay.ready')?.({
+      capabilities: ['http.request', 'http.download.chunked'],
+      limits: {
+        mediaMaxMegabytes: 30,
+        mediaTransferMegabytesPerSecond: 2,
+        controlTransferMegabytesPerSecond: 2,
+      },
+    })
+
+    const openAck = vi.fn()
+    remote.__handlers.get('app.http.request')({
+      id: 'chunked-open',
+      method: 'GET',
+      path: '/api/studio/files/download?path=test.bin',
+      streamBinary: true,
+    }, openAck)
+    await vi.waitFor(() => expect(openAck).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'chunked-open',
+      status: 200,
+      download: { id: expect.any(String), totalBytes: 5 },
+    })))
+    expect(openAck.mock.calls[0][0].bodyBytes).toBeUndefined()
+    const downloadId = openAck.mock.calls[0][0].download.id
+
+    const firstAck = vi.fn()
+    remote.__handlers.get('app.http.download.chunk')({ id: downloadId, maxBytes: 3 }, firstAck)
+    await vi.waitFor(() => expect(firstAck).toHaveBeenCalledWith(expect.objectContaining({
+      id: downloadId,
+      receivedBytes: 3,
+      totalBytes: 5,
+      done: false,
+    })))
+    expect(Array.from(firstAck.mock.calls[0][0].bodyBytes)).toEqual([1, 2, 3])
+
+    const secondAck = vi.fn()
+    remote.__handlers.get('app.http.download.chunk')({ id: downloadId, maxBytes: 3 }, secondAck)
+    await vi.waitFor(() => expect(secondAck).toHaveBeenCalledWith(expect.objectContaining({
+      id: downloadId,
+      receivedBytes: 5,
+      totalBytes: 5,
+      done: true,
+    })))
+    expect(Array.from(secondAck.mock.calls[0][0].bodyBytes)).toEqual([4, 5])
+  })
+
   it('marks App authorization-code login as a cloud connection', async () => {
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ token: 'app-token' }), {
       status: 200,
       headers: { 'content-type': 'application/json' },
     }))
-    const { startAppRelayClient } = await import('../../packages/server/src/services/app-relay/client')
+    const { startAppRelayClient } = await import('../../packages/server/src/modules/studio/services/app-relay/client')
     startAppRelayClient({
       relayUrl: 'https://relay.example.com',
       machineId: 'hwui_machine_1234567890',
@@ -231,7 +432,7 @@ describe('AppRelayClient', () => {
   })
 
   it('requests a bounded cloud preconnection without embedding the relay URL', async () => {
-    const { startAppRelayClient } = await import('../../packages/server/src/services/app-relay/client')
+    const { startAppRelayClient } = await import('../../packages/server/src/modules/studio/services/app-relay/client')
     const client = startAppRelayClient({
       relayUrl: 'https://relay.example.com',
       machineId: 'hwui_machine_1234567890',
@@ -274,7 +475,7 @@ describe('AppRelayClient', () => {
   })
 
   it('drops cached preconnections whenever the relay host session changes', async () => {
-    const { startAppRelayClient } = await import('../../packages/server/src/services/app-relay/client')
+    const { startAppRelayClient } = await import('../../packages/server/src/modules/studio/services/app-relay/client')
     const client = startAppRelayClient({
       relayUrl: 'https://relay.example.com',
       machineId: 'hwui_machine_1234567890',
@@ -324,7 +525,7 @@ describe('AppRelayClient', () => {
       status: 200,
       headers: { 'content-type': 'application/json' },
     }))
-    const { startAppRelayClient } = await import('../../packages/server/src/services/app-relay/client')
+    const { startAppRelayClient } = await import('../../packages/server/src/modules/studio/services/app-relay/client')
     const client = startAppRelayClient({
       relayUrl: 'https://relay.example.com',
       machineId: 'hwui_machine_1234567890',
@@ -372,7 +573,7 @@ describe('AppRelayClient', () => {
   })
 
   it('includes the cloud account when revoking a shared device code', async () => {
-    const { startAppRelayClient } = await import('../../packages/server/src/services/app-relay/client')
+    const { startAppRelayClient } = await import('../../packages/server/src/modules/studio/services/app-relay/client')
     const client = startAppRelayClient({
       relayUrl: 'https://relay.example.com',
       machineId: 'hwui_machine_1234567890',
@@ -396,7 +597,7 @@ describe('AppRelayClient', () => {
   })
 
   it('bridges the full-duplex /chat-run socket without using MCU events', async () => {
-    const { startAppRelayClient } = await import('../../packages/server/src/services/app-relay/client')
+    const { startAppRelayClient } = await import('../../packages/server/src/modules/studio/services/app-relay/client')
     startAppRelayClient({
       relayUrl: 'https://relay.example.com',
       machineId: 'hwui_machine_1234567890',
@@ -471,6 +672,27 @@ describe('AppRelayClient', () => {
       event: 'insert_queued_run',
     })))
 
+    const locationAck = vi.fn()
+    remote.__handlers.get('app.socket.event')({
+      id: 'relay-chat-1',
+      event: 'location.respond',
+      payload: {
+        session_id: 'session-1',
+        location_request_id: 'location-1',
+        status: 'denied',
+      },
+    }, locationAck)
+    expect(local.emit).toHaveBeenCalledWith('location.respond', {
+      session_id: 'session-1',
+      location_request_id: 'location-1',
+      status: 'denied',
+    })
+    await vi.waitFor(() => expect(locationAck).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'relay-chat-1',
+      ok: true,
+      event: 'location.respond',
+    })))
+
     local.__onAny('message.delta', { session_id: 'session-1', delta: 'hi' })
     expect(remote.emit).toHaveBeenCalledWith('app.socket.event', {
       id: 'relay-chat-1',
@@ -491,8 +713,34 @@ describe('AppRelayClient', () => {
     expect(local.disconnect).toHaveBeenCalled()
   })
 
+  it('closes a cloud bridge even when the cleanup notification has no acknowledgement', async () => {
+    const { startAppRelayClient } = await import('../../packages/server/src/modules/studio/services/app-relay/client')
+    startAppRelayClient({
+      relayUrl: 'https://relay.example.com',
+      machineId: 'hwui_machine_1234567890',
+      publicKey: 'machine-public-key',
+      localBaseUrl: 'http://127.0.0.1:8648',
+      fetchImpl: vi.fn() as any,
+    })
+    const remote = sockets[0]
+    remote.__handlers.get('app.socket.open')({
+      id: 'abandoned-bridge', namespace: '/chat-run', auth: { token: 'local-user-token' },
+    }, vi.fn())
+    const local = sockets[1]
+
+    remote.__handlers.get('app.socket.close')({ id: 'abandoned-bridge' })
+
+    expect(local.disconnect).toHaveBeenCalledTimes(1)
+    const eventAck = vi.fn()
+    remote.__handlers.get('app.socket.event')({ id: 'abandoned-bridge', event: 'run', payload: {} }, eventAck)
+    await vi.waitFor(() => expect(eventAck).toHaveBeenCalledWith(expect.objectContaining({
+      ok: false, error: expect.objectContaining({ code: 'socket_not_open' }),
+    })))
+    expect(local.emit).not.toHaveBeenCalled()
+  })
+
   it('bridges the /workflow status namespace and whitelisted subscription events', async () => {
-    const { startAppRelayClient } = await import('../../packages/server/src/services/app-relay/client')
+    const { startAppRelayClient } = await import('../../packages/server/src/modules/studio/services/app-relay/client')
     startAppRelayClient({
       relayUrl: 'https://relay.example.com',
       machineId: 'hwui_machine_1234567890',
@@ -533,6 +781,51 @@ describe('AppRelayClient', () => {
       ok: true,
       namespace: '/workflow',
       event: 'workflow.status.subscribe',
+    })))
+  })
+
+  it('bridges unified App subscriptions through cloud relay transport', async () => {
+    const { startAppRelayClient } = await import('../../packages/server/src/modules/studio/services/app-relay/client')
+    startAppRelayClient({
+      relayUrl: 'https://relay.example.com',
+      machineId: 'hwui_machine_1234567890',
+      publicKey: 'machine-public-key',
+      localBaseUrl: 'http://127.0.0.1:8648',
+      fetchImpl: vi.fn() as any,
+    })
+    const remote = sockets[0]
+    const openAck = vi.fn()
+    remote.__handlers.get('app.socket.open')({
+      id: 'relay-workflow-1',
+      namespace: '/chat-run',
+      auth: { token: 'local-user-token', appEventVersion: 1 }, query: { profile: 'default' },
+    }, openAck)
+
+    const local = sockets[1]
+    expect(local.__url).toBe('http://127.0.0.1:8648/chat-run')
+    expect(local.__options).toMatchObject({ auth: { token: 'local-user-token', appEventVersion: 1 } })
+    expect(openAck).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'relay-workflow-1',
+      ok: true,
+      namespace: '/chat-run',
+    }))
+
+    local.emit.mockImplementation((event: string, payload: unknown, ack?: (response: unknown) => void) => {
+      if (event === 'app.events.subscribe') {
+        ack?.({ ok: true, data: { statuses: [{ workflowId: 'workflow-a', status: 'idle' }] } })
+      }
+    })
+    const eventAck = vi.fn()
+    remote.__handlers.get('app.socket.event')({
+      id: 'relay-workflow-1',
+      event: 'app.events.subscribe',
+      payload: { schema_version: 1, profile: 'default', types: ['workflow.run.completed'] },
+      ack: true,
+    }, eventAck)
+    await vi.waitFor(() => expect(eventAck).toHaveBeenCalledWith(expect.objectContaining({
+      ok: true,
+      namespace: '/chat-run',
+      event: 'app.events.subscribe',
     })))
   })
 })

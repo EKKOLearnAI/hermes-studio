@@ -43,7 +43,16 @@ extraResources:
       - "bin/**"
       - "dist/**"
       - "!packages/desktop/**"
-      - "!**/{.git,.github,docs,tests,playwright.config.ts,README*,scripts,*.map}"
+      # Exclude repository-root development files without dropping nested
+      # runtime assets such as dist/ekko-skills/*/scripts/**.
+      - "!.git/**"
+      - "!.github/**"
+      - "!docs/**"
+      - "!tests/**"
+      - "!scripts/**"
+      - "!playwright.config.ts"
+      - "!README*"
+      - "!**/*.map"
   # electron-builder 26 deliberately skips a root-level node_modules directory
   # when it is nested inside a broader matcher. Use node_modules itself as the
   # source so the pruned production dependencies are copied into the Web UI.

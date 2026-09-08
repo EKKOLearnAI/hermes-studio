@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { RoomAgentSummary } from '@/api/hermes/group-chat'
+import type { RoomAgentSummary } from '@/api/studio/group-chat'
 import ProfileAvatar from '@/components/hermes/profiles/ProfileAvatar.vue'
 import { groupAgentAvatar } from '@/utils/group-agent-avatar'
 

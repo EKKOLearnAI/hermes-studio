@@ -6,7 +6,7 @@ import { defineComponent, h } from 'vue'
 import FileList from '@/components/hermes/files/FileList.vue'
 import FileTree from '@/components/hermes/files/FileTree.vue'
 import { useFilesStore } from '@/stores/hermes/files'
-import { listFiles } from '@/api/hermes/files'
+import { listFiles } from '@/api/studio/files'
 
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (key: string) => key }),
@@ -17,11 +17,11 @@ vi.mock('naive-ui', async (importOriginal) => ({
   useMessage: () => ({ error: vi.fn() }),
 }))
 
-vi.mock('@/api/hermes/files', () => ({
+vi.mock('@/api/studio/files', () => ({
   listFiles: vi.fn(),
 }))
 
-vi.mock('@/api/hermes/download', () => ({
+vi.mock('@/api/studio/download', () => ({
   downloadFile: vi.fn(),
 }))
 

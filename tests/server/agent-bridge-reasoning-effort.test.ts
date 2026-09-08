@@ -59,7 +59,7 @@ sys.modules["hermes_constants"] = hermes_constants
 
 runtime_spec = importlib.util.spec_from_file_location(
     "bridge_runtime",
-    "packages/server/src/services/hermes/agent-bridge/python/bridge_runtime.py",
+    "packages/server/src/modules/hermes/services/bridge/python/bridge_runtime.py",
 )
 bridge_runtime = importlib.util.module_from_spec(runtime_spec)
 assert runtime_spec.loader is not None
@@ -116,7 +116,7 @@ sys.modules["run_agent"] = run_agent
 
 pool_spec = importlib.util.spec_from_file_location(
     "bridge_pool",
-    "packages/server/src/services/hermes/agent-bridge/python/bridge_pool.py",
+    "packages/server/src/modules/hermes/services/bridge/python/bridge_pool.py",
 )
 bridge_pool = importlib.util.module_from_spec(pool_spec)
 assert pool_spec.loader is not None
@@ -245,7 +245,7 @@ print(json.dumps({
   })
 
   it('forwards maximum reasoning_effort when provided in options', async () => {
-    const { AgentBridgeClient } = await import('../../packages/server/src/services/hermes/agent-bridge/client')
+    const { AgentBridgeClient } = await import('../../packages/server/src/modules/hermes/services/bridge/client')
     const client = new AgentBridgeClient({ endpoint: 'tcp://127.0.0.1:1', connectRetryMs: 0, timeoutMs: 1 })
     const request = vi.spyOn(client, 'request').mockResolvedValue({
       ok: true,
@@ -266,7 +266,7 @@ print(json.dumps({
   })
 
   it('omits reasoning_effort entirely when the option is not set', async () => {
-    const { AgentBridgeClient } = await import('../../packages/server/src/services/hermes/agent-bridge/client')
+    const { AgentBridgeClient } = await import('../../packages/server/src/modules/hermes/services/bridge/client')
     const client = new AgentBridgeClient({ endpoint: 'tcp://127.0.0.1:1', connectRetryMs: 0, timeoutMs: 1 })
     const request = vi.spyOn(client, 'request').mockResolvedValue({
       ok: true,
@@ -283,7 +283,7 @@ print(json.dumps({
   })
 
   it('omits reasoning_effort when option is an empty string', async () => {
-    const { AgentBridgeClient } = await import('../../packages/server/src/services/hermes/agent-bridge/client')
+    const { AgentBridgeClient } = await import('../../packages/server/src/modules/hermes/services/bridge/client')
     const client = new AgentBridgeClient({ endpoint: 'tcp://127.0.0.1:1', connectRetryMs: 0, timeoutMs: 1 })
     const request = vi.spyOn(client, 'request').mockResolvedValue({
       ok: true,
@@ -303,13 +303,13 @@ print(json.dumps({
 
   it('keeps Agent Bridge on profile defaults without Workflow execution-policy plumbing', () => {
     const sources = [
-      'packages/server/src/services/hermes/agent-bridge/client.ts',
-      'packages/server/src/services/hermes/run-chat/types.ts',
-      'packages/server/src/services/hermes/run-chat/index.ts',
-      'packages/server/src/services/hermes/run-chat/handle-bridge-run.ts',
-      'packages/server/src/services/hermes/agent-bridge/python/bridge_server.py',
-      'packages/server/src/services/hermes/agent-bridge/python/bridge_pool.py',
-      'packages/server/src/services/hermes/agent-bridge/python/hermes_bridge.py',
+      'packages/server/src/modules/hermes/services/bridge/client.ts',
+      'packages/server/src/modules/studio/services/chat-run/types.ts',
+      'packages/server/src/modules/studio/sockets/chat-run.ts',
+      'packages/server/src/modules/studio/services/chat-run/handle-bridge-run.ts',
+      'packages/server/src/modules/hermes/services/bridge/python/bridge_server.py',
+      'packages/server/src/modules/hermes/services/bridge/python/bridge_pool.py',
+      'packages/server/src/modules/hermes/services/bridge/python/hermes_bridge.py',
     ].map(path => readFileSync(path, 'utf8'))
     for (const source of sources) {
       for (const removed of ['executionPolicy', 'execution_policy', 'allowedToolsets', 'allowedTools', 'skipMemory', 'skipContextFiles']) {
@@ -319,10 +319,10 @@ print(json.dumps({
   })
 
   it('does not expose a caller-controlled api mode through Agent Bridge', () => {
-    const client = readFileSync('packages/server/src/services/hermes/agent-bridge/client.ts', 'utf8')
-    const bridgeRun = readFileSync('packages/server/src/services/hermes/run-chat/handle-bridge-run.ts', 'utf8')
-    const server = readFileSync('packages/server/src/services/hermes/agent-bridge/python/bridge_server.py', 'utf8')
-    const pool = readFileSync('packages/server/src/services/hermes/agent-bridge/python/bridge_pool.py', 'utf8')
+    const client = readFileSync('packages/server/src/modules/hermes/services/bridge/client.ts', 'utf8')
+    const bridgeRun = readFileSync('packages/server/src/modules/studio/services/chat-run/handle-bridge-run.ts', 'utf8')
+    const server = readFileSync('packages/server/src/modules/hermes/services/bridge/python/bridge_server.py', 'utf8')
+    const pool = readFileSync('packages/server/src/modules/hermes/services/bridge/python/bridge_pool.py', 'utf8')
     expect(client).not.toContain('options.apiMode')
     expect(bridgeRun).not.toContain('data.apiMode')
     expect(bridgeRun).not.toContain('data.api_mode')
@@ -332,7 +332,7 @@ print(json.dumps({
   })
 
   it('forwards workspace to chat and context estimate requests', async () => {
-    const { AgentBridgeClient } = await import('../../packages/server/src/services/hermes/agent-bridge/client')
+    const { AgentBridgeClient } = await import('../../packages/server/src/modules/hermes/services/bridge/client')
     const client = new AgentBridgeClient({ endpoint: 'tcp://127.0.0.1:1', connectRetryMs: 0, timeoutMs: 1 })
     const request = vi.spyOn(client, 'request')
       .mockResolvedValueOnce({
@@ -369,13 +369,13 @@ print(json.dumps({
     }))
   })
   it('falls back to the profile default when the Python runtime cannot apply the requested reasoning effort', () => {
-    const source = readFileSync('packages/server/src/services/hermes/agent-bridge/python/bridge_pool.py', 'utf8')
+    const source = readFileSync('packages/server/src/modules/hermes/services/bridge/python/bridge_pool.py', 'utf8')
     expect(source).not.toContain('raise ValueError(f"reasoning effort is unavailable: {reasoning_effort}")')
     expect(source).toContain('Non-fatal: fall through to default reasoning_config')
   })
 
   it('preserves reasoning and api mode across the run queue', () => {
-    const source = readFileSync('packages/server/src/services/hermes/run-chat/index.ts', 'utf8')
+    const source = readFileSync('packages/server/src/modules/studio/sockets/chat-run.ts', 'utf8')
     expect(source).toContain('reasoningEffort: data.reasoning_effort')
     expect(source).toContain('apiMode: data.apiMode')
     expect(source).toContain('reasoning_effort: next.reasoningEffort')
