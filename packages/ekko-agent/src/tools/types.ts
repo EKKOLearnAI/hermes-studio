@@ -43,6 +43,7 @@ export type AgentToolAuthorizer = (
 ) => Promise<AgentToolAuthorizationDecision>
 
 export interface AgentToolContext {
+  updatePlan?: (update: import('./plan').AgentPlanUpdate) => import('./plan').AgentTaskPlan
   runId?: string
   cwd?: string
   workspaceRoot?: string

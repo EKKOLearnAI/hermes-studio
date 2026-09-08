@@ -1,6 +1,7 @@
 import { socialMessagesAr } from '../social-messages-locales'
 
 export default {
+  taskPlan: {"title": "خطة المهام", "progress": "اكتمل {completed}/{total}", "pending": "غير مكتمل", "in_progress": "قيد التقدم", "completed": "مكتمل", "running": "قيد التنفيذ", "ended": "انتهى التنفيذ؛ توجد خطوات غير مكتملة", "interrupted": "تمت المقاطعة؛ توجد خطوات غير مكتملة", "failed": "فشل التنفيذ؛ توجد خطوات غير مكتملة"},
   agentAutoUpdate: { label: 'التحديثات التلقائية' },
   ekkoConfig: {
     "settingsTitle": "الإعدادات",

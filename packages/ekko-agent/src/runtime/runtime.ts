@@ -15,6 +15,7 @@ import { countTextTokens } from '../model/tokens'
 import type { AgentMessageInput, AgentOutputMessage } from '../model/messages'
 import type { AgentMessage, AgentToolCall, AgentToolDefinition, ModelRequest, ModelResponse } from '../model/types'
 import type { AgentSkill } from '../skills/types'
+import { RunTaskPlan } from '../tools/plan'
 import { AgentToolRegistry, createDefaultToolRegistry } from '../tools/registry'
 import { sanitizeAgentToolResult } from '../tools/tool-result-sanitizer'
 import type { AgentTaskRequest, AgentToolContext, AgentToolResult } from '../tools/types'
@@ -365,11 +366,25 @@ export class AgentRuntime {
       ?? this.toolFailureRecoveryThreshold,
     ))
     const pendingBackgroundSubagentIds = new Set<string>()
+    const taskPlan = new RunTaskPlan(runId, plan => {
+      input.onPlanUpdate?.(plan)
+      emit({ type: 'plan.updated', runId, plan })
+    })
     const emit = (event: AgentRuntimeEvent) => {
+      if (event.type === 'run.completed') {
+        taskPlan.finish(event.output.finishReason === 'boundary_interrupt' ? 'interrupted' : 'ended')
+      } else if (event.type === 'run.failed') {
+        taskPlan.finish(input.signal?.aborted ? 'interrupted' : 'failed')
+      }
       events.push(event)
       input.onEvent?.(event)
     }
 
+    // Publish interruption before the host closes its stream, even if an active tool
+    // takes time to acknowledge cancellation. The run error path retries failed commits.
+    const interruptPlan = () => {
+      try { taskPlan.finish('interrupted') } catch { /* Retried by run.failed. */ }
+    }
     const inputSkills = this.areSkillsAvailable() ? input.skills ?? [] : []
     this.registerSkillTools(inputSkills)
     const memoryIdentity = this.memoryIdentityFor(input)
@@ -384,6 +399,10 @@ export class AgentRuntime {
 
     const executionToolContext: AgentToolContext = {
       ...(this.runToolContext(input, memoryPreparation?.sourceMessageIds) || {}),
+      updatePlan: update => {
+        throwIfAborted(input.signal)
+        return taskPlan.update(update)
+      },
       runId,
       modelCapabilities: this.modelClientFor(input).capabilities,
       modelProvider: this.modelClientFor(input).provider,
@@ -440,6 +459,7 @@ export class AgentRuntime {
       return { runId, messages, output, steps, events, context, contextEstimate, memoryContext }
     }
 
+    input.signal?.addEventListener('abort', interruptPlan, { once: true })
     try {
       const automaticRecoveryCalls = this.currentRecoveryDirective()?.automaticToolCalls ?? []
       if (automaticRecoveryCalls.length) {
@@ -646,6 +666,7 @@ export class AgentRuntime {
       emit({ type: 'run.failed', runId, error: message, steps: steps.length })
       throw error
     } finally {
+      input.signal?.removeEventListener('abort', interruptPlan)
       for (const subagentId of pendingBackgroundSubagentIds) {
         const task = this.backgroundTasks.get(subagentId)
         task?.controller.abort()
@@ -815,6 +836,7 @@ export class AgentRuntime {
       runtimeInstructions: this.currentRuntimeInstructions(),
       userSystemMessages,
       memoryContext,
+      planningEnabled: this.toolsEnabled && !!this.tools.get('update_plan'),
       clarificationEnabled: this.toolsEnabled && !!this.tools.get('clarify'),
       skillDiscoveryEnabled: this.toolsEnabled && this.areSkillsAvailable() &&
         !!this.tools.get('skill_list') &&

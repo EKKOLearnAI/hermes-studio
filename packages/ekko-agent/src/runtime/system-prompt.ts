@@ -3,6 +3,7 @@ export interface SystemPromptInput {
   runtimeInstructions?: string[]
   userSystemMessages?: string[]
   memoryContext?: string
+  planningEnabled?: boolean
   clarificationEnabled?: boolean
   skillDiscoveryEnabled?: boolean
   skillManagementEnabled?: boolean
@@ -64,6 +65,10 @@ export function buildSystemPrompt(input: SystemPromptInput = {}): string {
     input.context?.platform ?? process.platform,
     input.context?.arch ?? process.arch,
   ))
+  if (input.planningEnabled) sections.push(`## Task Planning
+Use update_plan proactively for tasks with multiple meaningful steps. Skip planning for simple questions or one-step actions.
+Create a short plan before substantial work. Send the complete plan with stable step IDs on every update. Mark the current step in_progress and update completed steps promptly after verifying their outcome. At most one step is in_progress.
+Keep unfinished work pending. A successful tool call or the end of your response does not prove that all steps are complete. Explain changes in scope or reopening completed steps. Before your final response, update the plan to reflect what actually finished.`)
   if (input.clarificationEnabled) sections.push(EKKO_CLARIFICATION_GUIDELINES)
 
   if (input.runtimeInstructions?.length) {

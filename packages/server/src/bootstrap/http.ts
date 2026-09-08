@@ -488,6 +488,8 @@ export async function bootstrap() {
   // Initialize all web-ui SQLite tables
   const { initAllStores } = await import('../modules/studio/infrastructure/database/init')
   initAllStores()
+  const { interruptOrphanedTaskPlans } = await import('../modules/studio/repositories/task-plan-store')
+  interruptOrphanedTaskPlans()
   startChatWebhookDispatcher()
   console.log('[bootstrap] all stores initialized')
 

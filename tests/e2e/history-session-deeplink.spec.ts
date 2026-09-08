@@ -240,6 +240,33 @@ test.describe('history session deep links', () => {
     await expect(page).toHaveURL(/#\/hermes\/history\/session\/hist-beta$/)
   })
 
+  test('restores the task plan independently of tool traces in paginated history', async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem('hermes_show_tool_calls', 'false'))
+    await page.route('**/api/studio/sessions/conversations/hist-beta/messages/paginated*', route => {
+      const detail = detailFor('hist-beta', historySessions)!
+      const taskPlan = {
+        session_id: 'hist-beta', run_id: 'history-plan-run', plan_id: 'history-plan-run', revision: 3,
+        execution_state: 'ended', created_at: detail.started_at * 1000, updated_at: detail.last_active * 1000,
+        plan: [{ id: 'inspect', step: 'Inspect existing implementation', status: 'completed' },
+          { id: 'verify', step: 'Verify remaining work', status: 'pending' }],
+      }
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+        session: detail,
+        messages: detail.messages.map(message => ({ ...message, run_marker: message.role === 'user' ? null : taskPlan.run_id })),
+        taskPlans: [taskPlan], workspaceRunChanges: [], total: detail.messages.length, offset: 0, limit: 150, hasMore: false,
+      }) })
+    })
+    await page.goto('/#/hermes/history/session/hist-beta')
+    const card = page.getByTestId('task-plan-card')
+    await expect(card).toContainText('1/2 completed')
+    await expect(card).toContainText('Run ended; unfinished steps remain')
+    await expect(card.locator('.pending')).toHaveCount(1)
+    await page.reload()
+    await expect(card).toHaveCount(1)
+    await expect(card).toContainText('1/2 completed')
+    await card.screenshot({ path: test.info().outputPath('task-plan-history.png'), animations: 'disabled' })
+  })
+
   test('completed tool runs can expand and collapse in history', async ({ page }) => {
     await page.goto('/#/hermes/history/session/hist-alpha')
 

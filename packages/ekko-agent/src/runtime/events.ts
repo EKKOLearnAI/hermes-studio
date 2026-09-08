@@ -5,6 +5,7 @@ import type { AgentRuntimeContextEstimate, EkkoBackgroundContinuationContext } f
 import type { MemoryContextDiagnostics } from '../memory/types'
 
 export type AgentRuntimeEvent =
+  | { type: 'plan.updated'; runId: string; plan: import('../tools/plan').AgentTaskPlan }
   | { type: 'run.started'; runId: string; maxSteps: number }
   | { type: 'memory.retrieved'; runId: string; diagnostics: MemoryContextDiagnostics; memoryIds: string[] }
   | { type: 'skill.review.started'; runId: string; reviewId: string }

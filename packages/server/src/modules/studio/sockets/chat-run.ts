@@ -1,3 +1,4 @@
+import { getSessionTaskPlans } from '../services/task-plans'
 import { bindLegacyAppEvents } from '../services/webhooks/legacy-app-events'
 import { bindAppEventSubscription } from '../services/webhooks/app-events'
 import { mobileDeviceRoom, mobileDeviceId, sameMobileDevice, mobileEventAllowed, type MobileDeviceTarget } from '../services/chat-run/mobile-device-target'
@@ -1698,7 +1699,8 @@ export class ChatRunSocket {
         .filter(message => String(message.display_role || message.role || '') === 'assistant')
         .map(message => message.id),
     )
-    const resumePage = { ...messagePage, workspaceRunChanges }
+    const taskPlans = getSessionTaskPlans(sid, messagePage.messages, true, state.runId)
+    const resumePage = { ...messagePage, workspaceRunChanges, taskPlans }
     const appMessagePage = options
       ? buildAppResumeMessagePage(resumePage, options.cachedId)
       : null
@@ -1706,6 +1708,7 @@ export class ChatRunSocket {
     socket.emit(options?.event || 'resumed', {
       session_id: sid,
       ...outboundMessagePage,
+      taskPlans,
       parentSessionId: sessionDetail?.parent_session_id || null,
       forkPointMessageId: sessionDetail?.fork_point_message_id || null,
       parentTitle: sessionDetail?.parent_title || null,

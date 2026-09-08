@@ -74,6 +74,7 @@ export interface SessionContext {
 export interface PaginatedSessionMessages {
   session: SessionSummary
   messages: HermesMessage[]
+  taskPlans?: import('@/utils/task-plan').TaskPlanSnapshot[]
   workspaceRunChanges: WorkspaceRunChangeSummary[]
   total: number
   offset: number

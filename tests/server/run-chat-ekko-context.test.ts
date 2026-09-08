@@ -4,6 +4,9 @@ import { join } from 'node:path'
 import { respondToEkkoToolApproval } from '../../packages/server/src/modules/ekko/services/approvals'
 import { respondToEkkoClarification } from '../../packages/server/src/modules/ekko/services/clarifications'
 
+const saveTaskPlanMock = vi.hoisted(() => vi.fn())
+vi.mock('../../packages/server/src/modules/studio/repositories/task-plan-store', () => ({ saveTaskPlan: saveTaskPlanMock }))
+
 const getSessionMock = vi.hoisted(() => vi.fn())
 const createSessionMock = vi.hoisted(() => vi.fn())
 const addMessageMock = vi.hoisted(() => vi.fn())
@@ -219,6 +222,37 @@ describe('ekko-agent context usage events', () => {
       },
     })
     completeWorkspaceRunCheckpointMock.mockReturnValue(null)
+  })
+
+  it('persists plan snapshots before broadcasting and records update_plan calls in chat history', async () => {
+    const plan = {
+      runId: 'run-plan', planId: 'run-plan', revision: 1, executionState: 'running',
+      createdAt: 100, updatedAt: 100,
+      plan: [{ id: 'a', step: 'Inspect', status: 'in_progress' }],
+    }
+    const toolCall = { id: 'call-plan', name: 'update_plan', arguments: { plan: plan.plan } }
+    agentRunMock.mockImplementationOnce(async (input: any) => {
+      input.onEvent({ type: 'run.started', runId: 'run-plan', maxSteps: 3 })
+      input.onEvent({ type: 'model.message', runId: 'run-plan', step: 1, message: { role: 'assistant', content: '', toolCalls: [toolCall] } })
+      input.onPlanUpdate(plan)
+      input.onEvent({ type: 'plan.updated', runId: 'run-plan', plan })
+      input.onEvent({ type: 'tool.completed', runId: 'run-plan', step: 1, toolCallId: 'call-plan', toolName: 'update_plan',
+        result: { ok: true, content: JSON.stringify(plan), data: plan }, durationMs: 1 })
+      return { runId: 'run-plan', output: { role: 'assistant', content: 'Working' }, steps: [], messages: [], events: [] }
+    })
+    const { handleEkkoAgentRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-ekko-agent-run')
+    const { nsp, socket, sessionMap, events } = makeHarness()
+    await handleEkkoAgentRun(nsp as any, socket as any, {
+      session_id: 'session-1', input: 'Plan work', coding_agent_id: 'ekko-agent',
+      onEvent: (event: string, payload: any) => {
+        if (event === 'plan.updated') expect(saveTaskPlanMock).toHaveBeenCalledWith(expect.objectContaining({ session_id: 'session-1', revision: 1 }))
+        events.push({ event, payload })
+      },
+    }, 'default', sessionMap, vi.fn(() => false))
+    expect(events).toContainEqual({ event: 'plan.updated', payload: expect.objectContaining({ plan_id: 'run-plan', execution_state: 'running', plan: plan.plan }) })
+    const rows = addMessagesMock.mock.calls.flatMap(call => call[0])
+    expect(rows).toContainEqual(expect.objectContaining({ role: 'tool', tool_name: 'update_plan', content: JSON.stringify(plan) }))
+    expect(rows).toContainEqual(expect.objectContaining({ role: 'assistant', tool_calls: [expect.objectContaining({ function: expect.objectContaining({ name: 'update_plan' }) })] }))
   })
 
   it('bridges Ekko tool approval requests through the existing chat events', async () => {
