@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 let uploadRoot = ''
 
-vi.mock('../../packages/server/src/services/hermes/upload-paths', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/files/upload-paths', () => ({
   getProfileUploadDir: (profile: string) => join(uploadRoot, profile),
 }))
 
@@ -20,7 +20,7 @@ describe('App chunked uploads', () => {
 
   it('writes ordered byte chunks and completes to a profile upload path', async () => {
     const { appendAppUploadChunk, completeAppUpload, openAppUpload } = await import(
-      '../../packages/server/src/services/hermes/app-upload'
+      '../../packages/server/src/modules/studio/services/files/app-upload'
     )
     const id = 'upload_test_1234'
     await openAppUpload({ id, owner: '7', profile: 'default', name: 'photo.png', size: 5 })
@@ -47,7 +47,7 @@ describe('App chunked uploads', () => {
 
   it('rejects out-of-order chunks and oversized files', async () => {
     const { APP_UPLOAD_MAX_BYTES, appendAppUploadChunk, openAppUpload } = await import(
-      '../../packages/server/src/services/hermes/app-upload'
+      '../../packages/server/src/modules/studio/services/files/app-upload'
     )
     await expect(openAppUpload({
       id: 'upload_too_large',

@@ -6,12 +6,11 @@ import {
   AgentRuntime,
   EkkoDatabaseManager,
   MemoryService,
-  ModelMemoryExtractor,
   SqliteMemoryStore,
   createMemoryTools,
+  hasExplicitMemoryForgetIntent,
   resolveMemoryQuery,
   type MemoryNode,
-  type MemoryMessage,
   type MemoryStore,
   type ModelClient,
   type ModelRequest,
@@ -24,7 +23,7 @@ let service: MemoryService
 beforeEach(async () => {
   webUiHome = await mkdtemp(join(tmpdir(), 'ekko-memory-service-'))
   store = new SqliteMemoryStore(new EkkoDatabaseManager({ baseDirectory: webUiHome }))
-  service = new MemoryService({ store, reviewEveryUserMessages: 1 })
+  service = new MemoryService({ store })
 })
 
 afterEach(async () => {
@@ -33,6 +32,232 @@ afterEach(async () => {
 })
 
 describe('MemoryService', () => {
+  it('does not treat negated configuration deletion text as a memory-forget request', () => {
+    expect(hasExplicitMemoryForgetIntent([{
+      role: 'user',
+      content: '不要删除用户配置、认证信息，也不要忘记现有偏好。',
+    }])).toBe(false)
+    expect(hasExplicitMemoryForgetIntent([{
+      role: 'user',
+      content: '请删除你保存的这条记忆。',
+    }])).toBe(true)
+  })
+
+  it('does not retain a memory approval queue table', () => {
+    const row = store.databaseManager.connection.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'memory_review_jobs'",
+    ).get()
+    expect(row).toBeUndefined()
+  })
+
+  it('keeps identical canonical keys independent across profile, context, and session scopes', async () => {
+    const contextA = { type: 'context' as const, namespace: 'test.chat', id: 'conversation-a' }
+    const contextB = { type: 'context' as const, namespace: 'test.chat', id: 'conversation-b' }
+    const profile = { type: 'profile' as const }
+    const session = { type: 'session' as const, id: 'runtime-a' }
+    const createLocation = async (scope: typeof profile | typeof contextA | typeof contextB | typeof session, value: string) => service.write({
+      operation: 'create',
+      kind: 'home_location',
+      scope,
+      reason: `Store ${value} in its declared scope.`,
+      explicitUserIntent: true,
+      identity: {
+        sessionId: 'runtime-a',
+        profileId: 'default',
+        recallScopes: [profile, contextA, contextB, session],
+        writeScopes: [profile, contextA, contextB, session],
+        defaultWriteScope: scope,
+        origin: { host: 'test-host', namespace: 'chat', contextId: scope.type === 'context' ? scope.id : 'runtime-a' },
+      },
+      node: { valueJson: value, title: `常住地：${value}`, content: `用户常住在${value}。` },
+    })
+
+    const profileNode = await createLocation(profile, '上海')
+    const contextANode = await createLocation(contextA, '北京')
+    const contextBNode = await createLocation(contextB, '广州')
+    const sessionNode = await createLocation(session, '杭州')
+
+    expect([profileNode, contextANode, contextBNode, sessionNode])
+      .toEqual(expect.arrayContaining([expect.objectContaining({ accepted: true, action: 'created' })]))
+    await expect(service.list({ profileId: 'default', key: 'profile.location.home' }))
+      .resolves.toHaveLength(4)
+
+    const currentConversation = await service.search({
+      sessionId: 'runtime-a',
+      profileId: 'default',
+      recallScopes: [profile, contextA, session],
+    }, { kinds: ['home_location'], limit: 10 })
+    expect(currentConversation.exact.map(node => node.valueJson)).toEqual(expect.arrayContaining(['上海', '北京', '杭州']))
+    expect(currentConversation.exact.map(node => node.valueJson)).not.toContain('广州')
+
+    const legacyCaller = await service.search(
+      { sessionId: 'legacy-runtime', profileId: 'default' },
+      { kinds: ['home_location'], limit: 10 },
+    )
+    expect(legacyCaller.exact.map(node => node.valueJson)).toEqual(['上海'])
+    await expect(service.get(contextANode.nodeId!, {
+      sessionId: 'legacy-runtime',
+      profileId: 'default',
+    })).resolves.toBeUndefined()
+    await expect(service.get(contextANode.nodeId!, { profileId: 'default' }))
+      .resolves.toMatchObject({ valueJson: '北京', scope: contextA })
+    expect(contextANode.node).toMatchObject({
+      scope: contextA,
+      origin: { host: 'test-host', namespace: 'chat', contextId: 'conversation-a' },
+    })
+  })
+
+  it('migrates version-3 nodes to profile scope without deleting them', async () => {
+    const manager = new EkkoDatabaseManager({ databasePath: join(webUiHome, 'legacy-memory.db') })
+    manager.connection.exec(`
+      CREATE TABLE memory_nodes (
+        row_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT NOT NULL UNIQUE,
+        parent_id TEXT,
+        supersedes_id TEXT,
+        profile_id TEXT NOT NULL,
+        domain TEXT NOT NULL,
+        category_path_json TEXT NOT NULL,
+        category_path_text TEXT NOT NULL,
+        type TEXT NOT NULL,
+        key TEXT NOT NULL,
+        revision INTEGER NOT NULL DEFAULT 1,
+        value_json TEXT,
+        title TEXT NOT NULL,
+        content TEXT NOT NULL,
+        status TEXT NOT NULL,
+        confidence REAL NOT NULL,
+        importance REAL NOT NULL,
+        tags_json TEXT NOT NULL DEFAULT '[]',
+        entities_json TEXT NOT NULL DEFAULT '[]',
+        source_message_ids_json TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        expires_at TEXT
+      );
+      CREATE UNIQUE INDEX idx_memory_nodes_unique_active_key
+        ON memory_nodes (profile_id, key) WHERE status = 'active';
+    `)
+    manager.connection.prepare(
+      'INSERT INTO schema_migrations (component, version, applied_at) VALUES (?, ?, ?)',
+    ).run('memory', 3, '2026-01-01T00:00:00.000Z')
+    manager.connection.prepare(`
+      INSERT INTO memory_nodes (
+        id, profile_id, domain, category_path_json, category_path_text, type, key,
+        revision, value_json, title, content, status, confidence, importance,
+        tags_json, entities_json, source_message_ids_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'legacy-node', 'default', 'profile', '["location"]', 'location', 'fact',
+      'profile.location.home', 1, '"\u82cf\u5dde"', '常住地', '用户常住苏州。', 'active', 0.9, 0.8,
+      '[]', '["\u82cf\u5dde"]', '[]', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z',
+    )
+
+    const migrated = new SqliteMemoryStore(manager)
+    try {
+      await expect(migrated.getNode('legacy-node')).resolves.toMatchObject({
+        id: 'legacy-node',
+        scope: { type: 'profile' },
+        valueJson: '苏州',
+      })
+      expect(manager.connection.prepare(
+        'SELECT 1 AS applied FROM schema_migrations WHERE component = ? AND version = ?',
+      ).get('memory', 4)).toMatchObject({ applied: 1 })
+    } finally {
+      migrated.close()
+    }
+  })
+
+  it('exposes standalone CRUD, history, and audit methods', async () => {
+    const identity = { sessionId: 'memory-api', profileId: 'default' }
+    const messageIds = await service.captureMessages(identity, [
+      { role: 'user', content: 'I prefer a dark interface.' },
+      { role: 'assistant', content: 'I will remember that.' },
+    ])
+
+    const created = await service.create({
+      kind: 'general_preference',
+      itemKey: 'interface_theme',
+      reason: 'Explicit user preference.',
+      explicitUserIntent: true,
+      identity,
+      node: {
+        valueJson: 'dark',
+        title: 'Interface theme',
+        content: 'The user prefers a dark interface.',
+        sourceMessageIds: [messageIds[0]],
+      },
+    })
+    expect(created).toMatchObject({ accepted: true, action: 'created' })
+
+    const active = await service.list({ profileId: 'default' })
+    expect(active).toMatchObject([{ id: created.nodeId, status: 'active', revision: 1 }])
+    await expect(service.get(created.nodeId!, identity)).resolves.toMatchObject({ valueJson: 'dark' })
+
+    const updated = await service.update(created.nodeId!, {
+      reason: 'The user changed the preference.',
+      expectedRevision: created.node!.revision,
+      explicitUserIntent: true,
+      identity,
+      node: {
+        valueJson: 'light',
+        title: 'Interface theme',
+        content: 'The user prefers a light interface.',
+      },
+    })
+    expect(updated).toMatchObject({ accepted: true, action: 'updated', node: { revision: 2, valueJson: 'light' } })
+    await expect(service.list({
+      profileId: 'default',
+      statuses: ['superseded'],
+    })).resolves.toMatchObject([{ id: created.nodeId, status: 'superseded' }])
+
+    const messages = await service.listMessages({ sessionId: identity.sessionId, limit: 10 })
+    expect(messages.map(message => message.id)).toEqual(messageIds)
+    const removed = await service.delete(updated.nodeId!, {
+      reason: 'The user asked Ekko to forget this preference.',
+      expectedRevision: updated.node!.revision,
+      identity,
+    })
+    expect(removed).toMatchObject({ mode: 'soft', deletedIds: [updated.nodeId] })
+    await expect(service.list({
+      profileId: 'default',
+      statuses: ['deleted'],
+    })).resolves.toMatchObject([{ id: updated.nodeId, status: 'deleted', revision: 3 }])
+
+    const audits = await service.listAuditEvents({
+      profileId: 'default',
+      sessionId: identity.sessionId,
+    })
+    expect(audits.map(event => event.eventType)).toEqual(['delete', 'supersede', 'create'])
+    expect(audits.every(event => event.profileId === 'default')).toBe(true)
+  })
+
+  it('hard-deletes directly through the exported delete method', async () => {
+    const identity = { sessionId: 'memory-hard-delete', profileId: 'default' }
+    const created = await service.create({
+      kind: 'general_preference',
+      itemKey: 'temporary_note',
+      reason: 'Store a temporary fact.',
+      explicitUserIntent: true,
+      identity,
+      node: {
+        valueJson: 'temporary',
+        title: 'Temporary note',
+        content: 'A temporary note.',
+      },
+    })
+    expect(created).toMatchObject({ accepted: true, action: 'created' })
+
+    await expect(service.delete(created.nodeId!, {
+      mode: 'hard',
+      reason: 'Remove the temporary fact.',
+      expectedRevision: created.node!.revision,
+      identity,
+    })).resolves.toMatchObject({ mode: 'hard', deletedIds: [created.nodeId] })
+    await expect(service.get(created.nodeId!, identity)).resolves.toBeUndefined()
+  })
+
+
   it('keeps the latest 20 messages in automatic memory context by default', async () => {
     const identity = { sessionId: 's1', profileId: 'default' }
     await service.captureMessages(identity, Array.from({ length: 25 }, (_, index) => ({
@@ -48,7 +273,7 @@ describe('MemoryService', () => {
   })
 
   it('generates canonical keys on the server and stores one profile memory shape', async () => {
-    const accepted = await service.proposeUpdate({
+    const accepted = await service.write({
       operation: 'create',
       kind: 'food_avoidance',
       itemKey: 'tofu',
@@ -71,7 +296,7 @@ describe('MemoryService', () => {
 
   it('searches controlled memory kinds without relying on natural-language matching', async () => {
     const identity = { sessionId: 's1', profileId: 'default' }
-    await service.proposeUpdate({
+    await service.write({
       operation: 'create',
       kind: 'general_preference',
       itemKey: 'visual_theme',
@@ -83,7 +308,7 @@ describe('MemoryService', () => {
         content: '用户偏好使用深色界面。',
       },
     })
-    await service.proposeUpdate({
+    await service.write({
       operation: 'create',
       kind: 'habit_routine',
       itemKey: 'weekly_review',
@@ -95,12 +320,12 @@ describe('MemoryService', () => {
         content: '用户保持每周复盘的习惯。',
       },
     })
-    await service.proposeUpdate({
+    await service.write({
       operation: 'create',
       kind: 'home_location',
       reason: '用户陈述常住地。',
       identity,
-      node: { valueJson: '测试城市' },
+      node: { valueJson: '测试城市', title: '用户常住地', content: '用户常住在测试城市。' },
     })
 
     const tool = createMemoryTools(service).find(item => item.definition.name === 'memory_search')!
@@ -187,7 +412,7 @@ describe('MemoryService', () => {
   })
 
   it('recalls ordinary preferences only when they match the current request', async () => {
-    await service.proposeUpdate({
+    await service.write({
       operation: 'create',
       kind: 'general_preference',
       itemKey: 'interface_theme',
@@ -231,7 +456,7 @@ describe('MemoryService', () => {
 
   it('keeps independent multi-value preferences and isolates profiles', async () => {
     for (const value of ['香菜', '芹菜']) {
-      await service.proposeUpdate({
+      await service.write({
         operation: 'create',
         kind: 'food_avoidance',
         itemKey: value,
@@ -251,7 +476,7 @@ describe('MemoryService', () => {
       identity: { sessionId: 'other', profileId: 'personal' },
     })).resolves.toMatchObject({ deletedIds: [], reason: 'No matching memory was found.' })
 
-    await expect(service.proposeUpdate({
+    await expect(service.write({
       operation: 'create',
       kind: 'food_avoidance',
       itemKey: '葱',
@@ -265,132 +490,8 @@ describe('MemoryService', () => {
     })
   })
 
-  it('extracts explicit preferences asynchronously and builds chained summaries', async () => {
-    const identity = { sessionId: 's1', profileId: 'default' }
-    service.scheduleRunCompletion(identity, [
-      { role: 'user', content: '以后做饭少油少辣' },
-      { role: 'assistant', content: '好的，已记住。' },
-    ])
-    await service.drain()
-
-    const result = await service.search(identity, { domain: 'custom', key: 'custom.fact:food_flavor_profile' })
-    expect([...result.exact, ...result.relevant]).toMatchObject([{
-      profileId: 'default',
-      valueJson: { oil: 'low', spicy: 'low' },
-    }])
-    await expect(store.getLatestSummary({ sessionId: 's1' })).resolves.toMatchObject({
-      currentGoal: '以后做饭少油少辣',
-    })
-  })
-
-  it('stores every turn but waits for the user-message review threshold before calling the extractor', async () => {
-    const extract = vi.fn().mockResolvedValue({
-      summaryPatch: 'Two user turns were reviewed together.',
-      nodes: [],
-    })
-    const gated = new MemoryService({
-      store,
-      reviewEveryUserMessages: 2,
-      extractor: { extract },
-    })
-    const identity = { sessionId: 'threshold-session', profileId: 'default' }
-
-    gated.scheduleRunCompletion(identity, [
-      { role: 'user', content: 'first question' },
-      { role: 'assistant', content: 'first answer' },
-    ])
-    await gated.drain()
-
-    expect(extract).not.toHaveBeenCalled()
-    await expect(store.listMessagesAfter({ sessionId: identity.sessionId, limit: 10 }))
-      .resolves.toHaveLength(2)
-    await expect(store.getLatestSummary({ sessionId: identity.sessionId })).resolves.toBeUndefined()
-
-    gated.scheduleRunCompletion(identity, [
-      { role: 'user', content: 'second question' },
-      { role: 'assistant', content: 'second answer' },
-    ])
-    await gated.drain()
-
-    expect(extract).toHaveBeenCalledTimes(1)
-    expect(extract.mock.calls[0][0].messages.map((message: MemoryMessage) => message.content)).toEqual([
-      'first question',
-      'first answer',
-      'second question',
-      'second answer',
-    ])
-    await expect(store.getLatestSummary({ sessionId: identity.sessionId })).resolves.toMatchObject({
-      summary: 'Two user turns were reviewed together.',
-    })
-  })
-
-  it('reviews every completed user turn by default and lets the curator decide noop', async () => {
-    const extract = vi.fn().mockResolvedValue({ summaryPatch: 'Default review.', nodes: [] })
-    const responsive = new MemoryService({ store, extractor: { extract } })
-
-    responsive.scheduleRunCompletion(
-      { sessionId: 'default-review-session', profileId: 'default' },
-      [
-        { role: 'user', content: '你好' },
-        { role: 'assistant', content: '你好！' },
-      ],
-    )
-    await responsive.drain()
-
-    expect(extract).toHaveBeenCalledTimes(1)
-  })
-
-  it('allows a manual review to bypass the user-message threshold', async () => {
-    const extract = vi.fn().mockResolvedValue({ summaryPatch: 'Manual review.', nodes: [] })
-    const gated = new MemoryService({
-      store,
-      reviewEveryUserMessages: 8,
-      extractor: { extract },
-    })
-    const identity = { sessionId: 'manual-review-session', profileId: 'default' }
-    await gated.captureMessages(identity, [{ role: 'user', content: 'one message' }])
-
-    gated.scheduleExtraction(identity)
-    await gated.drain()
-
-    expect(extract).toHaveBeenCalledTimes(1)
-    await expect(store.getLatestSummary({ sessionId: identity.sessionId })).resolves.toMatchObject({
-      summary: 'Manual review.',
-    })
-  })
-
-  it('reviews high-signal durable statements immediately without requiring a remember command', async () => {
-    const extract = vi.fn().mockResolvedValue({ summaryPatch: 'Memory candidate reviewed.', nodes: [] })
-    const responsive = new MemoryService({
-      store,
-      reviewEveryUserMessages: 8,
-      extractor: { extract },
-    })
-    const statements = [
-      '我是你老爷',
-      '我不喜欢长篇解释',
-      '我的工作流是 TypeScript 和 pnpm',
-      '其实我不住厦门，我现在住南宁',
-      '忘记我的住址',
-    ]
-
-    for (const [index, content] of statements.entries()) {
-      responsive.scheduleRunCompletion(
-        { sessionId: `high-signal-memory-${index}`, profileId: 'default' },
-        [
-          { role: 'user', content },
-          { role: 'assistant', content: '知道了。' },
-        ],
-      )
-    }
-    await responsive.drain()
-
-    expect(extract).toHaveBeenCalledTimes(statements.length)
-    expect(extract.mock.calls.map(call => call[0].messages[0].content)).toEqual(statements)
-  })
-
-  it('injects retrieved memory and memory tools into runtime requests', async () => {
-    await service.proposeUpdate({
+  it('injects retrieved memory and direct memory tools into foreground runtime requests', async () => {
+    await service.write({
       operation: 'create',
       kind: 'food_avoidance',
       itemKey: '香菜',
@@ -410,44 +511,38 @@ describe('MemoryService', () => {
     const request = vi.mocked(client.create).mock.calls[0][0] as ModelRequest
     expect(request.messages[0].content).toContain('## Memory Usage Rules')
     expect(request.messages[0].content).toContain('about to answer that you do not know or remember')
+    expect(request.messages[0].content).toContain('Memory mutations happen immediately')
     expect(request.messages[0].content).toContain('Avoid 香菜')
     expect(request.messages[0].content).toContain('key=preference.food.avoid:香菜 revision=1')
     expect(request.tools?.map(tool => tool.name)).toEqual(expect.arrayContaining([
-      'memory_search', 'memory_get', 'memory_propose_update', 'memory_forget',
+      'memory_search', 'memory_get', 'memory_write', 'memory_forget',
     ]))
+    expect(request.tools?.map(tool => tool.name)).not.toContain('memory_review')
     expect(result.memoryContext?.usedMemoryIds).toHaveLength(1)
   })
 
-  it('attaches the latest user message id to foreground memory writes', async () => {
-    const create = vi.fn()
-      .mockResolvedValueOnce({
-        content: '',
-        finishReason: 'tool_calls',
-        toolCalls: [{
-          id: 'foreground-memory-call',
-          name: 'memory_propose_update',
-          arguments: {
-            operation: 'create',
-            kind: 'home_location',
-            explicitUserIntent: true,
-            reason: '用户明确说明当前常住地。',
-            node: { valueJson: '贵阳' },
-          },
-        }],
-      })
-      .mockResolvedValueOnce({ content: '记住了。', finishReason: 'stop' })
-      .mockResolvedValueOnce({
-        content: JSON.stringify({
-          recentTopic: '更新常住地',
-          currentGoal: '',
-          constraints: [],
-          preferences: [],
-          decisions: [],
-          completedWork: [],
-          pendingWork: [],
-          knownIssues: [],
-        }),
-      })
+  it('writes explicit memory directly without forcing or narrowing the foreground request', async () => {
+    let foregroundCalls = 0
+    const create = vi.fn(async (request: ModelRequest) => {
+      foregroundCalls += 1
+      return foregroundCalls === 1
+        ? {
+            content: '',
+            finishReason: 'tool_calls',
+            toolCalls: [{
+              id: 'foreground-memory-write',
+              name: 'memory_write',
+              arguments: {
+                operation: 'create',
+                kind: 'home_location',
+                explicitUserIntent: true,
+                reason: '用户明确说明当前常住地。',
+                node: { valueJson: '贵阳', title: '用户常住地', content: '用户当前常住在贵阳。' },
+              },
+            }],
+          }
+        : { content: '已经记住。', finishReason: 'stop' }
+    })
     const client: ModelClient = {
       provider: 'test',
       requestStyle: 'custom-runtime',
@@ -457,11 +552,28 @@ describe('MemoryService', () => {
     }
     const runtime = new AgentRuntime({ modelClient: client, memory: service })
 
-    await runtime.run({
-      messages: ['我现在常住贵阳'],
+    const runResult = await runtime.run({
+      messages: ['请记住我现在常住贵阳'],
       contextKey: 'foreground-source-session',
       toolContext: { sessionId: 'foreground-source-session', profileId: 'default' },
     })
+    const foregroundRequest = create.mock.calls[0][0] as ModelRequest
+    expect(foregroundRequest.toolChoice).toBeUndefined()
+    expect(foregroundRequest.tools?.map(tool => tool.name)).toEqual(expect.arrayContaining([
+      'read_file',
+      'memory_search', 'memory_get', 'memory_write', 'memory_forget',
+    ]))
+    expect(runResult.steps).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'tool',
+        toolName: 'memory_write',
+        result: expect.objectContaining({
+          ok: true,
+          data: expect.objectContaining({ accepted: true, nodeId: expect.any(String) }),
+        }),
+      }),
+    ]))
+    await service.drain()
 
     const result = await service.search(
       { sessionId: 'foreground-source-session', profileId: 'default' },
@@ -476,46 +588,47 @@ describe('MemoryService', () => {
       .resolves.toEqual(expect.arrayContaining([expect.objectContaining({
         id: sourceId,
         role: 'user',
-        content: '我现在常住贵阳',
+        content: '请记住我现在常住贵阳',
       })]))
-    await service.drain()
+    expect(create.mock.calls.some(call => (call[0] as ModelRequest).metadata?.purpose === 'ekko-memory-review'))
+      .toBe(false)
   })
 
-  it('uses a dedicated model pass with only memory tools to summarize and persist memory', async () => {
-    const create = vi.fn()
-      .mockResolvedValueOnce({ content: 'Main answer' })
-      .mockResolvedValueOnce({
-        content: '',
-        toolCalls: [{
-          id: 'memory-call-1',
-          name: 'memory_propose_update',
-          arguments: {
-            operation: 'create',
-            kind: 'language_preference',
-            reason: 'The user explicitly requested a durable preference.',
-            explicitUserIntent: true,
-            node: {
-              valueJson: 'TypeScript',
-              title: 'Preferred programming language',
-              content: 'Prefer TypeScript for code examples.',
-              confidence: 0.98,
-              importance: 0.9,
-            },
-          },
-        }],
+  it('recognizes 清掉你所有的记忆 without forcing or narrowing the foreground request', async () => {
+    const identity = { sessionId: 'foreground-forget-all', profileId: 'default' }
+    const createdIds: string[] = []
+    for (let index = 0; index < 5; index += 1) {
+      const created = await service.write({
+        operation: 'create',
+        kind: 'general_preference',
+        itemKey: `forget_all_${index}`,
+        reason: 'Set up direct forget-all coverage.',
+        explicitUserIntent: true,
+        identity,
+        node: userPreference(`memory-${index}`),
       })
-      .mockResolvedValueOnce({
-        content: JSON.stringify({
-          recentTopic: 'Configured a preference for TypeScript examples',
-          currentGoal: '',
-          constraints: ['Do not use JavaScript examples'],
-          preferences: ['Prefer TypeScript examples'],
-          decisions: ['Use TypeScript by default'],
-          completedWork: ['Stored the TypeScript preference'],
-          pendingWork: [],
-          knownIssues: [],
-        }),
-      })
+      createdIds.push(created.nodeId!)
+    }
+
+    let foregroundCalls = 0
+    const create = vi.fn(async (request: ModelRequest) => {
+      foregroundCalls += 1
+      return foregroundCalls === 1
+        ? {
+            content: '',
+            finishReason: 'tool_calls',
+            toolCalls: [{
+              id: 'foreground-memory-forget-all',
+              name: 'memory_forget',
+              arguments: {
+                all: true,
+                mode: 'hard',
+                reason: '用户明确要求清除所有记忆',
+              },
+            }],
+          }
+        : { content: '已经清除。', finishReason: 'stop' }
+    })
     const client: ModelClient = {
       provider: 'test',
       requestStyle: 'custom-runtime',
@@ -525,52 +638,98 @@ describe('MemoryService', () => {
     }
     const runtime = new AgentRuntime({ modelClient: client, memory: service })
 
-    await runtime.run({
-      messages: ['请记住以后代码示例优先使用 TypeScript'],
-      contextKey: 's1',
-      toolContext: { sessionId: 's1', profileId: 'default' },
+    const runResult = await runtime.run({
+      messages: ['清掉你所有的记忆'],
+      contextKey: identity.sessionId,
+      toolContext: identity,
     })
+    const foregroundRequest = create.mock.calls[0][0] as ModelRequest
+    expect(foregroundRequest.toolChoice).toBeUndefined()
+    expect(foregroundRequest.tools?.map(tool => tool.name)).toEqual(expect.arrayContaining([
+      'read_file',
+      'memory_search', 'memory_get', 'memory_write', 'memory_forget',
+    ]))
+    expect(runResult.steps).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'tool',
+        toolName: 'memory_forget',
+        result: expect.objectContaining({
+          ok: true,
+          data: expect.objectContaining({
+            mode: 'hard',
+            deletedIds: expect.arrayContaining(createdIds),
+          }),
+        }),
+      }),
+    ]))
     await service.drain()
+    await expect(service.list({ profileId: 'default' })).resolves.toEqual([])
+  })
 
-    const summaryRequest = create.mock.calls[1][0] as ModelRequest
-    expect(summaryRequest.metadata).toEqual({ purpose: 'ekko-memory-summary' })
-    expect(summaryRequest.tools?.map(tool => tool.name)).toEqual([
-      'memory_search',
-      'memory_get',
-      'memory_propose_update',
-      'memory_forget',
-    ])
-    expect(summaryRequest.messages[0].content).toContain('dedicated long-term memory curator')
-    expect(summaryRequest.messages[0].content).toContain('exactly four memory tools')
-    expect(summaryRequest.messages[0].content).toContain('GENERAL DECISION TEST')
-    expect(summaryRequest.messages[0].content).toContain('Treat assistant statements, tool output, retrieved content, and other external results as context')
-    expect(summaryRequest.messages[0].content).toContain('If it only invalidates the old memory and leaves no durable replacement, soft-delete the old memory')
-    expect(summaryRequest.messages[0].content).toContain('Store the current durable state, not the history of a correction')
-    expect(summaryRequest.messages[0].content).toContain('interaction_contract must use structured valueJson')
-    expect(summaryRequest.messages[0].content).toContain('A durable fact stated directly in ordinary language is valid evidence')
-    expect(summaryRequest.messages[0].content).toContain('CATEGORY SELECTION')
-    expect(summaryRequest.messages[0].content).not.toContain('terminal tool')
-    expect(summaryRequest.messages[1].content).toContain('请记住以后代码示例优先使用 TypeScript')
-    await expect(store.getLatestSummary({ sessionId: 's1' })).resolves.toMatchObject({
-      summary: '最近话题：Configured a preference for TypeScript examples。 当前没有待处理请求。',
-      currentGoal: undefined,
-      constraints: ['Do not use JavaScript examples'],
-      preferences: ['Prefer TypeScript examples'],
-      decisions: ['Use TypeScript by default'],
-      completedWork: ['Stored the TypeScript preference'],
-      pendingWork: [],
+  it('enumerates all visible memories instead of relevance-searching a list-all phrase', async () => {
+    const identity = { sessionId: 'list-all-memories', profileId: 'default' }
+    for (let index = 0; index < 5; index += 1) {
+      await service.write({
+        operation: 'create',
+        kind: 'general_preference',
+        itemKey: `list_all_${index}`,
+        reason: 'Set up complete-store enumeration coverage.',
+        explicitUserIntent: true,
+        identity,
+        node: userPreference(`memory-${index}`),
+      })
+    }
+    const searchTool = createMemoryTools(service).find(tool => tool.definition.name === 'memory_search')!
+
+    const result = await searchTool.execute({ queryText: '所有已存储的记忆', limit: 50 }, identity)
+
+    expect(result.ok).toBe(true)
+    expect(result.data).toMatchObject({ exact: [], relevant: expect.any(Array) })
+    expect((result.data as { relevant: MemoryNode[] }).relevant).toHaveLength(5)
+  })
+
+  it('keeps running and requests correction after repeated memory mutation failures', async () => {
+    const requests: ModelRequest[] = []
+    let calls = 0
+    const create = vi.fn(async (request: ModelRequest) => {
+      requests.push(request)
+      calls += 1
+      return calls <= 3
+        ? {
+            content: '',
+            finishReason: 'tool_calls',
+            toolCalls: [{
+              id: `unauthorized-forget-${calls}`,
+              name: 'memory_forget',
+              arguments: { all: true, mode: 'hard', reason: 'No current-user forget request.' },
+            }],
+          }
+        : { content: '记忆未被清除；我会改用其他方案。', finishReason: 'stop' }
     })
-    const memories = await service.search(
-      { sessionId: 's1', profileId: 'default' },
-      { domain: 'preference', key: 'preference.language' },
-    )
-    expect([...memories.exact, ...memories.relevant]).toMatchObject([{
-      key: 'preference.language',
-      revision: 1,
-      profileId: 'default',
-      valueJson: 'TypeScript',
-      sourceMessageIds: [expect.any(String)],
-    }])
+    const client: ModelClient = {
+      provider: 'test',
+      requestStyle: 'custom-runtime',
+      capabilities: { streaming: false, tools: true, vision: false, jsonMode: false, systemPrompt: true },
+      create,
+      stream: vi.fn(),
+    }
+    const runtime = new AgentRuntime({ modelClient: client, memory: service })
+
+    const result = await runtime.run({
+      messages: ['你好'],
+      contextKey: 'failed-memory-mutation',
+      toolContext: { sessionId: 'failed-memory-mutation', profileId: 'default' },
+    })
+
+    expect(create).toHaveBeenCalledTimes(4)
+    expect(result.output).toMatchObject({
+      finishReason: 'stop',
+      content: expect.stringContaining('记忆未被清除'),
+    })
+    expect(requests[3].messages).toContainEqual(expect.objectContaining({
+      role: 'system',
+      content: expect.stringContaining('Tool recovery required: "memory_forget" failed 3 consecutive times.'),
+    }))
   })
 
   it('deduplicates recaptured messages when unrelated messages shift their positions', async () => {
@@ -588,212 +747,18 @@ describe('MemoryService', () => {
     await expect(store.listMessagesAfter({ sessionId: 's1', limit: 20 })).resolves.toHaveLength(3)
   })
 
-  it('excludes tool payloads from the bounded model summary transcript', async () => {
-    const client = modelClient()
-    const onUsage = vi.fn()
-    vi.mocked(client.create).mockResolvedValueOnce({
-      content: JSON.stringify({
-        recentTopic: '',
-        currentGoal: '',
-        constraints: [],
-        preferences: [],
-        decisions: [],
-        completedWork: [],
-        pendingWork: [],
-        knownIssues: [],
-      }),
-      model: 'summary-model',
-      usage: { inputTokens: 42, outputTokens: 8, totalTokens: 50 },
-    })
-    const extractor = new ModelMemoryExtractor({ modelClient: client, memory: service, onUsage })
-
-    await extractor.extract({
-      sessionId: 's1',
-      messages: [
-        memoryMessage('user', '查一下天气', 'm1'),
-        memoryMessage('tool', 'secret-tool-payload-with-a-long-weather-table', 'm2'),
-        memoryMessage('assistant', '天气已经查好。', 'm3'),
-      ],
-    })
-
-    const request = vi.mocked(client.create).mock.calls[0][0] as ModelRequest
-    expect(request.messages[1].content).toContain('查一下天气')
-    expect(request.messages[1].content).toContain('天气已经查好。')
-    expect(request.messages[1].content).not.toContain('secret-tool-payload')
-    expect(onUsage).toHaveBeenCalledWith({
-      purpose: 'ekko-memory-summary',
-      usage: { inputTokens: 42, outputTokens: 8, totalTokens: 50 },
-      model: 'summary-model',
-      callIndex: 1,
-    })
-  })
-
-  it('retries transient summary model failures before falling back', async () => {
-    const client = modelClient()
-    vi.mocked(client.create)
-      .mockRejectedValueOnce(new Error('temporary capacity error'))
-      .mockResolvedValueOnce({
-        content: JSON.stringify({
-          recentTopic: '讨论记忆系统',
-          currentGoal: '',
-          constraints: [],
-          preferences: [],
-          decisions: [],
-          completedWork: [],
-          pendingWork: [],
-          knownIssues: [],
-        }),
-      })
-    const extractor = new ModelMemoryExtractor({ modelClient: client, memory: service })
-
-    const result = await extractor.extract({
-      sessionId: 'retry-session',
-      messages: [
-        memoryMessage('user', '我们讨论一下记忆系统', 'm1'),
-        memoryMessage('assistant', '好的。', 'm2'),
-      ],
-    })
-
-    expect(client.create).toHaveBeenCalledTimes(2)
-    expect(result).toMatchObject({
-      summaryPatch: '最近话题：讨论记忆系统。 当前没有待处理请求。',
-      currentGoal: undefined,
-    })
-    expect(result.fallbackReason).toBeUndefined()
-  })
-
-  it('asks the summary model to repair malformed JSON before falling back', async () => {
-    const client = modelClient()
-    vi.mocked(client.create)
-      .mockResolvedValueOnce({ content: 'I summarized the conversation.' })
-      .mockResolvedValueOnce({
-        content: JSON.stringify({
-          recentTopic: '讨论记忆系统',
-          currentGoal: '',
-          constraints: [],
-          preferences: [],
-          decisions: [],
-          completedWork: [],
-          pendingWork: [],
-          knownIssues: [],
-        }),
-      })
-    const extractor = new ModelMemoryExtractor({ modelClient: client, memory: service })
-
-    const result = await extractor.extract({
-      sessionId: 'repair-session',
-      messages: [
-        memoryMessage('user', '我们讨论一下记忆系统', 'm1'),
-        memoryMessage('assistant', '好的。', 'm2'),
-      ],
-    })
-
-    expect(client.create).toHaveBeenCalledTimes(2)
-    const repairRequest = vi.mocked(client.create).mock.calls[1][0] as ModelRequest
-    expect(repairRequest.tools).toBeUndefined()
-    expect(repairRequest.toolChoice).toBeUndefined()
-    expect(repairRequest.messages.some(message => message.content.includes('not valid JSON'))).toBe(true)
-    expect(result.fallbackReason).toBeUndefined()
-  })
-
-  it('persists a compact safe summary and the failure reason after retries are exhausted', async () => {
-    const client = modelClient()
-    vi.mocked(client.create).mockRejectedValue(new Error('summary provider unavailable'))
-    const extractor = new ModelMemoryExtractor({ modelClient: client, memory: service })
-
-    const result = await extractor.extract({
-      sessionId: 'safe-fallback-session',
-      messages: [
-        memoryMessage('user', '是吗？那你觉得我要怎么做得更好', 'm1'),
-        memoryMessage('assistant', '可以从产品定位和社区运营入手。', 'm2'),
-      ],
-    })
-
-    expect(client.create).toHaveBeenCalledTimes(4)
-    expect(result).toMatchObject({
-      summaryPatch: '最近话题：是吗？那你觉得我要怎么做得更好。 当前没有待处理请求。',
-      currentGoal: undefined,
-      knownIssues: [],
-      fallbackReason: 'summary provider unavailable',
-    })
-    expect(result.summaryPatch).not.toContain('Assistant:')
-  })
-
-  it('normalizes completed lookup state before persisting a rolling summary', async () => {
-    const client = modelClient()
-    vi.mocked(client.create).mockResolvedValueOnce({
-      content: JSON.stringify({
-        recentTopic: '讨论 hermes-web-ui 项目及 GitHub 表现',
-        currentGoal: '探索 hermes-web-ui 项目，了解 GitHub 数据表现',
-        constraints: ['以“丫鬟”身份与“老爷”互动'],
-        preferences: ['称呼用户为“老爷”，以“丫鬟”角色互动'],
-        decisions: [],
-        completedWork: ['GitHub 3个月达到 9K+ Stars，最新版 v0.6.29'],
-        pendingWork: [],
-        knownIssues: [],
-      }),
-    })
-    const extractor = new ModelMemoryExtractor({ modelClient: client, memory: service })
-
-    const result = await extractor.extract({
-      sessionId: 'summary-quality-session',
-      messages: [
-        memoryMessage('user', '你帮我看下桌面 git/hermes-web-ui 的项目', 'm1'),
-        memoryMessage('assistant', '已经查看并介绍了项目。', 'm2'),
-        memoryMessage('user', '分析下这个项目 GitHub 的数据', 'm3'),
-        memoryMessage('assistant', '已经完成 GitHub 数据分析。', 'm4'),
-        memoryMessage('user', '你也觉得很不错吗', 'm5'),
-        memoryMessage('assistant', '是的，这个项目表现不错。', 'm6'),
-      ],
-    })
-
-    expect(result).toMatchObject({
-      summaryPatch: '最近话题：讨论 hermes-web-ui 项目及 GitHub 表现。 当前没有待处理请求。',
-      currentGoal: undefined,
-      preferences: ['称呼用户为“老爷”，以“丫鬟”角色互动'],
-      completedWork: [],
-      pendingWork: [],
-      knownIssues: [],
-    })
-    expect(result.summaryPatch).not.toContain('9K')
-    expect(result.summaryPatch).not.toContain('v0.6.29')
-  })
-
-  it('drops unsupported strengthened claims from the recent topic', async () => {
-    const client = modelClient()
-    vi.mocked(client.create).mockResolvedValueOnce({
-      content: JSON.stringify({
-        recentTopic: '用户的主力项目 hermes-web-ui',
-        currentGoal: '',
-        constraints: [],
-        preferences: [],
-        decisions: [],
-        completedWork: [],
-        pendingWork: [],
-        knownIssues: [],
-      }),
-    })
-    const extractor = new ModelMemoryExtractor({ modelClient: client, memory: service })
-
-    const result = await extractor.extract({
-      sessionId: 'unsupported-claim-session',
-      messages: [memoryMessage('user', '帮我看下 hermes-web-ui 项目', 'm1')],
-    })
-
-    expect(result.summaryPatch).toBe('当前没有待处理请求。')
-  })
-
   it('ignores model-owned taxonomy and returns the full server-owned memory card', async () => {
-    const tool = createMemoryTools(service).find(item => item.definition.name === 'memory_propose_update')!
+    const tool = createMemoryTools(service).find(item => item.definition.name === 'memory_write')!
     const result = await tool.execute({
       operation: 'create',
       kind: 'home_location',
       node: {
         valueJson: { city: '厦门', country: '中国' },
+        title: '用户常住地',
+        content: '用户明确表示常住在中国厦门。',
         type: 'user_preference',
         key: 'model-invented-key',
         summary: '这些字段应被服务端规则覆盖。',
-        sourceMessageIds: ['model-invented-source'],
       },
       reason: '用户表明自己常住厦门。',
       explicitUserIntent: true,
@@ -821,23 +786,113 @@ describe('MemoryService', () => {
     })
   })
 
+  it('applies mixed memory_write operations atomically and returns a terminal result', async () => {
+    const identity = { sessionId: 'atomic-memory-tool', profileId: 'default' }
+    const obsolete = await service.write({
+      operation: 'create',
+      kind: 'general_preference',
+      itemKey: 'obsolete_editor',
+      node: userPreference('旧编辑器'),
+      reason: 'Set up an obsolete memory.',
+      explicitUserIntent: true,
+      identity,
+    })
+    const tool = createMemoryTools(service).find(item => item.definition.name === 'memory_write')!
+
+    const result = await tool.execute({
+      operations: [
+        {
+          operation: 'create',
+          kind: 'home_location',
+          node: { valueJson: '杭州', title: '用户常住地', content: '用户当前常住在杭州。' },
+          reason: '用户明确说明当前常住地。',
+          explicitUserIntent: true,
+        },
+        {
+          operation: 'delete',
+          targetId: obsolete.nodeId,
+          expectedRevision: obsolete.node?.revision,
+          reason: '用户明确要求删除失效偏好。',
+        },
+      ],
+    }, {
+      ...identity,
+      memoryExplicitIntent: true,
+      memoryForgetIntent: true,
+      sourceMessageIds: ['atomic-user-message'],
+    })
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        accepted: true,
+        done: true,
+        results: [
+          { accepted: true, action: 'created' },
+          { accepted: true, action: 'deleted', nodeId: obsolete.nodeId },
+        ],
+      },
+    })
+    expect(result.content).toContain('do not repeat it')
+    await expect(service.get(obsolete.nodeId!, identity)).resolves.toMatchObject({ status: 'deleted' })
+    await expect(service.search(identity, { kinds: ['home_location'] })).resolves.toMatchObject({
+      exact: [expect.objectContaining({ valueJson: '杭州', sourceMessageIds: ['atomic-user-message'] })],
+    })
+  })
+
+  it('applies no memory changes when any batch operation fails validation', async () => {
+    const identity = { sessionId: 'atomic-validation', profileId: 'default' }
+    const result = await service.applyBatch({
+      identity,
+      explicitUserIntent: true,
+      operations: [
+        {
+          operation: 'create',
+          kind: 'language_preference',
+          node: { valueJson: '中文', title: '语言偏好', content: '用户偏好中文。' },
+          reason: 'Valid first operation.',
+        },
+        {
+          operation: 'create',
+          kind: 'project_context',
+          node: { valueJson: 'Hermes Studio', title: '项目', content: '用户在维护 Hermes Studio。' },
+          reason: 'Missing the required itemKey.',
+        },
+      ],
+    })
+
+    expect(result).toMatchObject({
+      accepted: false,
+      done: true,
+      failedOperationIndex: 1,
+      reason: expect.stringContaining('No operations were applied'),
+    })
+    await expect(service.search(identity, { kinds: ['language_preference'] }))
+      .resolves.toMatchObject({ exact: [], relevant: [] })
+  })
+
   it('updates an exact memory by id and revision and rejects stale writes', async () => {
     const identity = { sessionId: 's1', profileId: 'default' }
-    const original = await service.proposeUpdate({
+    const original = await service.write({
       operation: 'create',
       kind: 'home_location',
       explicitUserIntent: true,
       reason: 'The user explicitly asked to remember their location.',
       identity,
-      node: { valueJson: '厦门市' },
+      node: { valueJson: '厦门市', title: '用户常住地', content: '用户常住在厦门市。' },
     })
-    const tool = createMemoryTools(service).find(item => item.definition.name === 'memory_propose_update')!
+    const tool = createMemoryTools(service).find(item => item.definition.name === 'memory_write')!
 
     const result = await tool.execute({
       operation: 'update',
       targetId: original.nodeId,
       expectedRevision: original.node?.revision,
-      node: { valueJson: '广西南宁', importance: 0.9 },
+      node: {
+        valueJson: '广西南宁',
+        title: '用户常住地',
+        content: '用户明确表示常住在广西南宁。',
+        importance: 0.9,
+      },
       reason: '用户主动更正所在地为广西南宁。',
     }, identity)
 
@@ -856,7 +911,7 @@ describe('MemoryService', () => {
     expect(store.databaseManager.connection.prepare(
       "SELECT session_id FROM memory_audit_events WHERE event_type = 'supersede' ORDER BY row_id DESC LIMIT 1",
     ).get()).toMatchObject({ session_id: 's1' })
-    await expect(service.proposeUpdate({
+    await expect(service.write({
       operation: 'update',
       targetId: (result.data as { nodeId: string }).nodeId,
       expectedRevision: 1,
@@ -871,7 +926,7 @@ describe('MemoryService', () => {
 
   it('keeps one interaction contract and replaces duplicate relationship statements', async () => {
     const identity = { sessionId: 's1', profileId: 'default' }
-    await expect(service.proposeUpdate({
+    await expect(service.write({
       operation: 'create',
       kind: 'interaction_contract',
       explicitUserIntent: true,
@@ -882,28 +937,36 @@ describe('MemoryService', () => {
       accepted: false,
       reason: 'interaction_contract requires structured valueJson with userRole, assistantRole, or addressUserAs.',
     })
-    const first = await service.proposeUpdate({
+    const first = await service.write({
       operation: 'create',
       kind: 'interaction_contract',
       explicitUserIntent: true,
       reason: '用户设定称呼。',
       identity,
-      node: { valueJson: { userRole: '老爷', addressUserAs: '老爷' } },
+      node: {
+        valueJson: { userRole: '老爷', addressUserAs: '老爷' },
+        title: '用户与助手的互动关系',
+        content: '用户希望被称呼为老爷。',
+      },
     })
-    const second = await service.proposeUpdate({
+    const second = await service.write({
       operation: 'create',
       kind: 'interaction_contract',
       explicitUserIntent: true,
       reason: '用户更新了双方关系。',
       identity,
-      node: { valueJson: { userRole: '爸爸', assistantRole: '女儿', addressUserAs: '爸爸' } },
+      node: {
+        valueJson: { userRole: '爸爸', assistantRole: '女儿', addressUserAs: '爸爸' },
+        title: '用户与助手的互动关系',
+        content: '用户将自己设定为爸爸、助手设定为女儿，并希望被称呼为爸爸。',
+      },
     })
 
     expect(first).toMatchObject({ action: 'created', node: { key: 'interaction.relationship', revision: 1 } })
     expect(second).toMatchObject({ action: 'updated', node: {
       key: 'interaction.relationship',
       revision: 2,
-      content: '用户设定双方关系：用户是爸爸，助手是女儿；助手应称呼用户为爸爸。',
+      content: '用户将自己设定为爸爸、助手设定为女儿，并希望被称呼为爸爸。',
       entities: ['爸爸', '女儿'],
     } })
     await expect(store.getNode(first.nodeId!)).resolves.toMatchObject({ status: 'superseded' })
@@ -911,13 +974,16 @@ describe('MemoryService', () => {
     expect(active).toHaveLength(1)
     expect(active[0]).toMatchObject({ id: second.nodeId, revision: 2 })
 
-    const patched = await service.proposeUpdate({
+    const patched = await service.write({
       operation: 'update',
       targetId: second.nodeId,
       expectedRevision: 2,
       valuePatch: { addressUserAs: '父亲' },
       unsetValueFields: ['userRole'],
-      node: {},
+      node: {
+        title: '用户与助手的互动关系',
+        content: '助手的互动角色是女儿，并应称呼用户为父亲。',
+      },
       reason: '用户只修改称呼并删除自身角色设定。',
       identity,
     })
@@ -925,18 +991,18 @@ describe('MemoryService', () => {
       key: 'interaction.relationship',
       revision: 3,
       valueJson: { assistantRole: '女儿', addressUserAs: '父亲' },
-      content: '用户将助手的互动角色设定为女儿；助手应称呼用户为父亲。',
+      content: '助手的互动角色是女儿，并应称呼用户为父亲。',
       entities: ['女儿', '父亲'],
     } })
     expect(await store.queryNodes({ profileId: 'default', key: 'interaction.relationship' })).toHaveLength(1)
 
-    await service.proposeUpdate({
+    await service.write({
       operation: 'create',
       kind: 'home_location',
       explicitUserIntent: true,
       reason: '用户明确说明常住地。',
       identity,
-      node: { valueJson: '贵阳' },
+      node: { valueJson: '贵阳', title: '用户常住地', content: '用户常住在贵阳。' },
     })
     const locationSearch = await service.search(identity, {
       queryText: 'home location city 位置 城市',
@@ -946,9 +1012,9 @@ describe('MemoryService', () => {
       .toEqual(['profile.location.home'])
   })
 
-  it('requires confirmation for broad or hard deletion', async () => {
+  it('directly applies broad and hard deletion', async () => {
     for (const value of ['香菜', '芹菜']) {
-      await service.proposeUpdate({
+      await service.write({
         operation: 'create',
         kind: 'food_avoidance',
         itemKey: value,
@@ -958,9 +1024,6 @@ describe('MemoryService', () => {
         node: userPreference(value),
       })
     }
-    await expect(service.forget({
-      domain: 'preference', reason: 'clear preferences', identity: { sessionId: 's1', profileId: 'default' },
-    })).resolves.toMatchObject({ requiresConfirmation: true, deletedIds: [] })
     const one = await service.search({ sessionId: 's1', profileId: 'default' }, { domain: 'preference', limit: 10 })
     const node = [...one.exact, ...one.relevant][0]
     const nodeId = node.id
@@ -973,26 +1036,33 @@ describe('MemoryService', () => {
       reason: 'Mutation requires expectedRevision from memory_search, memory_get, or the injected memory card.',
     })
     await expect(service.forget({
-      id: nodeId,
-      expectedRevision: node.revision,
-      reason: 'forget one exact preference',
+      domain: 'preference',
+      reason: 'clear preferences',
       identity: { sessionId: 's1', profileId: 'default' },
-    })).resolves.toMatchObject({ deletedIds: [nodeId], mode: 'soft' })
-    const remaining = await service.search(
+    })).resolves.toMatchObject({ deletedIds: expect.arrayContaining([nodeId]), mode: 'soft' })
+    await expect(service.search(
       { sessionId: 's1', profileId: 'default' },
       { domain: 'preference', limit: 10 },
-    )
-    const remainingNode = [...remaining.exact, ...remaining.relevant][0]
-    const remainingNodeId = remainingNode.id
+    )).resolves.toMatchObject({ exact: [], relevant: [] })
+
+    const hardDelete = await service.write({
+      operation: 'create',
+      kind: 'general_preference',
+      itemKey: 'temporary',
+      reason: 'explicit',
+      explicitUserIntent: true,
+      identity: { sessionId: 's1', profileId: 'default' },
+      node: userPreference('temporary'),
+    })
     await expect(service.forget({
-      id: remainingNodeId,
-      expectedRevision: remainingNode.revision,
+      id: hardDelete.nodeId,
+      expectedRevision: hardDelete.node!.revision,
       mode: 'hard',
       reason: 'erase',
-      confirmed: false,
       identity: { sessionId: 's1', profileId: 'default' },
     }))
-      .resolves.toMatchObject({ requiresConfirmation: true, deletedIds: [] })
+      .resolves.toMatchObject({ mode: 'hard', deletedIds: [hardDelete.nodeId] })
+    await expect(service.get(hardDelete.nodeId!, { profileId: 'default' })).resolves.toBeUndefined()
   })
 
   it('degrades memory failures without blocking the model response', async () => {
@@ -1001,8 +1071,6 @@ describe('MemoryService', () => {
       appendMessage: failure,
       listRecentMessages: failure,
       listMessagesAfter: failure,
-      appendSummary: failure,
-      getLatestSummary: failure,
       getNode: failure,
       upsertNode: failure,
       supersedeNode: failure,
@@ -1010,11 +1078,10 @@ describe('MemoryService', () => {
       deleteNode: failure,
       queryNodes: failure,
       appendAuditEvent: failure,
-      getSessionState: failure,
-      setSessionState: failure,
       close() {},
     } as unknown as MemoryStore
-    const degraded = new MemoryService({ store: failingStore })
+    const onWarning = vi.fn()
+    const degraded = new MemoryService({ store: failingStore, onWarning })
     const client = modelClient()
     const runtime = new AgentRuntime({ modelClient: client, memory: degraded })
 
@@ -1023,7 +1090,34 @@ describe('MemoryService', () => {
     expect(result.output.content).toBe('ok')
     expect(result.memoryContext?.diagnostics).toMatchObject({ storeStatus: 'degraded', enabled: true })
     expect(result.memoryContext?.diagnostics.warnings).toContain('database unavailable')
+    expect(onWarning).toHaveBeenCalledWith(expect.objectContaining({ message: 'database unavailable' }))
     degraded.close()
+  })
+
+  it('does not report an ephemeral fallback as an empty durable memory store', async () => {
+    const ephemeral = new MemoryService({
+      store,
+      storageMode: 'ephemeral',
+      warning: 'persistent database unavailable',
+    })
+    const search = createMemoryTools(ephemeral).find(tool => tool.definition.name === 'memory_search')!
+
+    await expect(search.execute({ all: true }, {
+      sessionId: 's1',
+      profileId: 'default',
+    })).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringContaining('cannot determine whether durable memories exist'),
+    })
+
+    const client = modelClient()
+    const runtime = new AgentRuntime({ modelClient: client, memory: ephemeral })
+    await runtime.run({ messages: ['what do you remember?'], contextKey: 's1' })
+    const request = vi.mocked(client.create).mock.calls[0]?.[0] as ModelRequest
+    expect(String(request.messages[0]?.content)).toContain('persistent database unavailable')
+    expect(String(request.messages[0]?.content)).toContain(
+      'Do not interpret empty or missing results as proof that the user has no saved memories',
+    )
   })
 })
 
@@ -1034,16 +1128,6 @@ function modelClient(): ModelClient {
     capabilities: { streaming: false, tools: true, vision: false, jsonMode: false, systemPrompt: true },
     create: vi.fn(async () => ({ content: 'ok' })),
     stream: vi.fn(),
-  }
-}
-
-function memoryMessage(role: MemoryMessage['role'], content: string, id: string): MemoryMessage {
-  return {
-    id,
-    sessionId: 's1',
-    role,
-    content,
-    createdAt: '2026-01-01T00:00:00.000Z',
   }
 }
 

@@ -40,11 +40,11 @@ async function loadUpdateController(overrides: LoadUpdateControllerOptions = {})
     rmSync: vi.fn(),
     writeFileSync: vi.fn(),
   }))
-  vi.doMock('../../packages/server/src/services/runtime-environment', () => ({
+  vi.doMock('../../packages/server/src/modules/studio/public/runtime-environment', () => ({
     isDockerContainer: () => overrides.isDocker === true,
   }))
 
-  const mod = await import('../../packages/server/src/controllers/update')
+  const mod = await import('../../packages/server/src/bootstrap/update')
   return {
     ...mod,
     mocks: { execFile, execFileSync, spawn, unref, existsSync, readFileSync, appendFileSync },
@@ -92,7 +92,7 @@ describe('update controller', () => {
     vi.useRealTimers()
     vi.doUnmock('child_process')
     vi.doUnmock('fs')
-    vi.doUnmock('../../packages/server/src/services/runtime-environment')
+    vi.doUnmock('../../packages/server/src/modules/studio/public/runtime-environment')
     vi.unstubAllGlobals()
     if (originalPort === undefined) {
       delete process.env.PORT

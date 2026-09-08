@@ -115,6 +115,7 @@ export interface DesktopBrowserBridge {
   updateAnnotationNote: (tabId: string, marker: number, note: string) => Promise<boolean>
   captureAnnotations: (tabId: string) => Promise<DesktopBrowserSelection['screenshot']>
   clearAnnotations: (tabId: string) => Promise<boolean>
+  removeAnnotation?: (tabId: string, marker: number) => Promise<boolean>
   onAnnotationRequest: (callback: (request: { tabId: string; mode: 'element' | 'region' }) => void) => () => void
   onStateChange: (callback: (state: DesktopBrowserState) => void) => () => void
 }
@@ -123,8 +124,10 @@ export interface HermesDesktopBridge {
   getToken: () => Promise<string>
   ensureAuth?: () => Promise<boolean>
   retryBootstrap: (source?: 'cf' | 'github') => Promise<void>
+  restartApp?: () => Promise<boolean>
   selectRuntimeDirectory?: (defaultPath?: string) => Promise<string | null>
   notifyCompletion: (payload: { title: string; body?: string; icon?: string; tag?: string; clickUrl?: string }) => Promise<boolean>
+  openExternalUrl?: (url: string) => Promise<boolean>
   openChatWindow?: (sessionId: string, profile?: string) => Promise<void>
   getWindowState: () => Promise<{ isMaximized: boolean }>
   windowControl: (action: 'minimize' | 'toggle-maximize' | 'close') => Promise<{ isMaximized: boolean }>

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const readConfigYamlForProfileMock = vi.fn()
 
-vi.mock('../../packages/server/src/services/config-helpers', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/profile-config', () => ({
   readConfigYamlForProfile: readConfigYamlForProfileMock,
 }))
 
@@ -15,7 +15,7 @@ describe('run chat model config', () => {
   })
 
   it('uses the requested model for a new bridge session before falling back to profile default', async () => {
-    const { resolveBridgeRunModelConfig } = await import('../../packages/server/src/services/hermes/run-chat/model-config')
+    const { resolveBridgeRunModelConfig } = await import('../../packages/server/src/modules/studio/services/chat-run/model-config')
 
     const result = await resolveBridgeRunModelConfig({
       profile: 'default',
@@ -29,7 +29,7 @@ describe('run chat model config', () => {
   })
 
   it('keeps an existing session model ahead of a requested model', async () => {
-    const { resolveBridgeRunModelConfig } = await import('../../packages/server/src/services/hermes/run-chat/model-config')
+    const { resolveBridgeRunModelConfig } = await import('../../packages/server/src/modules/studio/services/chat-run/model-config')
 
     const result = await resolveBridgeRunModelConfig({
       profile: 'default',
@@ -48,7 +48,7 @@ describe('run chat model config', () => {
   })
 
   it('keeps an explicit model when no model group list is available', async () => {
-    const { resolveBridgeRunModelConfig } = await import('../../packages/server/src/services/hermes/run-chat/model-config')
+    const { resolveBridgeRunModelConfig } = await import('../../packages/server/src/modules/studio/services/chat-run/model-config')
 
     const result = await resolveBridgeRunModelConfig({
       profile: 'default',
@@ -61,7 +61,7 @@ describe('run chat model config', () => {
   })
 
   it('maps Claude OAuth to the Anthropic runtime provider', async () => {
-    const { resolveBridgeRunModelConfig } = await import('../../packages/server/src/services/hermes/run-chat/model-config')
+    const { resolveBridgeRunModelConfig } = await import('../../packages/server/src/modules/studio/services/chat-run/model-config')
 
     const result = await resolveBridgeRunModelConfig({
       profile: 'default',
@@ -75,7 +75,7 @@ describe('run chat model config', () => {
   })
 
   it('falls back to the profile default when the candidate model is unavailable', async () => {
-    const { resolveBridgeRunModelConfig } = await import('../../packages/server/src/services/hermes/run-chat/model-config')
+    const { resolveBridgeRunModelConfig } = await import('../../packages/server/src/modules/studio/services/chat-run/model-config')
 
     const result = await resolveBridgeRunModelConfig({
       profile: 'default',

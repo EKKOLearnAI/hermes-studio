@@ -24,6 +24,27 @@ describe('browser selection attachment context', () => {
     })
   })
 
+  it('marks derived video frames so they stay out of the visible attachment list', async () => {
+    const frame: Attachment = {
+      id: 'video-frame-1',
+      name: 'demo-video-frame-01.jpg',
+      type: 'image/jpeg',
+      size: 5,
+      url: 'blob:video-frame',
+      file: new File(['frame'], 'demo-video-frame-01.jpg', { type: 'image/jpeg' }),
+      videoFrameFor: 'video-1',
+    }
+
+    await expect(buildContentBlocks('', [frame], [{ name: frame.name, path: '/tmp/frame.jpg' }]))
+      .resolves.toEqual([{
+        type: 'image',
+        name: frame.name,
+        path: '/tmp/frame.jpg',
+        media_type: 'image/jpeg',
+        video_frame: true,
+      }])
+  })
+
   it('keeps expandable metadata on display input but omits the hidden model text block', async () => {
     const blocks = await buildContentBlocks('Make this clearer', [attachment], uploaded, false)
 

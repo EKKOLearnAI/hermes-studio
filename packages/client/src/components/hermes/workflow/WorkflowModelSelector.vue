@@ -2,7 +2,8 @@
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/hermes/app'
-import type { AvailableModelGroup, ProviderApiMode } from '@/api/hermes/system'
+import type { AvailableModelGroup } from '@/api/hermes/system'
+import type { ProviderApiMode } from '@/api/studio/provider-api-mode'
 import ModelPickerModal from '@/components/hermes/models/ModelPickerModal.vue'
 
 const props = defineProps<{

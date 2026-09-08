@@ -69,4 +69,50 @@ describe('ProfileCard config edit affordance', () => {
       },
     })
   })
+
+  it('hides the Hermes Profile switch action when Hermes is unavailable', () => {
+    const wrapper = mount(ProfileCard, {
+      props: {
+        profile: {
+          name: 'reviewer',
+          active: false,
+          model: 'gpt-5.4',
+          alias: 'reviewer',
+          avatar: null,
+        },
+      },
+      global: {
+        plugins: [createTestingPinia({
+          createSpy: vi.fn,
+          initialState: { profiles: { hermesAvailable: false } },
+        })],
+        stubs: { ProfileAvatar: { template: '<span />' } },
+      },
+    })
+
+    expect(wrapper.find('[data-testid="switch-hermes-profile"]').exists()).toBe(false)
+  })
+
+  it('shows the Hermes Profile switch action when a Hermes executable is available', () => {
+    const wrapper = mount(ProfileCard, {
+      props: {
+        profile: {
+          name: 'reviewer',
+          active: false,
+          model: 'gpt-5.4',
+          alias: 'reviewer',
+          avatar: null,
+        },
+      },
+      global: {
+        plugins: [createTestingPinia({
+          createSpy: vi.fn,
+          initialState: { profiles: { hermesAvailable: true } },
+        })],
+        stubs: { ProfileAvatar: { template: '<span />' } },
+      },
+    })
+
+    expect(wrapper.find('[data-testid="switch-hermes-profile"]').exists()).toBe(true)
+  })
 })

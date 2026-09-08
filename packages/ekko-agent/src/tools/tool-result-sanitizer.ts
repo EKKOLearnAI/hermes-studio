@@ -1,20 +1,25 @@
 import { createHash } from 'node:crypto'
-import { mkdir, readdir, stat, unlink, writeFile } from 'node:fs/promises'
+import { readdir, stat, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type { AgentToolContentPart, AgentToolResult } from './types'
+import { ensureToolAssetDirectory } from './workspace-temp'
 
 const DATA_URL_RE = /data:([a-zA-Z0-9.+-]+\/[a-zA-Z0-9.+-]+);base64,([a-zA-Z0-9+/=\r\n]+)/g
 const BASE64_FIELD_RE = /^(?:base64|b64|bodyBase64|dataUrl|image_base64|audio_base64)$/i
 const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000
 const DEFAULT_MAX_BYTES = 25 * 1024 * 1024
 const MIN_RAW_BASE64_CHARS = 4_096
+export const DEFAULT_TOOL_RESULT_MAX_TEXT_BYTES = 256_000
+export const DEFAULT_TOOL_RESULT_MAX_TEXT_ARTIFACT_BYTES = 25 * 1024 * 1024
 
 export interface ToolResultSanitizerOptions {
   tempRoot?: string
   ttlMs?: number
   maxBytes?: number
+  maxTextBytes?: number
+  maxTextArtifactBytes?: number
   now?: number
 }
 
@@ -26,11 +31,17 @@ export async function sanitizeAgentToolResult(
   await cleanupExpiredToolAssets(tempRoot, options.ttlMs ?? DEFAULT_TTL_MS, options.now ?? Date.now())
   const seen = new WeakSet<object>()
   const sanitize = (value: unknown, key = ''): Promise<unknown> => sanitizeValue(value, key, tempRoot, options, seen)
+  const content = String(await sanitizeStructuredText(result.content, sanitize))
+  const error = result.error === undefined
+    ? undefined
+    : String(await sanitizeStructuredText(result.error, sanitize))
   return {
     ...result,
-    content: String(await sanitizeStructuredText(result.content, sanitize)),
+    content: await boundToolResultText(content, tempRoot, options.maxTextBytes, options.maxTextArtifactBytes),
     data: result.data === undefined ? undefined : await sanitize(result.data),
-    error: result.error === undefined ? undefined : String(await sanitizeStructuredText(result.error, sanitize)),
+    error: error === undefined
+      ? undefined
+      : await boundToolResultText(error, tempRoot, options.maxTextBytes, options.maxTextArtifactBytes),
     contentParts: result.contentParts?.reduce<AgentToolContentPart[]>((parts, part) => {
       if (part.type === 'text') parts.push({ type: 'text', text: part.text.slice(0, 100_000) })
       else if (/^image\/(?:png|jpeg|webp|gif)$/i.test(part.mimeType)
@@ -41,6 +52,60 @@ export async function sanitizeAgentToolResult(
       return parts
     }, []),
   }
+}
+
+async function boundToolResultText(
+  text: string,
+  tempRoot: string,
+  requestedMaxBytes = DEFAULT_TOOL_RESULT_MAX_TEXT_BYTES,
+  requestedMaxArtifactBytes = DEFAULT_TOOL_RESULT_MAX_TEXT_ARTIFACT_BYTES,
+): Promise<string> {
+  const maxBytes = positiveInteger(requestedMaxBytes, DEFAULT_TOOL_RESULT_MAX_TEXT_BYTES)
+  const maxArtifactBytes = positiveInteger(
+    requestedMaxArtifactBytes,
+    DEFAULT_TOOL_RESULT_MAX_TEXT_ARTIFACT_BYTES,
+  )
+  const buffer = Buffer.from(text)
+  if (buffer.length <= maxBytes) return text
+  const digest = createHash('sha256').update(buffer).digest('hex')
+  const candidateArtifactPath = join(tempRoot, `tool-result-${digest}.txt`)
+  const artifactBuffer = buffer.subarray(0, maxArtifactBytes)
+  const artifactTruncated = artifactBuffer.length < buffer.length
+  let artifactPath: string | undefined
+  try {
+    await ensureToolAssetDirectory(tempRoot)
+    try {
+      await writeFile(candidateArtifactPath, artifactBuffer, { flag: 'wx', mode: 0o600 })
+      artifactPath = candidateArtifactPath
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+        const existing = await stat(candidateArtifactPath).catch(() => undefined)
+        if (existing?.isFile() && existing.size === artifactBuffer.length) artifactPath = candidateArtifactPath
+      }
+    }
+  } catch {
+    // The bounded preview remains usable even when artifact persistence is unavailable.
+  }
+  const tailBytes = Math.max(1, Math.floor(maxBytes / 3))
+  const headBytes = maxBytes - tailBytes
+  const omittedBytes = buffer.length - maxBytes
+  const marker = [
+    '',
+    '',
+    `[tool result truncated: ${buffer.length} bytes total, ${omittedBytes} bytes omitted.`,
+    artifactPath && artifactTruncated
+      ? `The first ${artifactBuffer.length} bytes were saved to ${artifactPath}; the artifact reached its safety limit. Use a narrower tool query to retrieve later sections.]`
+      : artifactPath
+        ? `Full output saved to ${artifactPath}; inspect it with read_file using offsets or a bounded search.]`
+      : 'Full output could not be saved; use a narrower tool query to retrieve the omitted section.]',
+    '',
+    '',
+  ].join('\n')
+  return `${buffer.subarray(0, headBytes).toString('utf8')}${marker}${buffer.subarray(-tailBytes).toString('utf8')}`
+}
+
+function positiveInteger(value: number | undefined, fallback: number): number {
+  return Number.isFinite(value) && Number(value) > 0 ? Math.floor(Number(value)) : fallback
 }
 
 export async function cleanupExpiredToolAssets(
@@ -147,7 +212,7 @@ async function materializeBinary(
   if (buffer.length > maxBytes) return `[base64 omitted: ${mime}, ${buffer.length} bytes exceeds limit]`
   const digest = createHash('sha256').update(buffer).digest('hex')
   const path = join(tempRoot, `${digest}.${extensionForMime(mime)}`)
-  await mkdir(tempRoot, { recursive: true })
+  await ensureToolAssetDirectory(tempRoot)
   try {
     await writeFile(path, buffer, { flag: 'wx', mode: 0o600 })
   } catch (error) {

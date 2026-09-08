@@ -3,6 +3,7 @@
     "target": "ES2022",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "commonjs",
+    "esModuleInterop": true,
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,

@@ -145,7 +145,7 @@ async function expectJourneySurface(page: Page) {
   await expect(page.locator('.node-kind-marker--memory')).toBeVisible()
   await expect(page.locator('.journey-node')).toHaveCount(journeyPayload.graph.nodes.length)
   await expect(page.locator('.vue-flow__edge')).toHaveCount(journeyPayload.graph.edges.length)
-  await expect(page.locator('aside.sidebar').getByRole('link', { name: /^Journey$/ })).toBeVisible()
+  await expect(page.locator('aside.hermes-config-sidebar').getByRole('link', { name: /^Journey$/ })).toBeVisible()
 }
 
 test('standalone Journey route renders under Monitoring and defers Skills-only APIs', async ({ page }) => {

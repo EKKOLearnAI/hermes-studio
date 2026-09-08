@@ -5,7 +5,7 @@ const mocks = vi.hoisted(() => ({
   resolveCredentials: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/services/hermes/authorized-provider-credentials', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/authorized-provider-runtime', () => ({
   isAuthorizedRuntimeProvider: mocks.isAuthorizedRuntimeProvider,
   resolveAuthorizedProviderRuntimeCredentials: mocks.resolveCredentials,
 }))
@@ -29,7 +29,7 @@ describe('Ekko Agent authorized provider credentials', () => {
       source: 'oauth',
     })
     const { resolveEkkoAuthorizedProviderCredentials } = await import(
-      '../../packages/server/src/services/ekko-agent/auth-providers'
+      '../../packages/server/src/modules/ekko/services/auth-providers'
     )
 
     await expect(resolveEkkoAuthorizedProviderCredentials(
@@ -50,7 +50,7 @@ describe('Ekko Agent authorized provider credentials', () => {
 
   it('ignores non-auth providers', async () => {
     const { resolveEkkoAuthorizedProviderCredentials } = await import(
-      '../../packages/server/src/services/ekko-agent/auth-providers'
+      '../../packages/server/src/modules/ekko/services/auth-providers'
     )
 
     await expect(resolveEkkoAuthorizedProviderCredentials('work', 'deepseek')).resolves.toEqual({})
@@ -60,7 +60,7 @@ describe('Ekko Agent authorized provider credentials', () => {
   it('propagates refresh failures instead of falling back to a stale token', async () => {
     mocks.resolveCredentials.mockRejectedValue(new Error('re-login required'))
     const { resolveEkkoAuthorizedProviderCredentials } = await import(
-      '../../packages/server/src/services/ekko-agent/auth-providers'
+      '../../packages/server/src/modules/ekko/services/auth-providers'
     )
 
     await expect(resolveEkkoAuthorizedProviderCredentials('default', 'xai-oauth'))

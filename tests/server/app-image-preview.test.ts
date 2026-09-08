@@ -1,6 +1,6 @@
 import { deflateSync } from 'node:zlib'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createAppImagePreview } from '../../packages/server/src/services/hermes/app-image-preview'
+import { createAppImagePreview } from '../../packages/server/src/modules/studio/services/files/app-image-preview'
 
 afterEach(() => {
   vi.doUnmock('sharp')
@@ -51,7 +51,7 @@ describe('createAppImagePreview', () => {
       throw new Error('Sharp should not load')
     })
     const { createAppImagePreview: createWithoutSharp } = await import(
-      '../../packages/server/src/services/hermes/app-image-preview'
+      '../../packages/server/src/modules/studio/services/files/app-image-preview'
     )
     const source = Buffer.from('hello')
 
@@ -67,7 +67,7 @@ describe('createAppImagePreview', () => {
       throw new Error('Native Sharp runtime unavailable')
     })
     const { createAppImagePreview: createWithoutSharp } = await import(
-      '../../packages/server/src/services/hermes/app-image-preview'
+      '../../packages/server/src/modules/studio/services/files/app-image-preview'
     )
     const source = solidPng(4, 4, [53, 88, 212, 255])
 

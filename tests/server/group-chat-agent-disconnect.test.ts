@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { AgentClient } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
+import { AgentClient } from '../../packages/server/src/modules/studio/services/group-chat/agent-clients'
 
 describe('group Agent disconnect lifecycle', () => {
   it('awaits abort before disposing and clearing an active Pi session', async () => {

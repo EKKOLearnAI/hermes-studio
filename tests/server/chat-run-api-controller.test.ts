@@ -39,7 +39,7 @@ describe('chat-run HTTP API controller', () => {
     const socket = makeSocket()
     ioMock.mockReturnValue(socket)
 
-    const { runOnce } = await import('../../packages/server/src/controllers/chat-run')
+    const { runOnce } = await import('../../packages/server/src/modules/studio/controllers/chat-run')
     const ctx = {
       get: vi.fn(() => ''),
       state: { profile: { name: 'default' } },
@@ -77,7 +77,7 @@ describe('chat-run HTTP API controller', () => {
     const socket = makeSocket()
     ioMock.mockReturnValue(socket)
 
-    const { runOnce } = await import('../../packages/server/src/controllers/chat-run')
+    const { runOnce } = await import('../../packages/server/src/modules/studio/controllers/chat-run')
     const ctx = {
       get: vi.fn(() => ''),
       state: { profile: { name: 'default' } },
@@ -101,7 +101,7 @@ describe('chat-run HTTP API controller', () => {
     const socket = makeSocket()
     ioMock.mockReturnValue(socket)
 
-    const { runOnce } = await import('../../packages/server/src/controllers/chat-run')
+    const { runOnce } = await import('../../packages/server/src/modules/studio/controllers/chat-run')
     const ctx = {
       get: vi.fn(() => ''),
       state: { profile: { name: 'default' } },
@@ -130,7 +130,7 @@ describe('chat-run HTTP API controller', () => {
     const socket = makeSocket()
     ioMock.mockReturnValue(socket)
 
-    const { runOnce } = await import('../../packages/server/src/controllers/chat-run')
+    const { runOnce } = await import('../../packages/server/src/modules/studio/controllers/chat-run')
     const ctx = {
       get: vi.fn(() => ''),
       state: { profile: { name: 'default' } },
@@ -166,7 +166,7 @@ describe('chat-run HTTP API controller', () => {
     const socket = makeSocket()
     ioMock.mockReturnValue(socket)
 
-    const { runOnce } = await import('../../packages/server/src/controllers/chat-run')
+    const { runOnce } = await import('../../packages/server/src/modules/studio/controllers/chat-run')
     const ctx = {
       get: vi.fn((name: string) => name.toLowerCase() === 'authorization' ? 'Bearer token-1' : ''),
       state: { profile: { name: 'default' } },
@@ -209,7 +209,7 @@ describe('chat-run HTTP API controller', () => {
     const socket = makeSocket()
     ioMock.mockReturnValue(socket)
 
-    const { runOnce } = await import('../../packages/server/src/controllers/chat-run')
+    const { runOnce } = await import('../../packages/server/src/modules/studio/controllers/chat-run')
     const ctx = {
       get: vi.fn((name: string) => name.toLowerCase() === 'authorization' ? 'Bearer token-1' : ''),
       state: { profile: { name: 'default' } },
@@ -246,7 +246,7 @@ describe('chat-run HTTP API controller', () => {
     const socket = makeSocket()
     ioMock.mockReturnValue(socket)
 
-    const { runOnce } = await import('../../packages/server/src/controllers/chat-run')
+    const { runOnce } = await import('../../packages/server/src/modules/studio/controllers/chat-run')
     const ctx = {
       get: vi.fn((name: string) => name.toLowerCase() === 'authorization' ? 'Bearer token-1' : ''),
       state: { profile: { name: 'default' } },

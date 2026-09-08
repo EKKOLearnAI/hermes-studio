@@ -4,7 +4,7 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 import YAML from 'js-yaml'
 
-vi.mock('../../packages/server/src/services/hermes/hermes-cli', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/runtime/cli', () => ({
   restartGateway: vi.fn().mockResolvedValue(undefined),
 }))
 
@@ -13,7 +13,8 @@ let hermesHome = ''
 async function loadProvidersController() {
   vi.resetModules()
   process.env.HERMES_HOME = hermesHome
-  return import('../../packages/server/src/controllers/hermes/providers')
+  await import('../../packages/server/src/bootstrap/agent-profile-adapter')
+  return import('../../packages/server/src/modules/hermes/controllers/providers')
 }
 
 function makeCtx(body: Record<string, any>, profile = 'default') {
@@ -39,7 +40,7 @@ describe('providers controller create', () => {
 
   afterEach(() => {
     delete process.env.HERMES_HOME
-    vi.doUnmock('../../packages/server/src/controllers/hermes/providers')
+    vi.doUnmock('../../packages/server/src/modules/hermes/controllers/providers')
     vi.clearAllMocks()
     if (hermesHome) rmSync(hermesHome, { recursive: true, force: true })
     hermesHome = ''
@@ -61,6 +62,24 @@ describe('providers controller create', () => {
     const envAfter = readFileSync(join(hermesHome, '.env'), 'utf-8')
     expect(envAfter).toContain('DEEPSEEK_API_KEY=deepseek-key')
     expect(envAfter).not.toContain('DEEPSEEK_BASE_URL')
+  })
+
+  it('selects native OpenCode Free without writing credentials or a custom provider', async () => {
+    const { create } = await loadProvidersController()
+    const ctx = makeCtx({ name: 'OpenCode Free', providerKey: 'opencode-free', model: 'mimo-v2.5-free', api_key: '' })
+    await create(ctx)
+    expect(ctx.body).toEqual({ success: true })
+    expect(readYaml(join(hermesHome, 'config.yaml'))).toEqual({ model: { provider: 'opencode-free', default: 'mimo-v2.5-free' } })
+    expect(readFileSync(join(hermesHome, '.env'), 'utf-8')).toBe('')
+  })
+
+  it('rejects a paid model under OpenCode Free without changing the current config', async () => {
+    const { create } = await loadProvidersController()
+    const before = readFileSync(join(hermesHome, 'config.yaml'), 'utf-8')
+    const ctx = makeCtx({ name: 'OpenCode Free', providerKey: 'opencode-free', model: 'claude-opus-4-8', api_key: '' })
+    await create(ctx)
+    expect(ctx.status).toBe(400)
+    expect(readFileSync(join(hermesHome, 'config.yaml'), 'utf-8')).toBe(before)
   })
 
   it('persists a built-in provider base URL when it differs from the preset default', async () => {

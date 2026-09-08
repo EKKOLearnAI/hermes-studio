@@ -11,7 +11,7 @@ describe('App connections API', () => {
   })
 
   it('uses the connection-specific authorization endpoints', async () => {
-    const api = await import('@/api/hermes/app-connections')
+    const api = await import('@/api/studio/app-connections')
 
     await api.fetchAppConnections()
     await api.createLanAppAuthorization()

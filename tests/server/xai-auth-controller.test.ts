@@ -3,12 +3,13 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { dirname, join } from 'path'
 import { tmpdir } from 'os'
 import YAML from 'js-yaml'
-import { applyXaiOAuthDefaultModel, saveXaiOAuthTokensForProfile, status } from '../../packages/server/src/controllers/hermes/xai-auth'
+import '../../packages/server/src/bootstrap/agent-profile-adapter'
+import { applyXaiOAuthDefaultModel, saveXaiOAuthTokensForProfile, status } from '../../packages/server/src/modules/hermes/controllers/xai-auth'
 
 let hermesHome = ''
 const mockResolveAuthorizedCredentials = vi.hoisted(() => vi.fn())
 
-vi.mock('../../packages/server/src/services/hermes/authorized-provider-credentials', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/providers/authorized-provider-credentials', () => ({
   resolveAuthorizedProviderRuntimeCredentials: mockResolveAuthorizedCredentials,
 }))
 

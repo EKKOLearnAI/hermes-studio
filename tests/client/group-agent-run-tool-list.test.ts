@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { defineComponent } from 'vue'
 import { createPinia } from 'pinia'
-import type { ChatMessage, RoomAgent } from '@/api/hermes/group-chat'
+import type { ChatMessage, RoomAgent } from '@/api/studio/group-chat'
 import GroupAgentRunCard from '@/components/hermes/group-chat/GroupAgentRunCard.vue'
 
 vi.mock('vue-i18n', () => ({
@@ -108,17 +108,28 @@ describe('GroupAgentRunCard tool list', () => {
     expect(wrapper.get('.run-transcript-item').attributes('data-message-id')).toBe('current-reasoning')
     expect(wrapper.get('.run-transcript').find('.tool-name').exists()).toBe(false)
     expect(wrapper.get('.run-column').element.children[0]).toBe(wrapper.get('.run-header').element)
-    expect(wrapper.get('.run-card').element.children[0]).toBe(panel.element)
+    const runAvatar = wrapper.get('.run-header .message-agent-avatar, .run-header group-agent-message-avatar-stub')
+    expect(`${runAvatar.attributes('style') || ''} ${runAvatar.attributes('size') || ''}`).toContain('22')
+    expect(wrapper.get('.run-card').element.children[0]).toBe(wrapper.get('.run-tools').element)
     expect(wrapper.get('.run-card').element.children[1]).toBe(wrapper.get('.run-transcript').element)
     expect(wrapper.get('.run-column').element.children[2]).toBe(wrapper.get('.run-time').element)
   })
 
-  it('keeps completed historical tool calls in the same bounded panel before its transcript', () => {
+  it('folds completed historical tools and expands the bounded panel without hiding the transcript', async () => {
     const wrapper = mountCard(runMessage([
       runItem({ id: 'historical-tool-1', role: 'tool', toolName: 'read_file', toolStatus: 'done' }),
       runItem({ id: 'historical-answer', content: 'Finished.', timestamp: 2 }),
       runItem({ id: 'historical-tool-2', role: 'tool', toolName: 'search', toolStatus: 'done', timestamp: 3 }),
     ], false))
+
+    const toggle = wrapper.get('.tool-run-header')
+    expect(toggle.attributes('aria-expanded')).toBe('false')
+    await vi.waitFor(() => expect(wrapper.find('.run-tool-list').exists()).toBe(false))
+    expect(wrapper.get('.run-transcript-item').attributes('data-message-id')).toMatch(/answer$/)
+    expect(toggle.text()).toContain('read_file')
+    expect(toggle.text()).toContain('search')
+    await toggle.trigger('click')
+    expect(toggle.attributes('aria-expanded')).toBe('true')
 
     expect(wrapper.get('.run-tool-list').findAll('.run-tool-item').map(item => item.attributes('data-message-id'))).toEqual([
       'historical-tool-2',
@@ -130,7 +141,41 @@ describe('GroupAgentRunCard tool list', () => {
     expect(wrapper.get('.run-transcript').text()).not.toContain('read_file')
     expect(wrapper.findAll('.run-tool-item[data-message-id="historical-tool-1"]')).toHaveLength(1)
     expect(wrapper.findAll('.run-tool-item[data-message-id="historical-tool-2"]')).toHaveLength(1)
-    expect(wrapper.get('.run-card').element.children[0]).toBe(wrapper.get('.run-tool-list').element)
+    expect(wrapper.get('.run-card').element.children[0]).toBe(wrapper.get('.run-tools').element)
     expect(wrapper.get('.run-card').element.children[1]).toBe(wrapper.get('.run-transcript').element)
   })
+
+  it('allows folding during execution and folds automatically when the run finishes', async () => {
+    const tool = runItem({ id: 'tool-1', role: 'tool', toolName: 'search', toolStatus: 'running' })
+    const wrapper = mountCard(runMessage([tool], true))
+    const toggle = wrapper.get('.tool-run-header')
+    expect(toggle.attributes('aria-expanded')).toBe('true')
+    expect(wrapper.find('.tool-run-success').exists()).toBe(false)
+
+    await toggle.trigger('click')
+    await vi.waitFor(() => expect(wrapper.find('.run-tool-list').exists()).toBe(false))
+    await wrapper.setProps({ message: runMessage([tool, runItem({ id: 'progress', content: 'Working' })], true) })
+    expect(toggle.attributes('aria-expanded')).toBe('false')
+    await toggle.trigger('click')
+
+    await wrapper.setProps({ message: runMessage([
+      { ...tool, toolStatus: 'done' },
+      runItem({ id: 'answer', content: 'Finished.' }),
+    ], false) })
+    expect(toggle.attributes('aria-expanded')).toBe('false')
+    await vi.waitFor(() => expect(wrapper.find('.run-tool-list').exists()).toBe(false))
+    expect(wrapper.get('.run-transcript-item').attributes('data-message-id')).toMatch(/answer$/)
+    await toggle.trigger('click')
+    expect(wrapper.find('.run-tool-item').exists()).toBe(true)
+  })
+
+  it.each(['error', 'interrupted'] as const)('keeps %s visible in the collapsed summary', (toolStatus) => {
+    const wrapper = mountCard(runMessage([
+      runItem({ id: 'failed-tool', role: 'tool', toolName: 'search', toolStatus }),
+    ], false))
+    expect(wrapper.get('.tool-run-header').attributes('aria-expanded')).toBe('false')
+    expect(wrapper.get('.tool-run-error').text()).toBe(toolStatus === 'error' ? 'chat.error' : 'chat.toolResultUnavailable')
+    expect(wrapper.find('.tool-run-success').exists()).toBe(false)
+  })
+
 })

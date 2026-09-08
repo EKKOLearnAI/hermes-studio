@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
@@ -33,6 +33,7 @@ const testState = vi.hoisted(() => {
 })
 
 vi.mock('child_process', () => ({
+  execFile: vi.fn(),
   spawn: vi.fn((command: string, args: string[], options: any) => {
     const child = new testState.TestEmitter() as any
     child.stdin = new testState.TestEmitter()
@@ -52,15 +53,16 @@ vi.mock('child_process', () => ({
   }),
 }))
 
-vi.mock('../../packages/server/src/db/hermes/session-store', async (importOriginal) => ({
-  ...await importOriginal<typeof import('../../packages/server/src/db/hermes/session-store')>(),
+vi.mock('../../packages/server/src/modules/studio/repositories/session-store', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../packages/server/src/modules/studio/repositories/session-store')>(),
   updateSessionStats: vi.fn(),
 }))
 
 import {
   CodingAgentRunManager,
   isolatedCodingAgentChildEnv,
-} from '../../packages/server/src/services/coding-agents/runtime/run-manager'
+} from '../../packages/server/src/modules/coding-agents/services/runtime/run-manager'
+import '../../packages/server/src/bootstrap/coding-agent-adapters'
 
 const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
 
@@ -78,6 +80,116 @@ afterEach(() => {
 })
 
 describe('coding agent Windows process launch', () => {
+  it('keeps Grok prompts out of Windows command arguments and settles after process close', () => {
+    const grokHome = mkdtempSync(join(tmpdir(), 'hermes-grok-windows-'))
+    const originalDatabaseUrl = process.env.DATABASE_URL
+    process.env.DATABASE_URL = 'studio-secret-that-must-not-leak'
+    try {
+      const manager = new CodingAgentRunManager()
+      const emitCompletion = vi.fn()
+      ;(manager as any).handleClaudePrintResponseEvent = vi.fn()
+      ;(manager as any).recordGrokNativeSessionId = vi.fn()
+      ;(manager as any).completeClaudePrintTurn = vi.fn((run: any, usage: unknown) => {
+        run.printCompleted = true
+        run.pendingChatCompletionEvent = 'run.completed'
+        run.pendingChatCompletionPayload = { usage }
+      })
+      ;(manager as any).emitAndMarkPrintChatRunCompletedAfterUsage = emitCompletion
+      const userPrompt = '请检查 C:\\项目 & echo %PATH% | whoami'
+      const run: any = {
+        id: 'agent-session-grok-windows',
+        launch: {
+          agentSessionId: 'agent-session-grok-windows',
+          agentNativeSessionId: '11111111-1111-4111-8111-111111111111',
+          agentId: 'grok',
+          mode: 'scoped',
+          profile: 'default',
+          provider: 'global',
+          model: '',
+          sessionId: 'chat-session-grok-windows',
+          command: 'C:\\Tools\\grok.cmd',
+          args: ['--always-approve', '--no-auto-update'],
+          shellCommand: 'grok',
+          workspaceDir: process.cwd(),
+          env: { GROK_HOME: grokHome },
+        },
+        state: { messages: [], isWorking: false, events: [], queue: [] },
+        lastActiveAt: Date.now(),
+        startedAt: Date.now(),
+        exited: false,
+        nativeResumeReady: false,
+      }
+
+      ;(manager as any).startGrokPrintTurn(run, userPrompt)
+
+      const promptPath = join(grokHome, readdirSync(grokHome).find(name => name.startsWith('turn-prompt-')) || '')
+      expect(readFileSync(promptPath, 'utf-8')).toBe(`${userPrompt}\n`)
+      expect(JSON.stringify(testState.spawnCalls[0]?.args)).not.toContain(userPrompt)
+      expect(JSON.stringify(testState.spawnCalls[0]?.args)).toContain('--prompt-file')
+      expect(JSON.stringify(testState.spawnCalls[0]?.args)).toContain('--session-id')
+      expect(testState.spawnCalls[0]?.options.env.DATABASE_URL).toBeUndefined()
+
+      const child = testState.spawnCalls[0]?.child
+      child.stdout.emit('data', Buffer.from('{"type":"end","sessionId":"11111111-1111-4111-8111-111111111111","usage":{"input_tokens":3}}\n'))
+      expect(run.printCompleted).toBe(true)
+      child.emit('close', 0)
+
+      expect(emitCompletion).toHaveBeenCalledWith(
+        run,
+        'run.completed',
+        { usage: { input_tokens: 3 } },
+      )
+      expect(existsSync(promptPath)).toBe(false)
+    } finally {
+      if (originalDatabaseUrl === undefined) delete process.env.DATABASE_URL
+      else process.env.DATABASE_URL = originalDatabaseUrl
+      rmSync(grokHome, { recursive: true, force: true })
+    }
+  })
+
+  it('resumes a Grok session that persisted before an error event ended the first turn', () => {
+    const grokHome = mkdtempSync(join(tmpdir(), 'hermes-grok-resume-'))
+    try {
+      const manager = new CodingAgentRunManager()
+      ;(manager as any).handleClaudePrintResponseEvent = vi.fn()
+      const sessionId = '11111111-1111-4111-8111-111111111111'
+      const workspaceDir = process.cwd()
+      mkdirSync(join(grokHome, 'sessions', encodeURIComponent(workspaceDir), sessionId), { recursive: true })
+      const run: any = {
+        id: 'agent-session-grok-resume',
+        launch: {
+          agentSessionId: 'agent-session-grok-resume',
+          agentNativeSessionId: sessionId,
+          agentId: 'grok',
+          mode: 'scoped',
+          profile: 'default',
+          provider: 'custom',
+          model: 'test-model',
+          sessionId: 'chat-session-grok-resume',
+          command: 'C:\\Tools\\grok.cmd',
+          args: ['--always-approve'],
+          shellCommand: 'grok',
+          workspaceDir,
+          env: { GROK_HOME: grokHome },
+        },
+        state: { messages: [], isWorking: false, events: [], queue: [] },
+        lastActiveAt: Date.now(),
+        startedAt: Date.now(),
+        exited: false,
+        nativeResumeReady: false,
+      }
+
+      ;(manager as any).startGrokPrintTurn(run, 'retry')
+
+      const commandLine = JSON.stringify(testState.spawnCalls[0]?.args)
+      expect(commandLine).toContain('--resume')
+      expect(commandLine).not.toContain('--session-id')
+      expect(run.nativeResumeReady).toBe(true)
+    } finally {
+      rmSync(grokHome, { recursive: true, force: true })
+    }
+  })
+
   it('does not inherit unrelated Studio secrets into coding-agent children', () => {
     expect(isolatedCodingAgentChildEnv(
       { PI_CODING_AGENT_DIR: 'C:\\Pi' },
@@ -737,6 +849,7 @@ describe('coding agent Windows process launch', () => {
     const manager = new CodingAgentRunManager()
     const emitted: Array<{ event: string; payload: any }> = []
     ;(manager as any).ensureDbSession = () => {}
+    ;(manager as any).addUserMessage = () => 1
     ;(manager as any).persistTerminalResponse = () => undefined
     ;(manager as any).refreshCodingAgentUsage = async () => {}
     ;(manager as any).completeWorkspaceRunDiff = () => undefined
@@ -951,6 +1064,62 @@ describe('coding agent Windows process launch', () => {
     if (run?.idleTimer) clearTimeout(run.idleTimer)
     ;(manager as any).runs.clear()
     ;(manager as any).sessionIndex.clear()
+  })
+
+  it('keeps long global Codex prompts in the Studio-owned prompt file', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'hermes-global-codex-prompt-'))
+    const promptPath = join(tempDir, 'AGENTS.md')
+    writeFileSync(promptPath, [
+      'User global Codex instructions.',
+      '',
+      '<!-- BEGIN HERMES WEB UI PROMPT -->',
+      'old Studio prompt',
+      '<!-- END HERMES WEB UI PROMPT -->',
+      '',
+    ].join('\n'))
+
+    try {
+      const manager = new CodingAgentRunManager()
+      ;(manager as any).ensureDbSession = () => {}
+      ;(manager as any).addUserMessage = () => {}
+      ;(manager as any).emitToChat = () => {}
+      ;(manager as any).markChatRunCompleted = () => {}
+
+      manager.start({
+        agentSessionId: 'agent-session-global-codex-file',
+        agentId: 'codex',
+        mode: 'global',
+        profile: 'default',
+        provider: 'global',
+        model: '',
+        sessionId: 'chat-session-global-codex-file',
+        command: 'C:\\Users\\Administrator\\AppData\\Roaming\\npm\\codex.cmd',
+        args: [],
+        env: { CODEX_HOME: tempDir },
+        promptFile: promptPath,
+        shellCommand: 'codex',
+        workspaceDir: process.cwd(),
+        state: { messages: [], isWorking: false, events: [], queue: [] },
+      })
+
+      const longPrompt = `Hermes Windows prompt\n${'详细说明'.repeat(3000)}`
+      manager.send('chat-session-global-codex-file', 'check this', { systemPrompt: longPrompt })
+
+      const commandLine = testState.spawnCalls[0].args[3]
+      expect(commandLine).not.toContain('developer_instructions=')
+      expect(commandLine).not.toContain('详细说明')
+      expect(commandLine.length).toBeLessThan(8191)
+      expect(readFileSync(promptPath, 'utf8')).toContain('User global Codex instructions.')
+      expect(readFileSync(promptPath, 'utf8')).toContain(longPrompt)
+      expect(readFileSync(promptPath, 'utf8').match(/BEGIN HERMES WEB UI PROMPT/g)).toHaveLength(1)
+
+      const run = (manager as any).runs.get('agent-session-global-codex-file')
+      if (run?.idleTimer) clearTimeout(run.idleTimer)
+      ;(manager as any).runs.clear()
+      ;(manager as any).sessionIndex.clear()
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true })
+    }
   })
 
   it('keeps scoped Claude prompts on file instead of adding a CLI prompt payload', () => {

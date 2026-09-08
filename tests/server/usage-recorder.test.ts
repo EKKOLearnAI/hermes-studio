@@ -2,15 +2,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const updateUsageMock = vi.hoisted(() => vi.fn())
 
-vi.mock('../../packages/server/src/db/hermes/usage-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/usage-store', () => ({
   updateUsage: updateUsageMock,
 }))
 
-vi.mock('../../packages/server/src/services/logger', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/logging', () => ({
   logger: { warn: vi.fn() },
 }))
 
-import { normalizeTokenUsage, recordSessionUsage } from '../../packages/server/src/services/usage-recorder'
+import { normalizeTokenUsage, recordSessionUsage } from '../../packages/server/src/modules/studio/services/usage/usage-recorder'
 
 describe('usage recorder', () => {
   beforeEach(() => {

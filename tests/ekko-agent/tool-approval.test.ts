@@ -63,6 +63,16 @@ describe('Ekko tool approvals', () => {
       command: 'npm',
       args: ['test'],
     })).toBeUndefined()
+    expect(toolApprovalRequirement('ekko_repair_database', {
+      strategy: 'rebuild',
+      confirmed: true,
+    })).toMatchObject({
+      key: 'ekko:database-rebuild',
+      description: 'quarantines and rebuilds the persistent Ekko database',
+    })
+    expect(toolApprovalRequirement('ekko_repair_database', {
+      strategy: 'retry',
+    })).toBeUndefined()
     expect(toolApprovalRequirement('read_file', {
       path: 'README.md',
     })).toBeUndefined()

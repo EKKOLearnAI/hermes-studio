@@ -5,18 +5,19 @@ import {
   emitAck,
   once,
 } from './group-chat-test-helpers'
-import { GROUP_CHAT_AGENT_SOCKET_SECRET, groupRuntimeSessionId } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
-import { AgentBridgeClient } from '../../packages/server/src/services/hermes/agent-bridge'
-import { ChatRunSocket } from '../../packages/server/src/services/hermes/run-chat'
+import { GROUP_CHAT_AGENT_SOCKET_SECRET, groupRuntimeSessionId } from '../../packages/server/src/modules/studio/services/group-chat/agent-clients'
+import { AgentBridgeClient } from '../../packages/server/src/modules/hermes/services/bridge/index'
+import { ChatRunSocket } from '../../packages/server/src/modules/studio/sockets/chat-run'
+import '../../packages/server/src/bootstrap/chat-agent-runtime-adapter'
 import {
   denyPendingEkkoToolApprovals,
   waitForEkkoToolApproval,
-} from '../../packages/server/src/services/ekko-agent/approvals'
+} from '../../packages/server/src/modules/ekko/services/approvals'
 import {
   cancelPendingEkkoClarifications,
   waitForEkkoClarification,
-} from '../../packages/server/src/services/ekko-agent/clarifications'
-import type { GroupChatServer } from '../../packages/server/src/services/hermes/group-chat'
+} from '../../packages/server/src/modules/ekko/services/clarifications'
+import type { GroupChatServer } from '../../packages/server/src/modules/studio/sockets/group-chat'
 
 describe('group chat approval and context baseline', () => {
   let harness: Awaited<ReturnType<typeof createTestGroupChatServer>>
@@ -38,6 +39,28 @@ describe('group chat approval and context baseline', () => {
     cancelPendingEkkoClarifications()
     harness?.cleanup()
     vi.restoreAllMocks()
+  })
+
+  it('group reply notifications recheck visibility, never replay duplicate messages', async () => {
+    const { bindLegacyAppEvents } = await import('../../packages/server/src/modules/studio/services/webhooks/legacy-app-events')
+    const allowed = { id: 'notice-allowed', emit: vi.fn(), data: {}, handshake: {auth:{}}, on: vi.fn() }
+    const denied = { id: 'notice-denied', emit: vi.fn(), data: {}, handshake: {auth:{}}, on: vi.fn() }
+    const server = groupServer as any
+    const old = server.nsp.sockets
+    server.nsp.sockets = new Map([[allowed.id, allowed], [denied.id, denied]])
+    const access = vi.spyOn(server, 'canSocketObserveRoom').mockImplementation((socket: any) => socket.id === allowed.id)
+    bindLegacyAppEvents(allowed as any, 'group', event => server.canSocketObserveRoom(allowed, event.subject.room_id))
+    bindLegacyAppEvents(denied as any, 'group', event => server.canSocketObserveRoom(denied, event.subject.room_id))
+    try {
+      const message = { id:'notice-message', roomId:'room-1', senderName:'Pi', senderType:'agent', role:'assistant', content:'Done' }
+      server.notifyGroupReply('room-1', message)
+      server.notifyGroupReply('room-1', message)
+      expect(allowed.emit).toHaveBeenCalledTimes(1)
+      expect(denied.emit).not.toHaveBeenCalled()
+      access.mockReturnValue(false)
+      server.notifyGroupReply('room-1', { ...message, id:'second-message' })
+      expect(allowed.emit).toHaveBeenCalledTimes(1)
+    } finally { for (const socket of [allowed, denied]) socket.on.mock.calls.find(call=>call[0] === 'disconnect')?.[1](); server.nsp.sockets = old }
   })
 
   async function joinPair() {
@@ -494,6 +517,8 @@ describe('group chat approval and context baseline', () => {
     await emitAck(human, 'join', { roomId: 'room-1', inviteCode: 'ROOM1' })
 
     const chatRun = new ChatRunSocket(groupServer.getIO())
+    ;(chatRun as any).bridge.interrupt = vi.fn(async () => ({ ok: true, synced: true }))
+    ;(chatRun as any).bridge.goalPause = vi.fn(async () => ({ ok: true }))
     const abortSession = vi.spyOn(chatRun, 'abortSession')
     const agent = await groupServer.agentClients.createAgent({
       agentId: 'agent-1',
@@ -745,6 +770,12 @@ describe('group chat approval and context baseline', () => {
     expect(joined.pendingClarifies).toEqual([
       expect.objectContaining({ clarify_id: 'clarify-restored', question: 'Which environment?' }),
     ])
+    expect(joined.pendingApprovals[0].remaining_timeout_ms).toBeGreaterThan(0)
+    expect(joined.pendingApprovals[0].remaining_timeout_ms).toBeLessThanOrEqual(joined.pendingApprovals[0].timeout_ms)
+    expect(joined.pendingApprovals[0].requested_at).toEqual(expect.any(Number))
+    expect(joined.pendingClarifies[0].remaining_timeout_ms).toBeGreaterThan(0)
+    expect(joined.pendingClarifies[0].remaining_timeout_ms).toBeLessThanOrEqual(joined.pendingClarifies[0].timeout_ms)
+    expect(joined.pendingClarifies[0].requested_at).toEqual(expect.any(Number))
   })
 
   it('routes approval responses back to the pending Ekko Agent session', async () => {

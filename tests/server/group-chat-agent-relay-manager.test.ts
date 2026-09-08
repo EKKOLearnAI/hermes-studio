@@ -125,7 +125,7 @@ describe('group Agent outbound Relay persistence', () => {
     }], null, 2)}\n`)
     relayConnectError.message = errorMessage
     const { GroupAgentOutboundRelayManager } = await import(
-      '../../packages/server/src/services/hermes/group-chat/agent-relay'
+      '../../packages/server/src/modules/studio/services/group-chat/agent-relay'
     )
     const manager = new GroupAgentOutboundRelayManager(() => null)
     await manager.restore()
@@ -171,7 +171,7 @@ describe('group Agent outbound Relay persistence', () => {
       return relaySocket
     })
     const { GroupAgentOutboundRelayManager } = await import(
-      '../../packages/server/src/services/hermes/group-chat/agent-relay'
+      '../../packages/server/src/modules/studio/services/group-chat/agent-relay'
     )
     const manager = new GroupAgentOutboundRelayManager(() => null)
 
@@ -259,7 +259,7 @@ describe('group Agent outbound Relay persistence', () => {
       return socket
     })
     const { GroupAgentOutboundRelayManager } = await import(
-      '../../packages/server/src/services/hermes/group-chat/agent-relay'
+      '../../packages/server/src/modules/studio/services/group-chat/agent-relay'
     )
     const manager = new GroupAgentOutboundRelayManager(() => null)
     const agent = {
@@ -299,6 +299,28 @@ describe('group Agent outbound Relay persistence', () => {
     expect(relaySockets[1].emit).toHaveBeenCalledWith('connector.revoke', {}, expect.any(Function))
     expect(JSON.parse(readFileSync(join(stateDir, 'group-chat', 'group-chat-agent-links.json'), 'utf8'))).toEqual([])
     manager.shutdown()
+  })
+
+  it('persists and restores cloud routing without merging rooms on different machines', async () => {
+    const connectorIds = ['11111111-2222-4333-8444-555555555555', '66666666-7777-4888-8999-000000000000']
+    let index = 0
+    ioMock.mockImplementation(() => createReadyRelaySocket(connectorIds[index++ % 2], { credential: 'r'.repeat(48), roomId: 'same-room' }))
+    const { GroupAgentOutboundRelayManager } = await import('../../packages/server/src/modules/studio/services/group-chat/agent-relay')
+    const agent = { agent: 'hermes' as const, profile: 'default', provider: '', model: '', apiMode: '', reasoningEffort: '', name: 'Remote Agent', description: '', avatar: '' }
+    const manager = new GroupAgentOutboundRelayManager(() => null)
+    for (const suffix of ['one', 'two']) await manager.connect({ cloudOrigin: 'https://cloud.example',
+      cloudMachineId: `hwui_target_machine_${suffix}_1234567890`, targetOrigin: 'http://source.example', pairingTicket: `ticket-${suffix}`, agent })
+    expect(typeof ioMock.mock.calls[0][1].auth).toBe('function')
+    expect((await manager.listConnections()).map(link => link.cloudMachineId)).toEqual(['hwui_target_machine_one_1234567890', 'hwui_target_machine_two_1234567890'])
+    expect(await manager.renameRoom(connectorIds[0], 'First machine only')).toBe(1)
+    manager.shutdown()
+    const restored = new GroupAgentOutboundRelayManager(() => null)
+    await restored.restore()
+    await vi.waitFor(async () => expect((await restored.listConnections()).filter(link => link.connected)).toHaveLength(2))
+    expect(typeof ioMock.mock.calls[2][1].auth).toBe('function')
+    expect(await restored.leaveRoom(connectorIds[0])).toEqual({ removed: 1, notified: 1 })
+    expect(await restored.listConnections()).toEqual([expect.objectContaining({ connectorId: connectorIds[1], cloudMachineId: 'hwui_target_machine_two_1234567890' })])
+    restored.shutdown()
   })
 
   it('ignores the legacy root-level connection file without migrating it', async () => {

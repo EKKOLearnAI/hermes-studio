@@ -5,7 +5,7 @@ const { startOutboundRelayClientMock, stopOutboundRelayClientMock } = vi.hoisted
   stopOutboundRelayClientMock: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/services/global-agent/outbound-relay-client', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/global-agent', () => ({
   startOutboundRelayClient: startOutboundRelayClientMock,
   stopOutboundRelayClient: stopOutboundRelayClientMock,
 }))
@@ -22,20 +22,20 @@ describe('MCU login controller', () => {
 
     const { DatabaseSync } = await import('node:sqlite')
     db = new DatabaseSync(':memory:')
-    vi.doMock('../../packages/server/src/db/index', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
       getDb: () => db,
       getStoragePath: () => ':memory:',
     }))
 
-    const schemas = await import('../../packages/server/src/db/hermes/schemas')
+    const schemas = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
     schemas.initAllHermesTables()
   })
 
   async function loadModules() {
     return {
-      ctrl: await import('../../packages/server/src/controllers/auth'),
-      users: await import('../../packages/server/src/db/hermes/users-store'),
-      auth: await import('../../packages/server/src/middleware/user-auth'),
+      ctrl: await import('../../packages/server/src/modules/studio/controllers/auth'),
+      users: await import('../../packages/server/src/modules/studio/repositories/users-store'),
+      auth: await import('../../packages/server/src/modules/studio/middleware/auth'),
     }
   }
 

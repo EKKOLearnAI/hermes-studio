@@ -3,13 +3,13 @@ import bodyParser from '@koa/bodyparser'
 import { createServer, type Server as HttpServer } from 'node:http'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { groupChatPublicRoutes, groupChatRoutes, setGroupChatServer } from '../../packages/server/src/routes/hermes/group-chat'
-import { initAllHermesTables } from '../../packages/server/src/db/hermes/schemas'
-import { GroupChatServer } from '../../packages/server/src/services/hermes/group-chat'
+import { groupChatPublicRoutes, groupChatRoutes, setGroupChatServer } from '../../packages/server/src/modules/studio/routes/group-chat'
+import { initAllHermesTables } from '../../packages/server/src/modules/studio/infrastructure/database/schemas'
+import { GroupChatServer } from '../../packages/server/src/modules/studio/sockets/group-chat'
 
 const dbState = vi.hoisted(() => ({ current: null as DatabaseSync | null }))
-vi.mock('../../packages/server/src/db/index', () => ({ getDb: () => dbState.current }))
-vi.mock('../../packages/server/src/middleware/user-auth', () => ({
+vi.mock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({ getDb: () => dbState.current }))
+vi.mock('../../packages/server/src/modules/studio/middleware/auth', () => ({
     isAuthEnabled: vi.fn(async () => false),
     authenticateUserToken: vi.fn(async () => null),
 }))
@@ -79,7 +79,7 @@ describe('group chat durable continuation route', () => {
     })
 
     it('allows the authenticated Room owner and rejects a non-manager without side effects', async () => {
-        const endpoint = `${baseUrl}/api/hermes/group-chat/rooms/room-1/handoffs/chain-1/continue`
+        const endpoint = `${baseUrl}/api/studio/group-chat/rooms/room-1/handoffs/chain-1/continue`
         const denied = await fetch(endpoint, { method: 'POST', headers: { 'x-test-user': 'member' } })
         expect(denied.status).toBe(403)
         expect(db.prepare('SELECT COUNT(*) AS count FROM gc_handoff_attempts').get()).toEqual({ count: 0 })
@@ -93,7 +93,7 @@ describe('group chat durable continuation route', () => {
     })
 
     it('returns a stable asynchronous continuation acknowledgement', async () => {
-        const endpoint = `${baseUrl}/api/hermes/group-chat/rooms/room-1/handoffs/chain-1/continue`
+        const endpoint = `${baseUrl}/api/studio/group-chat/rooms/room-1/handoffs/chain-1/continue`
         const response = await fetch(endpoint, { method: 'POST' })
         expect(response.status).toBe(202)
         const body = await response.json() as any
@@ -132,7 +132,7 @@ describe('group chat durable continuation route', () => {
         storage.markHandoffTargetInvocationStarted(attemptId)
         expect(storage.markRemoteHandoffOutcomeUnknown(attemptId, 'Remote transport ended without a terminal result')).toBeTruthy()
 
-        const response = await fetch(`${baseUrl}/api/hermes/group-chat/rooms/room-1/handoffs/chain-1/continue`, {
+        const response = await fetch(`${baseUrl}/api/studio/group-chat/rooms/room-1/handoffs/chain-1/continue`, {
             method: 'POST',
         })
         expect(response.status).toBe(409)

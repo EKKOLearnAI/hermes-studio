@@ -25,7 +25,7 @@ class FakeChild extends EventEmitter {
 
 let fakeChildren: FakeChild[] = []
 
-vi.mock('../../packages/server/src/services/hermes/hermes-process', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/runtime/process', () => ({
   execHermesWithBin: vi.fn().mockResolvedValue({ stdout: '', stderr: '' }),
   spawnHermesWithBin: vi.fn(() => {
     const child = new FakeChild(20000 + fakeChildren.length)
@@ -54,8 +54,8 @@ describe('profile delete managed gateway lifecycle', () => {
     await writeFile(join(profileDir, 'config.yaml'), 'model:\n  default: test\n', 'utf-8')
 
     try {
-      const { startGatewayRunManaged } = await import('../../packages/server/src/services/hermes/gateway-runner')
-      const { prepareGatewayForProfileDelete } = await import('../../packages/server/src/services/hermes/gateway-autostart')
+      const { startGatewayRunManaged } = await import('../../packages/server/src/modules/hermes/services/gateway/runner')
+      const { prepareGatewayForProfileDelete } = await import('../../packages/server/src/modules/hermes/services/gateway/autostart')
 
       startGatewayRunManaged('/usr/bin/hermes', { profileDir })
       expect(fakeChildren).toHaveLength(1)
