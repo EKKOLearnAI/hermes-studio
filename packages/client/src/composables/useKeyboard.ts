@@ -23,6 +23,13 @@ export function useKeyboard() {
       return
     }
 
+    if (mod && e.key === ',') {
+      if (router.currentRoute.value.name === 'login') return
+      e.preventDefault()
+      router.push({ name: 'hermes.settings' })
+      return
+    }
+
     if (mod && e.key.toLowerCase() === 'k') {
       if (router.currentRoute.value.name === 'login') return
       e.preventDefault()

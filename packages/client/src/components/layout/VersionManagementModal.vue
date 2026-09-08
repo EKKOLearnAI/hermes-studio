@@ -16,6 +16,8 @@ import {
   type VersionDownloadKind,
   type VersionDownloadSource,
 } from '@/api/hermes/runtime-versions'
+import HermesDataDirectoryHint from '@/components/hermes/HermesDataDirectoryHint.vue'
+import { useRuntimeRestartPrompt } from '@/composables/useRuntimeRestartPrompt'
 import { desktopBridge } from '@/utils/desktop-bridge'
 
 const props = defineProps<{ show: boolean }>()
@@ -23,12 +25,14 @@ const emit = defineEmits<{ (event: 'update:show', value: boolean): void }>()
 
 const { t } = useI18n()
 const message = useMessage()
+const { requestRuntimeRestart, checkRuntimeDownloads } = useRuntimeRestartPrompt()
 
 const status = ref<RuntimeVersionStatus | null>(null)
 const jobs = ref<VersionDownloadJob[]>([])
 const loading = ref(false)
 const actionLoading = ref<Record<string, boolean>>({})
 const loadError = ref('')
+const cliDetailsShow = ref(false)
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
 const canSelectRuntimeDirectory = computed(() => typeof desktopBridge()?.selectRuntimeDirectory === 'function')
@@ -38,6 +42,12 @@ const isDefaultRuntimeDirectory = computed(() => {
   return !defaultDirectory || selectedDirectory === defaultDirectory
 })
 
+const currentHermesSource = computed(() =>
+  status.value?.hermes.source
+  || status.value?.hermes.cliInstallations?.find(item => item.selected)?.source
+  || 'none',
+)
+
 const currentPlatformRuntime = computed(() =>
   (status.value?.hermes.installed || []).filter(item => item.platform === status.value?.platform),
 )
@@ -45,6 +55,9 @@ const currentPlatformRuntime = computed(() =>
 const runtimeVersions = computed(() => uniqueVersions([
   ...(status.value?.hermes.remoteVersions || []),
   ...currentPlatformRuntime.value.map(item => item.version),
+  ...(status.value?.active?.runtimeValidationFailures || [])
+    .filter(failure => failure.platform === status.value?.platform)
+    .map(failure => failure.version),
 ]))
 
 const runtimeJobs = computed(() => jobs.value.filter(job => job.kind === 'runtime'))
@@ -53,11 +66,14 @@ watch(() => props.show, show => {
   if (show) {
     void loadAll()
   } else {
+    cliDetailsShow.value = false
     stopPolling()
   }
 })
 
-onBeforeUnmount(stopPolling)
+onBeforeUnmount(() => {
+  stopPolling()
+})
 
 function updateShow(show: boolean) {
   emit('update:show', show)
@@ -73,6 +89,7 @@ async function loadAll() {
   loadError.value = ''
   try {
     await Promise.all([loadStatus(), loadJobs()])
+    checkRuntimeDownloads()
     if (hasRunningJobs()) startPolling()
   } catch (err) {
     loadError.value = err instanceof Error ? err.message : String(err)
@@ -199,6 +216,7 @@ async function startRuntimeDownload(version: string, source: VersionDownloadSour
   await runAction(`download-runtime-${source}-${version}`, async () => {
     const response = await downloadRuntimeVersion(version, source)
     jobs.value = [response.job, ...jobs.value.filter(job => job.id !== response.job.id)]
+    checkRuntimeDownloads()
     message.success(t('runtimeVersions.downloadStarted'))
     startPolling()
   })
@@ -208,7 +226,7 @@ async function useRuntime(version: string) {
   await runAction(`activate-runtime-${version}`, async () => {
     await activateRuntimeVersion(version)
     message.success(t('runtimeVersions.activateSuccess'))
-    await loadAll()
+    requestRuntimeRestart(version)
   })
 }
 
@@ -271,7 +289,18 @@ async function removeRuntime(version: string) {
               <h3>{{ t('runtimeVersions.runtimeTitle') }}</h3>
               <p>{{ t('runtimeVersions.platform') }}: {{ status?.platform || '-' }}</p>
             </div>
-            <NButton size="small" secondary @click="loadAll">{{ t('runtimeVersions.refresh') }}</NButton>
+            <div class="section-heading-actions">
+              <NButton
+                v-if="currentHermesSource === 'user-cli'"
+                data-testid="view-cli-details"
+                size="small"
+                secondary
+                @click="cliDetailsShow = true"
+              >
+                {{ t('runtimeVersions.viewCliDetails') }}
+              </NButton>
+              <NButton size="small" secondary @click="loadAll">{{ t('runtimeVersions.refresh') }}</NButton>
+            </div>
           </div>
           <div class="active-path stacked">
             <span
@@ -286,7 +315,29 @@ async function removeRuntime(version: string) {
             >
               {{ t('runtimeVersions.activeRuntimeDirectory') }}: {{ status?.hermes.activeDirectory || '-' }}
             </span>
+            <span
+              v-if="currentHermesSource !== 'user-cli'"
+              data-testid="active-python-path"
+              :title="status?.hermes.pythonPath || ''"
+            >
+              {{ t('runtimeVersions.activePythonPath') }}: {{ status?.hermes.pythonPath || '-' }}
+            </span>
+            <span
+              v-if="currentHermesSource !== 'user-cli'"
+              data-testid="active-agent-root"
+              :title="status?.hermes.agentRoot || ''"
+            >
+              {{ t('runtimeVersions.activeAgentRoot') }}: {{ status?.hermes.agentRoot || '-' }}
+            </span>
+            <span
+              v-if="currentHermesSource === 'managed-runtime'"
+              data-testid="active-data-directory"
+              :title="status?.hermes.dataDirectory || ''"
+            >
+              {{ t('runtimeVersions.activeDataDirectory') }}: {{ status?.hermes.dataDirectory || '-' }}
+            </span>
           </div>
+          <HermesDataDirectoryHint v-if="currentHermesSource === 'managed-runtime'" />
           <NAlert
             data-testid="runtime-cli-update-note"
             type="info"
@@ -438,6 +489,30 @@ async function removeRuntime(version: string) {
       </NSpin>
     </NDrawerContent>
   </NDrawer>
+  <NDrawer
+    :show="cliDetailsShow"
+    placement="right"
+    :width="'min(620px, calc(100vw - 24px))'"
+    @update:show="cliDetailsShow = $event"
+  >
+    <NDrawerContent :title="t('runtimeVersions.cliDetailsTitle')" closable>
+      <div data-testid="cli-details" class="cli-details">
+        <div class="cli-detail-row">
+          <strong>{{ t('runtimeVersions.activePythonPath') }}</strong>
+          <code :title="status?.hermes.pythonPath || ''">{{ status?.hermes.pythonPath || '-' }}</code>
+        </div>
+        <div class="cli-detail-row">
+          <strong>{{ t('runtimeVersions.activeAgentRoot') }}</strong>
+          <code :title="status?.hermes.agentRoot || ''">{{ status?.hermes.agentRoot || '-' }}</code>
+        </div>
+        <div class="cli-detail-row">
+          <strong>{{ t('runtimeVersions.activeDataDirectory') }}</strong>
+          <code :title="status?.hermes.dataDirectory || ''">{{ status?.hermes.dataDirectory || '-' }}</code>
+        </div>
+        <HermesDataDirectoryHint />
+      </div>
+    </NDrawerContent>
+  </NDrawer>
 </template>
 
 <style scoped lang="scss">
@@ -474,6 +549,12 @@ async function removeRuntime(version: string) {
   &.compact {
     align-items: center;
   }
+}
+
+.section-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .active-path {
@@ -563,6 +644,33 @@ async function removeRuntime(version: string) {
   font-size: 12px;
 }
 
+.cli-details {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cli-detail-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+
+  strong {
+    color: var(--text-color-2);
+    font-size: 12px;
+  }
+
+  code {
+    overflow-wrap: anywhere;
+    color: var(--text-color-1);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 12px;
+  }
+}
+
 .version-list,
 .job-list {
   display: flex;
@@ -645,6 +753,10 @@ async function removeRuntime(version: string) {
 
   .runtime-directory-actions {
     flex-wrap: wrap;
+  }
+
+  .section-heading-actions {
+    justify-content: flex-start;
   }
 
   .active-path {

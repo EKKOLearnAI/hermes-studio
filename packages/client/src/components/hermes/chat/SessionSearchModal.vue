@@ -3,7 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { NButton, NInput, NModal, NSpin, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
-import { fetchSessions, searchSessions, type SessionSearchResult, type SessionSummary } from '@/api/hermes/sessions'
+import { fetchSessions, searchSessions, type SessionSearchResult, type SessionSummary } from '@/api/studio/sessions'
 import { useChatStore } from '@/stores/hermes/chat'
 import { useSessionSearch } from '@/composables/useSessionSearch'
 import type { Session } from '@/stores/hermes/chat'
@@ -134,12 +134,16 @@ async function openItem(item: SearchItem) {
 
   await ensureChatSessionsLoaded()
   if (!chatStore.sessions.some(session => session.id === item.id) && typeof chatStore.addOrUpdateSession === 'function') {
-    const isCodingAgentSession = item.source === 'coding_agent' || item.agent === 'claude' || item.agent === 'codex' || item.agent === 'pi'
+    const isCodingAgentSession = item.source === 'coding_agent' || item.agent === 'claude' || item.agent === 'codex' || item.agent === 'pi' || item.agent === 'grok' || item.agent === 'opencode'
     const codingAgentId: Session['codingAgentId'] = item.agent === 'codex'
       ? 'codex'
       : item.agent === 'pi'
         ? 'pi'
-        : item.agent === 'claude'
+      : item.agent === 'grok'
+        ? 'grok'
+      : item.agent === 'opencode'
+        ? 'opencode'
+      : item.agent === 'claude'
           ? 'claude-code'
           : undefined
     chatStore.addOrUpdateSession({

@@ -4,7 +4,7 @@ import { resolve } from 'node:path'
 
 describe('workflow restart recovery bootstrap', () => {
   it('recovers after ChatRun registration and before WorkflowSocket initialization', () => {
-    const source = readFileSync(resolve(process.cwd(), 'packages/server/src/index.ts'), 'utf8')
+    const source = readFileSync(resolve(process.cwd(), 'packages/server/src/bootstrap/http.ts'), 'utf8')
     const register = source.indexOf('setChatRunServer(chatRunServer)')
     const chatInit = source.indexOf('chatRunServer.init()', register)
     const recovery = source.indexOf('recoverActiveRuns()', chatInit)

@@ -5,7 +5,7 @@ test('language menu stays usable after switching to an RTL locale', async ({ pag
   await authenticate(page, TEST_ACCESS_KEY, 'research')
   await mockHermesApi(page)
 
-  await page.goto('/#/hermes/jobs')
+  await page.goto('/#/hermes/theme')
 
   const languageSwitch = page.locator('.language-switch')
   const languageMenu = page.locator('.n-base-select-menu')

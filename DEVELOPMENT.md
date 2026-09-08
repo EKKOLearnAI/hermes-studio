@@ -36,6 +36,7 @@ npm run build
 - Do not reintroduce deprecated compatibility switches without a current caller.
 - Use structured APIs and parsers for structured data instead of ad hoc string edits when possible.
 - Add comments only where they explain non-obvious behavior or constraints.
+- Every Studio-injected managed MCP server must explicitly set `ELECTRON_RUN_AS_NODE: '1'` in its own launch `env`, including when an independent Node executable is selected. Never rely on parent environment inheritance or set this globally for the desktop GUI. See `docs/harness/validation.md` for the guardrail.
 
 ## Frontend Rules
 

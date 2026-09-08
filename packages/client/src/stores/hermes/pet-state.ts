@@ -8,7 +8,7 @@ import {
   type PetActivity,
   type PetState,
   type PetStateSnapshot,
-} from '@/api/hermes/pet-state'
+} from '@/api/studio/pet-state'
 
 function emptySnapshot(profile = 'default'): PetStateSnapshot {
   return {

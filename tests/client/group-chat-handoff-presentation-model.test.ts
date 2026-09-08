@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { handoffErrorTranslationKey, isPresentableHandoffChain } from '@/components/hermes/group-chat/handoff-presentation'
-import type { RoomAgentHandoffChain } from '@/api/hermes/group-chat'
+import type { RoomAgentHandoffChain } from '@/api/studio/group-chat'
 
 function chain(overrides: Partial<RoomAgentHandoffChain> = {}): RoomAgentHandoffChain {
   return {

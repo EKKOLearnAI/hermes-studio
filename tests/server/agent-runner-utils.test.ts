@@ -2,27 +2,28 @@ import { describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
+import '../../packages/server/src/bootstrap/coding-agent-adapters'
 import {
   anthropicMessagesUrl,
   chatCompletionsUrl,
   providerEndpointUrl,
   responsesUrl,
-} from '../../packages/server/src/services/coding-agents/shared/endpoint-resolver'
-import { parseSseFrame, readSseFrames, readSseFrameTexts, sseEvent } from '../../packages/server/src/services/coding-agents/shared/sse'
-import { AgentTargetRegistry, type AgentTargetInput } from '../../packages/server/src/services/coding-agents/shared/target-registry'
-import { teeAsyncIterable } from '../../packages/server/src/services/coding-agents/shared/stream-tee'
+} from '../../packages/server/src/modules/coding-agents/protocol/endpoint-resolver'
+import { parseSseFrame, readSseFrames, readSseFrameTexts, sseEvent } from '../../packages/server/src/modules/coding-agents/protocol/sse'
+import { AgentTargetRegistry, type AgentTargetInput } from '../../packages/server/src/modules/coding-agents/protocol/target-registry'
+import { teeAsyncIterable } from '../../packages/server/src/modules/coding-agents/protocol/stream-tee'
 import {
   buildClaudeStreamJsonInput,
   codexImageArgs,
   CodingAgentRunManager,
   codingAgentGatewayErrorMessage,
   sanitizeCodingAgentTerminalOutput,
-} from '../../packages/server/src/services/coding-agents/runtime/run-manager'
-import { applyResponseStreamEvent } from '../../packages/server/src/services/hermes/run-chat/response-stream'
-import { initAllHermesTables } from '../../packages/server/src/db/hermes/schemas'
-import { addMessage, getSession, getSessionDetail, listSessions } from '../../packages/server/src/db/hermes/session-store'
-import { getRecordedUsageTotals, getUsage } from '../../packages/server/src/db/hermes/usage-store'
-import { getChatRunServer, setChatRunServer } from '../../packages/server/src/services/hermes/run-chat/server-registry'
+} from '../../packages/server/src/modules/coding-agents/services/runtime/run-manager'
+import { applyResponseStreamEvent } from '../../packages/server/src/modules/studio/services/chat-run/response-stream'
+import { initAllHermesTables } from '../../packages/server/src/modules/studio/infrastructure/database/schemas'
+import { addMessage, getSession, getSessionDetail, listSessions } from '../../packages/server/src/modules/studio/repositories/session-store'
+import { getRecordedUsageTotals, getUsage } from '../../packages/server/src/modules/studio/repositories/usage-store'
+import { getChatRunServer, setChatRunServer } from '../../packages/server/src/modules/studio/services/chat-run/server-registry'
 
 describe('agent runner endpoint resolver', () => {
   it('adds v1 for provider hosts without an API root path', () => {
@@ -2326,6 +2327,82 @@ describe('response stream tool detail events', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('OpenCode JSON stream mapping', () => {
+  it('ignores scoped proxy lifecycle events and accepts native stdout once', () => {
+    const manager = new CodingAgentRunManager()
+    const emitted: Array<{ event: string; payload: any }> = []
+    ;(manager as any).emitToChat = (_sessionId: string, event: string, payload: any) => {
+      emitted.push({ event, payload })
+    }
+    ;(manager as any).ensureDbSession = () => {}
+    const run: any = {
+      id: 'agent-session-opencode-native',
+      launch: {
+        agentSessionId: 'agent-session-opencode-native',
+        agentId: 'opencode',
+        mode: 'scoped',
+        profile: 'default',
+        provider: 'test',
+        model: 'opencode-test',
+        sessionId: 'chat-session-opencode-native',
+        command: 'opencode',
+        args: [],
+        shellCommand: 'opencode',
+        workspaceDir: process.cwd(),
+      },
+      state: { messages: [], isWorking: false, events: [], queue: [] },
+      lastActiveAt: Date.now(),
+      startedAt: Date.now(),
+      exited: false,
+      currentChild: { exitCode: null, signalCode: null, killed: false },
+      printResponseId: 'resp_opencode_native',
+      printMessageId: 'msg_resp_opencode_native',
+      printText: '',
+      printTextStarted: false,
+      printCompleted: false,
+      responseStartEmitted: true,
+      terminalEventHandled: false,
+    }
+    ;(manager as any).runs.set(run.id, run)
+
+    manager.handleResponseEvent(run.id, {
+      type: 'response.output_text.delta',
+      data: { type: 'response.output_text.delta', delta: 'proxy duplicate' },
+    })
+    manager.handleResponseEvent(run.id, {
+      type: 'response.completed',
+      data: {
+        response: {
+          id: 'proxy-step-1',
+          status: 'completed',
+          output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'proxy duplicate' }] }],
+        },
+      },
+    })
+
+    expect(emitted).toEqual([])
+    expect(run.terminalEventHandled).toBe(false)
+    expect(run.state.messages).toEqual([])
+
+    ;(manager as any).handleOpenCodeLine(run, JSON.stringify({
+      type: 'text',
+      sessionID: 'ses_opencode_native',
+      part: { type: 'text', text: '您好！有什么可以帮您？', time: { end: Date.now() } },
+    }))
+    ;(manager as any).handleOpenCodeLine(run, JSON.stringify({
+      type: 'text',
+      sessionID: 'ses_opencode_native',
+      part: { type: 'text', text: '您好！有什么可以帮您？', time: { end: Date.now() } },
+    }))
+
+    expect(emitted.filter(event => event.event === 'message.delta').map(event => event.payload.delta)).toEqual([
+      '您好！有什么可以帮您？',
+    ])
+    expect(run.printText).toBe('您好！有什么可以帮您？')
+    expect(run.launch.agentNativeSessionId).toBe('ses_opencode_native')
   })
 })
 

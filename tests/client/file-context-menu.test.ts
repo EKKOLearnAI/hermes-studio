@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import type { FileEntry } from '@/api/hermes/files'
+import type { FileEntry } from '@/api/studio/files'
 
 const mockMessage = vi.hoisted(() => ({
   error: vi.fn(),
@@ -52,7 +52,7 @@ vi.mock('naive-ui', async () => {
   }
 })
 
-vi.mock('@/api/hermes/download', () => ({
+vi.mock('@/api/studio/download', () => ({
   downloadFile: downloadFileMock,
 }))
 

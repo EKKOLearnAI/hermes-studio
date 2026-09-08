@@ -12,16 +12,13 @@ export interface EkkoDataPathOptions {
 export function resolveEkkoDataDirectory(options: EkkoDataPathOptions = {}): string {
   if (isEkkoDevelopmentEnvironment(options.env ?? process.env)) {
     const packageRoot = options.packageRoot || resolve(__dirname, '..', '..')
-    return join(packageRoot, 'sql-data')
+    return join(packageRoot, '.ekko')
   }
   return new EkkoDirectoryManager(options.baseDirectory || options.homeDir || homedir()).rootDirectory
 }
 
 export function resolveEkkoDatabasePath(options: EkkoDataPathOptions = {}): string {
-  const databaseName = isEkkoDevelopmentEnvironment(options.env ?? process.env)
-    ? 'ekko-agent.db'
-    : 'ekko.db'
-  return join(resolveEkkoDataDirectory(options), databaseName)
+  return join(resolveEkkoDataDirectory(options), 'ekko.db')
 }
 
 export function isEkkoDevelopmentEnvironment(env: Record<string, string | undefined> = process.env): boolean {

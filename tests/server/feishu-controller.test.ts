@@ -8,7 +8,7 @@ const { beginRegistration, pollRegistration } = vi.hoisted(() => ({
   pollRegistration: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/services/social-messages/feishu-onboarding', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/social-messages/feishu-onboarding', () => ({
   beginFeishuQrRegistration: beginRegistration,
   pollFeishuQrRegistration: pollRegistration,
 }))
@@ -17,7 +17,7 @@ const originalWebUiHome = process.env.HERMES_WEB_UI_HOME
 const database = vi.hoisted(() => ({ value: null as any }))
 let studioHome = ''
 
-vi.mock('../../packages/server/src/db/index', () => ({ getDb: () => database.value }))
+vi.mock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({ getDb: () => database.value }))
 
 function makeCtx(userId = 7, profile = 'research', query: Record<string, string> = {}): any {
   return {
@@ -35,7 +35,7 @@ describe('social messages Feishu QR registration', () => {
     vi.clearAllMocks()
     const { DatabaseSync } = await import('node:sqlite')
     database.value = new DatabaseSync(':memory:')
-    const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
+    const { initAllHermesTables } = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
     initAllHermesTables()
     vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] })
     vi.setSystemTime(new Date('2026-08-23T00:00:00.000Z'))
@@ -69,7 +69,7 @@ describe('social messages Feishu QR registration', () => {
       openId: 'ou_owner',
     })
     const { getFeishuQrcode, pollFeishuQrcodeStatus } = await import(
-      '../../packages/server/src/controllers/social-messages'
+      '../../packages/server/src/modules/studio/controllers/social-messages'
     )
     const startCtx = makeCtx(7, 'research', { locale: 'zh-TW' })
 
@@ -91,14 +91,14 @@ describe('social messages Feishu QR registration', () => {
     expect(pollCtx.body).toEqual({ status: 'confirmed', open_id: 'ou_owner' })
     expect(JSON.stringify(pollCtx.body)).not.toContain('server-only-secret')
     const { readSocialMessageCredentials } = await import(
-      '../../packages/server/src/services/social-messages/credentials'
+      '../../packages/server/src/modules/studio/services/social-messages/credentials'
     )
     await expect(readSocialMessageCredentials(7)).resolves.toMatchObject({
       FEISHU_APP_ID: 'cli_scanned',
       FEISHU_APP_SECRET: 'server-only-secret',
     })
     await expect(readSocialMessageCredentials(8)).resolves.toEqual({})
-    const store = await import('../../packages/server/src/db/hermes/social-message-store')
+    const store = await import('../../packages/server/src/modules/studio/repositories/social-message-store')
     expect(store.getSocialMessageAccount(7, 'feishu')).toMatchObject({
       bindingLocale: 'ja',
       bindingNotified: false,
@@ -107,7 +107,7 @@ describe('social messages Feishu QR registration', () => {
 
   it('does not allow another user to poll the registration session', async () => {
     const { getFeishuQrcode, pollFeishuQrcodeStatus } = await import(
-      '../../packages/server/src/controllers/social-messages'
+      '../../packages/server/src/modules/studio/controllers/social-messages'
     )
     const startCtx = makeCtx(7, 'research')
     await getFeishuQrcode(startCtx)

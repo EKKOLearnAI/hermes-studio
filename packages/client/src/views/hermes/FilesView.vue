@@ -12,7 +12,7 @@ import FileList from '@/components/hermes/files/FileList.vue'
 import FileContextMenu from '@/components/hermes/files/FileContextMenu.vue'
 import FileUploadModal from '@/components/hermes/files/FileUploadModal.vue'
 import FileRenameModal from '@/components/hermes/files/FileRenameModal.vue'
-import type { FileEntry } from '@/api/hermes/files'
+import type { FileEntry } from '@/api/studio/files'
 
 const FileEditor = defineAsyncComponent(async () => (await import('@/components/hermes/files/FileEditor.vue')).default)
 const FilePreview = defineAsyncComponent(async () => (await import('@/components/hermes/files/FilePreview.vue')).default)

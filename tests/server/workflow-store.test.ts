@@ -9,7 +9,7 @@ const state = vi.hoisted(() => ({
   appHome: '',
 }))
 
-vi.mock('../../packages/server/src/db/index', () => ({
+vi.mock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
   getDb: () => state.db,
   jsonDelete: vi.fn(),
   jsonGet: vi.fn(),
@@ -17,7 +17,7 @@ vi.mock('../../packages/server/src/db/index', () => ({
   jsonSet: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/config', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/config', () => ({
   config: {
     appHome: state.appHome,
   },
@@ -31,7 +31,7 @@ describe('workflow store', () => {
     root = mkdtempSync(join(tmpdir(), 'hermes-workflow-store-'))
     state.appHome = join(root, 'home')
     state.db = new DatabaseSync(join(root, 'workflow.db'))
-    const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
+    const { initAllHermesTables } = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
     initAllHermesTables()
   })
 
@@ -42,7 +42,7 @@ describe('workflow store', () => {
   })
 
   it('creates workflows with a profile-scoped default workspace', async () => {
-    const { createWorkflow, getWorkflow } = await import('../../packages/server/src/db/hermes/workflow-store')
+    const { createWorkflow, getWorkflow } = await import('../../packages/server/src/modules/studio/repositories/workflow-store')
 
     const workflow = createWorkflow({
       name: 'Research flow',
@@ -65,7 +65,7 @@ describe('workflow store', () => {
   })
 
   it('updates and deletes workflows', async () => {
-    const { createWorkflow, deleteWorkflow, getWorkflow, listWorkflows, updateWorkflow } = await import('../../packages/server/src/db/hermes/workflow-store')
+    const { createWorkflow, deleteWorkflow, getWorkflow, listWorkflows, updateWorkflow } = await import('../../packages/server/src/modules/studio/repositories/workflow-store')
     const workflow = createWorkflow({ name: 'Draft', profile: 'default' })
 
     const updated = updateWorkflow(workflow.id, {
@@ -90,13 +90,13 @@ describe('workflow store', () => {
   })
 
   it('persists the requested run deadline and each node start budget', async () => {
-    const { createWorkflow } = await import('../../packages/server/src/db/hermes/workflow-store')
+    const { createWorkflow } = await import('../../packages/server/src/modules/studio/repositories/workflow-store')
     const {
       createWorkflowRun,
       createWorkflowRunNodeSession,
       getWorkflowRun,
       listWorkflowRunNodeSessions,
-    } = await import('../../packages/server/src/db/hermes/workflow-run-store')
+    } = await import('../../packages/server/src/modules/studio/repositories/workflow-run-store')
     const workflow = createWorkflow({ name: 'Budgeted run', profile: 'default' })
 
     const run = createWorkflowRun({
@@ -132,8 +132,8 @@ describe('workflow store', () => {
   })
 
   it('lists workflow runs by workflow ordered newest first', async () => {
-    const { createWorkflow } = await import('../../packages/server/src/db/hermes/workflow-store')
-    const { createWorkflowRun, listWorkflowRuns, updateWorkflowRun } = await import('../../packages/server/src/db/hermes/workflow-run-store')
+    const { createWorkflow } = await import('../../packages/server/src/modules/studio/repositories/workflow-store')
+    const { createWorkflowRun, listWorkflowRuns, updateWorkflowRun } = await import('../../packages/server/src/modules/studio/repositories/workflow-run-store')
     const workflow = createWorkflow({ name: 'Runs', profile: 'default' })
     const other = createWorkflow({ name: 'Other', profile: 'default' })
 
@@ -153,7 +153,7 @@ describe('workflow store', () => {
   })
 
   it('deletes workflow runs and their node session records', async () => {
-    const { createWorkflow } = await import('../../packages/server/src/db/hermes/workflow-store')
+    const { createWorkflow } = await import('../../packages/server/src/modules/studio/repositories/workflow-store')
     const {
       createWorkflowRun,
       createWorkflowRunNodeSession,
@@ -161,7 +161,7 @@ describe('workflow store', () => {
       getWorkflowRun,
       listWorkflowRunNodeSessions,
       updateWorkflowRun,
-    } = await import('../../packages/server/src/db/hermes/workflow-run-store')
+    } = await import('../../packages/server/src/modules/studio/repositories/workflow-run-store')
     const workflow = createWorkflow({ name: 'Runs', profile: 'default' })
     const run = createWorkflowRun({ workflow_id: workflow.id, status: 'running' })
     createWorkflowRunNodeSession({

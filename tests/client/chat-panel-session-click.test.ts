@@ -12,8 +12,10 @@ describe('ChatPanel session clicks', () => {
   it('opens desktop sessions in a native chat window while preserving the web tab fallback', () => {
     const source = readFileSync('packages/client/src/components/hermes/chat/ChatPanel.vue', 'utf8')
 
-    expect(source).toContain('bridge.openChatWindow(sessionId, sessionProfile(sessionId) || undefined)')
-    expect(source).toContain('window.open(sessionHref(sessionId), "_blank", "noopener,noreferrer")')
+    expect(source).toContain('function openSessionInNewTab(sessionId: string, profile = sessionProfile(sessionId))')
+    expect(source).toContain('bridge.openChatWindow(sessionId, profile || undefined)')
+    expect(source).toContain('window.open(sessionHref(sessionId, profile), "_blank", "noopener,noreferrer")')
+    expect(source).toContain('openSessionInNewTab(sessionId, chatStore.activeSession?.profile || null)')
     expect(source).toContain('v-if="currentMode === \'chat\' && !standalone"')
     expect(source).toContain('<header v-if="!standalone" class="chat-header">')
   })

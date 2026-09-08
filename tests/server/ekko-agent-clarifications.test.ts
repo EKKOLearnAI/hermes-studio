@@ -4,7 +4,7 @@ import {
   cancelPendingEkkoClarifications,
   respondToEkkoClarification,
   waitForEkkoClarification,
-} from '../../packages/server/src/services/ekko-agent/clarifications'
+} from '../../packages/server/src/modules/ekko/services/clarifications'
 import type { AgentClarificationRequest } from '../../packages/ekko-agent/src'
 
 afterEach(() => {

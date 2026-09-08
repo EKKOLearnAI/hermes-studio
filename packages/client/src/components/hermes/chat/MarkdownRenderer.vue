@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import 'katex/dist/katex.min.css'
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, unref, watch, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMessage } from 'naive-ui'
 import type MarkdownIt from 'markdown-it'
@@ -17,9 +17,11 @@ import {
   isMermaidFence,
   renderMermaidPlaceholder,
 } from './mermaidRenderer'
-import { downloadFile, getDownloadUrl, inferDownloadFileName } from '@/api/hermes/download'
+import { downloadFile, getDownloadUrl, inferDownloadFileName } from '@/api/studio/download'
+import { getBaseUrlValue } from '@/api/client'
 import { isPreviewableFile } from '@/utils/hermes/file-preview'
 import { openUrlInDesktopBrowser } from '@/utils/desktop-browser'
+import ImagePreviewOverlay from './ImagePreviewOverlay.vue'
 
 const LATEX_FENCE_LANGS = new Set(['latex', 'tex', 'math', 'katex'])
 function getFenceLanguage(info: string): string {
@@ -62,6 +64,8 @@ const props = withDefaults(defineProps<{
     content: string
     mentionNames?: string[]
     headingIdPrefix?: string
+    resolveImageUrl?: (path: string) => string
+    deferImages?: boolean
 }>(), {
     mentionNames: () => [],
     headingIdPrefix: '',
@@ -69,6 +73,8 @@ const props = withDefaults(defineProps<{
 
 const { t } = useI18n()
 const message = useMessage()
+const workspaceFilePreviewCapability = inject<boolean | Ref<boolean>>('hermesWorkspaceFilePreview', false)
+const workspaceFilePreviewAvailable = computed(() => unref(workspaceFilePreviewCapability))
 
 function diffFoldLabel(hiddenCount: number): string {
   return t('chat.unchangedLines', { count: hiddenCount })
@@ -144,24 +150,65 @@ let renderGeneration = 0
 let unmounted = false
 
 function isLocalFilePath(path: string): boolean {
-  return path.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(path)
+  return (path.startsWith('/') && !path.startsWith('//')) || /^[a-zA-Z]:[\\/]/.test(path)
 }
 
 function normalizeLocalFilePath(path: string): string {
   return /^[a-zA-Z]:\\/.test(path) ? path.replace(/\\/g, '/') : path
 }
 
-function localFilePathWithoutLocation(path: string): string {
-  const normalizedPath = normalizeLocalFilePath(path)
-  const locationMatch = normalizedPath.match(/^(.*?):(\d+)(?::\d+)?$/)
-  if (!locationMatch || !isLocalFilePath(locationMatch[1])) return normalizedPath
-  return locationMatch[1]
+type LocalFileLocation = {
+  path: string
+  startLine?: number
+  endLine?: number
 }
 
-function requestWorkspaceFilePreview(path: string, fileName: string): boolean {
+function positiveSafeLine(value: string | undefined): number | undefined {
+  if (!value) return undefined
+  const line = Number(value)
+  return Number.isSafeInteger(line) && line > 0 ? line : undefined
+}
+
+function parseLocalFileLocation(path: string): LocalFileLocation {
+  const normalizedPath = normalizeLocalFilePath(path)
+  const hashLocationMatch = normalizedPath.match(/^(.*?)#L(\d+)(?:-L?(\d+))?$/i)
+  if (hashLocationMatch && isLocalFilePath(hashLocationMatch[1])) {
+    const startLine = positiveSafeLine(hashLocationMatch[2])
+    if (!startLine) return { path: hashLocationMatch[1] }
+    const requestedEndLine = positiveSafeLine(hashLocationMatch[3])
+    return {
+      path: hashLocationMatch[1],
+      startLine,
+      endLine: requestedEndLine && requestedEndLine >= startLine ? requestedEndLine : startLine,
+    }
+  }
+  const locationMatch = normalizedPath.match(/^(.*?):(\d+)(?:-(\d+)|:(\d+))?$/)
+  if (!locationMatch || !isLocalFilePath(locationMatch[1])) return { path: normalizedPath }
+  const startLine = positiveSafeLine(locationMatch[2])
+  if (!startLine) return { path: locationMatch[1] }
+  const requestedEndLine = positiveSafeLine(locationMatch[3])
+  return {
+    path: locationMatch[1],
+    startLine,
+    endLine: requestedEndLine && requestedEndLine >= startLine ? requestedEndLine : startLine,
+  }
+}
+
+function requestWorkspaceFilePreview(
+  path: string,
+  fileName: string,
+  previewOnly = false,
+  startLine?: number,
+  endLine?: number,
+): boolean {
   const event = new CustomEvent('hermes:preview-workspace-file', {
     cancelable: true,
-    detail: { path, fileName },
+    detail: {
+      path,
+      fileName,
+      ...(previewOnly ? { previewOnly: true } : {}),
+      ...(startLine ? { startLine, endLine: endLine || startLine } : {}),
+    },
   })
   window.dispatchEvent(event)
   return event.defaultPrevented
@@ -169,13 +216,29 @@ function requestWorkspaceFilePreview(path: string, fileName: string): boolean {
 
 function downloadPathFromUrl(url: string): string | null {
   try {
-    return new URL(url, window.location.origin).searchParams.get('path')
+    const parsed = new URL(url, window.location.origin)
+    if (parsed.pathname !== '/api/studio/files/download') return null
+    const configuredApiOrigin = new URL(getBaseUrlValue() || window.location.origin, window.location.origin).origin
+    if (parsed.origin !== window.location.origin && parsed.origin !== configuredApiOrigin) return null
+    const path = parsed.searchParams.get('path')
+    return path ? `${path}${parsed.hash}` : null
   } catch {
     return null
   }
 }
 
-const VIDEO_EXTENSIONS = new Set(['mp4', 'webm', 'mov'])
+function localFileTargetFromRenderedHref(rawHref: string): string {
+  const href = md.utils.unescapeAll(rawHref)
+  let target = downloadPathFromUrl(href) || href
+  try { target = decodeURIComponent(target) } catch { /* Keep malformed percent sequences literal. */ }
+  return normalizeLocalFilePath(target)
+}
+
+function renderedLinkText(innerHtml: string): string {
+  return md.utils.unescapeAll(innerHtml.replace(/<[^>]+>/g, '')).trim()
+}
+
+const VIDEO_EXTENSIONS = new Set(['mp4', 'webm', 'mov', 'm4v'])
 const AUDIO_EXTENSIONS = new Set(['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac'])
 
 function hasExtension(path: string, extensions: Set<string>): boolean {
@@ -186,6 +249,7 @@ function hasExtension(path: string, extensions: Set<string>): boolean {
 
 const renderedHtml = computed(() => {
   let html = md.render(repairNestedMarkdownFences(props.content))
+  if (props.deferImages) html = html.replace(/<img\b[^>]*>/gi, '')
 
   // Add IDs to headings for anchor links
   const prefix = props.headingIdPrefix ? `${props.headingIdPrefix}-` : ''
@@ -211,20 +275,28 @@ const renderedHtml = computed(() => {
   // Replace image src paths with download URLs
   html = html.replace(/\bsrc=(["'])([^"']+)\1/g, (match, quote, path) => {
     if (!isLocalFilePath(path)) return match
+    if (props.resolveImageUrl && !path.startsWith('//')) {
+      let decodedPath = md.utils.unescapeAll(path)
+      try { decodedPath = decodeURIComponent(decodedPath) } catch { /* Keep literal paths. */ }
+      return `src="${md.utils.escapeHtml(props.resolveImageUrl(normalizeLocalFilePath(decodedPath)))}"`
+    }
     const downloadUrl = getDownloadUrl(normalizeLocalFilePath(path))
     return `src=${quote}${downloadUrl}${quote}`
   })
 
-  // Replace local file links with file card UI or video player
-  // Match <a href="/tmp/file.pdf">filename</a> or <a href="C:/tmp/file.pdf">filename</a>
-  html = html.replace(/<a href="([^"]+)">([^<]+)<\/a>/g, (match, rawPath, filename) => {
-    if (!isLocalFilePath(rawPath)) return match
+  // Replace local file links with preview links, download cards, or media players.
+  // Match optional title attributes and rich labels such as **file.ts** or `file.ts`.
+  html = html.replace(/<a href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g, (match, rawHref, innerHtml) => {
+    const target = localFileTargetFromRenderedHref(rawHref)
+    if (!isLocalFilePath(target)) return match
 
-    const path = localFilePathWithoutLocation(downloadPathFromUrl(rawPath) || rawPath)
-    const fileName = filename.trim()
+    const location = parseLocalFileLocation(target)
+    const { path } = location
+    const fileName = renderedLinkText(innerHtml)
     const downloadName = inferDownloadFileName(path, fileName)
 
-    // Video files: render as video player
+    // Media already has an immediate inline preview and is not presented as a
+    // downloadable document, so keep the player instead of opening source view.
     if (hasExtension(path, VIDEO_EXTENSIONS)) {
       const downloadUrl = getDownloadUrl(path)
       return `<div class="markdown-video-container">
@@ -233,7 +305,7 @@ const renderedHtml = computed(() => {
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
             <polygon points="5 3 19 12 5 21 5 3"/>
           </svg>
-          <span class="att-name">${fileName}</span>
+          <span class="att-name">${innerHtml}</span>
         </div>
       </div>`
     }
@@ -249,26 +321,32 @@ const renderedHtml = computed(() => {
             <circle cx="6" cy="18" r="3" />
             <circle cx="18" cy="16" r="3" />
           </svg>
-          <span class="att-name">${fileName}</span>
+          <span class="att-name">${innerHtml}</span>
         </div>
       </div>`
     }
 
-    // Other files: render as file card
-    return `<div class="markdown-file-card" data-path="${path}" data-filename="${downloadName}" title="${t('download.downloadFile')}">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+    if (workspaceFilePreviewAvailable.value && isPreviewableFile(downloadName)) {
+      const previewHref = location.startLine
+        ? `${path}#L${location.startLine}${location.endLine && location.endLine !== location.startLine ? `-L${location.endLine}` : ''}`
+        : path
+      return `<a class="markdown-file-link" href="${md.utils.escapeHtml(previewHref)}" title="${md.utils.escapeHtml(t('files.preview'))}">${innerHtml}</a>`
+    }
+
+    // Files without an in-app renderer retain the explicit download card.
+    const downloadLabel = md.utils.escapeHtml(t('download.downloadFile'))
+    return `<button class="markdown-file-card" type="button" data-path="${md.utils.escapeHtml(path)}" data-filename="${md.utils.escapeHtml(downloadName)}" title="${downloadLabel}" aria-label="${downloadLabel}: ${md.utils.escapeHtml(downloadName)}">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
         <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
         <polyline points="14 2 14 8 20 8" />
       </svg>
-      <span class="att-name">${fileName}</span>
-      <button class="att-download-btn" type="button" title="${t('download.downloadFile')}" aria-label="${t('download.downloadFile')}">
-        <svg class="att-download-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-          <polyline points="7 10 12 15 17 10" />
-          <line x1="12" y1="15" x2="12" y2="3" />
-        </svg>
-      </button>
-    </div>`
+      <span class="att-name">${innerHtml}</span>
+      <svg class="att-download-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+        <polyline points="7 10 12 15 17 10" />
+        <line x1="12" y1="15" x2="12" y2="3" />
+      </svg>
+    </button>`
   })
 
   if (props.mentionNames && props.mentionNames.length > 0) {
@@ -420,6 +498,20 @@ onBeforeUnmount(() => {
 })
 
 async function handleMarkdownClick(event: MouseEvent): Promise<void> {
+  const target = event.target as HTMLElement
+  const link = target.closest('a') as HTMLAnchorElement | null
+  const href = link?.getAttribute('href') || ''
+  const isWebLink = /^(?:https?:)?\/\//i.test(href)
+  const webUrl = href.startsWith('//') ? `${window.location.protocol}${href}` : href
+  const isLocalLink = isLocalFilePath(href) || href.startsWith('/api/studio/files/download?')
+
+  // Native anchor navigation happens as soon as this async listener yields, so
+  // cancel all links handled below before the first await.
+  if (isWebLink || isLocalLink) {
+    event.preventDefault()
+    if (isLocalLink) event.stopPropagation()
+  }
+
   const copyResult = await handleCodeBlockCopyClick(event)
   if (copyResult !== null) {
     if (copyResult) {
@@ -429,8 +521,6 @@ async function handleMarkdownClick(event: MouseEvent): Promise<void> {
     }
     return
   }
-
-  const target = event.target as HTMLElement
 
   // Handle image clicks for preview
   const img = target.closest('img') as HTMLImageElement | null
@@ -447,52 +537,34 @@ async function handleMarkdownClick(event: MouseEvent): Promise<void> {
     event.stopPropagation()
     const path = fileCard.getAttribute('data-path')
     const fileName = fileCard.getAttribute('data-filename') || undefined
-
-    const isDownloadBtn = target.closest('.att-download-btn')
-
-    if (isDownloadBtn && path) { // Only download file with download icon clicked.
+    if (path) {
       message.info(t('download.downloading'))
       downloadFile(path, fileName).catch((err: Error) => {
         message.error(err.message || t('download.downloadFailed'))
       })
-      return
-    }
-
-    if (path) {
-      if (isPreviewableFile(fileName || path) && requestWorkspaceFilePreview(path, fileName || inferDownloadFileName(path))) {
-        return
-      } else { // Download file immediately
-        downloadFile(path, fileName).catch((err: Error) => {
-          message.error(err.message || t('download.downloadFailed'))
-        })
-      }
     }
     return
   }
 
-  // Handle file path link clicks for download
-  const link = target.closest('a') as HTMLAnchorElement | null
+  // Handle ordinary links after cards, copy controls, and image overlays.
   if (!link) return
-
-  const href = link.getAttribute('href')
   if (!href) return
 
-  // Desktop chat links stay inside the embedded browser. Web deployments keep
-  // using a separate browser tab so the hash-based router cannot intercept.
-  if (href.startsWith('http://') || href.startsWith('https://')) {
-    event.preventDefault()
+  // Desktop links use the configured destination. Web deployments keep using a
+  // separate browser tab so the hash-based router cannot intercept.
+  if (isWebLink) {
     try {
-      if (await openUrlInDesktopBrowser(href)) return
+      if (await openUrlInDesktopBrowser(webUrl)) return
     } catch (error) {
       message.error(`${t('browser.loadFailed')}: ${error instanceof Error ? error.message : String(error)}`)
       return
     }
-    window.open(href, '_blank', 'noopener,noreferrer')
+    window.open(webUrl, '_blank', 'noopener,noreferrer')
     return
   }
 
-  // Full download URL: open directly (already has /api/hermes/download?path=...)
-  if (href.startsWith('/api/hermes/download?')) {
+  // Full download URL: open directly (already has /api/studio/files/download?path=...)
+  if (href.startsWith('/api/studio/files/download?')) {
     event.preventDefault()
     event.stopPropagation()
     const linkText = link.textContent || ''
@@ -507,15 +579,25 @@ async function handleMarkdownClick(event: MouseEvent): Promise<void> {
     return
   }
 
-  // File path links: intercept and download
+  // Preview-capable local links open in the host panel. Contexts without a
+  // preview host render download cards earlier, while unsupported links keep
+  // the explicit download fallback here.
   if (isLocalFilePath(href)) {
     event.preventDefault()
     event.stopPropagation()
     const linkText = link.textContent || ''
     const fileName = linkText.startsWith('File: ') ? linkText.slice(6).trim() : linkText.trim()
-    const path = localFilePathWithoutLocation(href)
+    const location = parseLocalFileLocation(href)
+    const { path } = location
+    const downloadName = inferDownloadFileName(path, fileName || undefined)
+    if (isPreviewableFile(downloadName)) {
+      if (!requestWorkspaceFilePreview(path, downloadName, true, location.startLine, location.endLine)) {
+        message.error(t('files.previewFailed'))
+      }
+      return
+    }
     message.info(t('download.downloading'))
-    downloadFile(path, inferDownloadFileName(path, fileName || undefined)).catch((err: Error) => {
+    downloadFile(path, downloadName).catch((err: Error) => {
       message.error(err.message || t('download.downloadFailed'))
     })
   }
@@ -525,11 +607,12 @@ async function handleMarkdownClick(event: MouseEvent): Promise<void> {
 
 <template>
   <div ref="markdownBody" class="markdown-body" dir="auto" v-html="renderedHtml" @click="handleMarkdownClick"></div>
-  <Teleport to="body">
-    <div v-if="previewUrl" class="image-preview-overlay" @click.self="previewUrl = null">
-      <img :src="previewUrl" class="image-preview-img" @click="previewUrl = null" />
-    </div>
-  </Teleport>
+  <ImagePreviewOverlay
+    v-if="previewUrl"
+    :src="previewUrl"
+    alt=""
+    @close="previewUrl = null"
+  />
 </template>
 
 <style lang="scss">
@@ -598,6 +681,33 @@ async function handleMarkdownClick(event: MouseEvent): Promise<void> {
 
     &:hover {
       color: $accent-hover;
+    }
+  }
+
+  a.markdown-file-link {
+    color: $text-secondary;
+    font-weight: 500;
+    text-decoration-line: underline;
+    text-decoration-style: dotted;
+    text-decoration-thickness: 1px;
+    text-decoration-color: $text-muted;
+    text-underline-offset: 3px;
+    cursor: pointer;
+    transition: color 0.15s ease, text-decoration-color 0.15s ease;
+
+    &:hover,
+    &:focus-visible {
+      color: $text-primary;
+      text-decoration-color: var(--accent-primary);
+    }
+
+    code:not(.hljs) {
+      padding: 0;
+      border-radius: 0;
+      color: inherit;
+      background: transparent;
+      font: inherit;
+      white-space: inherit;
     }
   }
 
@@ -679,6 +789,7 @@ async function handleMarkdownClick(event: MouseEvent): Promise<void> {
     align-items: center;
     gap: 6px;
     padding: 6px 10px;
+    font: inherit;
     font-size: 12px;
     color: $text-secondary;
     background-color: rgba(0, 0, 0, 0.04);
@@ -686,11 +797,18 @@ async function handleMarkdownClick(event: MouseEvent): Promise<void> {
     border-radius: $radius-sm;
     margin: 8px 0;
     cursor: pointer;
+    text-align: start;
     transition: background-color 0.15s ease, border-color 0.15s ease;
 
-    &:hover {
+    &:hover,
+    &:focus-visible {
       background-color: rgba(0, 0, 0, 0.08);
       border-color: $border-color;
+    }
+
+    &:focus-visible {
+      outline: 2px solid rgba(var(--accent-primary-rgb), 0.72);
+      outline-offset: 2px;
     }
 
     .att-name {
@@ -706,22 +824,8 @@ async function handleMarkdownClick(event: MouseEvent): Promise<void> {
       transition: opacity 0.15s ease;
     }
 
-    .att-download-btn {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      flex-shrink: 0;
-      width: 18px;
-      height: 18px;
-      padding: 0;
-      color: inherit;
-      background: transparent;
-      border: 0;
-      cursor: pointer;
-    }
-
     &:hover .att-download-icon,
-    .att-download-btn:hover .att-download-icon {
+    &:focus-visible .att-download-icon {
       opacity: 1;
     }
   }
@@ -802,25 +906,6 @@ async function handleMarkdownClick(event: MouseEvent): Promise<void> {
     align-items: center;
     justify-content: center;
   }
-}
-
-.image-preview-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 9999;
-  background: rgba(0, 0, 0, 0.85);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-}
-
-.image-preview-img {
-  max-width: 90vw;
-  max-height: 90vh;
-  object-fit: contain;
-  border-radius: 4px;
-  cursor: pointer;
 }
 
 </style>

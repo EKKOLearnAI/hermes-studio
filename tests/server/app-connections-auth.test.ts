@@ -8,20 +8,24 @@ describe('App connection authorization', () => {
     vi.stubEnv('AUTH_JWT_SECRET', 'app-auth-test-secret')
     const { DatabaseSync } = await import('node:sqlite')
     db = new DatabaseSync(':memory:')
-    vi.doMock('../../packages/server/src/db/index', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
       getDb: () => db,
       getStoragePath: () => ':memory:',
     }))
-    const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
+    vi.doMock('../../packages/server/src/modules/studio/public/profile-config', () => ({
+      listProfileNamesFromDisk: () => ['default'],
+    }))
+    const { initAllHermesTables } = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
     initAllHermesTables()
   })
 
   afterEach(() => {
     db?.close()
     db = null
-    vi.doUnmock('../../packages/server/src/db/index')
-    vi.doUnmock('../../packages/server/src/services/lan-discovery')
-    vi.doUnmock('../../packages/server/src/services/system-info')
+    vi.doUnmock('../../packages/server/src/modules/studio/infrastructure/database/index')
+    vi.doUnmock('../../packages/server/src/modules/studio/services/network/lan-discovery')
+    vi.doUnmock('../../packages/server/src/modules/studio/public/system-info')
+    vi.doUnmock('../../packages/server/src/modules/studio/public/profile-config')
     vi.unstubAllEnvs()
     vi.resetModules()
   })
@@ -31,20 +35,20 @@ describe('App connection authorization', () => {
   }
 
   it('records the authorizing user and exchanges once for that user\'s 30-day device token', async () => {
-    const users = await import('../../packages/server/src/db/hermes/users-store')
+    const users = await import('../../packages/server/src/modules/studio/repositories/users-store')
     const admin = users.bootstrapDefaultSuperAdmin('admin', '123456')!
-    vi.doMock('../../packages/server/src/services/lan-discovery', async importOriginal => ({
-      ...await importOriginal<typeof import('../../packages/server/src/services/lan-discovery')>(),
+    vi.doMock('../../packages/server/src/modules/studio/services/network/lan-discovery', async importOriginal => ({
+      ...await importOriginal<typeof import('../../packages/server/src/modules/studio/services/network/lan-discovery')>(),
       getLanBackendUrlForRequest: () => 'http://192.168.1.20:8648',
     }))
-    vi.doMock('../../packages/server/src/services/system-info', async importOriginal => ({
-      ...await importOriginal<typeof import('../../packages/server/src/services/system-info')>(),
+    vi.doMock('../../packages/server/src/modules/studio/public/system-info', async importOriginal => ({
+      ...await importOriginal<typeof import('../../packages/server/src/modules/studio/public/system-info')>(),
       getDeviceId: async () => 'hwui_local_machine_1234567890',
     }))
-    const appConnectionsController = await import('../../packages/server/src/controllers/app-connections')
-    const authController = await import('../../packages/server/src/controllers/auth')
-    const authMiddleware = await import('../../packages/server/src/middleware/user-auth')
-    const store = await import('../../packages/server/src/db/hermes/app-connections-store')
+    const appConnectionsController = await import('../../packages/server/src/modules/studio/controllers/app-connections')
+    const authController = await import('../../packages/server/src/modules/studio/controllers/auth')
+    const authMiddleware = await import('../../packages/server/src/modules/studio/middleware/auth')
+    const store = await import('../../packages/server/src/modules/studio/repositories/app-connections-store')
 
     const authorizationCtx = {
       state: { user: { id: admin.id, username: admin.username, role: admin.role } },
@@ -121,7 +125,7 @@ describe('App connection authorization', () => {
     ])
 
     const protectedCtx = {
-      path: '/api/hermes/sessions',
+      path: '/api/studio/sessions',
       headers: { authorization: `Bearer ${loginCtx.body.token}` },
       query: {},
       state: {},
@@ -153,10 +157,10 @@ describe('App connection authorization', () => {
   })
 
   it('keeps one row per phone and connection type while refreshing repeated logins', async () => {
-    const users = await import('../../packages/server/src/db/hermes/users-store')
+    const users = await import('../../packages/server/src/modules/studio/repositories/users-store')
     const admin = users.bootstrapDefaultSuperAdmin('admin', '123456')!
-    const authController = await import('../../packages/server/src/controllers/auth')
-    const store = await import('../../packages/server/src/db/hermes/app-connections-store')
+    const authController = await import('../../packages/server/src/modules/studio/controllers/auth')
+    const store = await import('../../packages/server/src/modules/studio/repositories/app-connections-store')
 
     async function login(connectionType: 'lan' | 'cloud', deviceName: string) {
       const issued = store.createAppAuthorizationCode(admin.id)
@@ -203,7 +207,7 @@ describe('App connection authorization', () => {
   })
 
   it('lets an active non-super-admin user manually issue their own App token', async () => {
-    const users = await import('../../packages/server/src/db/hermes/users-store')
+    const users = await import('../../packages/server/src/modules/studio/repositories/users-store')
     const member = users.createUser({
       username: 'member',
       password: ' secret-with-spaces ',
@@ -211,9 +215,9 @@ describe('App connection authorization', () => {
       profiles: ['default'],
       defaultProfile: 'default',
     })
-    const authController = await import('../../packages/server/src/controllers/auth')
-    const authMiddleware = await import('../../packages/server/src/middleware/user-auth')
-    const store = await import('../../packages/server/src/db/hermes/app-connections-store')
+    const authController = await import('../../packages/server/src/modules/studio/controllers/auth')
+    const authMiddleware = await import('../../packages/server/src/modules/studio/middleware/auth')
+    const store = await import('../../packages/server/src/modules/studio/repositories/app-connections-store')
     const ctx = {
       request: {
         body: {
