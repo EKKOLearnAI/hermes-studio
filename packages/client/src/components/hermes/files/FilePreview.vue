@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, h, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
+import { computed, defineAsyncComponent, h, nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import { NAlert, NButton, NIcon, NSpin, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
+import { RecycleScroller } from 'vue-virtual-scroller'
+import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
 import { useFilesStore } from '@/stores/hermes/files'
 import { fetchFilePreviewBlob } from '@/api/studio/files'
 import { fetchAuthenticatedBlob, saveBlob } from '@/api/studio/binary-content'
@@ -29,8 +31,10 @@ const previewError = ref('')
 const previewText = ref('')
 const previewBuffer = shallowRef<ArrayBuffer | null>(null)
 const mediaUrl = ref('')
+const previewContent = ref<HTMLElement | null>(null)
 let requestController: AbortController | null = null
 let requestGeneration = 0
+let sourceRevealGeneration = 0
 
 function revokeMediaUrl(): void {
   if (mediaUrl.value) URL.revokeObjectURL(mediaUrl.value)
@@ -72,7 +76,7 @@ async function loadPreview(): Promise<void> {
       const text = await blob.text()
       if (generation !== requestGeneration) return
       previewText.value = text
-      if (file.type === 'html' && await openHtmlInDesktopBrowser(text, file.name)) return
+      if (file.type === 'html' && !file.startLine && await openHtmlInDesktopBrowser(text, file.name)) return
     } else {
       const buffer = await blob.arrayBuffer()
       if (generation !== requestGeneration) return
@@ -136,6 +140,99 @@ const highlightedPreview = computed(() => {
   })
 })
 
+const locatedSourceContent = computed(() => {
+  const previewFile = filesStore.previewFile
+  if (!previewFile?.startLine) return null
+  if (previewFile.type === 'markdown' || previewFile.type === 'text') {
+    return previewFile.content || ''
+  }
+  if (previewFile.type === 'html' || previewFile.type === 'csv') {
+    return previewText.value
+  }
+  return null
+})
+
+const locatedSourceTextLines = computed(() => {
+  const content = locatedSourceContent.value
+  return content === null ? [] : content.split(/\r?\n/)
+})
+
+const effectivePreviewLocation = computed(() => {
+  const previewFile = filesStore.previewFile
+  const lineCount = locatedSourceTextLines.value.length
+  if (!previewFile?.startLine || lineCount === 0) return null
+
+  const startLine = Math.min(Math.max(1, previewFile.startLine), lineCount)
+  const requestedEndLine = Math.max(previewFile.startLine, previewFile.endLine ?? previewFile.startLine)
+  const endLine = Math.min(Math.max(startLine, requestedEndLine), lineCount)
+  return { startLine, endLine }
+})
+
+const previewLocationLabel = computed(() => {
+  const location = effectivePreviewLocation.value
+  if (!location) return ''
+  return location.endLine === location.startLine
+    ? `L${location.startLine}`
+    : `L${location.startLine}–${location.endLine}`
+})
+
+const locatedSourceLines = computed(() => {
+  const location = effectivePreviewLocation.value
+  if (!location) return []
+  return locatedSourceTextLines.value.map((text, index) => {
+    const number = index + 1
+    return {
+      number,
+      text,
+      isTarget: number >= location.startLine && number <= location.endLine,
+    }
+  })
+})
+
+function locatedSourceElement(): HTMLElement | null {
+  return previewContent.value?.querySelector<HTMLElement>('.preview-source') ?? null
+}
+
+function nextRenderFrame(): Promise<void> {
+  return new Promise(resolve => requestAnimationFrame(() => resolve()))
+}
+
+function revealLocatedSourceNow(): void {
+  const startLine = effectivePreviewLocation.value?.startLine
+  const element = locatedSourceElement()
+  if (!startLine || !element?.classList.contains('ready')) return
+  const targetTop = (startLine - 1) * 20
+  element.scrollTop = Math.max(0, targetTop - Math.max(0, element.clientHeight - 20) / 2)
+  element.dispatchEvent(new Event('scroll'))
+  requestAnimationFrame(() => element.focus({ preventScroll: true }))
+}
+
+watch(
+  () => [
+    filesStore.previewFile?.path,
+    effectivePreviewLocation.value?.startLine,
+    locatedSourceContent.value,
+  ],
+  async () => {
+    const generation = ++sourceRevealGeneration
+    const startLine = effectivePreviewLocation.value?.startLine
+    if (!startLine) return
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await nextTick()
+      await nextRenderFrame()
+      if (generation !== sourceRevealGeneration) return
+      const element = locatedSourceElement()
+      if (!element?.classList.contains('ready')) continue
+      revealLocatedSourceNow()
+      await nextRenderFrame()
+      if (generation !== sourceRevealGeneration) return
+      element.focus({ preventScroll: true })
+      return
+    }
+  },
+  { flush: 'post', immediate: true },
+)
+
 async function handlePreviewClick(event: MouseEvent) {
   const copyResult = await handleCodeBlockCopyClick(event)
   if (copyResult) {
@@ -155,6 +252,7 @@ const CloseIcon = () =>
 watch(() => filesStore.previewFile, () => { void loadPreview() }, { immediate: true })
 onBeforeUnmount(() => {
   requestGeneration += 1
+  sourceRevealGeneration += 1
   resetLoadedPreview()
 })
 </script>
@@ -164,6 +262,7 @@ onBeforeUnmount(() => {
     <div class="preview-header">
       <div class="preview-file-info">
         <span class="preview-filename">{{ filesStore.previewFile.path }}</span>
+        <span v-if="previewLocationLabel" class="preview-location" aria-live="polite">{{ previewLocationLabel }}</span>
         <span class="preview-size">{{ formatSize(filesStore.previewFile.size) }}</span>
       </div>
       <div class="preview-actions">
@@ -176,7 +275,7 @@ onBeforeUnmount(() => {
         </NButton>
       </div>
     </div>
-    <div class="preview-content">
+    <div ref="previewContent" class="preview-content">
       <NSpin v-if="loading" :description="t('files.previewLoading')" />
       <NAlert v-else-if="previewError" type="error" class="preview-error">
         <template #header>{{ t('files.previewFailed') }}</template>
@@ -200,6 +299,30 @@ onBeforeUnmount(() => {
         preload="metadata"
         @error="handleVideoError"
       />
+      <RecycleScroller
+        v-else-if="locatedSourceLines.length"
+        class="preview-source"
+        :items="locatedSourceLines"
+        :item-size="20"
+        key-field="number"
+        role="region"
+        tabindex="0"
+        :aria-label="`${t('files.preview')}: ${filesStore.previewFile.path}`"
+        @resize="revealLocatedSourceNow"
+        @visible="revealLocatedSourceNow"
+      >
+        <template #default="{ item: line }">
+          <div
+            class="preview-source-line"
+            :class="{ 'is-target-line': line.isTarget }"
+            :data-line="line.number"
+            :aria-current="line.isTarget ? 'location' : undefined"
+          >
+            <span class="preview-source-line-number" aria-hidden="true">{{ line.number }}</span>
+            <code class="preview-source-line-text">{{ line.text || ' ' }}</code>
+          </div>
+        </template>
+      </RecycleScroller>
       <div v-else-if="filesStore.previewFile.type === 'markdown'" class="preview-markdown">
         <MarkdownRenderer :content="filesStore.previewFile.content || ''" />
       </div>
@@ -286,6 +409,17 @@ onBeforeUnmount(() => {
   color: $text-muted;
 }
 
+.preview-location {
+  flex: none;
+  padding: 1px 6px;
+  border: 1px solid rgba(var(--accent-primary-rgb), 0.24);
+  border-radius: 999px;
+  color: var(--accent-primary);
+  background: rgba(var(--accent-primary-rgb), 0.08);
+  font-family: $font-code;
+  font-size: 11px;
+}
+
 .preview-content {
   flex: 1;
   overflow: auto;
@@ -325,6 +459,68 @@ onBeforeUnmount(() => {
 .preview-markdown {
   max-width: 800px;
   width: 100%;
+}
+
+.preview-source {
+  align-self: stretch;
+  min-width: 0;
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  font-family: $font-code;
+  font-size: 13px;
+  line-height: 1.55;
+  scrollbar-width: none;
+
+  // Let long rows contribute to the scroller's horizontal overflow.
+  :deep(.vue-recycle-scroller__item-wrapper) {
+    overflow: visible;
+  }
+
+  &:focus-visible {
+    outline: 2px solid rgba(var(--accent-primary-rgb), 0.72);
+    outline-offset: -2px;
+  }
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+.preview-source-line {
+  display: grid;
+  grid-template-columns: 52px minmax(max-content, 1fr);
+  min-width: max-content;
+  height: 20px;
+  border-radius: 3px;
+  line-height: 20px;
+  white-space: pre;
+}
+
+.preview-source-line.is-target-line {
+  background: rgba(var(--accent-primary-rgb), 0.14);
+  box-shadow: inset 2px 0 0 var(--accent-primary);
+}
+
+.preview-source-line-number {
+  position: sticky;
+  left: 0;
+  padding-inline: 8px 12px;
+  color: $text-muted;
+  background: $bg-secondary;
+  text-align: end;
+  user-select: none;
+}
+
+.preview-source-line.is-target-line .preview-source-line-number {
+  color: var(--accent-primary);
+  background: rgba(var(--accent-primary-rgb), 0.12);
+}
+
+.preview-source-line-text {
+  padding-inline: 12px;
+  color: $text-primary;
+  font: inherit;
 }
 
 .preview-code {
