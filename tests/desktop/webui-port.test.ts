@@ -1,6 +1,6 @@
 import { createServer, type Server } from 'node:http'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { releaseOccupiedWebUiPort } from '../../packages/desktop/src/main/webui-port'
+import { canBindTcpPort, releaseOccupiedWebUiPort } from '../../packages/desktop/src/main/webui-port'
 
 const servers: Server[] = []
 
@@ -16,6 +16,7 @@ async function listen(server: Server, host = '127.0.0.1'): Promise<number> {
 }
 
 afterEach(async () => {
+  vi.unstubAllEnvs()
   await Promise.all(servers.splice(0).map(server => new Promise<void>(resolve => {
     if (!server.listening) {
       resolve()
@@ -60,6 +61,70 @@ describe('Desktop Web UI port recovery', () => {
 
     await expect(releaseOccupiedWebUiPort(port, 'desktop-token')).resolves.toBe(true)
     expect(server.listening).toBe(false)
+  })
+
+  it('waits for a delayed IPv4 wildcard shutdown before reporting success', async () => {
+    vi.stubEnv('HERMES_WEB_UI_SHUTDOWN_FORCE_EXIT_MS', '100')
+    let server!: Server
+    server = createServer((request, response) => {
+      if (request.url === '/api/desktop/shutdown' && request.method === 'POST') {
+        response.statusCode = request.headers.authorization === 'Bearer desktop-token' ? 202 : 401
+        response.end()
+        if (response.statusCode === 202) setTimeout(() => server.close(), 150)
+        return
+      }
+      response.statusCode = 404
+      response.end()
+    })
+    const port = await listen(server, '0.0.0.0')
+
+    await expect(releaseOccupiedWebUiPort(port, 'desktop-token')).resolves.toBe(true)
+    expect(server.listening).toBe(false)
+  })
+
+  it('reports an occupied IPv4 wildcard port as unavailable to a matching probe', async () => {
+    const server = createServer()
+    const port = await listen(server, '0.0.0.0')
+
+    await expect(canBindTcpPort(port, '0.0.0.0')).resolves.toBe(false)
+    expect(server.listening).toBe(true)
+  })
+
+  it('waits through the configured shutdown budget plus cleanup grace', async () => {
+    vi.stubEnv('HERMES_WEB_UI_SHUTDOWN_FORCE_EXIT_MS', '100')
+    let server!: Server
+    server = createServer((request, response) => {
+      if (request.url === '/api/desktop/shutdown' && request.method === 'POST') {
+        response.statusCode = request.headers.authorization === 'Bearer desktop-token' ? 202 : 401
+        response.end()
+        if (response.statusCode === 202) setTimeout(() => server.close(), 900)
+        return
+      }
+      response.statusCode = 404
+      response.end()
+    })
+    const port = await listen(server, '0.0.0.0')
+
+    await expect(releaseOccupiedWebUiPort(port, 'desktop-token')).resolves.toBe(true)
+    expect(server.listening).toBe(false)
+  })
+
+  it('throws when the server misses the shutdown budget and cleanup grace', async () => {
+    vi.stubEnv('HERMES_WEB_UI_SHUTDOWN_FORCE_EXIT_MS', '100')
+    const server = createServer((request, response) => {
+      if (request.url === '/api/desktop/shutdown' && request.method === 'POST') {
+        response.statusCode = request.headers.authorization === 'Bearer desktop-token' ? 202 : 401
+        response.end()
+        return
+      }
+      response.statusCode = 404
+      response.end()
+    })
+    const port = await listen(server, '0.0.0.0')
+
+    await expect(releaseOccupiedWebUiPort(port, 'desktop-token'))
+      .rejects.toThrow(`Existing Web UI server did not release port ${port} after shutdown`)
+    expect(server.listening).toBe(true)
   })
 
   it('does not stop a non-Desktop service on the requested port', async () => {

@@ -1,28 +1,35 @@
 import { createServer } from 'node:net'
 
-const PORT_RELEASE_TIMEOUT_MS = 10_000
+const DEFAULT_WEB_UI_SHUTDOWN_FORCE_EXIT_MS = 10_000
+const PORT_RELEASE_GRACE_MS = 1_000
 const PORT_POLL_INTERVAL_MS = 100
 
-export async function canBindTcpPort(port: number): Promise<boolean> {
+function webUiShutdownWaitTimeoutMs(): number {
+  const configured = Number(process.env.HERMES_WEB_UI_SHUTDOWN_FORCE_EXIT_MS)
+  const forceExitMs = Number.isFinite(configured) && configured > 0
+    ? configured
+    : DEFAULT_WEB_UI_SHUTDOWN_FORCE_EXIT_MS
+  return forceExitMs + PORT_RELEASE_GRACE_MS
+}
+
+export async function canBindTcpPort(port: number, host = '127.0.0.1'): Promise<boolean> {
   return await new Promise((resolve) => {
     const server = createServer()
     server.unref()
     server.once('error', () => resolve(false))
-    // Match the Web UI server, which listens on all local interfaces. On macOS
-    // a loopback-only probe can incorrectly succeed beside a wildcard listener.
-    server.listen(port, () => {
+    server.listen(port, host, () => {
       server.close(() => resolve(true))
     })
   })
 }
 
-async function waitForTcpPort(port: number, timeoutMs: number): Promise<boolean> {
+async function waitForTcpPort(port: number, host: string, timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
-    if (await canBindTcpPort(port)) return true
+    if (await canBindTcpPort(port, host)) return true
     await new Promise(resolve => setTimeout(resolve, PORT_POLL_INTERVAL_MS))
   }
-  return canBindTcpPort(port)
+  return canBindTcpPort(port, host)
 }
 
 /**
@@ -34,19 +41,22 @@ export async function releaseOccupiedWebUiPort(
   token: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<boolean> {
+  const timeoutMs = webUiShutdownWaitTimeoutMs()
   let response: Response
   try {
     response = await fetchImpl(`http://127.0.0.1:${port}/api/desktop/shutdown`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(PORT_RELEASE_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     })
   } catch {
     return false
   }
 
   if (response.status !== 202) return false
-  if (!await waitForTcpPort(port, PORT_RELEASE_TIMEOUT_MS)) {
+  // The Web UI listens on 0.0.0.0. Probe the same IPv4 wildcard address so an
+  // IPv6 wildcard bind cannot report success while the real listener remains.
+  if (!await waitForTcpPort(port, '0.0.0.0', timeoutMs)) {
     throw new Error(`Existing Web UI server did not release port ${port} after shutdown`)
   }
   return true

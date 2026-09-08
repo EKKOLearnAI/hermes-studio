@@ -553,7 +553,9 @@ async function getFreeTcpPort(): Promise<number> {
 async function getFreeTcpPortInRange(min: number, max: number): Promise<number> {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     const port = min + (randomBytes(2).readUInt16BE(0) % (max - min + 1))
-    if (await canBindTcpPort(port)) return port
+    // Bridge workers use tcp://127.0.0.1, so keep the probe on the same
+    // loopback address instead of reserving an IPv4 wildcard port.
+    if (await canBindTcpPort(port, '127.0.0.1')) return port
   }
   return getFreeTcpPort()
 }
