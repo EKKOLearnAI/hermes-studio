@@ -3,14 +3,14 @@ import { computed } from 'vue'
 import { NTooltip } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
+import { isStoredSuperAdmin } from '@/api/client'
 import { useSessionSearch } from '@/composables/useSessionSearch'
 
-type ActiveSection = 'chat' | 'history' | 'connections' | 'group' | 'global' | 'workflow'
+type ActiveSection = 'chat' | 'history' | 'connections' | 'agents' | 'models' | 'group' | 'global' | 'workflow'
 
 const props = defineProps<{
   active: ActiveSection
   primaryLabel?: string
-  hideModeSwitch?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -20,12 +20,9 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const router = useRouter()
 const { openSessionSearch } = useSessionSearch()
+const canManageAgents = computed(() => isStoredSuperAdmin())
 
 const primaryText = computed(() => props.primaryLabel || t('chat.newChat'))
-const showModeSwitch = computed(() => !props.hideModeSwitch)
-const historyButtonLabel = computed(() =>
-  props.active === 'history' ? t('chat.sessions') : t('sidebar.history'),
-)
 
 function openChat() {
   if (props.active === 'chat') return
@@ -33,16 +30,23 @@ function openChat() {
 }
 
 function openHistory() {
-  if (props.active === 'history') {
-    void router.push({ name: 'hermes.chat' })
-    return
-  }
+  if (props.active === 'history') return
   void router.push({ name: 'hermes.history' })
 }
 
 function openConnections() {
   if (props.active === 'connections') return
   void router.push({ name: 'hermes.connections' })
+}
+
+function openAgentManager() {
+  if (props.active === 'agents') return
+  void router.push({ name: 'hermes.agentManager' })
+}
+
+function openModels() {
+  if (props.active === 'models') return
+  void router.push({ name: 'hermes.models' })
 }
 
 function openGroupChat() {
@@ -98,40 +102,6 @@ function openApiRelay() {
       </button>
       <button
         class="page-sidebar-tab"
-        type="button"
-        @click="openHistory"
-      >
-        <svg
-          v-if="active === 'history'"
-          width="15"
-          height="15"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.8"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-        </svg>
-        <svg
-          v-else
-          width="15"
-          height="15"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.8"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <circle cx="12" cy="12" r="9" />
-          <path d="M12 7v5l3 2" />
-        </svg>
-        <span>{{ historyButtonLabel }}</span>
-      </button>
-      <button
-        class="page-sidebar-tab"
         :class="{ active: active === 'connections' }"
         type="button"
         :aria-current="active === 'connections' ? 'page' : undefined"
@@ -155,6 +125,54 @@ function openApiRelay() {
         </svg>
         <span>{{ t('sidebar.connections') }}</span>
       </button>
+      <button
+        v-if="canManageAgents"
+        class="page-sidebar-tab"
+        :class="{ active: active === 'agents' }"
+        type="button"
+        :aria-current="active === 'agents' ? 'page' : undefined"
+        @click="openAgentManager"
+      >
+        <svg
+          width="17"
+          height="17"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M12 8V4H8" />
+          <rect x="4" y="8" width="16" height="12" rx="3" />
+          <path d="M2 14h2M20 14h2M9 13v2M15 13v2" />
+        </svg>
+        <span>{{ t('sidebar.agentManager') }}</span>
+      </button>
+      <button
+        class="page-sidebar-tab"
+        :class="{ active: active === 'models' }"
+        type="button"
+        :aria-current="active === 'models' ? 'page' : undefined"
+        @click="openModels"
+      >
+        <svg
+          width="15"
+          height="15"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <circle cx="12" cy="12" r="3" />
+          <path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9 7 7M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1" />
+        </svg>
+        <span>{{ t('sidebar.models') }}</span>
+      </button>
       <button class="page-sidebar-tab" type="button" @click="openApiRelay">
         <svg
           width="15"
@@ -171,16 +189,16 @@ function openApiRelay() {
         <span>{{ t('sidebar.apiRelay') }}</span>
       </button>
     </div>
-    <div v-if="showModeSwitch" class="conversation-switch conversation-switch--three" role="tablist" aria-label="Conversation type">
+    <div class="conversation-switch conversation-switch--four" role="tablist" aria-label="Conversation type">
       <NTooltip trigger="hover" placement="top">
         <template #trigger>
           <button
             class="conversation-switch-tab"
-            :class="{ active: active === 'chat' || active === 'history' }"
+            :class="{ active: active === 'chat' }"
             type="button"
             role="tab"
             :aria-label="t('sidebar.singleChat')"
-            :aria-selected="active === 'chat' || active === 'history'"
+            :aria-selected="active === 'chat'"
             @click="openChat"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -232,6 +250,25 @@ function openApiRelay() {
           </button>
         </template>
         {{ t('sidebar.workflow') }}
+      </NTooltip>
+      <NTooltip trigger="hover" placement="top">
+        <template #trigger>
+          <button
+            class="conversation-switch-tab"
+            :class="{ active: active === 'history' }"
+            type="button"
+            role="tab"
+            :aria-label="t('sidebar.history')"
+            :aria-selected="active === 'history'"
+            @click="openHistory"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="9" />
+              <path d="M12 7v5l3 2" />
+            </svg>
+          </button>
+        </template>
+        {{ t('sidebar.history') }}
       </NTooltip>
     </div>
   </div>
@@ -300,8 +337,8 @@ function openApiRelay() {
   background: rgba(var(--accent-primary-rgb), 0.05);
 }
 
-.conversation-switch--three {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+.conversation-switch--four {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .conversation-switch-tab {
@@ -335,7 +372,7 @@ function openApiRelay() {
   }
 }
 
-:global(.dark .conversation-switch--three .conversation-switch-tab.active) {
+:global(.dark .conversation-switch--four .conversation-switch-tab.active) {
   background: $bg-card-hover;
   color: $accent-primary;
   box-shadow:

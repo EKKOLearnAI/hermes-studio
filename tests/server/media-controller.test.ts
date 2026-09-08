@@ -8,8 +8,8 @@ const originalWebuiStateDir = process.env.HERMES_WEBUI_STATE_DIR
 const temporaryProfileDirs: string[] = []
 
 afterEach(() => {
-  vi.doUnmock('../../packages/server/src/services/hermes/hermes-profile')
-  vi.doUnmock('../../packages/server/src/services/config-helpers')
+  vi.doUnmock('../../packages/server/src/modules/studio/public/profile-config')
+  vi.doUnmock('../../packages/server/src/modules/studio/public/media-profile-config')
   vi.clearAllMocks()
   vi.unstubAllEnvs()
   vi.resetModules()
@@ -23,7 +23,7 @@ afterEach(() => {
 describe('media controller', () => {
   it('uses Hermes Web UI media directory as the default generated video output path', async () => {
     process.env.HERMES_WEB_UI_HOME = '/tmp/hermes-web-ui-test-home'
-    const { defaultImageOutputPath, defaultMediaOutputPath } = await import('../../packages/server/src/controllers/hermes/media')
+    const { defaultImageOutputPath, defaultMediaOutputPath } = await import('../../packages/server/src/modules/studio/controllers/media')
 
     expect(defaultMediaOutputPath('req_123')).toBe(join('/tmp/hermes-web-ui-test-home', 'media', 'req_123.mp4'))
     expect(defaultMediaOutputPath('bad/request:id')).toBe(join('/tmp/hermes-web-ui-test-home', 'media', 'bad_request_id.mp4'))
@@ -33,12 +33,12 @@ describe('media controller', () => {
 
   it('generates images through the requested configured custom provider', async () => {
     vi.stubEnv('AGNES_API_KEY', 'agnes-secret')
-    vi.doMock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/public/profile-config', () => ({
       getActiveProfileName: () => 'default',
       getProfileDir: () => '/tmp/hermes-web-ui-test-profile',
       listProfileNamesFromDisk: () => ['default'],
     }))
-    vi.doMock('../../packages/server/src/services/config-helpers', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/public/media-profile-config', () => ({
       readConfigYamlForProfile: vi.fn(async () => ({
         custom_providers: [{
           name: 'agnes',
@@ -55,7 +55,7 @@ describe('media controller', () => {
     const originalFetch = globalThis.fetch
     globalThis.fetch = fetchMock as any
     try {
-      const { apiKeyImageGenerate } = await import('../../packages/server/src/controllers/hermes/media')
+      const { apiKeyImageGenerate } = await import('../../packages/server/src/modules/studio/controllers/media')
       const ctx: any = {
         state: { serverTokenAuth: true },
         query: {},
@@ -104,12 +104,12 @@ describe('media controller', () => {
 
   it('takes the text-to-image route and timeout from the profile auxiliary settings', async () => {
     vi.stubEnv('STUDIO_IMG_KEY', 'studio-secret')
-    vi.doMock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/public/profile-config', () => ({
       getActiveProfileName: () => 'default',
       getProfileDir: () => '/tmp/hermes-web-ui-test-profile',
       listProfileNamesFromDisk: () => ['default'],
     }))
-    vi.doMock('../../packages/server/src/services/config-helpers', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/public/media-profile-config', () => ({
       readConfigYamlForProfile: vi.fn(async () => ({
         custom_providers: [{
           name: 'Studio Images',
@@ -130,7 +130,7 @@ describe('media controller', () => {
     const timeoutSpy = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(new AbortController().signal)
     globalThis.fetch = fetchMock as any
     try {
-      const { apiKeyImageGenerate } = await import('../../packages/server/src/controllers/hermes/media')
+      const { apiKeyImageGenerate } = await import('../../packages/server/src/modules/studio/controllers/media')
       const ctx: any = {
         state: { serverTokenAuth: true },
         query: {},
@@ -158,12 +158,12 @@ describe('media controller', () => {
   it('routes Studio image-to-image and multipart edits through their configured tasks', async () => {
     vi.stubEnv('GENERATION_IMG_KEY', 'generation-secret')
     vi.stubEnv('EDIT_IMG_KEY', 'edit-secret')
-    vi.doMock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/public/profile-config', () => ({
       getActiveProfileName: () => 'default',
       getProfileDir: () => '/tmp/hermes-web-ui-test-profile',
       listProfileNamesFromDisk: () => ['default'],
     }))
-    vi.doMock('../../packages/server/src/services/config-helpers', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/public/media-profile-config', () => ({
       readConfigYamlForProfile: vi.fn(async () => ({
         custom_providers: [
           {
@@ -199,7 +199,7 @@ describe('media controller', () => {
     const timeoutSpy = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(new AbortController().signal)
     globalThis.fetch = fetchMock as any
     try {
-      const { apiKeyImageGenerate } = await import('../../packages/server/src/controllers/hermes/media')
+      const { apiKeyImageGenerate } = await import('../../packages/server/src/modules/studio/controllers/media')
       const ctx: any = {
         state: { serverTokenAuth: true },
         query: {},
@@ -265,12 +265,12 @@ describe('media controller', () => {
   })
 
   it('reports the configured provider when it cannot be resolved', async () => {
-    vi.doMock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/public/profile-config', () => ({
       getActiveProfileName: () => 'default',
       getProfileDir: () => '/tmp/hermes-web-ui-test-profile',
       listProfileNamesFromDisk: () => ['default'],
     }))
-    vi.doMock('../../packages/server/src/services/config-helpers', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/public/media-profile-config', () => ({
       readConfigYamlForProfile: vi.fn(async () => ({
         custom_providers: [],
         auxiliary: {
@@ -278,7 +278,7 @@ describe('media controller', () => {
         },
       })),
     }))
-    const { apiKeyImageGenerate } = await import('../../packages/server/src/controllers/hermes/media')
+    const { apiKeyImageGenerate } = await import('../../packages/server/src/modules/studio/controllers/media')
     const ctx: any = {
       state: { serverTokenAuth: true },
       query: {},
@@ -299,12 +299,12 @@ describe('media controller', () => {
 
   it('lets the request override the configured image model', async () => {
     vi.stubEnv('STUDIO_IMG_KEY', 'studio-secret')
-    vi.doMock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/public/profile-config', () => ({
       getActiveProfileName: () => 'default',
       getProfileDir: () => '/tmp/hermes-web-ui-test-profile',
       listProfileNamesFromDisk: () => ['default'],
     }))
-    vi.doMock('../../packages/server/src/services/config-helpers', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/public/media-profile-config', () => ({
       readConfigYamlForProfile: vi.fn(async () => ({
         custom_providers: [{
           name: 'studio-images',
@@ -322,7 +322,7 @@ describe('media controller', () => {
     const timeoutSpy = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(new AbortController().signal)
     globalThis.fetch = fetchMock as any
     try {
-      const { apiKeyImageGenerate } = await import('../../packages/server/src/controllers/hermes/media')
+      const { apiKeyImageGenerate } = await import('../../packages/server/src/modules/studio/controllers/media')
       const ctx: any = {
         state: { serverTokenAuth: true },
         query: {},
@@ -353,12 +353,12 @@ describe('media controller', () => {
 
   it('forces response storage off for Studio image-to-image', async () => {
     vi.stubEnv('AGNES_API_KEY', 'agnes-secret')
-    vi.doMock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/public/profile-config', () => ({
       getActiveProfileName: () => 'default',
       getProfileDir: () => '/tmp/hermes-web-ui-test-profile',
       listProfileNamesFromDisk: () => ['default'],
     }))
-    vi.doMock('../../packages/server/src/services/config-helpers', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/public/media-profile-config', () => ({
       readConfigYamlForProfile: vi.fn(async () => ({
         custom_providers: [{
           name: 'agnes',
@@ -375,7 +375,7 @@ describe('media controller', () => {
     const originalFetch = globalThis.fetch
     globalThis.fetch = fetchMock as any
     try {
-      const { apiKeyImageGenerate } = await import('../../packages/server/src/controllers/hermes/media')
+      const { apiKeyImageGenerate } = await import('../../packages/server/src/modules/studio/controllers/media')
       const ctx: any = {
         state: { serverTokenAuth: true },
         query: {},
@@ -420,15 +420,15 @@ describe('media controller', () => {
   it('rejects MiniMax image-to-video without credentials', async () => {
     vi.stubEnv('MINIMAX_API_KEY', '')
     vi.stubEnv('MINIMAX_CN_API_KEY', '')
-    vi.doMock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/public/profile-config', () => ({
       getActiveProfileName: () => 'default',
       getProfileDir: () => '/tmp/hermes-web-ui-test-profile',
       listProfileNamesFromDisk: () => ['default'],
     }))
-    vi.doMock('../../packages/server/src/services/config-helpers', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/public/media-profile-config', () => ({
       readConfigYamlForProfile: vi.fn(async () => ({ model: { provider: 'minimax' } })),
     }))
-    const { miniMaxImageToVideo } = await import('../../packages/server/src/controllers/hermes/media')
+    const { miniMaxImageToVideo } = await import('../../packages/server/src/modules/studio/controllers/media')
     const ctx: any = {
       state: { serverTokenAuth: true },
       query: {},
@@ -450,12 +450,12 @@ describe('media controller', () => {
   it('generates image-to-video with the official MiniMax v1 workflow by default', async () => {
     vi.stubEnv('MINIMAX_API_KEY', 'minimax-test-key')
     vi.stubEnv('MINIMAX_CN_API_KEY', '')
-    vi.doMock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/public/profile-config', () => ({
       getActiveProfileName: () => 'default',
       getProfileDir: () => '/tmp/hermes-web-ui-test-profile',
       listProfileNamesFromDisk: () => ['default'],
     }))
-    vi.doMock('../../packages/server/src/services/config-helpers', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/public/media-profile-config', () => ({
       readConfigYamlForProfile: vi.fn(async () => ({ model: { provider: 'minimax' } })),
     }))
     const fetchMock = vi.fn(async (url: string | URL | Request, _init?: RequestInit) => {
@@ -485,7 +485,7 @@ describe('media controller', () => {
     const originalSetTimeout = globalThis.setTimeout
     globalThis.setTimeout = ((cb: () => void) => { cb(); return 0 }) as any
     try {
-      const { miniMaxImageToVideo } = await import('../../packages/server/src/controllers/hermes/media')
+      const { miniMaxImageToVideo } = await import('../../packages/server/src/modules/studio/controllers/media')
       const ctx: any = {
         state: { serverTokenAuth: true },
         query: {},
@@ -536,12 +536,12 @@ describe('media controller', () => {
     writeFileSync(join(profileDir, '.env'), 'MINIMAX_CN_API_KEY="profile-cn-key"\n')
     vi.stubEnv('MINIMAX_API_KEY', '')
     vi.stubEnv('MINIMAX_CN_API_KEY', 'process-cn-key')
-    vi.doMock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/public/profile-config', () => ({
       getActiveProfileName: () => 'default',
       getProfileDir: () => profileDir,
       listProfileNamesFromDisk: () => ['default'],
     }))
-    vi.doMock('../../packages/server/src/services/config-helpers', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/public/media-profile-config', () => ({
       readConfigYamlForProfile: vi.fn(async () => ({ model: { provider: 'minimax-cn' } })),
     }))
     const fetchMock = vi.fn(async (url: string | URL | Request, _init?: RequestInit) => {
@@ -571,7 +571,7 @@ describe('media controller', () => {
     const originalSetTimeout = globalThis.setTimeout
     globalThis.setTimeout = ((cb: () => void) => { cb(); return 0 }) as any
     try {
-      const { miniMaxImageToVideo } = await import('../../packages/server/src/controllers/hermes/media')
+      const { miniMaxImageToVideo } = await import('../../packages/server/src/modules/studio/controllers/media')
       const ctx: any = {
         state: { serverTokenAuth: true },
         query: {},
@@ -615,12 +615,12 @@ describe('media controller', () => {
 
   it('validates model-specific MiniMax duration and resolution options', async () => {
     vi.stubEnv('MINIMAX_API_KEY', 'minimax-test-key')
-    vi.doMock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/public/profile-config', () => ({
       getActiveProfileName: () => 'default',
       getProfileDir: () => '/tmp/hermes-web-ui-test-profile',
       listProfileNamesFromDisk: () => ['default'],
     }))
-    vi.doMock('../../packages/server/src/services/config-helpers', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/public/media-profile-config', () => ({
       readConfigYamlForProfile: vi.fn(async () => ({})),
     }))
     const fetchMock = vi.fn(async (url: string | URL | Request, _init?: RequestInit) => {
@@ -650,7 +650,7 @@ describe('media controller', () => {
     const originalSetTimeout = globalThis.setTimeout
     globalThis.setTimeout = ((cb: () => void) => { cb(); return 0 }) as any
     try {
-      const { miniMaxImageToVideo } = await import('../../packages/server/src/controllers/hermes/media')
+      const { miniMaxImageToVideo } = await import('../../packages/server/src/modules/studio/controllers/media')
       const ctx: any = {
         state: { serverTokenAuth: true },
         query: {},

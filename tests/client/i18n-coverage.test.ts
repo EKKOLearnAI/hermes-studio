@@ -376,7 +376,6 @@ function labelLength(value: unknown): number {
 
 describe('i18n locale coverage', () => {
   const ALLOWED_MISSING_KEYS = new Set([
-    'changelog.new_0_5_4_7',
     'chat.sessionNotFound',
   ])
 

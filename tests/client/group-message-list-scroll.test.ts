@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { defineComponent, nextTick } from 'vue'
-import type { ChatMessage, RoomAgentHandoffChain } from '@/api/hermes/group-chat'
+import type { ChatMessage, RoomAgentHandoffChain } from '@/api/studio/group-chat'
 
 const mockScrollToBottom = vi.hoisted(() => vi.fn())
 const mockCaptureScrollPosition = vi.hoisted(() => vi.fn())
@@ -28,15 +28,15 @@ vi.mock('@/api/client', () => ({
   getStoredUsername: vi.fn(() => null),
 }))
 
-vi.mock('@/api/auth', () => ({
+vi.mock('@/api/studio/auth', () => ({
   fetchCurrentUser: vi.fn(),
 }))
 
-vi.mock('@/api/hermes/download', () => ({
+vi.mock('@/api/studio/download', () => ({
   getDownloadUrl: vi.fn((path: string) => `/download?path=${path}`),
 }))
 
-vi.mock('@/api/hermes/group-chat', () => ({
+vi.mock('@/api/studio/group-chat', () => ({
   connectGroupChat: vi.fn(),
   disconnectGroupChat: vi.fn(),
   getSocket: vi.fn(),
@@ -93,7 +93,7 @@ vi.mock('@/components/hermes/group-chat/GroupMessageItem.vue', () => ({
 
 import GroupMessageList from '@/components/hermes/group-chat/GroupMessageList.vue'
 import { useGroupChatStore } from '@/stores/hermes/group-chat'
-import { getRoomDetail } from '@/api/hermes/group-chat'
+import { getRoomDetail } from '@/api/studio/group-chat'
 
 function makeMessage(id: string): ChatMessage {
   return {
@@ -130,7 +130,7 @@ describe('GroupMessageList scroll behavior', () => {
     expect(wrapper.getComponent({ name: 'VirtualMessageList' }).props('virtualized')).toBe(false)
   })
 
-  it('shows all four agent avatars in the group-chat empty state', () => {
+  it('shows every coding agent avatar in the group-chat empty state', () => {
     const wrapper = mount(GroupMessageList)
     const avatars = wrapper.findAll('.empty-agent-avatar img')
 
@@ -139,6 +139,9 @@ describe('GroupMessageList scroll behavior', () => {
       'Ekko',
       'Codex',
       'Claude',
+      'Pi',
+      'Grok',
+      'OpenCode',
     ])
     expect(wrapper.get('.empty-state p').text()).toBe('groupChat.emptyState')
     expect(wrapper.text()).not.toContain('chat.emptyState')

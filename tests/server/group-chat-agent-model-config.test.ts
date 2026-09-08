@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const readConfigYamlForProfileMock = vi.fn()
 
-vi.mock('../../packages/server/src/services/config-helpers', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/profile-config', () => ({
   readConfigYamlForProfile: readConfigYamlForProfileMock,
 }))
 
@@ -15,7 +15,7 @@ describe('group chat agent model config', () => {
     readConfigYamlForProfileMock.mockResolvedValueOnce({
       model: { default: 'research-model', provider: 'research-provider' },
     })
-    const { resolveGroupAgentModelContext } = await import('../../packages/server/src/services/hermes/group-chat/agent-clients')
+    const { resolveGroupAgentModelContext } = await import('../../packages/server/src/modules/studio/services/group-chat/agent-clients')
 
     const result = await resolveGroupAgentModelContext('research')
 
@@ -24,7 +24,7 @@ describe('group chat agent model config', () => {
   })
 
   it('prefers the model and provider selected for the room agent', async () => {
-    const { resolveGroupAgentModelContext } = await import('../../packages/server/src/services/hermes/group-chat/agent-clients')
+    const { resolveGroupAgentModelContext } = await import('../../packages/server/src/modules/studio/services/group-chat/agent-clients')
 
     const result = await resolveGroupAgentModelContext('research', 'selected-model', 'selected-provider')
 
@@ -33,7 +33,7 @@ describe('group chat agent model config', () => {
   })
 
   it('requires cached context metadata to match the active model and provider', async () => {
-    const { isGroupBridgeContextCacheCompatible } = await import('../../packages/server/src/services/hermes/group-chat/agent-clients')
+    const { isGroupBridgeContextCacheCompatible } = await import('../../packages/server/src/modules/studio/services/group-chat/agent-clients')
 
     expect(isGroupBridgeContextCacheCompatible(
       { model: 'research-model', provider: 'research-provider' },

@@ -53,7 +53,7 @@ vi.mock('naive-ui', () => ({
   useDialog: () => ({ warning: dialogWarningMock }),
 }))
 
-vi.mock('@/api/hermes/sessions', () => ({
+vi.mock('@/api/studio/sessions', () => ({
   fetchContextLength: fetchContextLengthMock,
   setSessionPushEnabled: setSessionPushEnabledMock,
 }))
@@ -62,7 +62,7 @@ vi.mock('@/api/hermes/model-context', () => ({
   setModelContext: vi.fn().mockResolvedValue(undefined),
 }))
 
-vi.mock('@/api/social-messages', () => ({
+vi.mock('@/api/studio/social-messages', () => ({
   fetchSocialMessagePlatforms: fetchSocialMessagePlatformsMock,
 }))
 

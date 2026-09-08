@@ -8,7 +8,7 @@ import {
   buildResumeMessages,
   RESUME_MESSAGE_PAGE_LIMIT,
   RESUME_TOOL_RESULT_DISPLAY_LIMIT,
-} from '../../packages/server/src/services/hermes/run-chat/resume-payload'
+} from '../../packages/server/src/modules/studio/services/chat-run/resume-payload'
 
 function message(overrides: Record<string, unknown>) {
   return {
@@ -239,6 +239,35 @@ describe('buildResumeMessages', () => {
     expect(outbound[0]).not.toBe(stateEvents[0])
     expect(outbound[0].data.output.length).toBe(RESUME_TOOL_RESULT_DISPLAY_LIMIT)
     expect(stateEvents[0].data.output).toBe(completeOutput)
+  })
+
+  it('computes pending interaction time remaining on the server when replaying a run', () => {
+    const requestedAt = 1_000_000
+    const stateEvents = [
+      {
+        event: 'approval.requested',
+        data: { event: 'approval.requested', approval_id: 'approval-1', timeout_ms: 300_000, requested_at: requestedAt },
+      },
+      {
+        event: 'clarify.requested',
+        data: { event: 'clarify.requested', clarify_id: 'clarify-1', timeout_ms: 120_000, requested_at: requestedAt },
+      },
+    ]
+
+    const outbound = buildResumeEvents(stateEvents, requestedAt + 45_000)
+
+    expect(outbound[0].data.remaining_timeout_ms).toBe(255_000)
+    expect(outbound[1].data.remaining_timeout_ms).toBe(75_000)
+    expect(stateEvents[0].data).not.toHaveProperty('remaining_timeout_ms')
+  })
+
+  it('never returns a negative pending interaction countdown', () => {
+    const outbound = buildResumeEvents([{
+      event: 'approval.requested',
+      data: { event: 'approval.requested', approval_id: 'approval-1', timeout_ms: 1_000, requested_at: 10_000 },
+    }], 15_000)
+
+    expect(outbound[0].data.remaining_timeout_ms).toBe(0)
   })
 
   it('reuses the display boundary for group-chat tool rows while preserving selected payload tools', () => {

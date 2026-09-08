@@ -1,2 +1,10 @@
-sql-data/*
-!sql-data/.gitkeep
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+.DS_Store
+.env
+.env.local
+
+.ekko/
+sql-data/

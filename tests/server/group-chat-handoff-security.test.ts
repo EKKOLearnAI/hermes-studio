@@ -3,11 +3,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   connectLocalAgentHandoff,
   resetLocalHandoffJobsForTest,
-} from '../../packages/server/src/controllers/hermes/group-chat-agent-link'
-import { GROUP_AGENT_PAIRING_REQUEST_TTL_MS } from '../../packages/server/src/services/hermes/group-chat/agent-relay-store'
-import { setGroupChatRuntimeServer } from '../../packages/server/src/services/hermes/group-chat/runtime'
+} from '../../packages/server/src/modules/studio/controllers/group-chat-agent-link'
+import { GROUP_AGENT_PAIRING_REQUEST_TTL_MS } from '../../packages/server/src/modules/studio/services/group-chat/agent-relay-store'
+import { setGroupChatRuntimeServer } from '../../packages/server/src/modules/studio/services/group-chat/runtime'
+import {
+  resetAgentStatusRegistryForTests,
+  updateAgentStatus,
+} from '../../packages/server/src/modules/studio/public/agent-status-registry'
 
-vi.mock('../../packages/server/src/services/hermes/group-chat/agent-relay', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/group-chat/agent-relay', () => ({
   getGroupAgentOutboundRelayManager: vi.fn(() => ({ connect: vi.fn() })),
   GROUP_AGENT_RELAY_PROTOCOL_VERSION: 2,
 }))
@@ -39,6 +43,12 @@ function handoffContext(body = handoffBody(), userId = 1): Context {
 
 describe('group chat Agent handoff security limits', () => {
   beforeEach(() => {
+    resetAgentStatusRegistryForTests()
+    updateAgentStatus('hermes', {
+      installed: true,
+      source: 'user-cli',
+      path: '/usr/local/bin/hermes',
+    })
     setGroupChatRuntimeServer({
       getChatRunService: () => null,
     } as any)
@@ -46,6 +56,7 @@ describe('group chat Agent handoff security limits', () => {
 
   afterEach(() => {
     resetLocalHandoffJobsForTest()
+    resetAgentStatusRegistryForTests()
     setGroupChatRuntimeServer(null)
     vi.unstubAllGlobals()
   })
@@ -116,7 +127,7 @@ describe('group chat Agent handoff security limits', () => {
     expect(ctx.status).toBe(202)
     expect(ctx.body).toEqual({ ok: true, accepted: true })
     expect(fetchMock).toHaveBeenCalledWith(
-      expect.stringMatching(/^http:\/\/47\.243\.215\.84:8088\/api\/hermes\/group-chat\/invites\/ROOMCODE\/agent-links\//),
+      expect.stringMatching(/^http:\/\/47\.243\.215\.84:8088\/api\/studio\/group-chat\/invites\/ROOMCODE\/agent-links\//),
       expect.objectContaining({ method: 'POST' }),
     )
   })

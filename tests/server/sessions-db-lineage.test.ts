@@ -6,7 +6,7 @@ import { DatabaseSync } from 'node:sqlite'
 
 const profileDir = vi.hoisted(() => ({ value: '' }))
 
-vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/profiles/profile', () => ({
   getActiveProfileDir: () => profileDir.value,
   getHermesBaseDir: () => profileDir.value,
 }))
@@ -166,7 +166,7 @@ describe('session DB compression lineage', () => {
   it('projects compressed root summaries to the latest continuation tip', async () => {
     seedCompressionChain(db!)
 
-    const mod = await import('../../packages/server/src/db/hermes/sessions-db')
+    const mod = await import('../../packages/server/src/modules/hermes/services/history/sessions-db')
     const rows = await mod.listSessionSummaries(undefined, 20)
 
     expect(rows).toHaveLength(1)
@@ -199,7 +199,7 @@ describe('session DB compression lineage', () => {
     insertMessage(db!, { id: 11, session_id: 'before-reset', content: 'before reset history', timestamp: 101 })
     insertMessage(db!, { id: 12, session_id: 'after-reset', content: '重置后可搜索', timestamp: 202 })
 
-    const mod = await import('../../packages/server/src/db/hermes/sessions-db')
+    const mod = await import('../../packages/server/src/modules/hermes/services/history/sessions-db')
     const summaries = await mod.listSessionSummaries('feishu', 20)
     expect(summaries.map(summary => summary.id)).toEqual(['after-reset', 'before-reset'])
 
@@ -228,7 +228,7 @@ describe('session DB compression lineage', () => {
     insertSession(db!, { id: 'cli-old', source: 'cli', started_at: 200 })
     insertSession(db!, { id: 'weixin-one', source: 'weixin', started_at: 100 })
 
-    const mod = await import('../../packages/server/src/db/hermes/sessions-db')
+    const mod = await import('../../packages/server/src/modules/hermes/services/history/sessions-db')
     const result = await mod.listSessionSummaryGroups(1, 'default', ['cli-old'])
 
     expect(result.groups).toEqual(expect.arrayContaining([
@@ -251,7 +251,7 @@ describe('session DB compression lineage', () => {
   it.skip('returns the projected logical session when search matches continuation content (requires FTS5)', async () => {
     seedCompressionChain(db!)
 
-    const mod = await import('../../packages/server/src/db/hermes/sessions-db')
+    const mod = await import('../../packages/server/src/modules/hermes/services/history/sessions-db')
     const rows = await mod.searchSessionSummaries('lineageunique', undefined, 20)
 
     expect(rows).toHaveLength(1)
@@ -266,7 +266,7 @@ describe('session DB compression lineage', () => {
   it('hydrates the full compression chain when detail is requested by projected tip id', async () => {
     seedCompressionChain(db!)
 
-    const mod = await import('../../packages/server/src/db/hermes/sessions-db')
+    const mod = await import('../../packages/server/src/modules/hermes/services/history/sessions-db')
     const detail = await mod.getSessionDetailFromDb('tip')
 
     expect(detail).toMatchObject({
@@ -290,7 +290,7 @@ describe('session DB compression lineage', () => {
     })
     insertMessage(db!, { id: 4, session_id: 'unrelated', content: 'must stay outside the requested page', timestamp: 401 })
 
-    const mod = await import('../../packages/server/src/db/hermes/sessions-db')
+    const mod = await import('../../packages/server/src/modules/hermes/services/history/sessions-db')
     const newestPage = await mod.getSessionDetailPaginatedFromDbWithProfile('tip', 'default', 0, 2)
 
     expect(newestPage).toMatchObject({
@@ -341,7 +341,7 @@ describe('session DB compression lineage', () => {
     insertMessage(db!, { id: 12, session_id: 'older-child', content: 'older should not merge', timestamp: 202 })
     insertMessage(db!, { id: 13, session_id: 'latest-child', content: 'latest should merge', timestamp: 206 })
 
-    const mod = await import('../../packages/server/src/db/hermes/sessions-db')
+    const mod = await import('../../packages/server/src/modules/hermes/services/history/sessions-db')
     const detail = await mod.getSessionDetailFromDb('root')
 
     expect(detail).toMatchObject({
@@ -382,7 +382,7 @@ describe('session DB compression lineage', () => {
       end_reason: null,
     })
 
-    const mod = await import('../../packages/server/src/db/hermes/sessions-db')
+    const mod = await import('../../packages/server/src/modules/hermes/services/history/sessions-db')
     const rows = await mod.searchSessionSummaries('needle', 'telegram', 1)
 
     expect(rows).toHaveLength(1)

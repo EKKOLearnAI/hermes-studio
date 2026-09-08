@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { transcodeToPcmS16le } from '../../packages/server/src/services/hermes/stt-providers/audio-convert'
+import { transcodeToPcmS16le } from '../../packages/server/src/modules/studio/services/voice/stt/audio-convert'
 
 function wavS16le(samples: number[], sampleRate: number, channels = 1): Buffer {
   const dataSize = samples.length * 2

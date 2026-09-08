@@ -9,7 +9,7 @@ import {
   copyModelProviderAuthForClone,
   EXCLUSIVE_PLATFORMS,
   EXCLUSIVE_PLATFORM_ENV_PATTERNS,
-} from '../../packages/server/src/services/hermes/profile-credentials'
+} from '../../packages/server/src/modules/hermes/services/profiles/profile-credentials'
 
 const originalHermesHome = process.env.HERMES_HOME
 let tmpDir: string

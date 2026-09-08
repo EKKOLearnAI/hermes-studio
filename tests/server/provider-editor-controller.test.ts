@@ -30,7 +30,7 @@ const {
   }
 })
 
-vi.mock('../../packages/server/src/services/hermes/provider-editor', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/providers/provider-editor', () => ({
   ProviderEditorError: MockProviderEditorError,
   getProviderEditorDetail: mockGetEditor,
   updateProviderEditorDetail: mockPatchEditor,
@@ -38,19 +38,19 @@ vi.mock('../../packages/server/src/services/hermes/provider-editor', () => ({
   testProviderEditorDraft: mockTestDraft,
 }))
 
-vi.mock('../../packages/server/src/db/hermes/provider-audit-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/provider-audit', () => ({
   appendProviderAuditEvent: mockAppendAudit,
 }))
 
-vi.mock('../../packages/server/src/services/coding-agents', () => ({
-  invalidateCodingAgentProviderRuntime: mockInvalidateProviderRuntime,
+vi.mock('../../packages/server/src/modules/studio/public/provider-runtime', () => ({
+  invalidateProviderRuntime: mockInvalidateProviderRuntime,
 }))
 
-vi.mock('../../packages/server/src/services/logger', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/logging', () => ({
   logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() },
 }))
 
-vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/profiles/profile', () => ({
   getActiveProfileName: () => 'default',
   getProfileDir: (profile: string) => `/profiles/${profile}`,
 }))
@@ -60,7 +60,7 @@ import {
   patchEditor,
   patchEditorContexts,
   testEditor,
-} from '../../packages/server/src/controllers/hermes/providers'
+} from '../../packages/server/src/modules/hermes/controllers/providers'
 
 const detail = {
   id: 'custom:test-provider',

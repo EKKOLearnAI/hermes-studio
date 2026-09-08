@@ -21,7 +21,7 @@ afterEach(() => {
 
 describe('app config writes', () => {
   it('merges concurrent patches by reading under the shared file lock', async () => {
-    const { writeAppConfig } = await import('../../packages/server/src/services/app-config')
+    const { writeAppConfig } = await import('../../packages/server/src/modules/studio/services/config/app-config')
 
     await Promise.all([
       writeAppConfig({ modelAliases: { deepseek: { model: 'Alias' } } }),

@@ -1,21 +1,30 @@
 import { mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { EkkoFileLogger } from '../../packages/ekko-agent/src'
+import { EkkoFileLogReader, EkkoFileLogger } from '../../packages/ekko-agent/src'
 
 const mocks = vi.hoisted(() => ({
   appHome: `/tmp/hermes-web-ui-logs-controller-${process.pid}`,
   listLogFiles: vi.fn(async () => []),
   readLogs: vi.fn(async () => ''),
+  hermesAvailable: true,
 }))
 
-vi.mock('../../packages/server/src/config', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/config', () => ({
   config: { appHome: mocks.appHome },
 }))
 
-vi.mock('../../packages/server/src/services/hermes/hermes-cli', () => ({
-  listLogFiles: mocks.listLogFiles,
-  readLogs: mocks.readLogs,
+vi.mock('../../packages/server/src/modules/studio/public/agent-logs', () => ({
+  listPrimaryAgentLogFiles: mocks.listLogFiles,
+  readPrimaryAgentLogs: mocks.readLogs,
+  getEkkoLogSource: (profile: string) => {
+    const directory = join(mocks.appHome, '.ekko', 'logs', profile)
+    return new EkkoFileLogReader({ directory })
+  },
+}))
+
+vi.mock('../../packages/server/src/modules/studio/public/agent-status-registry', () => ({
+  isHermesAgentAvailable: vi.fn(() => mocks.hermesAvailable),
 }))
 
 describe('Hermes logs controller Ekko source', () => {
@@ -26,6 +35,7 @@ describe('Hermes logs controller Ekko source', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    mocks.hermesAvailable = true
   })
 
   afterAll(async () => {
@@ -52,7 +62,7 @@ describe('Hermes logs controller Ekko source', () => {
       data: { error: 'timed out' },
     })
 
-    const controller = await import('../../packages/server/src/controllers/hermes/logs')
+    const controller = await import('../../packages/server/src/modules/studio/controllers/logs')
     const listContext: any = {
       state: { profile: { name: 'work' } },
       query: {},
@@ -78,5 +88,26 @@ describe('Hermes logs controller Ekko source', () => {
     })
     expect(readContext.body.entries[0].message).toContain('tool.failed')
     expect(readContext.body.entries[0].message).toContain('session=session-target')
+  })
+
+  it('keeps Studio logs but does not query Hermes logs when Hermes is unavailable', async () => {
+    mocks.hermesAvailable = false
+    const controller = await import('../../packages/server/src/modules/studio/controllers/logs')
+    const listContext: any = { state: { profile: { name: 'work' } }, query: {}, body: null }
+
+    await controller.list(listContext)
+
+    expect(mocks.listLogFiles).not.toHaveBeenCalled()
+    expect(listContext.body.files.map((file: any) => file.name)).not.toContain('agent')
+
+    const readContext: any = {
+      params: { name: 'agent' },
+      query: { lines: '100' },
+      body: null,
+    }
+    await controller.read(readContext)
+
+    expect(mocks.readLogs).not.toHaveBeenCalled()
+    expect(readContext.body).toEqual({ entries: [] })
   })
 })

@@ -24,13 +24,13 @@ function makeCtx(profile: string): any {
 
 async function loadNousAuthController() {
   vi.resetModules()
-  vi.doMock('../../packages/server/src/services/logger', () => ({
+  vi.doMock('../../packages/server/src/modules/studio/public/logging', () => ({
     logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn() },
   }))
-  vi.doMock('../../packages/server/src/services/hermes/authorized-provider-credentials', () => ({
+  vi.doMock('../../packages/server/src/modules/hermes/services/providers/authorized-provider-credentials', () => ({
     resolveAuthorizedProviderRuntimeCredentials: mockResolveAuthorizedCredentials,
   }))
-  return import('../../packages/server/src/controllers/hermes/nous-auth')
+  return import('../../packages/server/src/modules/hermes/controllers/nous-auth')
 }
 
 describe('Nous auth controller', () => {
@@ -41,8 +41,8 @@ describe('Nous auth controller', () => {
   })
 
   afterEach(() => {
-    vi.doUnmock('../../packages/server/src/services/logger')
-    vi.doUnmock('../../packages/server/src/services/hermes/authorized-provider-credentials')
+    vi.doUnmock('../../packages/server/src/modules/studio/public/logging')
+    vi.doUnmock('../../packages/server/src/modules/hermes/services/providers/authorized-provider-credentials')
     delete process.env.HERMES_HOME
     if (hermesHome) rmSync(hermesHome, { recursive: true, force: true })
     hermesHome = ''

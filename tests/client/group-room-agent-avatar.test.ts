@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { mount } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
-import type { RoomAgentSummary } from '@/api/hermes/group-chat'
+import type { RoomAgentSummary } from '@/api/studio/group-chat'
 import GroupRoomAgentAvatar from '@/components/hermes/group-chat/GroupRoomAgentAvatar.vue'
 
 const messages: Record<string, string> = {

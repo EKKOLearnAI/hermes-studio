@@ -9,13 +9,13 @@ const mockFilesApi = vi.hoisted(() => ({
   listFiles: vi.fn(),
 }))
 
-vi.mock('@/api/hermes/files', () => mockFilesApi)
+vi.mock('@/api/studio/files', () => mockFilesApi)
 
 const mockSessionsApi = vi.hoisted(() => ({
   listSessionWorkspaceFiles: vi.fn(),
 }))
 
-vi.mock('@/api/hermes/sessions', () => mockSessionsApi)
+vi.mock('@/api/studio/sessions', () => mockSessionsApi)
 
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (key: string) => key }),

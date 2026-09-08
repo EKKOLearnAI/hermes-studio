@@ -8,7 +8,7 @@ const profileMock = vi.hoisted(() => ({
   getActiveProfileDir: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/profiles/profile', () => ({
   getActiveProfileDir: profileMock.getActiveProfileDir,
   getProfileDir: vi.fn(),
 }))
@@ -186,7 +186,7 @@ describe('native-style Hermes usage analytics DB aggregation', () => {
       api_call_count: 9,
     })
 
-    const mod = await import('../../packages/server/src/db/hermes/sessions-db')
+    const mod = await import('../../packages/server/src/modules/hermes/services/history/sessions-db')
     const result = await mod.getUsageStatsFromDb(30, now)
 
     expect(result).toMatchObject({
@@ -260,7 +260,7 @@ describe('native-style Hermes usage analytics DB aggregation', () => {
       estimated_cost_usd: 0.001,
     }, false)
 
-    const mod = await import('../../packages/server/src/db/hermes/sessions-db')
+    const mod = await import('../../packages/server/src/modules/hermes/services/history/sessions-db')
     const result = await mod.getUsageStatsFromDb(30, now)
 
     expect(result.input_tokens).toBe(4)

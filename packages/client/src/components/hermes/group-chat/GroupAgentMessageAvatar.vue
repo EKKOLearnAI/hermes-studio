@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { NPopover } from 'naive-ui'
 import ProfileAvatar from '@/components/hermes/profiles/ProfileAvatar.vue'
-import type { MemberInfo, RoomAgent } from '@/api/hermes/group-chat'
+import type { MemberInfo, RoomAgent } from '@/api/studio/group-chat'
 import { groupAgentAvatar, parseStoredAvatar } from '@/utils/group-agent-avatar'
 
 const props = defineProps<{
@@ -19,6 +19,8 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const avatarSize = computed(() => props.size || 36)
+const compact = computed(() => avatarSize.value <= 24)
+const ownerBadgeAvatarSize = computed(() => compact.value ? 10 : 14)
 const avatarStyle = computed(() => ({
     width: `${avatarSize.value}px`,
     height: `${avatarSize.value}px`,
@@ -34,6 +36,7 @@ function runtimeValue(value: string): string {
         <template #trigger>
             <span
                 class="message-agent-avatar"
+                :class="{ 'message-agent-avatar--compact': compact }"
                 :aria-label="agent.name"
                 :style="avatarStyle"
             >
@@ -46,7 +49,7 @@ function runtimeValue(value: string): string {
                     <ProfileAvatar
                         :name="owner.name"
                         :avatar="parseStoredAvatar(owner.avatar)"
-                        :size="14"
+                        :size="ownerBadgeAvatarSize"
                     />
                 </span>
             </span>
@@ -71,11 +74,15 @@ function runtimeValue(value: string): string {
                     <span>{{ t('workflow.profile') }}</span>
                     <strong :title="runtimeValue(agent.profile)">{{ runtimeValue(agent.profile) }}</strong>
                 </div>
-                <div class="message-agent-runtime-row">
+                <div v-if="agent.agentMode === 'global'" class="message-agent-runtime-row">
+                    <span>{{ t('codingAgents.launchModeScope') }}</span>
+                    <strong>{{ t('codingAgents.launchModeGlobal') }}</strong>
+                </div>
+                <div v-if="agent.agentMode !== 'global'" class="message-agent-runtime-row">
                     <span>{{ t('profiles.provider') }}</span>
                     <strong :title="runtimeValue(agent.provider)">{{ runtimeValue(agent.provider) }}</strong>
                 </div>
-                <div class="message-agent-runtime-row">
+                <div v-if="agent.agentMode !== 'global'" class="message-agent-runtime-row">
                     <span>{{ t('profiles.model') }}</span>
                     <strong :title="runtimeValue(agent.model)">{{ runtimeValue(agent.model) }}</strong>
                 </div>
@@ -125,6 +132,13 @@ function runtimeValue(value: string): string {
     background: $bg-main-surface;
     box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
     pointer-events: none;
+}
+
+.message-agent-avatar--compact .message-agent-owner-badge {
+    inset-block-start: -4px;
+    inset-inline-end: -5px;
+    width: 14px;
+    height: 14px;
 }
 
 .message-agent-popover {
