@@ -139,6 +139,8 @@ export interface AgentRuntimeRunInput {
   /** Correlation fields only; log events and payloads remain runtime-owned. */
   logContext?: EkkoRuntimeLogContext
   onSkillReviewUsage?: (input: SkillReviewUsageEvent) => void
+  /** Synchronous durable commit, called before plan.updated is published. Throw to reject an update. */
+  onPlanUpdate?: (plan: import('../tools/plan').AgentTaskPlan) => void
   onEvent?: (event: AgentRuntimeEvent) => void
 }
 

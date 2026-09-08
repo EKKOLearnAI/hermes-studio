@@ -1,3 +1,4 @@
+import type { TaskPlanSnapshot } from '@/utils/task-plan'
 import { io, type Socket } from 'socket.io-client'
 import { getBaseUrlValue, getApiKey } from '../client'
 import type { ChatCodingAgentId } from '../coding-agents'
@@ -159,6 +160,7 @@ export interface RunEvent {
 }
 
 export interface ResumeSessionPayload {
+  taskPlans?: TaskPlanSnapshot[]
   session_id: string
   messages: any[]
   workspaceRunChanges?: import('./sessions').WorkspaceRunChangeSummary[]
@@ -855,6 +857,7 @@ export function connectChatRun(requestedProfile?: string | null, transport: Chat
 
     // Usage events
     chatRunSocket.on('usage.updated', globalUsageUpdatedHandler)
+    chatRunSocket.on('plan.updated', globalAgentEventHandler)
     chatRunSocket.on('agent.event', globalAgentEventHandler)
     chatRunSocket.on('run.reattach_failed', globalRunReattachFailedHandler)
     chatRunSocket.on('session.command', globalSessionCommandHandler)

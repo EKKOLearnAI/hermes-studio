@@ -1,3 +1,4 @@
+import { mergeTaskPlanMessages, type TaskPlanSnapshot } from '@/utils/task-plan'
 import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, getChatRunSocket, respondToolApproval, onPeerUserMessage, onSessionCommand, onSessionTitleUpdated, onSessionWorkspaceUpdated, onSessionSettingsUpdated, respondClarify, type ChatRunTransport, type RunEvent, type ResumeSessionPayload, type StartRunRequest, type ContentBlock as ContentBlockImport } from '@/api/studio/chat'
 import { archiveSession as archiveSessionApi, deleteSession as deleteSessionApi, fetchSessionMessagesPage, fetchSessions, fetchWorkspaceRunChangeFile, setSessionModel, setSessionPushEnabled as persistSessionPushEnabled, setSessionReasoningEffort as persistSessionReasoningEffort, type HermesMessage, type SessionSummary, type WorkspaceRunChangeFileDetail, type WorkspaceRunChangeSummary } from '@/api/studio/sessions'
 import { getActiveProfileName } from '@/api/client'
@@ -74,6 +75,7 @@ export interface Attachment {
 }
 
 export interface Message {
+  taskPlan?: TaskPlanSnapshot
   id: string
   role: 'user' | 'assistant' | 'system' | 'tool' | 'command'
   content: string
@@ -885,7 +887,7 @@ function resolveResumedAssistantState(
   }
 }
 
-function mapHermesMessages(msgs: HermesMessage[]): Message[] {
+function mapHermesMessages(msgs: HermesMessage[], taskPlans: unknown[] = [], previous: Message[] = []): Message[] {
   // Filter out assistant messages with no display content unless they carry tool call metadata
   // needed to name later tool result rows when resuming persisted history.
   const filteredMsgs = msgs.filter(m => {
@@ -1106,7 +1108,9 @@ function mapHermesMessages(msgs: HermesMessage[]): Message[] {
       runMarker: readRunMarker(msg),
     })
   }
-  return result
+  const restored = mergeTaskPlanMessages(result, taskPlans)
+  const restoredIds = new Set(restored.map(message => message.id))
+  return mergeTaskPlanMessages(restored, previous.filter(message => message.taskPlan && restoredIds.has(message.id)).map(message => message.taskPlan))
 }
 
 function sessionActivitySeconds(s: SessionSummary): number {
@@ -1841,7 +1845,7 @@ export const useChatStore = defineStore('chat', () => {
       )
       const detail = await fetchSessionMessagesPage(sid, 0, limit, activeSession.value?.profile)
       if (!detail) return false
-      const mapped = mapHermesMessages(detail.messages || [])
+      const mapped = mapHermesMessages(detail.messages || [], detail.taskPlans, target.messages)
       target.messages = mapped
       restorePersistedSubagentStreams(sid)
       setWorkspaceRunChanges(sid, detail.workspaceRunChanges || [])
@@ -2006,8 +2010,8 @@ export const useChatStore = defineStore('chat', () => {
           target.parentTitle = (data as any).parentTitle || target.parentTitle || null
           target.parentLastMessage = (data as any).parentLastMessage || target.parentLastMessage || null
           target.parentLastMessageRole = (data as any).parentLastMessageRole || target.parentLastMessageRole || null
-          if (data.messages?.length) {
-            target.messages = mapHermesMessages(data.messages as any[])
+          if (Array.isArray(data.messages)) {
+            target.messages = mapHermesMessages(data.messages as any[], data.taskPlans, target.messages)
             restorePersistedSubagentStreams(sessionId)
             setWorkspaceRunChanges(sessionId, data.workspaceRunChanges || [])
             target.loadedMessageCount = data.messageLoadedCount ?? data.messages.length
@@ -2066,7 +2070,7 @@ export const useChatStore = defineStore('chat', () => {
                 addAgentErrorMessage(sessionId, e.error)
                 serverWorking.value.delete(sessionId)
                 queueLengths.value.delete(sessionId)
-              } else if (e.event === 'agent.event' || e.event === 'run.reattach_failed') {
+              } else if (e.event === 'plan.updated' || e.event === 'agent.event' || e.event === 'run.reattach_failed') {
                 handleAgentEvent(e)
               } else if (e.event === 'workspace.diff.completed') {
                 handleWorkspaceRunChangeEvent(sessionId, e)
@@ -2133,7 +2137,7 @@ export const useChatStore = defineStore('chat', () => {
 
       const existingIds = new Set(target.messages.map(message => message.id))
       const olderMessages = mapHermesMessages(page.messages).filter(message => !existingIds.has(message.id))
-      target.messages = [...olderMessages, ...target.messages]
+      target.messages = mergeTaskPlanMessages([...olderMessages, ...target.messages], page.taskPlans || [], sessionId)
       restorePersistedSubagentStreams(sessionId)
       mergeWorkspaceRunChanges(sessionId, page.workspaceRunChanges || [])
       target.loadedMessageCount = offset + page.messages.length
@@ -2908,6 +2912,11 @@ export const useChatStore = defineStore('chat', () => {
   function handleAgentEvent(evt: RunEvent) {
     const sid = evt.session_id
     if (!sid) return
+    if (evt.event === 'plan.updated') {
+      const target = sessions.value.find(session => session.id === sid)
+      if (target) target.messages = mergeTaskPlanMessages(target.messages, [evt], sid)
+      return
+    }
     if ((evt as any).source === 'coding_agent' && (evt as any).kind === 'status') return
     const text = String((evt as any).text || (evt as any).message || '').trim()
     if (!text) return
@@ -3723,7 +3732,7 @@ export const useChatStore = defineStore('chat', () => {
           const previousActiveAssistantMessageId = activeAssistantMessageId
           const previousReasoningAssistantMessageId = reasoningAssistantMessageId
           const replayRunMarker = getReplayRunMarker(data.events) ?? activeRunMarker
-          target.messages = mapHermesMessages(data.messages as any[])
+          target.messages = mapHermesMessages(data.messages as any[], data.taskPlans, target.messages)
           restorePersistedSubagentStreams(sid)
           setWorkspaceRunChanges(sid, data.workspaceRunChanges || [])
           target.loadedMessageCount = data.messageLoadedCount ?? data.messages.length
@@ -3815,6 +3824,7 @@ export const useChatStore = defineStore('chat', () => {
                 handleTerminalWorkspaceRunChange(sid, e)
                 if (!isQueueInsertionInterruption(e)) addAgentErrorMessage(sid, e.error)
                 break
+              case 'plan.updated':
               case 'agent.event':
                 handleAgentEvent(e)
                 break
@@ -3883,6 +3893,7 @@ export const useChatStore = defineStore('chat', () => {
               break
             }
 
+            case 'plan.updated':
             case 'agent.event': {
               handleAgentEvent(evt)
               break
@@ -4531,6 +4542,7 @@ export const useChatStore = defineStore('chat', () => {
           break
         }
 
+        case 'plan.updated':
         case 'agent.event': {
           handleAgentEvent(evt)
           break
@@ -5199,12 +5211,12 @@ export const useChatStore = defineStore('chat', () => {
             }
             if (!data.isWorking) setCompressionState(sid, null)
             applyResumedSessionSettings(data)
-            if (data.messages?.length && activeSession.value) {
+            if (Array.isArray(data.messages) && activeSession.value) {
               if (typeof data.workspace === 'string') {
                 activeSession.value.workspace = data.workspace.trim() || null
                 activeSession.value.isLocalOnly = false
               }
-              activeSession.value.messages = mapHermesMessages(data.messages as any[])
+              activeSession.value.messages = mapHermesMessages(data.messages as any[], data.taskPlans, activeSession.value.messages)
               restorePersistedSubagentStreams(sid)
               setWorkspaceRunChanges(sid, data.workspaceRunChanges || [])
               activeSession.value.loadedMessageCount = data.messageLoadedCount ?? data.messages.length

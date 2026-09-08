@@ -9,6 +9,7 @@ import { NButton, NDropdown, NPopconfirm, NTooltip, useMessage, type DropdownOpt
 import { useI18n } from 'vue-i18n'
 import { getSourceLabel } from '@/shared/session-display'
 import { copyToClipboard } from '@/utils/clipboard'
+import { mergeTaskPlanMessages } from '@/utils/task-plan'
 import HistoryMessageList from '@/components/hermes/chat/HistoryMessageList.vue'
 import SessionListItem from '@/components/hermes/chat/SessionListItem.vue'
 import OutlinePanel from '@/components/hermes/chat/OutlinePanel.vue'
@@ -246,7 +247,7 @@ async function loadHistorySession(sessionId: string, profile?: string | null) {
 
   if (page) {
     const base = summary || page.session
-    sessionData = sessionFromSummary(base, mapHistoryMessages(page.messages))
+    sessionData = sessionFromSummary(base, mergeTaskPlanMessages(mapHistoryMessages(page.messages), page.taskPlans || [], sessionId))
     sessionData.profile = summary?.profile || sessionProfile || undefined
     sessionData.messageCount = page.total
     sessionData.messageTotal = page.total
@@ -304,7 +305,7 @@ async function loadOlderHistoryMessages(sessionId: string): Promise<boolean> {
 
     const existingIds = new Set(target.messages.map(message => message.id))
     const olderMessages = mapHistoryMessages(page.messages).filter(message => !existingIds.has(message.id))
-    target.messages = [...olderMessages, ...target.messages]
+    target.messages = mergeTaskPlanMessages([...olderMessages, ...target.messages], page.taskPlans || [], sessionId)
     target.loadedMessageCount = offset + page.messages.length
     target.messageTotal = page.total
     target.messageCount = page.total

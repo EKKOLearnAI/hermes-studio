@@ -1,6 +1,7 @@
 import { socialMessagesRu } from '../social-messages-locales'
 
 export default {
+  taskPlan: {"title": "План задач", "progress": "Завершено: {completed}/{total}", "pending": "Не завершено", "in_progress": "В процессе", "completed": "Завершено", "running": "Выполняется", "ended": "Запуск завершён; остались незавершённые шаги", "interrupted": "Прервано; остались незавершённые шаги", "failed": "Ошибка выполнения; остались незавершённые шаги"},
   agentAutoUpdate: { label: 'Автоматические обновления' },
   ekkoConfig: {
     "settingsTitle": "Настройки",

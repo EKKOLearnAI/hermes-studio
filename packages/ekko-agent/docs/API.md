@@ -1381,6 +1381,10 @@ export { OpenAICompatibleModelClient, normalizeOpenAIChatResponse, toOpenAIChatP
 export { OpenAIResponsesModelClient, normalizeOpenAIResponsesResponse, toOpenAIResponsesPayload, } from './model/providers/openai-responses'
 
 export { PromptCompletionModelClient, normalizePromptCompletionResponse, toPromptCompletionPayload, } from './model/providers/prompt-completion'
+
+export { UpdatePlanTool } from './tools/plan'
+
+export type { AgentPlanStep, AgentPlanUpdate, AgentTaskPlan } from './tools/plan'
 ```
 ### `src/logging/file-logger.ts`
 
@@ -2522,7 +2526,7 @@ export class EkkoRecoveryService {
 ### `src/runtime/events.ts`
 
 ```ts
-export type AgentRuntimeEvent = | { type: 'run.started'; runId: string; maxSteps: number } | { type: 'memory.retrieved'; runId: string; diagnostics: MemoryContextDiagnostics; memoryIds: string[] } | { type: 'skill.review.started'; runId: string; reviewId: string } | { type: 'skill.review.completed'; runId: string; reviewId: string; mutations: number } | { type: 'skill.review.failed'; runId: string; reviewId: string; error: string } | { type: 'model.started'; runId: string; step: number } | { type: 'context.estimated'; runId: string; step: number; estimate: AgentRuntimeContextEstimate } | { type: 'model.retry'; runId: string; step: number; retry: number; maxRetries: number; error: string } | { type: 'model.message'; runId: string; step: number; message: AgentOutputMessage } | { type: 'model.delta'; runId: string; step: number; text: string } | { type: 'model.reasoning'; runId: string; step: number; text: string } | { type: 'model.tool_call'; runId: string; step: number; toolCall: AgentToolCall } | { type: 'model.usage'; runId: string; step: number; usage: ModelUsage } | { type: 'model.context'; runId: string; step: number; context: unknown } | { type: 'tool.started'; runId: string; step: number; toolCallId: string; toolName: string; arguments: Record<string, unknown> } | { type: 'tool.completed'; runId: string; step: number; toolCallId: string; toolName: string; result: AgentToolResult; durationMs: number } | { type: 'tool.failed'; runId: string; step: number; toolCallId: string; toolName: string; result: AgentToolResult; durationMs: number } | { type: 'subagent.start'; runId: string; subagentId: string; goal: string; background: boolean; model?: string; startedAt: number } | { type: 'subagent.text'; runId: string; childRunId?: string; subagentId: string; goal: string; background: boolean; text: string } | { type: 'subagent.thinking'; runId: string; childRunId?: string; subagentId: string; goal: string; background: boolean; text: string } | { type: 'subagent.tool'; runId: string; childRunId?: string; subagentId: string; goal: string; background: boolean; toolName: string; arguments: Record<string, unknown>; toolCount: number } | { type: 'subagent.complete' runId: string childRunId?: string subagentId: string goal: string background: boolean status: 'completed' | 'failed' | 'interrupted' summary: string output: string outputTail: string durationMs: number toolCount: number apiCalls: number inputTokens: number outputTokens: number cacheReadTokens: number cacheWriteTokens: number reasoningTokens: number continuationContext?: EkkoBackgroundContinuationContext } | { type: 'run.tool_recovery_required'; runId: string; toolName: string; failures: number } | { type: 'run.completed'; runId: string; output: AgentOutputMessage; steps: number; context?: unknown; contextEstimate?: AgentRuntimeContextEstimate } | { type: 'run.failed'; runId: string; error: string; steps: number } | { type: 'run.max_steps'; runId: string; maxSteps: number }
+export type AgentRuntimeEvent = | { type: 'plan.updated'; runId: string; plan: import('../tools/plan').AgentTaskPlan } | { type: 'run.started'; runId: string; maxSteps: number } | { type: 'memory.retrieved'; runId: string; diagnostics: MemoryContextDiagnostics; memoryIds: string[] } | { type: 'skill.review.started'; runId: string; reviewId: string } | { type: 'skill.review.completed'; runId: string; reviewId: string; mutations: number } | { type: 'skill.review.failed'; runId: string; reviewId: string; error: string } | { type: 'model.started'; runId: string; step: number } | { type: 'context.estimated'; runId: string; step: number; estimate: AgentRuntimeContextEstimate } | { type: 'model.retry'; runId: string; step: number; retry: number; maxRetries: number; error: string } | { type: 'model.message'; runId: string; step: number; message: AgentOutputMessage } | { type: 'model.delta'; runId: string; step: number; text: string } | { type: 'model.reasoning'; runId: string; step: number; text: string } | { type: 'model.tool_call'; runId: string; step: number; toolCall: AgentToolCall } | { type: 'model.usage'; runId: string; step: number; usage: ModelUsage } | { type: 'model.context'; runId: string; step: number; context: unknown } | { type: 'tool.started'; runId: string; step: number; toolCallId: string; toolName: string; arguments: Record<string, unknown> } | { type: 'tool.completed'; runId: string; step: number; toolCallId: string; toolName: string; result: AgentToolResult; durationMs: number } | { type: 'tool.failed'; runId: string; step: number; toolCallId: string; toolName: string; result: AgentToolResult; durationMs: number } | { type: 'subagent.start'; runId: string; subagentId: string; goal: string; background: boolean; model?: string; startedAt: number } | { type: 'subagent.text'; runId: string; childRunId?: string; subagentId: string; goal: string; background: boolean; text: string } | { type: 'subagent.thinking'; runId: string; childRunId?: string; subagentId: string; goal: string; background: boolean; text: string } | { type: 'subagent.tool'; runId: string; childRunId?: string; subagentId: string; goal: string; background: boolean; toolName: string; arguments: Record<string, unknown>; toolCount: number } | { type: 'subagent.complete' runId: string childRunId?: string subagentId: string goal: string background: boolean status: 'completed' | 'failed' | 'interrupted' summary: string output: string outputTail: string durationMs: number toolCount: number apiCalls: number inputTokens: number outputTokens: number cacheReadTokens: number cacheWriteTokens: number reasoningTokens: number continuationContext?: EkkoBackgroundContinuationContext } | { type: 'run.tool_recovery_required'; runId: string; toolName: string; failures: number } | { type: 'run.completed'; runId: string; output: AgentOutputMessage; steps: number; context?: unknown; contextEstimate?: AgentRuntimeContextEstimate } | { type: 'run.failed'; runId: string; error: string; steps: number } | { type: 'run.max_steps'; runId: string; maxSteps: number }
 ```
 ### `src/runtime/manager.ts`
 
@@ -2560,6 +2564,7 @@ export interface SystemPromptInput {
   runtimeInstructions?: string[]
   userSystemMessages?: string[]
   memoryContext?: string
+  planningEnabled?: boolean
   clarificationEnabled?: boolean
   skillDiscoveryEnabled?: boolean
   skillManagementEnabled?: boolean
@@ -2668,6 +2673,7 @@ export interface AgentRuntimeRunInput {
   backgroundDelegationEnabled?: boolean
   logContext?: EkkoRuntimeLogContext
   onSkillReviewUsage?: (input: SkillReviewUsageEvent) => void
+  onPlanUpdate?: (plan: import('../tools/plan').AgentTaskPlan) => void
   onEvent?: (event: AgentRuntimeEvent) => void
 }
 
@@ -3098,6 +3104,42 @@ export function resolveUnrestrictedToolPath( inputPath: string, context: { cwd?:
 
 export function resolveToolPath(inputPath: string, context: { cwd?: string; workspaceRoot?: string } = {}): string
 ```
+### `src/tools/plan.ts`
+
+```ts
+export interface AgentPlanStep {
+  id: string
+  step: string
+  status: 'pending' | 'in_progress' | 'completed'
+}
+
+export interface AgentPlanUpdate {
+  explanation?: string
+  plan: AgentPlanStep[]
+}
+
+export interface AgentTaskPlan extends AgentPlanUpdate {
+  runId: string
+  planId: string
+  revision: number
+  executionState: 'running' | 'ended' | 'interrupted' | 'failed'
+  createdAt: number
+  updatedAt: number
+}
+
+export function parsePlanUpdate(input: Record<string, unknown>): AgentPlanUpdate
+
+export class RunTaskPlan {
+  constructor(private runId: string, private commit: (plan: AgentTaskPlan) => void)
+  update(update: AgentPlanUpdate): AgentTaskPlan
+  finish(state: Exclude<AgentTaskPlan['executionState'], 'running'>): void
+}
+
+export class UpdatePlanTool implements AgentTool {
+  readonly definition = { name: 'update_plan', description: 'Create or update the task plan for this run. Send the complete ordered list on every update. Keep step IDs stable. Mark a step completed only after its work is verified. Use for multi-step tasks; skip simple questions.', parameters: { type: 'object', properties: { explanation: { type: 'string', maxLength: 1000, description: 'Brief reason for the update or scope change.' }, plan: { type: 'array', minItems: 1, maxItems: 30, items: { type: 'object', properties: { id: { type: 'string', minLength: 1, maxLength: 100 }, step: { type: 'string', minLength: 1, maxLength: 200 }, status: { type: 'string', enum: ['pending', 'in_progress', 'completed'] }, }, required: ['id', 'step', 'status'], additionalProperties: false, }, }, }, required: ['plan'], additionalProperties: false, }, }
+  async execute(input: Record<string, unknown>, context?: AgentToolContext): Promise<AgentToolResult>
+}
+```
 ### `src/tools/recovery.ts`
 
 ```ts
@@ -3309,6 +3351,7 @@ export interface AgentToolAuthorizationDecision {
 export type AgentToolAuthorizer = ( toolName: string, input: Record<string, unknown>, context?: AgentToolContext, ) => Promise<AgentToolAuthorizationDecision>
 
 export interface AgentToolContext {
+  updatePlan?: (update: import('./plan').AgentPlanUpdate) => import('./plan').AgentTaskPlan
   runId?: string
   cwd?: string
   workspaceRoot?: string
