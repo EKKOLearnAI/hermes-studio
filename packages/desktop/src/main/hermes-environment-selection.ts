@@ -203,9 +203,6 @@ function pythonCandidates(
   const binDir = dirname(hermesBin)
   const candidates = [
     pythonFromLauncher(hermesBin, env) || '',
-    ...(process.platform === 'win32'
-      ? [join(binDir, 'python.exe'), join(binDir, 'python3.exe'), join(binDir, '..', 'python.exe')]
-      : [join(binDir, 'python3'), join(binDir, 'python')]),
   ]
   if (agentRoot) {
     candidates.push(...(process.platform === 'win32'
@@ -221,6 +218,9 @@ function pythonCandidates(
           join(agentRoot, '.venv', 'bin', 'python'),
         ]))
   }
+  candidates.push(...(process.platform === 'win32'
+    ? [join(binDir, 'python.exe'), join(binDir, 'python3.exe'), join(binDir, '..', 'python.exe')]
+    : [join(binDir, 'python3'), join(binDir, 'python')]))
   return candidates
 }
 
@@ -246,7 +246,9 @@ export function resolveDesktopHermesInstallationEnvironment(
     ...(pythonRoot ? [pythonRoot] : []),
     ...agentRootCandidates(hermesBin, hermesHome),
   ].find(candidate => existsSync(join(candidate, 'run_agent.py')))
-  const python = launcherPython || firstExisting(pythonCandidates(agentRoot, hermesBin, env))
+  const python = agentRoot
+    ? firstExisting(pythonCandidates(agentRoot, hermesBin, env))
+    : launcherPython
   return {
     ...(python ? { python, environmentRoot: environmentRootFromPython(python) } : {}),
     ...(agentRoot ? { agentRoot } : {}),
@@ -275,17 +277,18 @@ function findHermesCommands(searchPath: string, env: NodeJS.ProcessEnv): string[
 }
 
 function normalizeVersion(raw: string): string {
-  return raw
+  const firstLine = raw
     .split(/\r?\n/)[0]
     ?.replace(/^Hermes(?: Agent)?\s+/i, '')
     .trim() || ''
+  return firstLine.match(/^v?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)/)?.[1] || firstLine
 }
 
 type HermesVersionProbeResult =
   | { ok: true; version: string }
   | { ok: false; error: string }
 
-function probeFailureMessage(error: unknown, timeout: number): string {
+function probeFailureMessage(error: unknown, timeout: number, source: Exclude<DesktopHermesSelectionSource, 'none'>): string {
   const detail = error as NodeJS.ErrnoException & {
     killed?: boolean
     signal?: NodeJS.Signals
@@ -296,12 +299,13 @@ function probeFailureMessage(error: unknown, timeout: number): string {
     : Buffer.isBuffer(detail?.stderr)
       ? detail.stderr.toString('utf8').trim()
       : ''
+  const label = source === 'user-cli' ? 'Hermes CLI version probe' : 'Hermes CLI import probe'
   if (detail?.killed || detail?.code === 'ETIMEDOUT') {
-    return `Hermes CLI import probe timed out after ${timeout}ms${stderr ? `: ${stderr}` : ''}`
+    return `${label} timed out after ${timeout}ms${stderr ? `: ${stderr}` : ''}`
   }
   const code = detail?.code !== undefined ? ` (${String(detail.code)})` : ''
   const message = error instanceof Error ? error.message.replace(/^Error:\s*/, '').trim() : String(error)
-  return `Hermes CLI import probe failed${code}: ${stderr || message || 'unknown error'}`
+  return `${label} failed${code}: ${stderr || message || 'unknown error'}`
 }
 
 async function probeHermesVersion(
@@ -319,18 +323,22 @@ async function probeHermesVersion(
     version: '',
   })
   try {
-    const { stdout } = await execFileAsync(selection.pythonPath, ['-c', HERMES_VERSION_PROBE], {
+    const command = source === 'user-cli' ? selection.path : selection.pythonPath
+    const args = source === 'user-cli' ? ['--version'] : ['-c', HERMES_VERSION_PROBE]
+    const { stdout, stderr } = await execFileAsync(command, args, {
       encoding: 'utf8',
       timeout,
       windowsHide: true,
       env: probeEnv,
     })
-    const version = normalizeVersion(String(stdout || ''))
+    const version = normalizeVersion(`${stdout || ''}${stderr || ''}`)
     return version
       ? { ok: true, version }
-      : { ok: false, error: 'Hermes CLI import probe returned an empty version' }
+      : { ok: false, error: source === 'user-cli'
+          ? 'Hermes CLI version probe returned an empty version'
+          : 'Hermes CLI import probe returned an empty version' }
   } catch (error) {
-    return { ok: false, error: probeFailureMessage(error, timeout) }
+    return { ok: false, error: probeFailureMessage(error, timeout, source) }
   }
 }
 

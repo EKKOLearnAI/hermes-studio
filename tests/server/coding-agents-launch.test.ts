@@ -76,6 +76,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  delete process.env.HERMES_DESKTOP
   delete process.env.HERMES_WEB_UI_HOME
   delete process.env.HERMES_CODING_AGENT_GLOBAL_HOME
   delete process.env.CODEX_HOME
@@ -1144,6 +1145,26 @@ describe('coding agent launch preparation', () => {
     expect(mcp.mcpServers['hermes-studio-devices'].command).toBe('/runtime/node')
     expect(mcp.mcpServers['hermes-studio-browser'].command).toBe('/runtime/node')
     expect(mcp.mcpServers['hermes-studio-use'].command).toBe('/runtime/node')
+  })
+
+  it('runs scoped Hermes Studio MCP through Electron Node mode when the desktop runtime node is unavailable', async () => {
+    const home = makeHome()
+    process.env.HERMES_DESKTOP = 'true'
+
+    const result = await prepareCodingAgentLaunch('claude-code', {
+      profile: 'default',
+      provider: 'openrouter',
+      model: 'cognitivecomputations/dolphin-mistral-24b-venice-edition:free',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      apiKey: 'sk-test',
+    })
+
+    const mcp = JSON.parse(readFileSync(join(result.rootDir, 'mcp.json'), 'utf-8'))
+    expect(mcp.mcpServers['hermes-studio-api']).toMatchObject({
+      command: process.execPath,
+      args: [join(process.cwd(), 'bin/hermes-studio-mcp.mjs'), 'api'],
+      env: { ELECTRON_RUN_AS_NODE: '1' },
+    })
   })
 
   it('cleans legacy Hermes MCP entries from scoped Claude and Codex configs', async () => {

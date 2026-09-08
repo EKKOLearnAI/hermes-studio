@@ -59,6 +59,8 @@ function createUserCli(home: string, version: string): {
   writeFileSync(command, `#!/bin/sh\nexec "${python}" "${agentCommand}" "$@"\n`)
   chmodSync(python, 0o755)
   chmodSync(command, 0o755)
+  writeFileSync(join(home, '.local', 'bin', 'python'), '#!/bin/sh\nexit 29\n')
+  chmodSync(join(home, '.local', 'bin', 'python'), 0o755)
   return { command, python, agentRoot, hermesHome }
 }
 

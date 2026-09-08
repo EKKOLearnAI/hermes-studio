@@ -24,7 +24,7 @@ function userCli(root: string, version: string, succeeds = true) {
   const python = executable(
     join(environmentRoot, 'bin', 'python3'),
     succeeds
-      ? `#!/bin/sh\nprintf '${version}\\n'\n`
+      ? `#!/bin/sh\n[ "$1" = "-c" ] && exit 19\nprintf '${version}\\n'\n`
       : '#!/bin/sh\nexit 1\n',
   )
   const agentCommand = join(agentRoot, 'hermes')
@@ -36,6 +36,7 @@ function userCli(root: string, version: string, succeeds = true) {
     join(root, '.local', 'bin', 'hermes'),
     `#!/bin/sh\nexec "${python}" "${agentCommand}" "$@"\n`,
   )
+  executable(join(root, '.local', 'bin', 'python'), '#!/bin/sh\nexit 29\n')
   return { command, python, agentRoot, environmentRoot, hermesHome }
 }
 
