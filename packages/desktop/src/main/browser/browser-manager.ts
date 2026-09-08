@@ -219,11 +219,12 @@ export class BrowserManager {
     await this.clearAnnotations(tabId, false)
     const ids = [...this.records.keys()]
     const index = ids.indexOf(tabId)
+    const contents = record.view.webContents
     this.window.contentView.removeChildView(record.view)
-    this.automation.detach(tabId, record.view.webContents)
+    this.automation.detach(tabId, contents)
     this.automationVisibleTabs.delete(tabId)
     this.agentDownloadGuardUntil.delete(tabId)
-    record.view.webContents.close()
+    if (contents && !contents.isDestroyed()) contents.close()
     this.records.delete(tabId)
     if (this.activeTabId === tabId) this.activeTabId = [...this.records.keys()][Math.max(0, index - 1)]
     await this.persistTabs()
@@ -741,13 +742,15 @@ export class BrowserManager {
     })
     contents.on('page-favicon-updated', (_event, favicons) => { tab.faviconUrl = favicons[0]; this.emitState() })
     contents.on('render-process-gone', () => { tab.crashed = true; tab.loading = false; this.emitState() })
-    contents.debugger.on('detach', () => {
-      this.automation.invalidate(id)
-      tab.agentControl = 'idle'
-      tab.agentLabel = undefined
-      tab.agentAction = undefined
-      this.emitState()
-    })
+    if (!contents.isDestroyed()) {
+      contents.debugger.on('detach', () => {
+        this.automation.invalidate(id)
+        tab.agentControl = 'idle'
+        tab.agentLabel = undefined
+        tab.agentAction = undefined
+        this.emitState()
+      })
+    }
     contents.on('console-message', details => {
       const levelNumber = ({ debug: 0, info: 1, warning: 2, error: 3 } as Record<string, number>)[details.level] ?? 1
       record.console.push({ level: levelNumber, message: details.message, line: details.lineNumber, sourceId: details.sourceId, timestamp: new Date().toISOString() })
@@ -989,9 +992,10 @@ export class BrowserManager {
 
   private destroyViews(): void {
     for (const [id, record] of this.records) {
+      const contents = record.view.webContents
       this.window.contentView.removeChildView(record.view)
-      this.automation.detach(id, record.view.webContents)
-      if (!record.view.webContents.isDestroyed()) record.view.webContents.close()
+      this.automation.detach(id, contents)
+      if (contents && !contents.isDestroyed()) contents.close()
     }
     this.records.clear()
     this.automationVisibleTabs.clear()
