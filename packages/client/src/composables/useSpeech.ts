@@ -1,4 +1,5 @@
 import { ref, computed, onUnmounted } from 'vue'
+import { parseThinking } from '@/utils/thinking-parser'
 import {
   generateSpeech,
   playAudioBlob,
@@ -124,11 +125,7 @@ export function useSpeech() {
   function extractReadableText(content: string): string {
     if (!content) return ''
 
-    let text = content
-
-    // 移除 thinking 标签内容
-    text = text.replace(/<thinking[^>]*>[\s\S]*?<\/thinking>/gi, '')
-    text = text.replace(/<thinking[^>]*>[\s\S]*/gi, '')
+    let text = parseThinking(content, { streaming: false }).body
 
     // 移除代码块
     text = text.replace(/```[\s\S]*?```/g, '')
