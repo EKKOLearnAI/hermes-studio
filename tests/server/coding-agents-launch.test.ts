@@ -450,6 +450,61 @@ describe('coding agent launch preparation', () => {
     })
   })
 
+  it('removes user-installed pi-mcp-adapter duplicates from isolated Pi settings', async () => {
+    const home = makeHome()
+    const managedAdapterEntry = join(
+      home,
+      'coding-agent',
+      'pi-mcp-adapter',
+      'node_modules',
+      'pi-mcp-adapter',
+      'index.ts',
+    )
+    mkdirSync(dirname(managedAdapterEntry), { recursive: true })
+    writeFileSync(managedAdapterEntry, 'export default {}')
+
+    const userAdapterEntry = join(
+      home,
+      'global-home',
+      '.pi',
+      'agent',
+      'npm',
+      'node_modules',
+      'pi-mcp-adapter',
+      'index.ts',
+    )
+    const userSettingsPath = join(home, 'global-home', '.pi', 'agent', 'settings.json')
+    mkdirSync(dirname(userSettingsPath), { recursive: true })
+    writeFileSync(userSettingsPath, `${JSON.stringify({
+      packages: ['pi-mcp-adapter@2.32.1', 'pi-extra-package@1.0.0'],
+    }, null, 2)}\n`)
+    const scopedSettingsPath = join(home, 'coding-agent', 'model', 'default', 'custom_test', 'pi', 'settings.json')
+    mkdirSync(dirname(scopedSettingsPath), { recursive: true })
+    writeFileSync(scopedSettingsPath, `${JSON.stringify({
+      extensions: [userAdapterEntry, '/tmp/pi-extra-extension.ts'],
+    }, null, 2)}\n`)
+
+    const result = await prepareCodingAgentLaunch('pi', {
+      profile: 'default',
+      provider: 'custom:test',
+      model: 'test-model',
+      baseUrl: 'https://api.example.com/v1',
+      apiKey: '«redacted:sk-…»',
+      apiMode: 'codex_responses',
+      sessionId: 'pi-adapter-dedupe-session',
+      agentSessionId: 'pi-adapter-dedupe-agent',
+    })
+
+    const runtimeSettings = JSON.parse(readFileSync(join(result.rootDir, 'settings.json'), 'utf8'))
+    expect(runtimeSettings.packages).toEqual(['pi-extra-package@1.0.0'])
+    expect(runtimeSettings.extensions).toContain('/tmp/pi-extra-extension.ts')
+    expect(runtimeSettings.extensions).toContain(managedAdapterEntry)
+    expect(runtimeSettings.extensions).not.toContain(userAdapterEntry)
+    expect(runtimeSettings.extensions.filter((value: string) => value.includes('pi-mcp-adapter'))).toEqual([
+      managedAdapterEntry,
+    ])
+  })
+
   it('migrates legacy plaintext Pi proxy targets to encrypted storage during restore', async () => {
     const home = makeHome()
     const targetPath = join(

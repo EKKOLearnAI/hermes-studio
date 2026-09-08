@@ -1395,6 +1395,15 @@ function getPiMcpAdapterEntry(): string {
   return join(getPiMcpAdapterRoot(), 'node_modules', 'pi-mcp-adapter', 'index.ts')
 }
 
+function isPiMcpAdapterReference(value: unknown): boolean {
+  if (typeof value !== 'string') return false
+  const normalized = value.trim().replace(/\\/g, '/')
+  if (!normalized) return false
+  const packageReference = normalized.replace(/^npm:/i, '')
+  return /(?:^|\/)pi-mcp-adapter(?:@[^/]+)?(?:\/index\.[cm]?[jt]sx?)?$/i.test(packageReference)
+    || /@npm:pi-mcp-adapter(?:@|$)/i.test(packageReference)
+}
+
 function piSettingsConfig(existingContents: string[] = [], runtimeExtensionPath = ''): string {
   let existing: Record<string, unknown> = {}
   for (const content of existingContents) {
@@ -1403,11 +1412,17 @@ function piSettingsConfig(existingContents: string[] = [], runtimeExtensionPath 
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) existing = { ...existing, ...parsed }
     } catch {}
   }
+  // Studio always injects its managed adapter below. Remove user copies only
+  // from the isolated runtime projection so the original Pi config stays intact.
   const configuredExtensions = Array.isArray(existing.extensions)
-    ? existing.extensions.filter(value => typeof value === 'string' && value.trim())
+    ? existing.extensions.filter(value => typeof value === 'string' && value.trim() && !isPiMcpAdapterReference(value))
     : []
+  const configuredPackages = Array.isArray(existing.packages)
+    ? existing.packages.filter(value => !isPiMcpAdapterReference(value))
+    : undefined
   return `${JSON.stringify({
     ...existing,
+    ...(configuredPackages ? { packages: configuredPackages } : {}),
     defaultProjectTrust: 'never',
     enableSkillCommands: true,
     extensions: [...new Set([
