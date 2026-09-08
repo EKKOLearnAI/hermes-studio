@@ -36,8 +36,18 @@ export function setApiKey(key: string) {
   localStorage.setItem('hermes_api_key', key)
 }
 
+function clearSessionPinCache() {
+  for (let index = localStorage.length - 1; index >= 0; index -= 1) {
+    const key = localStorage.key(index)
+    if (key?.startsWith('hermes_session_pins_v1_') || key?.startsWith('hermes_session_pins_migrated_v2_')) {
+      localStorage.removeItem(key)
+    }
+  }
+}
+
 export function clearApiKey() {
   localStorage.removeItem('hermes_api_key')
+  clearSessionPinCache()
 }
 
 function clearAuthSessionState() {

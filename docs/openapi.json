@@ -15512,6 +15512,133 @@
         ]
       }
     },
+    "/api/studio/session-pins": {
+      "get": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Get session-pins",
+        "description": "GET /api/studio/session-pins",
+        "operationId": "listSessionPins",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/studio/session-pins/merge": {
+      "post": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Create merge",
+        "description": "POST /api/studio/session-pins/merge",
+        "operationId": "mergeSessionPins",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "pinnedIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/studio/session-pins/{id}": {
+      "put": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Update :id",
+        "description": "PUT /api/studio/session-pins/:id",
+        "operationId": "setSessionPinned",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "mergePinnedIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "pinned": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/studio/sessions": {
       "get": {
         "tags": [

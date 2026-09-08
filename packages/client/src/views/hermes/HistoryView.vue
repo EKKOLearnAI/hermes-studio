@@ -383,14 +383,20 @@ function handleMobileChange(e: MediaQueryListEvent | MediaQueryList) {
   }
 }
 
+async function syncPinsAndReloadSessions() {
+  await sessionBrowserPrefsStore.syncPins()
+  await loadHermesSessions()
+}
+
 function openPageSidebar() {
   showSessions.value = true
+  void syncPinsAndReloadSessions()
 }
 
 onMounted(async () => {
   appStore.loadModels()
   await profilesStore.fetchProfiles()
-  await loadHermesSessions()
+  await syncPinsAndReloadSessions()
   await syncRouteSession()
 
   mobileQuery = window.matchMedia('(max-width: 768px)')
@@ -425,7 +431,7 @@ watch(() => profilesStore.activeProfileName, async () => {
   if (profilesStore.switching) return
   historySessionId.value = null
   historySession.value = null
-  await loadHermesSessions()
+  await syncPinsAndReloadSessions()
   await openDefaultHistorySession(true)
 })
 

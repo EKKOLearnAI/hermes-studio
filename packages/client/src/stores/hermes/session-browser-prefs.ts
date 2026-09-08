@@ -1,8 +1,11 @@
 import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
+import { getStoredUserId } from '@/api/client'
+import { fetchSessionPins, mergeSessionPins, setSessionPinned } from '@/api/studio/sessions'
 import { useProfilesStore } from './profiles'
 
 const PIN_KEY_PREFIX = 'hermes_session_pins_v1_'
+const PIN_MIGRATION_KEY_PREFIX = 'hermes_session_pins_migrated_v2_'
 const HUMAN_ONLY_KEY_PREFIX = 'hermes_human_only_v1_'
 const RECENT_COUNT_KEY = 'hermes_recent_session_count_v1'
 const RECENT_COLLAPSED_KEY = 'hermes_recent_sessions_collapsed_v1'
@@ -17,12 +20,24 @@ function currentProfileName(): string {
   }
 }
 
-function pinsKey(profileName: string): string {
+function currentPinOwner(): string {
+  return String(getStoredUserId() ?? 'anonymous')
+}
+
+function pinsKey(profileName: string, owner = currentPinOwner()): string {
+  return `${PIN_KEY_PREFIX}${owner}_${profileName}`
+}
+
+function legacyPinsKey(profileName: string): string {
   return `${PIN_KEY_PREFIX}${profileName}`
 }
 
 function humanOnlyKey(profileName: string): string {
   return `${HUMAN_ONLY_KEY_PREFIX}${profileName}`
+}
+
+function pinMigrationKey(profileName: string, owner = currentPinOwner()): string {
+  return `${PIN_MIGRATION_KEY_PREFIX}${owner}_${profileName}`
 }
 
 function loadJson<T>(key: string, fallback: T): T {
@@ -48,20 +63,31 @@ function sameIds(a: string[], b: string[]): boolean {
 
 export const useSessionBrowserPrefsStore = defineStore('session-browser-prefs', () => {
   const profileName = ref(currentProfileName())
-  const pinnedIds = ref<string[]>(loadJson<string[]>(pinsKey(profileName.value), []))
+  let pinOwner = currentPinOwner()
+  const pinnedIds = ref<string[]>(loadJson<string[]>(pinsKey(profileName.value, pinOwner), []))
   const humanOnly = ref<boolean>(loadJson<boolean>(humanOnlyKey(profileName.value), true))
   const recentCount = ref<number>(Math.min(100, Math.max(1, loadJson<number>(RECENT_COUNT_KEY, 10))))
   const recentCollapsed = ref<boolean>(loadJson<boolean>(RECENT_COLLAPSED_KEY, false))
   const showRecentSessions = ref<boolean>(loadJson<boolean>(SHOW_RECENT_SESSIONS_KEY, true))
+  let pinMutationVersion = 0
+
+  function reloadPinOwner(): void {
+    const nextOwner = currentPinOwner()
+    if (nextOwner === pinOwner) return
+    pinOwner = nextOwner
+    pinnedIds.value = loadJson<string[]>(pinsKey(profileName.value, pinOwner), [])
+    ++pinMutationVersion
+  }
 
   function reload() {
+    reloadPinOwner()
     profileName.value = currentProfileName()
-    pinnedIds.value = loadJson<string[]>(pinsKey(profileName.value), [])
+    pinnedIds.value = loadJson<string[]>(pinsKey(profileName.value, pinOwner), [])
     humanOnly.value = loadJson<boolean>(humanOnlyKey(profileName.value), true)
   }
 
   function persistPins() {
-    saveJson(pinsKey(profileName.value), pinnedIds.value)
+    saveJson(pinsKey(profileName.value, pinOwner), pinnedIds.value)
   }
 
   function persistHumanOnly() {
@@ -72,19 +98,79 @@ export const useSessionBrowserPrefsStore = defineStore('session-browser-prefs', 
     return pinnedIds.value.includes(sessionId)
   }
 
-  function togglePinned(sessionId: string) {
+  async function syncPins(): Promise<void> {
+    reloadPinOwner()
+    const profile = profileName.value
+    const owner = pinOwner
+    const version = ++pinMutationVersion
+    try {
+      const migrated = localStorage.getItem(pinMigrationKey(profile, owner)) === 'true'
+      const result = migrated
+        ? await fetchSessionPins(profile)
+        : await mergeSessionPins(profile, [
+            ...loadJson<string[]>(legacyPinsKey(profile), []),
+            ...pinnedIds.value,
+          ])
+      if (profileName.value !== profile || pinOwner !== owner || version !== pinMutationVersion) return
+      pinnedIds.value = result.pinnedIds
+      persistPins()
+      if (!migrated) {
+        localStorage.setItem(pinMigrationKey(profile, owner), 'true')
+        localStorage.removeItem(legacyPinsKey(profile))
+      }
+    } catch {
+      // Keep the local cache while offline; a later reload retries the sync.
+    }
+  }
+
+  async function togglePinned(sessionId: string): Promise<boolean> {
+    reloadPinOwner()
+    const profile = profileName.value
+    const owner = pinOwner
+    const previous = [...pinnedIds.value]
     if (isPinned(sessionId)) {
       pinnedIds.value = pinnedIds.value.filter(id => id !== sessionId)
     } else {
       pinnedIds.value = [...pinnedIds.value, sessionId]
     }
     persistPins()
+
+    const pinned = pinnedIds.value.includes(sessionId)
+    const version = ++pinMutationVersion
+    try {
+      const mergePinnedIds = localStorage.getItem(pinMigrationKey(profile, owner)) === 'true'
+        ? undefined
+        : [
+            ...loadJson<string[]>(legacyPinsKey(profile), []),
+            ...pinnedIds.value,
+          ]
+      const result = await setSessionPinned(profile, sessionId, pinned, mergePinnedIds)
+      if (profileName.value === profile && pinOwner === owner && version === pinMutationVersion) {
+        pinnedIds.value = result.pinnedIds
+        persistPins()
+      }
+      localStorage.setItem(pinMigrationKey(profile, owner), 'true')
+      localStorage.removeItem(legacyPinsKey(profile))
+      return true
+    } catch {
+      if (profileName.value === profile && pinOwner === owner && version === pinMutationVersion) {
+        pinnedIds.value = previous
+        persistPins()
+      }
+      return false
+    }
   }
 
   function removePinned(sessionId: string): boolean {
     if (!isPinned(sessionId)) return false
     pinnedIds.value = pinnedIds.value.filter(id => id !== sessionId)
     persistPins()
+    const profile = profileName.value
+    ++pinMutationVersion
+    void setSessionPinned(profile, sessionId, false).then(
+      () => localStorage.setItem(pinMigrationKey(profile), 'true'),
+      () => {},
+    )
     return true
   }
 
@@ -132,6 +218,7 @@ export const useSessionBrowserPrefsStore = defineStore('session-browser-prefs', 
     recentCollapsed,
     showRecentSessions,
     reload,
+    syncPins,
     isPinned,
     togglePinned,
     removePinned,

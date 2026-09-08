@@ -385,8 +385,14 @@ function handleMobileChange(e: MediaQueryListEvent | MediaQueryList) {
   }
 }
 
+async function syncPinsAndReloadSessions() {
+  await sessionBrowserPrefsStore.syncPins();
+  await chatStore.loadSessions(chatStore.sessionProfileFilter);
+}
+
 function openPageSidebar() {
   showSessions.value = true;
+  void syncPinsAndReloadSessions();
 }
 
 watch(
@@ -511,8 +517,14 @@ onMounted(() => {
   if (profilesStore.profiles.length === 0) {
     void profilesStore.fetchProfiles();
   }
+  void syncPinsAndReloadSessions();
   if (!props.standalone) void loadSessionCategories();
 });
+
+watch(
+  () => profilesStore.activeProfileName,
+  () => void syncPinsAndReloadSessions(),
+);
 
 watch(
   () => chatStore.activeSessionId,
