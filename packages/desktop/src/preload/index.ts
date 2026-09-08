@@ -63,6 +63,7 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
     updateAnnotationNote: (tabId: string, marker: number, note: string): Promise<boolean> => ipcRenderer.invoke('hermes-desktop:browser-update-annotation-note', tabId, marker, note),
     captureAnnotations: (tabId: string): Promise<BrowserSelection['screenshot']> => ipcRenderer.invoke('hermes-desktop:browser-capture-annotations', tabId),
     clearAnnotations: (tabId: string): Promise<boolean> => ipcRenderer.invoke('hermes-desktop:browser-clear-annotations', tabId),
+    removeAnnotation: (tabId: string, marker: number): Promise<boolean> => ipcRenderer.invoke('hermes-desktop:browser-remove-annotation', tabId, marker),
     onAnnotationRequest: (callback: (request: { tabId: string; mode: 'element' | 'region' }) => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent, request: { tabId: string; mode: 'element' | 'region' }) => callback(request)
       ipcRenderer.on('hermes-desktop:browser-annotation-request', listener)

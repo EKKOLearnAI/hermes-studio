@@ -135,6 +135,7 @@ export default {
   browser: {
     title: '브라우저', settings: '브라우저 설정', desktopOnly: '내장 브라우저는 Hermes Studio Desktop에서만 사용할 수 있습니다.', newTab: '새 탭',
     back: '뒤로', forward: '앞으로', reload: '새로고침', stop: '중지', addressPlaceholder: '검색 또는 주소 입력',
+    undoAnnotation: '마지막 주석 취소', deleteAnnotation: '주석 {index} 삭제',
     selectElement: '요소 선택', selectRegion: '영역 선택', annotationPlaceholder: 'Agent가 확인하거나 변경할 내용을 입력하세요…', selectionData: '브라우저 선택 데이터', annotationAdded: '스크린샷을 채팅 입력창에 추가했습니다', annotationCount: '주석 {count}개', annotationLabel: '주석 {index}', clearAnnotations: '주석 지우기', finishAnnotation: '완료',
     agent: 'Agent', agentControlling: '{agent}가 이 탭을 제어 중', agentWaiting: '{agent}가 확인을 기다리는 중', takeOver: '제어권 가져오기', tabCrashed: '이 탭이 비정상 종료되었습니다.', recoverTab: '탭 새로고침', profiles: '프로필', profileName: '프로필 이름', addProfile: '프로필 추가', currentProfile: '활성 프로필', switchProfile: '프로필 전환', editProfile: '프로필 편집',
     profileDirectory: '프로필 데이터 경로', downloadDirectory: '다운로드 경로', profileRootDirectory: '프로필 루트 경로', chooseProfileRootDirectory: '빈 경로 선택', profileRootDirectoryHint: '빈 경로를 선택하세요. 데이터는 {data}, 다운로드는 {download}를 사용합니다.', proxy: '프록시', proxyMode: '프록시 모드', proxyDirect: '직접 연결', proxySystem: '시스템 프록시', proxyCustom: '사용자 지정 프록시', proxyServer: '프록시 서버', proxyServerPlaceholder: '예: http://127.0.0.1:7890 또는 socks5://127.0.0.1:1080',
