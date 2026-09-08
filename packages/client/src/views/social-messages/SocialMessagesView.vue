@@ -38,7 +38,7 @@ import {
   type FeishuRecipient,
   type TelegramRecipient,
   type WeixinRecipient,
-} from '@/api/social-messages'
+} from '@/api/studio/social-messages'
 
 withDefaults(defineProps<{
   embedded?: boolean

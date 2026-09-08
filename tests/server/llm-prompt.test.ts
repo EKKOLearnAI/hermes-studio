@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { getSystemPrompt } from '../../packages/server/src/lib/llm-prompt'
+import { getSystemPrompt } from '../../packages/server/src/modules/studio/public/runs/prompt'
 
 describe('LLM prompt', () => {
   it('includes Hermes MCP usage guidance in every system prompt without runtime profile or resource URI values', () => {

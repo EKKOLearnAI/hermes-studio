@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { request as httpRequest } from 'node:http'
+import { request as httpsRequest } from 'node:https'
 import { createInterface } from 'node:readline'
 import { randomUUID } from 'node:crypto'
 import { readFileSync, statSync } from 'node:fs'
@@ -181,6 +183,33 @@ function normalizePublicHeaders(headers) {
   return normalized
 }
 
+// Mobile consent can wait five minutes before producing response headers.
+// Avoid fetch's 300-second headers deadline racing that business deadline.
+async function fetchMobileConsent(url, options) {
+  return new Promise((resolve, reject) => {
+    const target = new URL(url)
+    const transport = target.protocol === 'https:' ? httpsRequest : httpRequest
+    let timer
+    const req = transport(target, { method: options.method, headers: options.headers }, res => {
+      const chunks = []
+      res.on('data', chunk => chunks.push(chunk))
+      res.on('error', error => { clearTimeout(timer); reject(error) })
+      res.on('end', () => {
+        clearTimeout(timer)
+        const text = Buffer.concat(chunks).toString('utf8')
+        const headers = new Headers()
+        for (const [name, value] of Object.entries(res.headers)) {
+          if (value != null) headers.set(name, Array.isArray(value) ? value.join(', ') : value)
+        }
+        resolve({ status: res.statusCode || 500, headers, text: async () => text })
+      })
+    })
+    timer = setTimeout(() => req.destroy(new Error('Mobile consent transport timed out')), 330_000)
+    req.on('error', error => { clearTimeout(timer); reject(error) })
+    req.end(options.body)
+  })
+}
+
 async function requestEnvelope(path, options = {}) {
   const profile = typeof options.profile === 'string' && options.profile.trim()
     ? options.profile.trim()
@@ -194,7 +223,8 @@ async function requestEnvelope(path, options = {}) {
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...(profile ? { 'X-Hermes-Profile': profile } : {}),
   }
-  const response = await fetch(`${baseUrl()}${appendQuery(path, options.query)}`, {
+  const fetchRequest = path === '/api/studio/mobile-calendar/request' ? fetchMobileConsent : fetch
+  const response = await fetchRequest(`${baseUrl()}${appendQuery(path, options.query)}`, {
     method,
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -303,7 +333,7 @@ function validateRequiredObjectFields(schema, value, location) {
 }
 
 async function validateApiRequest(method, path, args) {
-  if (pathWithoutQuery(path) === '/api/openapi.json' || pathWithoutQuery(path) === '/api/hermes/openapi.json') return null
+  if (pathWithoutQuery(path) === '/api/openapi.json') return null
   const openapi = await openApiDocument(withAuthArgs(args))
   const match = findOpenApiOperation(openapi, method, path)
   if (!match) return `Unknown endpoint in OpenAPI document: ${method} ${pathWithoutQuery(path)}`
@@ -660,6 +690,10 @@ function pickDefined(source, keys) {
   return picked
 }
 
+function currentMobileSessionArgs(args) {
+  const sessionId = String(process.env.HERMES_STUDIO_SESSION_ID || '').trim()
+  return sessionId ? { ...args, session_id: sessionId } : args
+}
 function boundedInteger(value, fallback, min, max) {
   const parsed = Number.parseInt(String(value ?? ''), 10)
   if (!Number.isFinite(parsed)) return fallback
@@ -923,7 +957,7 @@ const tools = [
     inputSchema: inputSchema({
         path: {
           type: 'string',
-          description: 'Optional exact endpoint path filter for on-demand details, for example /api/chat-run/runs.',
+          description: 'Optional exact endpoint path filter for on-demand details, for example /api/studio/chat-run/runs.',
         },
         method: {
           type: 'string',
@@ -943,7 +977,7 @@ const tools = [
   {
     name: 'hermes_studio_api_request',
     toolset: 'api',
-    description: 'Execute a Hermes Studio operation by calling an endpoint path. Use hermes_studio_api_openapi_get first as the operation manual to inspect method, parameters, requestBody, and responses. Do not use /api/chat-run/* or /api/hermes/sessions/* as an internal delegation mechanism.',
+    description: 'Execute a Hermes Studio operation by calling an endpoint path. Use hermes_studio_api_openapi_get first as the operation manual to inspect method, parameters, requestBody, and responses. Do not use /api/studio/chat-run/* or /api/studio/sessions/* as an internal delegation mechanism.',
     inputSchema: inputSchema({
         method: {
           type: 'string',
@@ -952,7 +986,7 @@ const tools = [
         },
         path: {
           type: 'string',
-          description: 'Relative Hermes Studio endpoint path from the operation manual, for example /api/hermes/sessions?limit=20. Full URLs and // paths are rejected.',
+          description: 'Relative Hermes Studio endpoint path from the operation manual, for example /api/studio/sessions?limit=20. Full URLs and // paths are rejected.',
         },
         body: {
           type: ['object', 'array', 'string', 'number', 'boolean', 'null'],
@@ -1025,12 +1059,12 @@ const tools = [
         },
         coding_agent_id: {
           type: 'string',
-          enum: ['claude-code', 'codex'],
+          enum: ['claude-code', 'codex', 'pi', 'grok', 'opencode', 'ekko-agent'],
           description: 'Coding agent id when source is coding_agent.',
         },
         agent_id: {
           type: 'string',
-          enum: ['claude-code', 'codex'],
+          enum: ['claude-code', 'codex', 'pi', 'grok', 'opencode', 'ekko-agent'],
           description: 'Alias for coding_agent_id.',
         },
         mode: {
@@ -1262,6 +1296,61 @@ const tools = [
     toolset: 'use',
     description: 'Summarize current Hermes worker state, including worker count, completed interactions, and sessions still interacting.',
     inputSchema: inputSchema(),
+  },
+  {
+    name: 'hermes_studio_use_mobile_location',
+    toolset: 'use',
+    description: 'Request the user’s current mobile-device location once for the current direct chat. The App always asks the user to confirm before sharing WGS84 coordinates. Never use proactively, for background tracking, or from delegated/workflow tasks.',
+    inputSchema: inputSchema({
+        session_id: {
+          type: 'string',
+          description: 'Exact current Hermes Studio direct-chat session id supplied in the run context.',
+        },
+        purpose: {
+          type: 'string',
+          description: 'Short user-visible explanation of why the current location is needed.',
+        },
+        accuracy: {
+          type: 'string',
+          enum: ['coarse', 'precise'],
+          description: 'Requested accuracy. Defaults to coarse; use precise only when necessary for the user’s request.',
+        },
+        timeout_ms: {
+          type: 'number',
+          description: 'Maximum time to wait for the user and device, from 3000 to 60000 milliseconds.',
+        },
+      }, ['session_id', 'purpose']),
+  },
+  {
+    name: 'hermes_studio_use_mobile_calendar',
+    toolset: 'use',
+    description: 'With the user’s explicit request, ask their mobile App to list, create, update, or delete calendar events in the current direct chat. The App always requires one-time confirmation. Single-item delete requires exact listed id, title and start_ms (calendar) or due_ms when present (reminder), with fresh App confirmation. Background access is not supported.',
+    inputSchema: inputSchema({
+      session_id: { type: 'string', description: 'Exact current Hermes Studio direct-chat session id supplied in the run context.' },
+      action: { type: 'string', enum: ['list', 'create', 'update', 'delete'], description: 'Calendar operation.' },
+      purpose: { type: 'string', description: 'Short user-visible reason for the request.' },
+      start_ms: { type: 'number', description: 'List range start as Unix milliseconds.' },
+      end_ms: { type: 'number', description: 'List range end as Unix milliseconds; maximum range is 31 days.' },
+      limit: { type: 'number', description: 'Maximum list result count, from 1 to 100.' },
+      item: { type: 'object', additionalProperties: true, description: 'Event fields for create/update: id (update), title, start_ms, end_ms, all_day, location, notes, reminder_minutes.' },
+      timeout_ms: { type: 'number', minimum: 3000, maximum: 300000, default: 300000, description: 'Wait time for user confirmation, from 3000 to 300000 milliseconds. Defaults to 5 minutes, matching the App consent card. Omit unless the user requests a shorter wait.' },
+    }, ['session_id', 'action', 'purpose']),
+  },
+  {
+    name: 'hermes_studio_use_mobile_reminders',
+    toolset: 'use',
+    description: 'With the user’s explicit request, ask their mobile App to list, create, update, complete, or delete reminders in the current direct chat. The App always requires one-time confirmation. Single-item delete requires exact listed id, title and start_ms (calendar) or due_ms when present (reminder), with fresh App confirmation. Background access is not supported.',
+    inputSchema: inputSchema({
+      session_id: { type: 'string', description: 'Exact current Hermes Studio direct-chat session id supplied in the run context.' },
+      action: { type: 'string', enum: ['list', 'create', 'update', 'complete', 'delete'], description: 'Reminder operation.' },
+      purpose: { type: 'string', description: 'Short user-visible reason for the request.' },
+      start_ms: { type: 'number', description: 'List range start as Unix milliseconds.' },
+      end_ms: { type: 'number', description: 'List range end as Unix milliseconds; maximum range is 31 days.' },
+      include_completed: { type: 'boolean', description: 'Include completed reminders when listing.' },
+      limit: { type: 'number', description: 'Maximum list result count, from 1 to 100.' },
+      item: { type: 'object', additionalProperties: true, description: 'Reminder fields: id (update/complete), title, due_ms, notes, priority, completed.' },
+      timeout_ms: { type: 'number', minimum: 3000, maximum: 300000, default: 300000, description: 'Wait time for user confirmation, from 3000 to 300000 milliseconds. Defaults to 5 minutes, matching the App consent card. Omit unless the user requests a shorter wait.' },
+    }, ['session_id', 'action', 'purpose']),
   },
   {
     name: 'hermes_studio_use_workflows_list',
@@ -1621,8 +1710,8 @@ const CATEGORY_TOOLSETS = {
   },
   use: {
     name: 'hermes_studio_use_toolset',
-    coverage: 'Explicit user-requested Studio chat/coding runs; session list/count/detail/messages/context/rename/delete; usage statistics; profiles and available models; provider add/delete; worker status; workflow CRUD and workflow run list/start/stop/rerun/delete.',
-    description: 'Discover and invoke high-level Hermes Studio operations without loading every Studio-use tool schema into the model context. Covers explicit user-requested chat or coding runs, session management and clean context, usage statistics, profiles/models/providers, worker status, workflow CRUD, and workflow run lifecycle. Never use chat/session operations as an internal delegation mechanism. Use action=list for the compact operation catalog, action=describe for one full input schema, then action=call with that exact tool name and arguments.',
+    coverage: 'Explicit user-requested Studio chat/coding runs; one-time confirmed mobile location, calendar and reminder operations; session list/count/detail/messages/context/rename/delete; usage statistics; profiles and available models; provider add/delete; worker status; workflow CRUD and workflow run list/start/stop/rerun/delete.',
+    description: 'Discover and invoke high-level Hermes Studio operations without loading every Studio-use tool schema into the model context. Covers explicit user-requested chat or coding runs, one-time confirmed mobile location, calendar/reminder operations, session management and clean context, usage statistics, profiles/models/providers, worker status, workflow CRUD, and workflow run lifecycle. Never use chat/session or mobile-device operations as an internal delegation mechanism. Use action=list for the compact operation catalog, action=describe for one full input schema, then action=call with that exact tool name and arguments.',
   },
 }
 
@@ -1814,7 +1903,7 @@ async function callTool(name, args = {}) {
       return jsonText(await requestEnvelope(path, options))
     }
     case 'hermes_studio_use_chat_run':
-      return jsonText(await request('/api/chat-run/runs', withAuthArgs(args, {
+      return jsonText(await request('/api/studio/chat-run/runs', withAuthArgs(args, {
         method: 'POST',
         body: pickDefined(args, [
           'input',
@@ -1838,34 +1927,34 @@ async function callTool(name, args = {}) {
         ]),
       })))
     case 'hermes_studio_use_sessions_list':
-      return jsonText(await request('/api/hermes/sessions', withAuthArgs(args, {
+      return jsonText(await request('/api/studio/sessions', withAuthArgs(args, {
         query: pickDefined(args, ['limit', 'source']),
       })))
     case 'hermes_studio_use_sessions_count':
-      return jsonText(await request('/api/hermes/sessions/count', withAuthArgs(args, {
+      return jsonText(await request('/api/studio/sessions/count', withAuthArgs(args, {
         query: pickDefined(args, ['source']),
       })))
     case 'hermes_studio_use_usage_stats':
-      return jsonText(await request('/api/hermes/usage/stats', withAuthArgs(args, {
+      return jsonText(await request('/api/studio/usage/stats', withAuthArgs(args, {
         query: pickDefined(args, ['days']),
       })))
     case 'hermes_studio_use_session_get':
-      return jsonText(await request(`/api/hermes/sessions/${encodeURIComponent(args.session_id)}`, withAuthArgs(args)))
+      return jsonText(await request(`/api/studio/sessions/${encodeURIComponent(args.session_id)}`, withAuthArgs(args)))
     case 'hermes_studio_use_session_messages':
-      return jsonText(await request(`/api/hermes/sessions/conversations/${encodeURIComponent(args.session_id)}/messages`, withAuthArgs(args, {
+      return jsonText(await request(`/api/studio/sessions/conversations/${encodeURIComponent(args.session_id)}/messages`, withAuthArgs(args, {
         query: args.include_internal ? { humanOnly: '0' } : undefined,
       })))
     case 'hermes_studio_use_session_context':
       return jsonText(cleanSessionContextPayload(
-        await request(`/api/hermes/sessions/${encodeURIComponent(args.session_id)}/context`, withAuthArgs(args)),
+        await request(`/api/studio/sessions/${encodeURIComponent(args.session_id)}/context`, withAuthArgs(args)),
         args,
       ))
     case 'hermes_studio_use_session_delete':
-      return jsonText(await request(`/api/hermes/sessions/${encodeURIComponent(args.session_id)}`, withAuthArgs(args, {
+      return jsonText(await request(`/api/studio/sessions/${encodeURIComponent(args.session_id)}`, withAuthArgs(args, {
         method: 'DELETE',
       })))
     case 'hermes_studio_use_session_rename':
-      return jsonText(await request(`/api/hermes/sessions/${encodeURIComponent(args.session_id)}/rename`, withAuthArgs(args, {
+      return jsonText(await request(`/api/studio/sessions/${encodeURIComponent(args.session_id)}/rename`, withAuthArgs(args, {
         method: 'POST',
         body: { title: args.title },
       })))
@@ -1901,16 +1990,37 @@ async function callTool(name, args = {}) {
       })))
     case 'hermes_studio_use_worker_status':
       return jsonText(summarizeWorkerRuntime(
-        await request('/api/hermes/performance/runtime', withAuthArgs(args)),
+        await request('/api/studio/performance/runtime', withAuthArgs(args)),
       ))
+    case 'hermes_studio_use_mobile_location':
+      return jsonText(await request('/api/studio/mobile-location/request', withAuthArgs(args, {
+        method: 'POST',
+        body: pickDefined(args, ['session_id', 'purpose', 'accuracy', 'timeout_ms']),
+      })))
+    case 'hermes_studio_use_mobile_calendar':
+      return jsonText(await request('/api/studio/mobile-calendar/request', withAuthArgs(currentMobileSessionArgs(args), {
+        method: 'POST',
+        body: {
+          capability: 'calendar',
+          ...pickDefined(currentMobileSessionArgs(args), ['session_id', 'action', 'purpose', 'start_ms', 'end_ms', 'limit', 'item', 'timeout_ms']),
+        },
+      })))
+    case 'hermes_studio_use_mobile_reminders':
+      return jsonText(await request('/api/studio/mobile-calendar/request', withAuthArgs(currentMobileSessionArgs(args), {
+        method: 'POST',
+        body: {
+          capability: 'reminder',
+          ...pickDefined(currentMobileSessionArgs(args), ['session_id', 'action', 'purpose', 'start_ms', 'end_ms', 'include_completed', 'limit', 'item', 'timeout_ms']),
+        },
+      })))
     case 'hermes_studio_use_workflows_list':
-      return jsonText(await request('/api/hermes/workflows', withAuthArgs(args, {
+      return jsonText(await request('/api/studio/workflows', withAuthArgs(args, {
         query: pickDefined(args, ['profile']),
       })))
     case 'hermes_studio_use_workflow_get':
-      return jsonText(await request(`/api/hermes/workflows/${encodeURIComponent(args.workflow_id)}`, withAuthArgs(args)))
+      return jsonText(await request(`/api/studio/workflows/${encodeURIComponent(args.workflow_id)}`, withAuthArgs(args)))
     case 'hermes_studio_use_workflow_create':
-      return jsonText(await request('/api/hermes/workflows', withAuthArgs(args, {
+      return jsonText(await request('/api/studio/workflows', withAuthArgs(args, {
         method: 'POST',
         body: pickDefined(args, [
           'name',
@@ -1922,7 +2032,7 @@ async function callTool(name, args = {}) {
         ]),
       })))
     case 'hermes_studio_use_workflow_update':
-      return jsonText(await request(`/api/hermes/workflows/${encodeURIComponent(args.workflow_id)}`, withAuthArgs(args, {
+      return jsonText(await request(`/api/studio/workflows/${encodeURIComponent(args.workflow_id)}`, withAuthArgs(args, {
         method: 'PATCH',
         body: pickDefined(args, [
           'name',
@@ -1933,15 +2043,15 @@ async function callTool(name, args = {}) {
         ]),
       })))
     case 'hermes_studio_use_workflow_delete':
-      return jsonText(await request(`/api/hermes/workflows/${encodeURIComponent(args.workflow_id)}`, withAuthArgs(args, {
+      return jsonText(await request(`/api/studio/workflows/${encodeURIComponent(args.workflow_id)}`, withAuthArgs(args, {
         method: 'DELETE',
       })))
     case 'hermes_studio_use_workflow_runs_list':
-      return jsonText(await request(`/api/hermes/workflows/${encodeURIComponent(args.workflow_id)}/runs`, withAuthArgs(args, {
+      return jsonText(await request(`/api/studio/workflows/${encodeURIComponent(args.workflow_id)}/runs`, withAuthArgs(args, {
         query: pickDefined(args, ['limit']),
       })))
     case 'hermes_studio_use_workflow_run_start':
-      return jsonText(await request(`/api/hermes/workflows/${encodeURIComponent(args.workflow_id)}/run`, withAuthArgs(args, {
+      return jsonText(await request(`/api/studio/workflows/${encodeURIComponent(args.workflow_id)}/run`, withAuthArgs(args, {
         method: 'POST',
         body: pickDefined(args, [
           'start_node_ids',
@@ -1950,11 +2060,11 @@ async function callTool(name, args = {}) {
         ]),
       })))
     case 'hermes_studio_use_workflow_run_stop':
-      return jsonText(await request(`/api/hermes/workflows/${encodeURIComponent(args.workflow_id)}/runs/${encodeURIComponent(args.run_id)}/stop`, withAuthArgs(args, {
+      return jsonText(await request(`/api/studio/workflows/${encodeURIComponent(args.workflow_id)}/runs/${encodeURIComponent(args.run_id)}/stop`, withAuthArgs(args, {
         method: 'POST',
       })))
     case 'hermes_studio_use_workflow_rerun_node':
-      return jsonText(await request(`/api/hermes/workflows/${encodeURIComponent(args.workflow_id)}/runs/${encodeURIComponent(args.run_id)}/rerun-from-node`, withAuthArgs(args, {
+      return jsonText(await request(`/api/studio/workflows/${encodeURIComponent(args.workflow_id)}/runs/${encodeURIComponent(args.run_id)}/rerun-from-node`, withAuthArgs(args, {
         method: 'POST',
         body: pickDefined(args, [
           'node_id',
@@ -1963,7 +2073,7 @@ async function callTool(name, args = {}) {
         ]),
       })))
     case 'hermes_studio_use_workflow_run_delete':
-      return jsonText(await request(`/api/hermes/workflows/${encodeURIComponent(args.workflow_id)}/runs/${encodeURIComponent(args.run_id)}`, withAuthArgs(args, {
+      return jsonText(await request(`/api/studio/workflows/${encodeURIComponent(args.workflow_id)}/runs/${encodeURIComponent(args.run_id)}`, withAuthArgs(args, {
         method: 'DELETE',
       })))
     case 'hermes_studio_lan_devices_list':

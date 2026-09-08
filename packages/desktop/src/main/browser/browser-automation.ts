@@ -76,10 +76,12 @@ export class BrowserAutomation {
     this.snapshots.delete(tabId)
   }
 
-  detach(tabId: string, contents: WebContents): void {
+  detach(tabId: string, contents?: WebContents): void {
     this.invalidate(tabId)
-    if (contents.debugger.isAttached()) {
-      try { contents.debugger.detach() } catch { /* already detached */ }
+    if (!contents || contents.isDestroyed()) return
+    const debuggerApi = contents.debugger
+    if (debuggerApi.isAttached()) {
+      try { debuggerApi.detach() } catch { /* already detached */ }
     }
   }
 

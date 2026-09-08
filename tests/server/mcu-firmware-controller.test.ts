@@ -27,7 +27,7 @@ describe('MCU firmware controller', () => {
 
     const firmware = Buffer.from('firmware-v1')
     await writeFile(path.join(tempRoot, 'dist/mcu/v1/firmware.bin'), firmware)
-    const ctrl = await import('../../packages/server/src/controllers/hermes/mcu-firmware')
+    const ctrl = await import('../../packages/server/src/modules/studio/controllers/mcu-firmware')
     const ctx = makeCtx({ version: 'v1' })
 
     await ctrl.manifest(ctx)
@@ -42,7 +42,7 @@ describe('MCU firmware controller', () => {
       size: firmware.length,
       sha256: createHash('sha256').update(firmware).digest('hex'),
       md5: createHash('md5').update(firmware).digest('hex'),
-      url: '/api/hermes/mcu/firmware/v1/firmware.bin',
+      url: '/api/studio/mcu/firmware/v1/firmware.bin',
     })
   })
 
@@ -53,7 +53,7 @@ describe('MCU firmware controller', () => {
 
     const firmware = Buffer.from('legacy-device-v1')
     await writeFile(path.join(tempRoot, 'dist/mcu/v1/firmware.bin'), firmware)
-    const ctrl = await import('../../packages/server/src/controllers/hermes/mcu-firmware')
+    const ctrl = await import('../../packages/server/src/modules/studio/controllers/mcu-firmware')
     const ctx = makeCtx({})
 
     await ctrl.legacyManifest(ctx)
@@ -62,7 +62,7 @@ describe('MCU firmware controller', () => {
     expect(ctx.body).toMatchObject({
       updateAvailable: true,
       firmwareVersion: 'v1',
-      url: '/api/hermes/mcu/firmware/v1/firmware.bin',
+      url: '/api/studio/mcu/firmware/v1/firmware.bin',
       md5: createHash('md5').update(firmware).digest('hex'),
     })
   })
@@ -74,7 +74,7 @@ describe('MCU firmware controller', () => {
 
     const firmware = Buffer.from('firmware-v2')
     await writeFile(path.join(tempRoot, 'dist/mcu/v2/firmware.bin'), firmware)
-    const ctrl = await import('../../packages/server/src/controllers/hermes/mcu-firmware')
+    const ctrl = await import('../../packages/server/src/modules/studio/controllers/mcu-firmware')
     const ctx = makeCtx({ version: 'v2' })
 
     await ctrl.manifest(ctx)
@@ -85,7 +85,7 @@ describe('MCU firmware controller', () => {
       firmwareVersion: 'v2',
       size: firmware.length,
       md5: createHash('md5').update(firmware).digest('hex'),
-      url: '/api/hermes/mcu/firmware/v2/firmware.bin',
+      url: '/api/studio/mcu/firmware/v2/firmware.bin',
     })
   })
 
@@ -94,7 +94,7 @@ describe('MCU firmware controller', () => {
     process.chdir(tempRoot)
     vi.stubEnv('NODE_ENV', 'production')
 
-    const ctrl = await import('../../packages/server/src/controllers/hermes/mcu-firmware')
+    const ctrl = await import('../../packages/server/src/modules/studio/controllers/mcu-firmware')
     const ctx = makeCtx({ version: 'v3' })
 
     await ctrl.manifest(ctx)

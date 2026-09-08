@@ -6,7 +6,7 @@ import {
   resolveMentionTargets,
   resolveStructuredMentionTargets,
   stripMentionRoutingTokens,
-} from '../../packages/server/src/services/hermes/group-chat/mention-routing'
+} from '../../packages/server/src/modules/studio/services/group-chat/mention-routing'
 
 type TestAgent = { name: string; id?: string; agentId?: string; profile?: string }
 

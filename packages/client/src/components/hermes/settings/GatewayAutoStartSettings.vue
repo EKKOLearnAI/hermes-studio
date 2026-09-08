@@ -10,6 +10,9 @@ const settingsStore = useSettingsStore()
 const profilesStore = useProfilesStore()
 const message = useMessage()
 const { t } = useI18n()
+withDefaults(defineProps<{ standalone?: boolean }>(), {
+  standalone: false,
+})
 
 const enabled = computed(() => settingsStore.gatewayAutoStart.enabled !== false)
 const mode = computed(() => Array.isArray(settingsStore.gatewayAutoStart.include) ? 'include' : 'all')
@@ -72,7 +75,7 @@ function saveExclude(value: string[]) {
 </script>
 
 <template>
-  <section class="settings-section gateway-auto-start-settings">
+  <section class="settings-section gateway-auto-start-settings" :class="{ standalone }">
     <h3 class="section-title">{{ t('settings.gatewayAutoStart.title') }}</h3>
     <p class="section-hint">{{ t('settings.gatewayAutoStart.description') }}</p>
 
@@ -144,6 +147,12 @@ function saveExclude(value: string[]) {
 .gateway-auto-start-settings {
   padding-top: 16px;
   border-top: 1px solid var(--border-color);
+
+  &.standalone {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: 0;
+  }
 }
 
 .section-title {

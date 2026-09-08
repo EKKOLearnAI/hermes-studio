@@ -173,7 +173,7 @@ test('opens a Profile-generated package.json even when the session has no explic
   const api = await mockHermesApi(page, { sessions: [{ ...session, workspace: null }] })
   let previewRequestUrl = ''
   let previewAuthorization = ''
-  await page.route(`**/api/hermes/sessions/${sessionId}/workspace-file/content**`, async route => {
+  await page.route(`**/api/studio/sessions/${sessionId}/workspace-file/content**`, async route => {
     previewRequestUrl = route.request().url()
     previewAuthorization = route.request().headers().authorization || ''
     await route.fulfill({
@@ -185,15 +185,15 @@ test('opens a Profile-generated package.json even when the session has no explic
   await mockChatSocket(page)
 
   await page.goto(`/#/hermes/session/${sessionId}`)
-  const fileCard = page.locator('.markdown-file-card', { hasText: 'package.json' })
-  await expect(fileCard).toBeVisible()
-  await fileCard.click()
+  const fileLink = page.locator('.markdown-file-link', { hasText: 'package.json' })
+  await expect(fileLink).toBeVisible({ timeout: 15_000 })
+  await fileLink.click()
 
   const toolPanel = page.locator('.chat-tool-panel')
   await expect(toolPanel.locator('.file-preview')).toBeVisible()
   await expect(toolPanel.locator('.preview-filename')).toHaveText(generatedPath)
   await expect(toolPanel.locator('.preview-code')).toContainText('generated-preview')
-  await expect(toolPanel.locator('.chat-tool-tabs')).toHaveCount(1)
+  await expect(toolPanel.locator('.chat-tool-tabs')).toHaveCount(0)
 
   const requestUrl = new URL(previewRequestUrl)
   expect(requestUrl.searchParams.get('path')).toBe(generatedPath)
@@ -201,8 +201,204 @@ test('opens a Profile-generated package.json even when the session has no explic
   expect(previewAuthorization).toBe(`Bearer ${TEST_ACCESS_KEY}`)
 
   await toolPanel.getByRole('button', { name: 'Close', exact: true }).click()
-  await expect(toolPanel.locator('.file-preview')).toHaveCount(0)
+  await expect(toolPanel).toHaveCount(0)
+  expect(api.unexpectedRequests).toEqual([])
+})
+
+test('opens the reported code-styled local file link in the side preview', async ({ page }) => {
+  const relativePath = 'release-maintainer/SKILL.md'
+  const absolutePath = `${sessionWorkspace}/${relativePath}`
+  await authenticate(page, TEST_ACCESS_KEY, 'research')
+  await page.addInitScript(({ id, label, path }) => {
+    ;(window as any).__PW_CHAT_SOCKET_RESUMES__ = {
+      [id]: {
+        session_id: id,
+        messages: [{
+          id: 1,
+          session_id: id,
+          role: 'assistant',
+          content: `Updated [\`${label}\`](<${path}>)`,
+          timestamp: 1_790_000_001,
+          tool_call_id: null,
+          tool_calls: null,
+          tool_name: null,
+          token_count: null,
+          finish_reason: null,
+          reasoning: null,
+        }],
+        isWorking: false,
+        events: [],
+      },
+    }
+  }, { id: sessionId, label: relativePath, path: absolutePath })
+
+  const api = await mockHermesApi(page, { sessions: [session] })
+  let previewRequestUrl = ''
+  let downloadRequests = 0
+  let releaseFirstPreview!: () => void
+  let releaseSecondPreview!: () => void
+  let markFirstPreviewStarted!: () => void
+  let markSecondPreviewStarted!: () => void
+  const firstPreviewGate = new Promise<void>(resolve => { releaseFirstPreview = resolve })
+  const secondPreviewGate = new Promise<void>(resolve => { releaseSecondPreview = resolve })
+  const firstPreviewStarted = new Promise<void>(resolve => { markFirstPreviewStarted = resolve })
+  const secondPreviewStarted = new Promise<void>(resolve => { markSecondPreviewStarted = resolve })
+  let previewRequestCount = 0
+  await page.route(`**/api/studio/sessions/${sessionId}/workspace-file/content**`, async route => {
+    previewRequestUrl = route.request().url()
+    if (previewRequestCount++ === 0) {
+      markFirstPreviewStarted()
+      await firstPreviewGate
+    } else {
+      markSecondPreviewStarted()
+      await secondPreviewGate
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/plain; charset=utf-8',
+      body: '# Release Maintainer\n\nOpened from the exact reported link shape.\n',
+    })
+  })
+  await page.route('**/api/studio/files/download**', async route => {
+    downloadRequests += 1
+    await route.fulfill({ status: 200, contentType: 'text/markdown', body: '# downloaded' })
+  })
+  await mockChatSocket(page)
+
+  await page.goto(`/#/hermes/session/${sessionId}`)
+  const fileLink = page.locator('.markdown-body a', { hasText: relativePath })
+  await expect(fileLink).toBeVisible({ timeout: 15_000 })
+  await expect(fileLink.locator('code')).toHaveText(relativePath)
+  await expect(fileLink).toHaveClass(/markdown-file-link/)
+  await expect(fileLink).toHaveCSS('text-decoration-style', 'dotted')
+  await expect(fileLink.locator('code')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+  await expect(fileLink.locator('code')).toHaveCSS('padding-top', '0px')
+  const toolPanel = page.locator('.chat-tool-panel')
+  await expect(toolPanel).toHaveCount(0)
+
+  await fileLink.click()
+  await firstPreviewStarted
+  await expect(toolPanel).toBeVisible()
+  await expect(toolPanel.locator('.chat-file-preview-loading')).toBeVisible()
+  await expect(toolPanel.locator('.files-tree-panel')).toHaveCount(0)
+  await expect(toolPanel.locator('.chat-tool-tabs')).toHaveCount(0)
+  releaseFirstPreview()
+  await expect(toolPanel.locator('.file-preview')).toBeVisible()
+  await toolPanel.getByRole('button', { name: 'Close', exact: true }).click()
+  await expect(toolPanel).toHaveCount(0)
+
+  await page.locator('.header-tool-toggle').click()
   await expect(toolPanel.locator('.files-tree-panel')).toBeVisible()
+  await fileLink.click()
+  await secondPreviewStarted
+  await expect(toolPanel.locator('.chat-file-preview-loading')).toBeVisible()
+  await expect(toolPanel.locator('.files-tree-panel')).toHaveCount(0)
+  await expect(toolPanel.locator('.chat-tool-tabs')).toHaveCount(0)
+  releaseSecondPreview()
+  await expect(toolPanel.locator('.file-preview')).toBeVisible()
+  await expect(toolPanel.locator('.files-tree-panel')).toHaveCount(0)
+  await expect(toolPanel.locator('.chat-tool-tabs')).toHaveCount(0)
+  await expect(toolPanel.locator('.preview-filename')).toHaveText(relativePath)
+  await expect(toolPanel.locator('.preview-markdown')).toContainText('Opened from the exact reported link shape.')
+  expect(new URL(previewRequestUrl).searchParams.get('path')).toBe(relativePath)
+  expect(downloadRequests).toBe(0)
+  expect(api.unexpectedRequests).toEqual([])
+})
+
+test('opens GitHub-style line anchors and reveals the requested range in the side preview', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const relativePath = 'server/src/services/runtime-kernel/heartbeat.release.ts'
+  const absolutePath = `${sessionWorkspace}/${relativePath}`
+  await authenticate(page, TEST_ACCESS_KEY, 'research')
+  await page.addInitScript(({ id, path }) => {
+    ;(window as any).__PW_CHAT_SOCKET_RESUMES__ = {
+      [id]: {
+        session_id: id,
+        messages: [{
+          id: 1,
+          session_id: id,
+          role: 'assistant',
+          content: `[补偿升级入口:550](<${path}#L550-L552>)`,
+          timestamp: 1_790_000_001,
+          tool_call_id: null,
+          tool_calls: null,
+          tool_name: null,
+          token_count: null,
+          finish_reason: null,
+          reasoning: null,
+        }],
+        isWorking: false,
+        events: [],
+      },
+    }
+  }, { id: sessionId, path: absolutePath })
+
+  const api = await mockHermesApi(page, { sessions: [session] })
+  let previewRequestUrl = ''
+  await page.route(`**/api/studio/sessions/${sessionId}/workspace-file/content**`, async route => {
+    previewRequestUrl = route.request().url()
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/plain; charset=utf-8',
+      body: Array.from(
+        { length: 600 },
+        (_, index) => index === 549
+          ? `const targetLine = 550 // ${'long source content '.repeat(20)}END_OF_LINE`
+          : `const line${index + 1} = ${index + 1}`,
+      ).join('\n'),
+    })
+  })
+  await mockChatSocket(page)
+
+  await page.goto(`/#/hermes/session/${sessionId}`)
+  const reference = page.locator('.markdown-file-link', { hasText: '补偿升级入口:550' })
+  await expect(reference).toBeVisible({ timeout: 15_000 })
+  await expect(reference).toHaveCSS('text-decoration-style', 'dotted')
+  await expect(page.locator('.markdown-file-card', { hasText: '补偿升级入口:550' })).toHaveCount(0)
+  await expect(page.locator('.att-download-btn')).toHaveCount(0)
+  const evidenceDir = process.env.HERMES_VISUAL_EVIDENCE_DIR
+  if (evidenceDir) {
+    await page.screenshot({ path: `${evidenceDir}/01-inline-file-link.png`, animations: 'disabled' })
+  }
+  await reference.click()
+
+  const toolPanel = page.locator('.chat-tool-panel')
+  const source = toolPanel.locator('.preview-source')
+  const target = source.locator('.preview-source-line[data-line="550"]')
+  await expect(target).toBeVisible()
+  await expect(target).toContainText('const targetLine = 550')
+  await expect(target).toHaveClass(/is-target-line/)
+  await expect(source.locator('.preview-source-line.is-target-line')).toHaveCount(3)
+  expect(await source.locator('.preview-source-line').count()).toBeLessThan(100)
+  await expect(target).toBeInViewport()
+  await expect(source).toBeFocused()
+  await expect.poll(() => source.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
+  if (evidenceDir) {
+    await page.screenshot({ path: `${evidenceDir}/02-line-range-preview.png`, animations: 'disabled' })
+  }
+
+  // A located line must remain readable beyond the side panel's width.
+  const initialScrollTop = await source.evaluate(element => element.scrollTop)
+  await source.evaluate(element => { element.scrollLeft = element.scrollWidth })
+  await expect.poll(() => source.evaluate(element => element.scrollLeft)).toBeGreaterThan(0)
+  await expect.poll(() => target.locator('code').evaluate(element => {
+    const text = element.firstChild!
+    const range = document.createRange()
+    range.setStart(text, text.textContent!.length - 'END_OF_LINE'.length)
+    range.setEnd(text, text.textContent!.length)
+    const tail = range.getBoundingClientRect()
+    const viewport = element.closest('.preview-source')!.getBoundingClientRect()
+    return tail.left >= viewport.left && tail.right <= viewport.right
+  })).toBe(true)
+  expect(await source.evaluate(element => element.scrollTop)).toBe(initialScrollTop)
+  await expect(target).toHaveClass(/is-target-line/)
+  if (evidenceDir) {
+    await page.screenshot({ path: `${evidenceDir}/03-long-line-scrolled.png`, animations: 'disabled' })
+  }
+
+  const requestUrl = new URL(previewRequestUrl)
+  expect(requestUrl.searchParams.get('path')).toBe(relativePath)
+  expect(requestUrl.searchParams.get('path')).not.toContain('#L')
   expect(api.unexpectedRequests).toEqual([])
 })
 
@@ -234,7 +430,7 @@ test('HTML source mode remains scrollable while its scrollbar is hidden', async 
 
   const api = await mockHermesApi(page, { sessions: [session] })
   const longHtml = `<main>\n${Array.from({ length: 300 }, (_, index) => `  <p>Line ${index + 1}</p>`).join('\n')}\n</main>`
-  await page.route(`**/api/hermes/sessions/${sessionId}/workspace-file/content**`, route => route.fulfill({
+  await page.route(`**/api/studio/sessions/${sessionId}/workspace-file/content**`, route => route.fulfill({
     status: 200,
     contentType: 'text/html; charset=utf-8',
     body: longHtml,
@@ -242,7 +438,7 @@ test('HTML source mode remains scrollable while its scrollbar is hidden', async 
   await mockChatSocket(page)
 
   await page.goto(`/#/hermes/session/${sessionId}`)
-  await page.locator('.markdown-file-card', { hasText: 'long-preview.html' }).click()
+  await page.locator('.markdown-file-link', { hasText: 'long-preview.html' }).click()
   const panel = page.locator('.chat-tool-panel')
   await panel.getByRole('button', { name: 'Source', exact: true }).click()
   const source = panel.locator('.source-view')
@@ -289,7 +485,7 @@ test('XLSX preview parses workbook sheets inside the isolated worker', async ({ 
   }, { id: sessionId, path: workbookPath })
 
   const api = await mockHermesApi(page, { sessions: [session] })
-  await page.route(`**/api/hermes/sessions/${sessionId}/workspace-file/content**`, route => route.fulfill({
+  await page.route(`**/api/studio/sessions/${sessionId}/workspace-file/content**`, route => route.fulfill({
     status: 200,
     contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     body: createXlsxFixture(),
@@ -297,7 +493,7 @@ test('XLSX preview parses workbook sheets inside the isolated worker', async ({ 
   await mockChatSocket(page)
 
   await page.goto(`/#/hermes/session/${sessionId}`)
-  await page.locator('.markdown-file-card', { hasText: 'sales.xlsx' }).click()
+  await page.locator('.markdown-file-link', { hasText: 'sales.xlsx' }).click()
   const panel = page.locator('.chat-tool-panel')
   await expect(panel.getByRole('button', { name: 'Sales Data', exact: true })).toBeVisible()
   await expect(panel.locator('.n-data-table')).toContainText('Product')
@@ -335,7 +531,7 @@ test('DOCX, PDF, and PPTX lazy renderers open safely and cleanly replace one ano
   }, { id: sessionId, docx: docxPath, pdf: pdfPath, pptx: pptxPath })
 
   const api = await mockHermesApi(page, { sessions: [session] })
-  await page.route(`**/api/hermes/sessions/${sessionId}/workspace-file/content**`, route => {
+  await page.route(`**/api/studio/sessions/${sessionId}/workspace-file/content**`, route => {
     const path = new URL(route.request().url()).searchParams.get('path') || ''
     if (path.endsWith('.docx')) {
       return route.fulfill({
@@ -356,20 +552,19 @@ test('DOCX, PDF, and PPTX lazy renderers open safely and cleanly replace one ano
   await mockChatSocket(page)
 
   await page.goto(`/#/hermes/session/${sessionId}`)
-  await page.locator('.markdown-file-card', { hasText: 'brief.docx' }).click()
+  await page.locator('.markdown-file-link', { hasText: 'brief.docx' }).click()
   const panel = page.locator('.chat-tool-panel')
   await expect(panel.locator('.docx-container')).toContainText('Hermes DOCX Preview')
   await panel.getByRole('button', { name: 'Close', exact: true }).click()
-  await expect(panel.locator('.file-preview')).toHaveCount(0)
-  await expect(panel.locator('.files-tree-panel')).toBeVisible()
+  await expect(panel).toHaveCount(0)
 
-  await page.locator('.markdown-file-card', { hasText: 'report.pdf' }).click()
+  await page.locator('.markdown-file-link', { hasText: 'report.pdf' }).click()
   const canvas = page.locator('.chat-tool-panel .pdf-stage canvas')
   await expect(canvas).toBeVisible()
   await expect.poll(() => canvas.evaluate(element => (element as HTMLCanvasElement).width)).toBeGreaterThan(0)
   await page.locator('.chat-tool-panel').getByRole('button', { name: 'Close', exact: true }).click()
 
-  await page.locator('.markdown-file-card', { hasText: 'deck.pptx' }).click()
+  await page.locator('.markdown-file-link', { hasText: 'deck.pptx' }).click()
   await expect(page.locator('.chat-tool-panel .pptx-renderer-host')).toContainText('Hermes PPTX Preview')
   expect(api.unexpectedRequests).toEqual([])
 })

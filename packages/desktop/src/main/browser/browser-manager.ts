@@ -219,11 +219,12 @@ export class BrowserManager {
     await this.clearAnnotations(tabId, false)
     const ids = [...this.records.keys()]
     const index = ids.indexOf(tabId)
+    const contents = record.view.webContents
     this.window.contentView.removeChildView(record.view)
-    this.automation.detach(tabId, record.view.webContents)
+    this.automation.detach(tabId, contents)
     this.automationVisibleTabs.delete(tabId)
     this.agentDownloadGuardUntil.delete(tabId)
-    record.view.webContents.close()
+    if (contents && !contents.isDestroyed()) contents.close()
     this.records.delete(tabId)
     if (this.activeTabId === tabId) this.activeTabId = [...this.records.keys()][Math.max(0, index - 1)]
     await this.persistTabs()
@@ -580,14 +581,10 @@ export class BrowserManager {
         screenshot: whole,
       }
     } catch (error) {
-      await record.view.webContents.executeJavaScriptInIsolatedWorld(ANNOTATION_WORLD_ID, [{
-        code: `(()=>{const state=globalThis[${JSON.stringify(ANNOTATION_STATE_KEY)}];const mark=state?.marks?.get(${marker});if(mark){mark.box.remove();state.marks.delete(${marker});if(!state.marks.size)state.destroy()}})()`,
-      }], true).catch(() => undefined)
+      await this.cleanupAnnotationPage(tabId, `(()=>{const state=globalThis[${JSON.stringify(ANNOTATION_STATE_KEY)}];const mark=state?.marks?.get(${marker});if(mark){mark.box.remove();state.marks.delete(${marker});if(!state.marks.size)state.destroy()}})()`)
       throw error
     } finally {
-      await record.view.webContents.executeJavaScriptInIsolatedWorld(ANNOTATION_WORLD_ID, [{
-        code: `dispatchEvent(new CustomEvent(${JSON.stringify(ANNOTATION_CANCEL_EVENT)}))`,
-      }], true).catch(() => undefined)
+      await this.cleanupAnnotationPage(tabId, `dispatchEvent(new CustomEvent(${JSON.stringify(ANNOTATION_CANCEL_EVENT)}))`)
       this.activeAnnotationTabs.delete(tabId)
       this.emitState()
     }
@@ -595,14 +592,13 @@ export class BrowserManager {
 
   async cancelAnnotation(tabId: string): Promise<boolean> {
     if (!this.activeAnnotationTabs.has(tabId)) return false
-    const record = this.records.get(tabId)
-    if (!record || record.view.webContents.isDestroyed()) {
+    const contents = this.records.get(tabId)?.view.webContents
+    if (!contents || contents.isDestroyed()) {
       this.activeAnnotationTabs.delete(tabId)
+      this.emitState()
       return false
     }
-    await record.view.webContents.executeJavaScriptInIsolatedWorld(ANNOTATION_WORLD_ID, [{
-      code: `dispatchEvent(new CustomEvent(${JSON.stringify(ANNOTATION_CANCEL_EVENT)}))`,
-    }], true).catch(() => undefined)
+    await this.cleanupAnnotationPage(tabId, `dispatchEvent(new CustomEvent(${JSON.stringify(ANNOTATION_CANCEL_EVENT)}))`)
     return true
   }
 
@@ -624,18 +620,37 @@ export class BrowserManager {
     return this.screenshot(tabId, false)
   }
 
+  async removeAnnotation(tabId: string, marker: number): Promise<boolean> {
+    if (!Number.isSafeInteger(marker) || marker < 1) throw new Error('Invalid browser annotation marker')
+    if (this.activeAnnotationTabs.has(tabId)) throw new Error('An annotation is already active in this tab')
+    const contents = this.requireTab(tabId).view.webContents
+    if (!contents || contents.isDestroyed()) throw new Error('Browser tab is no longer available')
+    const remaining = await contents.executeJavaScriptInIsolatedWorld(ANNOTATION_WORLD_ID, [{
+      code: `(()=>{const state=globalThis[${JSON.stringify(ANNOTATION_STATE_KEY)}];if(!state)return [];const mark=state.marks.get(${marker});if(mark){mark.box.remove();state.marks.delete(${marker})}const remaining=[...state.marks.keys()];if(!remaining.length)state.destroy();return remaining})()`,
+    }], true) as number[]
+    if (this.records.get(tabId)?.view.webContents !== contents || contents.isDestroyed()) return true
+    // Keep surviving marker numbers stable so their notes and submitted refs agree.
+    if (remaining.length) this.annotationMarkerCounts.set(tabId, Math.max(...remaining))
+    else this.annotationMarkerCounts.delete(tabId)
+    this.emitState()
+    return true
+  }
+
+  private async cleanupAnnotationPage(tabId: string, code: string): Promise<void> {
+    const contents = this.records.get(tabId)?.view.webContents
+    if (!contents || contents.isDestroyed()) return
+    try {
+      await contents.executeJavaScriptInIsolatedWorld(ANNOTATION_WORLD_ID, [{ code }], true)
+    } catch { /* the renderer may disappear while annotation cleanup is running */ }
+  }
+
   async clearAnnotations(tabId: string, waitForPage = true): Promise<boolean> {
     const wasActive = this.activeAnnotationTabs.has(tabId)
     const hadMarks = this.annotationMarkerCounts.has(tabId)
     if (!wasActive && !hadMarks) return false
-    const record = this.records.get(tabId)
-    if (record && !record.view.webContents.isDestroyed()) {
-      const cleanup = record.view.webContents.executeJavaScriptInIsolatedWorld(ANNOTATION_WORLD_ID, [{
-        code: `dispatchEvent(new CustomEvent(${JSON.stringify(ANNOTATION_CANCEL_EVENT)}));globalThis[${JSON.stringify(ANNOTATION_STATE_KEY)}]?.destroy?.()`,
-      }], true).catch(() => undefined)
-      if (waitForPage) await cleanup
-      else void cleanup
-    }
+    const cleanup = this.cleanupAnnotationPage(tabId, `dispatchEvent(new CustomEvent(${JSON.stringify(ANNOTATION_CANCEL_EVENT)}));globalThis[${JSON.stringify(ANNOTATION_STATE_KEY)}]?.destroy?.()`)
+    if (waitForPage) await cleanup
+    else void cleanup
     this.activeAnnotationTabs.delete(tabId)
     this.annotationMarkerCounts.delete(tabId)
     if (wasActive || hadMarks) this.emitState()
@@ -741,13 +756,15 @@ export class BrowserManager {
     })
     contents.on('page-favicon-updated', (_event, favicons) => { tab.faviconUrl = favicons[0]; this.emitState() })
     contents.on('render-process-gone', () => { tab.crashed = true; tab.loading = false; this.emitState() })
-    contents.debugger.on('detach', () => {
-      this.automation.invalidate(id)
-      tab.agentControl = 'idle'
-      tab.agentLabel = undefined
-      tab.agentAction = undefined
-      this.emitState()
-    })
+    if (!contents.isDestroyed()) {
+      contents.debugger.on('detach', () => {
+        this.automation.invalidate(id)
+        tab.agentControl = 'idle'
+        tab.agentLabel = undefined
+        tab.agentAction = undefined
+        this.emitState()
+      })
+    }
     contents.on('console-message', details => {
       const levelNumber = ({ debug: 0, info: 1, warning: 2, error: 3 } as Record<string, number>)[details.level] ?? 1
       record.console.push({ level: levelNumber, message: details.message, line: details.lineNumber, sourceId: details.sourceId, timestamp: new Date().toISOString() })
@@ -937,6 +954,7 @@ export class BrowserManager {
 
   private refreshTab(record: TabRecord): void {
     const contents = record.view.webContents
+    if (!contents || contents.isDestroyed()) return
     const currentUrl = contents.getURL() || 'about:blank'
     const isHtmlPreview = !!record.htmlPreviewTitle && currentUrl.startsWith('data:text/html')
     if (record.htmlPreviewTitle) record.ephemeral = isHtmlPreview
@@ -989,9 +1007,10 @@ export class BrowserManager {
 
   private destroyViews(): void {
     for (const [id, record] of this.records) {
+      const contents = record.view.webContents
       this.window.contentView.removeChildView(record.view)
-      this.automation.detach(id, record.view.webContents)
-      if (!record.view.webContents.isDestroyed()) record.view.webContents.close()
+      this.automation.detach(id, contents)
+      if (contents && !contents.isDestroyed()) contents.close()
     }
     this.records.clear()
     this.automationVisibleTabs.clear()

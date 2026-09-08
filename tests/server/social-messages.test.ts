@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { FeishuSocialMessageAdapter } from '../../packages/server/src/services/social-messages/adapters/feishu'
-import { TelegramSocialMessageAdapter } from '../../packages/server/src/services/social-messages/adapters/telegram'
-import { WeixinSocialMessageAdapter } from '../../packages/server/src/services/social-messages/adapters/weixin'
-import { SocialMessageService } from '../../packages/server/src/services/social-messages/service'
-import type { SocialMessageAdapter, SocialMessageSendInput } from '../../packages/server/src/services/social-messages/types'
+import { FeishuSocialMessageAdapter } from '../../packages/server/src/modules/studio/services/social-messages/adapters/feishu'
+import { TelegramSocialMessageAdapter } from '../../packages/server/src/modules/studio/services/social-messages/adapters/telegram'
+import { WeixinSocialMessageAdapter } from '../../packages/server/src/modules/studio/services/social-messages/adapters/weixin'
+import { SocialMessageService } from '../../packages/server/src/modules/studio/services/social-messages/service'
+import type { SocialMessageAdapter, SocialMessageSendInput } from '../../packages/server/src/modules/studio/services/social-messages/types'
 
 const { feishuCreate, FeishuClient } = vi.hoisted(() => {
   const create = vi.fn()

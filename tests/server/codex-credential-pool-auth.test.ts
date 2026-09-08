@@ -41,26 +41,28 @@ function makeCtx(profile?: string): any {
 
 async function loadModelsController() {
   vi.resetModules()
-  vi.doMock('../../packages/server/src/services/app-config', () => ({
+  vi.doMock('../../packages/server/src/modules/studio/public/app-config', () => ({
     readAppConfig: vi.fn().mockResolvedValue({}),
     providerDisplayLabel: (_appConfig: any, _profile: string, _providerId: string, fallback: string) => fallback,
   }))
-  vi.doMock('../../packages/server/src/services/hermes/copilot-models', () => ({
+  vi.doMock('../../packages/server/src/modules/hermes/services/providers/copilot-models', () => ({
     getCopilotModelsDetailed: vi.fn().mockResolvedValue([]),
     resolveCopilotOAuthToken: vi.fn().mockResolvedValue(''),
   }))
-  return import('../../packages/server/src/controllers/hermes/models')
+  await import('../../packages/server/src/bootstrap/agent-profile-adapter')
+  return import('../../packages/server/src/modules/hermes/controllers/models')
 }
 
 async function loadCodexAuthController() {
   vi.resetModules()
-  vi.doMock('../../packages/server/src/services/logger', () => ({
+  vi.doMock('../../packages/server/src/modules/studio/public/logging', () => ({
     logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn() },
   }))
-  vi.doMock('../../packages/server/src/services/hermes/authorized-provider-credentials', () => ({
+  vi.doMock('../../packages/server/src/modules/hermes/services/providers/authorized-provider-credentials', () => ({
     resolveAuthorizedProviderRuntimeCredentials: mockResolveAuthorizedCredentials,
   }))
-  return import('../../packages/server/src/controllers/hermes/codex-auth')
+  await import('../../packages/server/src/bootstrap/agent-profile-adapter')
+  return import('../../packages/server/src/modules/hermes/controllers/codex-auth')
 }
 
 describe('OpenAI Codex credential pool auth compatibility', () => {
@@ -75,10 +77,10 @@ describe('OpenAI Codex credential pool auth compatibility', () => {
   })
 
   afterEach(() => {
-    vi.doUnmock('../../packages/server/src/services/app-config')
-    vi.doUnmock('../../packages/server/src/services/hermes/copilot-models')
-    vi.doUnmock('../../packages/server/src/services/logger')
-    vi.doUnmock('../../packages/server/src/services/hermes/authorized-provider-credentials')
+    vi.doUnmock('../../packages/server/src/modules/studio/public/app-config')
+    vi.doUnmock('../../packages/server/src/modules/hermes/services/providers/copilot-models')
+    vi.doUnmock('../../packages/server/src/modules/studio/public/logging')
+    vi.doUnmock('../../packages/server/src/modules/hermes/services/providers/authorized-provider-credentials')
     delete process.env.HERMES_HOME
     delete process.env.HERMES_WEB_UI_HOME
     delete process.env.CODEX_HOME

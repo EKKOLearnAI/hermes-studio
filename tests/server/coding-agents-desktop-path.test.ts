@@ -75,7 +75,7 @@ afterEach(() => {
 
 describe('coding agent desktop PATH detection', () => {
   it('detects Claude from the login shell PATH when Electron PATH is minimal', async () => {
-    const { getCodingAgentStatus } = await import('../../packages/server/src/services/coding-agents')
+    const { getCodingAgentStatus } = await import('../../packages/server/src/bootstrap/coding-agents')
     const status = await getCodingAgentStatus({
       id: 'claude-code',
       name: 'Claude Code',

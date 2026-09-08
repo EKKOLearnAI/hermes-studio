@@ -5,7 +5,7 @@ import type {
   OpenaiTtsProvider,
   OpenaiTtsProviderOptions,
   TtsProvider,
-} from '../../packages/server/src/services/hermes/tts-providers/types'
+} from '../../packages/server/src/modules/studio/services/voice/tts/providers/types'
 
 describe('tts provider type usability', () => {
   it('accepts OpenAI provider options', () => {

@@ -4,7 +4,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { Readable } from 'stream'
 
-const mockGetSkillUsageStatsFromDb = vi.hoisted(() => vi.fn())
+const mockListSkillUsageEventsAfterMessageId = vi.hoisted(() => vi.fn())
 const mockGetActiveProfileName = vi.hoisted(() => vi.fn())
 const mockGetProfileDir = vi.hoisted(() => vi.fn())
 const mockUpdateConfigYamlForProfile = vi.hoisted(() => vi.fn())
@@ -12,19 +12,36 @@ const mockReadConfigYamlForProfile = vi.hoisted(() => vi.fn())
 const mockSafeReadFile = vi.hoisted(() => vi.fn())
 const mockExtractDescription = vi.hoisted(() => vi.fn())
 const mockListFilesRecursive = vi.hoisted(() => vi.fn())
+const mockGetLocalSkillUsageStats = vi.hoisted(() => vi.fn())
+const mockGetSkillUsageSyncCursor = vi.hoisted(() => vi.fn())
+const mockSyncExternalSkillUsageEvents = vi.hoisted(() => vi.fn())
+const agentStatusMocks = vi.hoisted(() => ({ hermesAvailable: true }))
 
-vi.mock('../../packages/server/src/db/hermes/sessions-db', () => ({
-  getSkillUsageStatsFromDb: mockGetSkillUsageStatsFromDb,
+vi.mock('../../packages/server/src/modules/hermes/services/history/sessions-db', () => ({
+  listSkillUsageEventsAfterMessageId: mockListSkillUsageEventsAfterMessageId,
 }))
 
-vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/agent-status-registry', () => ({
+  isHermesAgentAvailable: vi.fn(() => agentStatusMocks.hermesAvailable),
+}))
+
+vi.mock('../../packages/server/src/modules/studio/public/skill-usage', () => ({
+  getLocalSkillUsageStats: mockGetLocalSkillUsageStats,
+  getSkillUsageSyncCursor: mockGetSkillUsageSyncCursor,
+  syncExternalSkillUsageEvents: mockSyncExternalSkillUsageEvents,
+}))
+
+vi.mock('../../packages/server/src/modules/hermes/services/profiles/profile', () => ({
   getActiveProfileName: mockGetActiveProfileName,
   getProfileDir: mockGetProfileDir,
 }))
 
-vi.mock('../../packages/server/src/services/config-helpers', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/profile-config', () => ({
   readConfigYamlForProfile: mockReadConfigYamlForProfile,
   updateConfigYamlForProfile: mockUpdateConfigYamlForProfile,
+}))
+
+vi.mock('../../packages/server/src/modules/studio/public/files', () => ({
   safeReadFile: mockSafeReadFile,
   extractDescription: mockExtractDescription,
   listFilesRecursive: mockListFilesRecursive,
@@ -32,7 +49,7 @@ vi.mock('../../packages/server/src/services/config-helpers', () => ({
 
 async function loadController() {
   vi.resetModules()
-  return import('../../packages/server/src/controllers/hermes/skills')
+  return import('../../packages/server/src/modules/hermes/controllers/skills')
 }
 
 function multipartBody(boundary: string, parts: Array<{ name: string; value: string; filename?: string; filenameStar?: string; contentType?: string }>): Buffer {
@@ -57,6 +74,7 @@ function multipartBody(boundary: string, parts: Array<{ name: string; value: str
 describe('skills controller', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    agentStatusMocks.hermesAvailable = true
     mockGetActiveProfileName.mockReturnValue('default')
     mockGetProfileDir.mockImplementation((profile: string) => `/tmp/hermes-${profile}`)
     mockReadConfigYamlForProfile.mockResolvedValue({})
@@ -72,17 +90,22 @@ describe('skills controller', () => {
     })
     mockListFilesRecursive.mockResolvedValue([])
     mockUpdateConfigYamlForProfile.mockImplementation(async (_profile: string, updater: (config: Record<string, any>) => Record<string, any>) => updater({}))
-    mockGetSkillUsageStatsFromDb.mockResolvedValue({
-      period_days: 7,
-      summary: {
-        total_skill_loads: 0,
-        total_skill_edits: 0,
-        total_skill_actions: 0,
-        distinct_skills_used: 0,
+    mockGetLocalSkillUsageStats.mockImplementation((days: number) => ({
+      stats: {
+        period_days: days,
+        summary: {
+          total_skill_loads: 0,
+          total_skill_edits: 0,
+          total_skill_actions: 0,
+          distinct_skills_used: 0,
+        },
+        by_day: [],
+        top_skills: [],
       },
-      by_day: [],
-      top_skills: [],
-    })
+      sessionIds: [],
+    }))
+    mockGetSkillUsageSyncCursor.mockReturnValue(0)
+    mockListSkillUsageEventsAfterMessageId.mockResolvedValue({ events: [], cursor: 12, reset: false })
   })
 
   it('loads skill usage from the request-scoped profile state database', async () => {
@@ -91,8 +114,11 @@ describe('skills controller', () => {
 
     await usageStats(ctx)
 
-    expect(mockGetSkillUsageStatsFromDb).toHaveBeenCalledWith(30, undefined, 'research')
-    expect(ctx.body.period_days).toBe(7)
+    expect(mockGetLocalSkillUsageStats).toHaveBeenNthCalledWith(1, 30, undefined, 'research', false)
+    expect(mockListSkillUsageEventsAfterMessageId).toHaveBeenCalledWith(0, 'research')
+    expect(mockSyncExternalSkillUsageEvents).toHaveBeenCalledWith('hermes', 'research', [], 12, false)
+    expect(mockGetLocalSkillUsageStats).toHaveBeenNthCalledWith(2, 30, undefined, 'research', true)
+    expect(ctx.body.period_days).toBe(30)
   })
 
   it('falls back to active profile when no request profile is set', async () => {
@@ -102,7 +128,29 @@ describe('skills controller', () => {
 
     await usageStats(ctx)
 
-    expect(mockGetSkillUsageStatsFromDb).toHaveBeenCalledWith(7, undefined, 'travel')
+    expect(mockGetLocalSkillUsageStats).toHaveBeenNthCalledWith(1, 7, undefined, 'travel', false)
+    expect(mockListSkillUsageEventsAfterMessageId).toHaveBeenCalledWith(0, 'travel')
+  })
+
+  it('returns empty skill usage without reading Hermes state.db when Hermes is unavailable', async () => {
+    agentStatusMocks.hermesAvailable = false
+    const { usageStats } = await loadController()
+    const ctx: any = { query: { days: '30' }, state: { profile: { name: 'research' } }, body: null }
+
+    await usageStats(ctx)
+
+    expect(mockListSkillUsageEventsAfterMessageId).not.toHaveBeenCalled()
+    expect(ctx.body).toEqual({
+      period_days: 30,
+      summary: {
+        total_skill_loads: 0,
+        total_skill_edits: 0,
+        total_skill_actions: 0,
+        distinct_skills_used: 0,
+      },
+      by_day: [],
+      top_skills: [],
+    })
   })
 
   it('toggles skills in the request-scoped profile config', async () => {
@@ -263,6 +311,114 @@ describe('skills controller', () => {
     } finally {
       if (previousHome == null) delete process.env.HOME
       else process.env.HOME = previousHome
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('lists Grok shared agent skills as local skills', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'hermes-web-ui-grok-skills-'))
+    const previousHome = process.env.HOME
+    const grokSkillDir = join(root, '.grok', 'skills', 'grok-skill')
+    const sharedSkillDir = join(root, '.agents', 'skills', 'shared-skill')
+
+    await mkdir(grokSkillDir, { recursive: true })
+    await mkdir(sharedSkillDir, { recursive: true })
+    await writeFile(join(grokSkillDir, 'SKILL.md'), '# Grok Skill\ngrok-local skill\n', 'utf-8')
+    await writeFile(join(sharedSkillDir, 'SKILL.md'), '# Shared Skill\nshared agent skill\n', 'utf-8')
+    process.env.HOME = root
+
+    try {
+      const { list } = await loadController()
+      const ctx: any = { query: { target: 'grok' }, state: { profile: { name: 'research' } }, body: null }
+
+      await list(ctx)
+
+      const misc = ctx.body.categories.find((category: any) => category.name === 'misc')
+      expect(misc.skills).toEqual(expect.arrayContaining([
+        expect.objectContaining({ name: 'grok-skill', source: 'local', description: 'grok-local skill' }),
+        expect.objectContaining({ name: 'shared-skill', source: 'local', description: 'shared agent skill' }),
+      ]))
+    } finally {
+      if (previousHome == null) delete process.env.HOME
+      else process.env.HOME = previousHome
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('updates Grok skills from the shared agent skills directory', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'hermes-web-ui-grok-shared-skill-update-'))
+    const previousHome = process.env.HOME
+    const sharedSkillDir = join(root, '.agents', 'skills', 'shared-skill')
+
+    await mkdir(sharedSkillDir, { recursive: true })
+    await writeFile(join(sharedSkillDir, 'SKILL.md'), '# Shared Skill\nbefore\n', 'utf-8')
+    process.env.HOME = root
+
+    try {
+      const { updateSkill } = await loadController()
+      const ctx: any = {
+        query: { target: 'grok' },
+        params: { category: 'misc', skill: 'shared-skill' },
+        request: { body: { content: '# Shared Skill\nafter\n' } },
+        state: { profile: { name: 'research' } },
+        body: null,
+      }
+
+      await updateSkill(ctx)
+
+      expect(ctx.body).toEqual({ success: true })
+      expect(await readFile(join(sharedSkillDir, 'SKILL.md'), 'utf-8')).toBe('# Shared Skill\nafter\n')
+    } finally {
+      if (previousHome == null) delete process.env.HOME
+      else process.env.HOME = previousHome
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('reads OpenCode skills from the configured Coding Agent global home', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'hermes-web-ui-opencode-skills-'))
+    const previousGlobalHome = process.env.HERMES_CODING_AGENT_GLOBAL_HOME
+    const skillsDir = join(root, '.config', 'opencode', 'skills')
+    const skillDir = join(skillsDir, 'demo-skill')
+    const sharedSkillsDir = join(root, '.agents', 'skills')
+    const sharedSkillDir = join(sharedSkillsDir, 'shared-skill')
+
+    await mkdir(skillDir, { recursive: true })
+    await mkdir(sharedSkillDir, { recursive: true })
+    await writeFile(join(skillDir, 'SKILL.md'), '# Demo Skill\nOpenCode skill\n', 'utf-8')
+    await writeFile(join(sharedSkillDir, 'SKILL.md'), '# Shared Skill\nShared OpenCode skill\n', 'utf-8')
+    process.env.HERMES_CODING_AGENT_GLOBAL_HOME = root
+
+    try {
+      const { list } = await loadController()
+      const target = { target: 'opencode' }
+
+      const listCtx: any = {
+        query: target,
+        state: { profile: { name: 'research' } },
+        body: null,
+      }
+      await list(listCtx)
+      expect(listCtx.body.paths).toEqual({ local: skillsDir, external: [sharedSkillsDir] })
+      expect(listCtx.body.categories).toContainEqual(expect.objectContaining({
+        name: 'misc',
+        skills: expect.arrayContaining([
+          expect.objectContaining({
+            name: 'demo-skill',
+            enabled: true,
+            source: 'local',
+          }),
+          expect.objectContaining({
+            name: 'shared-skill',
+            enabled: true,
+            source: 'local',
+          }),
+        ]),
+      }))
+      expect(mockUpdateConfigYamlForProfile).not.toHaveBeenCalled()
+    } finally {
+      if (previousGlobalHome == null) delete process.env.HERMES_CODING_AGENT_GLOBAL_HOME
+      else process.env.HERMES_CODING_AGENT_GLOBAL_HOME = previousGlobalHome
       await rm(root, { recursive: true, force: true })
     }
   })

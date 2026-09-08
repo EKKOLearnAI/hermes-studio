@@ -9,6 +9,7 @@ export const MEMORY_NODE_TYPES = [
   'correction',
 ] as const
 export const MEMORY_NODE_STATUSES = ['active', 'superseded', 'expired', 'deleted'] as const
+export const MEMORY_SCOPE_TYPES = ['profile', 'context', 'session'] as const
 export const MEMORY_KINDS = [
   'interaction_contract',
   'profile_name',
@@ -35,7 +36,21 @@ export const MEMORY_KINDS = [
 export type MemoryNodeType = typeof MEMORY_NODE_TYPES[number]
 export type MemoryNodeStatus = typeof MEMORY_NODE_STATUSES[number]
 export type MemoryKind = typeof MEMORY_KINDS[number]
+export type MemoryScopeType = typeof MEMORY_SCOPE_TYPES[number]
 export type MemoryMessageRole = 'system' | 'user' | 'assistant' | 'tool'
+export type MemoryWritePolicy = 'automatic' | 'explicit-only'
+
+export type MemoryScope =
+  | { type: 'profile' }
+  | { type: 'context'; namespace: string; id: string }
+  | { type: 'session'; id: string }
+
+/** Host-stamped provenance. Ekko stores it as opaque metadata and never interprets host-specific names. */
+export interface MemoryOrigin {
+  host?: string
+  namespace?: string
+  contextId?: string
+}
 
 export interface MemoryMessage {
   id: string
@@ -47,21 +62,12 @@ export interface MemoryMessage {
   createdAt: string
 }
 
-export interface MemorySummary {
-  id: string
-  sessionId: string
-  parentSummaryId?: string
-  fromMessageId: string
-  toMessageId: string
-  summary: string
-  currentGoal?: string
-  constraints: string[]
-  preferences: string[]
-  decisions: string[]
-  completedWork: string[]
-  pendingWork: string[]
-  knownIssues: string[]
-  createdAt: string
+export interface MemoryEvidenceMessageInput {
+  id?: string
+  role: Extract<MemoryMessageRole, 'user' | 'assistant'>
+  content: string
+  metadata?: Record<string, unknown>
+  createdAt?: string
 }
 
 export interface MemoryNode {
@@ -69,6 +75,9 @@ export interface MemoryNode {
   parentId?: string
   supersedesId?: string
   profileId: string
+  /** Defaults to profile scope for nodes created before scoped memory existed. */
+  scope?: MemoryScope
+  origin?: MemoryOrigin
   domain: string
   categoryPath: string[]
   type: MemoryNodeType
@@ -90,7 +99,7 @@ export interface MemoryNode {
 
 export interface MemoryAuditEvent {
   id: string
-  eventType: 'create' | 'update' | 'supersede' | 'expire' | 'delete' | 'extract' | 'summary'
+  eventType: 'create' | 'update' | 'supersede' | 'expire' | 'delete'
   nodeId?: string
   sessionId?: string
   profileId: string
@@ -102,6 +111,7 @@ export interface MemoryAuditEvent {
 
 export interface MemoryQuery {
   profileId?: string
+  scopes?: MemoryScope[]
   domain?: string
   categoryPathPrefix?: string[]
   types?: MemoryNodeType[]
@@ -112,7 +122,19 @@ export interface MemoryQuery {
   entities?: string[]
   queryText?: string
   includeExpired?: boolean
+  statuses?: MemoryNodeStatus[]
   limit?: number
+  offset?: number
+}
+
+export interface MemoryAuditQuery {
+  profileId?: string
+  nodeId?: string
+  sessionId?: string
+  eventTypes?: MemoryAuditEvent['eventType'][]
+  actor?: string
+  limit?: number
+  offset?: number
 }
 
 export type MemoryOmissionReason =
@@ -139,7 +161,6 @@ export interface MemoryContextDiagnostics {
 }
 
 export interface MemoryContext {
-  latestSummary?: MemorySummary
   recentMessages: MemoryMessage[]
   activeTasks: MemoryNode[]
   relevantNodes: MemoryNode[]
@@ -152,46 +173,17 @@ export interface MemoryContext {
 export interface MemoryRuntimeIdentity {
   sessionId: string
   profileId?: string
+  origin?: MemoryOrigin
+  recallScopes?: MemoryScope[]
+  writeScopes?: MemoryScope[]
+  defaultWriteScope?: MemoryScope
 }
 
-export interface MemoryExtractionInput extends MemoryRuntimeIdentity {
-  previousSummary?: MemorySummary
-  messages: MemoryMessage[]
-}
-
-export interface MemoryExtractionOperation {
-  operation: 'create' | 'update' | 'supersede' | 'expire' | 'ignore'
+export interface MemoryWriteInput {
+  operation: 'create' | 'update' | 'supersede' | 'expire'
   kind?: MemoryKind
   itemKey?: string
-  targetId?: string
-  expectedRevision?: number
-  node: Partial<MemoryNode>
-  reason: string
-  explicitUserIntent?: boolean
-}
-
-export interface MemoryExtraction {
-  summaryPatch?: string
-  currentGoal?: string
-  constraints?: string[]
-  preferences?: string[]
-  decisions?: string[]
-  completedWork?: string[]
-  pendingWork?: string[]
-  knownIssues?: string[]
-  nodes: MemoryExtractionOperation[]
-  forceSummary?: boolean
-  fallbackReason?: string
-}
-
-export interface MemoryExtractor {
-  extract(input: MemoryExtractionInput): Promise<MemoryExtraction>
-}
-
-export interface MemoryProposeUpdateInput {
-  operation: 'create' | 'update' | 'supersede' | 'expire' | 'delete'
-  kind?: MemoryKind
-  itemKey?: string
+  scope?: MemoryScope
   targetId?: string
   expectedRevision?: number
   valuePatch?: Record<string, unknown>
@@ -203,7 +195,7 @@ export interface MemoryProposeUpdateInput {
   identity?: Partial<MemoryRuntimeIdentity>
 }
 
-export interface MemoryProposeUpdateResult {
+export interface MemoryWriteResult {
   accepted: boolean
   nodeId?: string
   action?: 'created' | 'updated' | 'noop' | 'expired' | 'deleted'
@@ -211,7 +203,72 @@ export interface MemoryProposeUpdateResult {
   reason?: string
 }
 
+export type MemoryBatchOperation =
+  | Omit<MemoryWriteInput, 'actor' | 'identity'>
+  | {
+      operation: 'delete'
+      targetId: string
+      expectedRevision: number
+      mode?: 'soft' | 'hard'
+      reason: string
+    }
+
+export interface MemoryBatchInput {
+  operations: MemoryBatchOperation[]
+  actor?: string
+  explicitUserIntent?: boolean
+  identity?: Partial<MemoryRuntimeIdentity>
+}
+
+export interface MemoryBatchResult {
+  accepted: boolean
+  done: boolean
+  results: MemoryWriteResult[]
+  failedOperationIndex?: number
+  reason?: string
+}
+
+export interface MemoryCreateInput {
+  kind: MemoryKind
+  itemKey?: string
+  node: Partial<MemoryNode>
+  reason: string
+  actor?: string
+  explicitUserIntent?: boolean
+  identity?: Partial<MemoryRuntimeIdentity>
+}
+
+export interface MemoryUpdateInput {
+  node?: Partial<MemoryNode>
+  valuePatch?: Record<string, unknown>
+  unsetValueFields?: string[]
+  reason: string
+  actor?: string
+  expectedRevision: number
+  explicitUserIntent?: boolean
+  identity?: Partial<MemoryRuntimeIdentity>
+}
+
+export interface MemoryExpireInput {
+  reason: string
+  actor?: string
+  expectedRevision: number
+  identity?: Partial<MemoryRuntimeIdentity>
+}
+
+export interface MemoryDeleteInput extends MemoryExpireInput {
+  mode?: 'soft' | 'hard'
+}
+
+export interface MemoryMessageListInput {
+  sessionId: string
+  afterMessageId?: string
+  limit?: number
+}
+
 export interface MemoryForgetInput {
+  all?: boolean
+  targets?: Array<{ id: string; expectedRevision: number }>
   id?: string
   expectedRevision?: number
   domain?: string
@@ -223,38 +280,67 @@ export interface MemoryForgetInput {
   reason: string
   actor?: string
   identity?: Partial<MemoryRuntimeIdentity>
-  confirmed?: boolean
 }
 
 export interface MemoryForgetResult {
   deletedIds: string[]
   deletedMemories?: MemoryNode[]
   mode: 'soft' | 'hard'
-  requiresConfirmation?: boolean
   reason?: string
 }
 
-export interface MemorySessionState {
-  sessionId: string
-  lastExtractedMessageId?: string
-  lastSummaryMessageId?: string
-  updatedAt: string
-}
+export type MemoryStoreMutation =
+  | {
+      type: 'upsert'
+      node: MemoryNode
+      audit?: Omit<MemoryAuditEvent, 'id' | 'nodeId' | 'createdAt'>
+    }
+  | {
+      type: 'supersede'
+      oldNodeId: string
+      newNode: MemoryNode
+      reason: string
+      actor: string
+      sessionId?: string
+    }
+  | {
+      type: 'status'
+      nodeId: string
+      status: MemoryNodeStatus
+      reason: string
+      actor: string
+      expectedRevision?: number
+      sessionId?: string
+      updatedAt?: string
+    }
+  | {
+      type: 'delete'
+      nodeId: string
+      mode: 'soft' | 'hard'
+      reason: string
+      actor: string
+      expectedRevision?: number
+      sessionId?: string
+      updatedAt?: string
+    }
 
 export interface MemoryStore {
   appendMessage(message: MemoryMessage): Promise<void>
   listRecentMessages(input: { sessionId: string; limit: number }): Promise<MemoryMessage[]>
-  listMessagesAfter(input: { sessionId: string; messageId?: string; limit?: number }): Promise<MemoryMessage[]>
-  appendSummary(summary: MemorySummary): Promise<void>
-  getLatestSummary(input: { sessionId: string }): Promise<MemorySummary | undefined>
+  listMessagesAfter(input: {
+    sessionId: string
+    messageId?: string
+    throughMessageId?: string
+    limit?: number
+  }): Promise<MemoryMessage[]>
   getNode(id: string): Promise<MemoryNode | undefined>
   upsertNode(node: MemoryNode, audit?: Omit<MemoryAuditEvent, 'id' | 'nodeId' | 'createdAt'>): Promise<void>
   supersedeNode(input: { oldNodeId: string; newNode: MemoryNode; reason: string; actor: string; sessionId?: string }): Promise<void>
   updateNodeStatus(input: { nodeId: string; status: MemoryNodeStatus; reason: string; actor: string; expectedRevision?: number; sessionId?: string }): Promise<boolean>
   deleteNode(input: { nodeId: string; mode: 'soft' | 'hard'; reason: string; actor: string; expectedRevision?: number; sessionId?: string }): Promise<boolean>
+  applyMutations(mutations: MemoryStoreMutation[]): Promise<void>
   queryNodes(query: MemoryQuery): Promise<MemoryNode[]>
   appendAuditEvent(event: MemoryAuditEvent): Promise<void>
-  getSessionState(sessionId: string): Promise<MemorySessionState | undefined>
-  setSessionState(state: MemorySessionState): Promise<void>
+  listAuditEvents(query?: MemoryAuditQuery): Promise<MemoryAuditEvent[]>
   close(): void
 }

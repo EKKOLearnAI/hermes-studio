@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import type { StoredMessage } from '../../packages/server/src/services/hermes/context-engine/types'
+import type { StoredMessage } from '../../packages/server/src/modules/studio/services/group-chat/types'
 import {
   buildProjectedGroupChatHistory,
   projectGroupChatMessage,
-} from '../../packages/server/src/services/hermes/group-chat/context-projection'
+} from '../../packages/server/src/modules/studio/services/group-chat/context-projection'
 import {
   cleanGroupMessages,
   GroupRoomSummaryService,
-} from '../../packages/server/src/services/hermes/group-chat/room-summary'
+} from '../../packages/server/src/modules/studio/services/group-chat/room-summary'
 
 function makeMessage(overrides: Partial<StoredMessage>): StoredMessage {
   return {

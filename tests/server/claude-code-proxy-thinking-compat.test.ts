@@ -6,7 +6,7 @@ import { resolve } from 'path'
 import {
   claudeProxyMessages,
   registerClaudeCodeProxyTarget,
-} from '../../packages/server/src/services/coding-agents/claude-code/proxy'
+} from '../../packages/server/src/modules/coding-agents/services/claude-code/proxy'
 
 function makeProxyContext(routeKey: string, token: string, body: any): any {
   return {

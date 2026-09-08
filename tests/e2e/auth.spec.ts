@@ -28,7 +28,9 @@ test('rejects invalid credentials without persisting a token', async ({ page }) 
 })
 
 test('logs in with password through the BFF before entering the app', async ({ page }) => {
-  const api = await mockHermesApi(page)
+  const api = await mockHermesApi(page, {
+    ttsActiveProviders: { default: 'openai' },
+  })
 
   await page.goto('/')
   await page.getByPlaceholder('Username').fill('playwright')
@@ -42,5 +44,13 @@ test('logs in with password through the BFF before entering the app', async ({ p
   const loginRequest = api.requests.find((request) => request.pathname === '/api/auth/login')
   expect(loginRequest?.method).toBe('POST')
   expect(loginRequest?.postData).toBe(JSON.stringify({ username: 'playwright', password: 'correct-password' }))
+
+  await expect.poll(async () => {
+    const raw = await page.evaluate(() => window.localStorage.getItem('hermes-tts-settings-v2'))
+    return raw ? JSON.parse(raw).provider : null
+  }).toBe('openai')
+  const ttsSettingsRequest = api.requests.find(request => request.pathname === '/api/studio/tts/settings')
+  expect(ttsSettingsRequest?.headers.authorization).toBe(`Bearer ${TEST_ACCESS_KEY}`)
+  expect(ttsSettingsRequest?.headers['x-hermes-profile']).toBe('default')
   expect(api.unexpectedRequests).toEqual([])
 })

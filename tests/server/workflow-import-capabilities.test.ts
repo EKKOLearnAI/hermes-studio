@@ -1,6 +1,6 @@
 import { createHash } from 'crypto'
 import { describe, expect, it } from 'vitest'
-import { assertWorkflowImportCapabilities, workflowImportEnvironmentRevision } from '../../packages/server/src/services/workflow-import-capabilities'
+import { assertWorkflowImportCapabilities, workflowImportEnvironmentRevision } from '../../packages/server/src/modules/studio/services/workflow/import-capabilities'
 
 const node = (data: Record<string, unknown>) => ({ id: 'agent', type: 'agent', data: { agent: 'hermes', ...data } })
 
@@ -57,6 +57,14 @@ describe('workflow import capabilities', () => {
     expect(() => assertWorkflowImportCapabilities([
       node({ agent: 'claude-code', provider: 'custom:test', model: 'model-a', apiMode: 'bedrock_converse' }),
     ], groups)).toThrow('unavailable')
+  })
+
+  it('does not require profile provider/model capabilities for supported global CLI nodes', () => {
+    expect(() => assertWorkflowImportCapabilities([
+      node({ agent: 'codex', agentMode: 'global' }),
+      node({ agent: 'claude-code', agentMode: 'global' }),
+      node({ agent: 'pi', agentMode: 'global' }),
+    ], [])).not.toThrow()
   })
 
   it.each(['openai-codex', 'copilot', 'xai-oauth', 'qwen-oauth', 'nous', 'claude-oauth', 'minimax-oauth'])(

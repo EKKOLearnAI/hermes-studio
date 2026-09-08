@@ -9,7 +9,7 @@ const mcpTestMock = vi.fn()
 const mcpToolsMock = vi.fn()
 const mcpReloadMock = vi.fn()
 
-vi.mock('../../packages/server/src/services/hermes/agent-bridge/client', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/bridge/client', () => ({
   AgentBridgeClient: vi.fn().mockImplementation(() => ({
     mcpList: mcpListMock,
     mcpAdd: mcpAddMock,
@@ -21,7 +21,7 @@ vi.mock('../../packages/server/src/services/hermes/agent-bridge/client', () => (
   })),
 }))
 
-vi.mock('../../packages/server/src/services/logger', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/logging', () => ({
   logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() },
 }))
 
@@ -90,7 +90,7 @@ describe('MCP Controller', () => {
   describe('listServers', () => {
     it('returns servers list from bridge', async () => {
       mcpListMock.mockResolvedValue(SAMPLE_SERVERS_RESPONSE)
-      const { listServers } = await import('../../packages/server/src/controllers/hermes/mcp')
+      const { listServers } = await import('../../packages/server/src/modules/hermes/controllers/mcp')
       const ctx = createCtx()
       await listServers(ctx)
       expect(ctx.body).toEqual(SAMPLE_SERVERS_RESPONSE)
@@ -99,7 +99,7 @@ describe('MCP Controller', () => {
 
     it('returns 503 on bridge error', async () => {
       mcpListMock.mockRejectedValue(new Error('bridge down'))
-      const { listServers } = await import('../../packages/server/src/controllers/hermes/mcp')
+      const { listServers } = await import('../../packages/server/src/modules/hermes/controllers/mcp')
       const ctx = createCtx()
       await listServers(ctx)
       expect(ctx.status).toBe(503)
@@ -110,7 +110,7 @@ describe('MCP Controller', () => {
   describe('addServer', () => {
     it('sends name and config to bridge', async () => {
       mcpAddMock.mockResolvedValue({ ok: true, name: 'my-server' })
-      const { addServer } = await import('../../packages/server/src/controllers/hermes/mcp')
+      const { addServer } = await import('../../packages/server/src/modules/hermes/controllers/mcp')
       const ctx = createCtx({ request: { body: { name: 'my-server', config: { command: 'node', args: ['srv.js'] } } } })
       await addServer(ctx)
       expect(mcpAddMock).toHaveBeenCalledWith('my-server', { command: 'node', args: ['srv.js'] }, 'test-profile')
@@ -118,7 +118,7 @@ describe('MCP Controller', () => {
     })
 
     it('returns 400 when name is missing', async () => {
-      const { addServer } = await import('../../packages/server/src/controllers/hermes/mcp')
+      const { addServer } = await import('../../packages/server/src/modules/hermes/controllers/mcp')
       const ctx = createCtx({ request: { body: { config: { command: 'x' } } } })
       await addServer(ctx)
       expect(ctx.status).toBe(400)
@@ -126,7 +126,7 @@ describe('MCP Controller', () => {
     })
 
     it('returns 400 when config is missing', async () => {
-      const { addServer } = await import('../../packages/server/src/controllers/hermes/mcp')
+      const { addServer } = await import('../../packages/server/src/modules/hermes/controllers/mcp')
       const ctx = createCtx({ request: { body: { name: 'x' } } })
       await addServer(ctx)
       expect(ctx.status).toBe(400)
@@ -136,7 +136,7 @@ describe('MCP Controller', () => {
   describe('updateServer', () => {
     it('sends name from params and config to bridge', async () => {
       mcpUpdateMock.mockResolvedValue({ ok: true })
-      const { updateServer } = await import('../../packages/server/src/controllers/hermes/mcp')
+      const { updateServer } = await import('../../packages/server/src/modules/hermes/controllers/mcp')
       const ctx = createCtx({
         params: { name: 'github' },
         request: { body: { config: { tools: { include: ['a', 'b'] } } } },
@@ -146,7 +146,7 @@ describe('MCP Controller', () => {
     })
 
     it('returns 400 when config is missing', async () => {
-      const { updateServer } = await import('../../packages/server/src/controllers/hermes/mcp')
+      const { updateServer } = await import('../../packages/server/src/modules/hermes/controllers/mcp')
       const ctx = createCtx({ params: { name: 'github' }, request: { body: {} } })
       await updateServer(ctx)
       expect(ctx.status).toBe(400)
@@ -154,7 +154,7 @@ describe('MCP Controller', () => {
 
     it('sends tools.include config for include mode', async () => {
       mcpUpdateMock.mockResolvedValue({ ok: true })
-      const { updateServer } = await import('../../packages/server/src/controllers/hermes/mcp')
+      const { updateServer } = await import('../../packages/server/src/modules/hermes/controllers/mcp')
       const ctx = createCtx({
         params: { name: 'github' },
         request: { body: { config: { command: 'npx', args: ['-y', 'server'], tools: { include: ['read_file', 'write_file'] } } } },
@@ -170,7 +170,7 @@ describe('MCP Controller', () => {
 
     it('sends tools.exclude config for exclude mode', async () => {
       mcpUpdateMock.mockResolvedValue({ ok: true })
-      const { updateServer } = await import('../../packages/server/src/controllers/hermes/mcp')
+      const { updateServer } = await import('../../packages/server/src/modules/hermes/controllers/mcp')
       const ctx = createCtx({
         params: { name: 'github' },
         request: { body: { config: { command: 'npx', args: ['-y', 'server'], tools: { exclude: ['delete_file'] } } } },
@@ -186,7 +186,7 @@ describe('MCP Controller', () => {
 
     it('sends config without tools field for all mode', async () => {
       mcpUpdateMock.mockResolvedValue({ ok: true })
-      const { updateServer } = await import('../../packages/server/src/controllers/hermes/mcp')
+      const { updateServer } = await import('../../packages/server/src/modules/hermes/controllers/mcp')
       const ctx = createCtx({
         params: { name: 'github' },
         request: { body: { config: { command: 'npx', args: ['-y', 'server'] } } },
@@ -203,7 +203,7 @@ describe('MCP Controller', () => {
   describe('removeServer', () => {
     it('sends name to bridge', async () => {
       mcpRemoveMock.mockResolvedValue({ ok: true })
-      const { removeServer } = await import('../../packages/server/src/controllers/hermes/mcp')
+      const { removeServer } = await import('../../packages/server/src/modules/hermes/controllers/mcp')
       const ctx = createCtx({ params: { name: 'github' } })
       await removeServer(ctx)
       expect(mcpRemoveMock).toHaveBeenCalledWith('github', 'test-profile')
@@ -213,7 +213,7 @@ describe('MCP Controller', () => {
   describe('testServer', () => {
     it('returns tool list from bridge', async () => {
       mcpTestMock.mockResolvedValue({ ok: true, tools: ['create_repository', 'search_repositories'] })
-      const { testServer } = await import('../../packages/server/src/controllers/hermes/mcp')
+      const { testServer } = await import('../../packages/server/src/modules/hermes/controllers/mcp')
       const ctx = createCtx({ params: { name: 'github' } })
       await testServer(ctx)
       expect(mcpTestMock).toHaveBeenCalledWith('github', 'test-profile')
@@ -224,7 +224,7 @@ describe('MCP Controller', () => {
   describe('listTools', () => {
     it('returns tools without server filter', async () => {
       mcpToolsMock.mockResolvedValue(SAMPLE_TOOLS_RESPONSE)
-      const { listTools } = await import('../../packages/server/src/controllers/hermes/mcp')
+      const { listTools } = await import('../../packages/server/src/modules/hermes/controllers/mcp')
       const ctx = createCtx({ query: {} })
       await listTools(ctx)
       expect(mcpToolsMock).toHaveBeenCalledWith(undefined, 'test-profile', undefined)
@@ -233,7 +233,7 @@ describe('MCP Controller', () => {
 
     it('passes server filter to bridge', async () => {
       mcpToolsMock.mockResolvedValue(SAMPLE_TOOLS_RESPONSE)
-      const { listTools } = await import('../../packages/server/src/controllers/hermes/mcp')
+      const { listTools } = await import('../../packages/server/src/modules/hermes/controllers/mcp')
       const ctx = createCtx({ query: { server: 'github' } })
       await listTools(ctx)
       expect(mcpToolsMock).toHaveBeenCalledWith('github', 'test-profile', undefined)
@@ -241,7 +241,7 @@ describe('MCP Controller', () => {
 
     it('passes raw=true to get unfiltered tools', async () => {
       mcpToolsMock.mockResolvedValue(SAMPLE_TOOLS_RESPONSE)
-      const { listTools } = await import('../../packages/server/src/controllers/hermes/mcp')
+      const { listTools } = await import('../../packages/server/src/modules/hermes/controllers/mcp')
       const ctx = createCtx({ query: { server: 'github', raw: '1' } })
       await listTools(ctx)
       expect(mcpToolsMock).toHaveBeenCalledWith('github', 'test-profile', true)
@@ -249,7 +249,7 @@ describe('MCP Controller', () => {
 
     it('returns 503 on bridge error', async () => {
       mcpToolsMock.mockRejectedValue(new Error('timeout'))
-      const { listTools } = await import('../../packages/server/src/controllers/hermes/mcp')
+      const { listTools } = await import('../../packages/server/src/modules/hermes/controllers/mcp')
       const ctx = createCtx()
       await listTools(ctx)
       expect(ctx.status).toBe(503)
@@ -259,7 +259,7 @@ describe('MCP Controller', () => {
   describe('reloadMcp', () => {
     it('reloads all servers when no filter', async () => {
       mcpReloadMock.mockResolvedValue({ ok: true, message: 'MCP servers reloaded' })
-      const { reloadMcp } = await import('../../packages/server/src/controllers/hermes/mcp')
+      const { reloadMcp } = await import('../../packages/server/src/modules/hermes/controllers/mcp')
       const ctx = createCtx({ query: {} })
       await reloadMcp(ctx)
       expect(mcpReloadMock).toHaveBeenCalledWith(undefined, 'test-profile')
@@ -267,7 +267,7 @@ describe('MCP Controller', () => {
 
     it('reloads specific server', async () => {
       mcpReloadMock.mockResolvedValue({ ok: true, message: 'MCP servers reloaded' })
-      const { reloadMcp } = await import('../../packages/server/src/controllers/hermes/mcp')
+      const { reloadMcp } = await import('../../packages/server/src/modules/hermes/controllers/mcp')
       const ctx = createCtx({ query: { server: 'github' } })
       await reloadMcp(ctx)
       expect(mcpReloadMock).toHaveBeenCalledWith('github', 'test-profile')
@@ -275,7 +275,7 @@ describe('MCP Controller', () => {
 
     it('returns 503 on bridge error', async () => {
       mcpReloadMock.mockRejectedValue(new Error('reload failed'))
-      const { reloadMcp } = await import('../../packages/server/src/controllers/hermes/mcp')
+      const { reloadMcp } = await import('../../packages/server/src/modules/hermes/controllers/mcp')
       const ctx = createCtx()
       await reloadMcp(ctx)
       expect(ctx.status).toBe(503)
@@ -285,7 +285,7 @@ describe('MCP Controller', () => {
   describe('profile handling', () => {
     it('passes undefined profile when ctx.state.profile is missing', async () => {
       mcpListMock.mockResolvedValue({ ok: true, servers: [], total_tools: 0 })
-      const { listServers } = await import('../../packages/server/src/controllers/hermes/mcp')
+      const { listServers } = await import('../../packages/server/src/modules/hermes/controllers/mcp')
       const ctx = createCtx({ state: {} })
       await listServers(ctx)
       expect(mcpListMock).toHaveBeenCalledWith(undefined)
@@ -293,7 +293,7 @@ describe('MCP Controller', () => {
 
     it('passes undefined profile when profile.name is empty', async () => {
       mcpListMock.mockResolvedValue({ ok: true, servers: [], total_tools: 0 })
-      const { listServers } = await import('../../packages/server/src/controllers/hermes/mcp')
+      const { listServers } = await import('../../packages/server/src/modules/hermes/controllers/mcp')
       const ctx = createCtx({ state: { profile: { name: '' } } })
       await listServers(ctx)
       expect(mcpListMock).toHaveBeenCalledWith(undefined)
@@ -303,7 +303,7 @@ describe('MCP Controller', () => {
   describe('response structure', () => {
     it('mcp_list response has all required fields', async () => {
       mcpListMock.mockResolvedValue(SAMPLE_SERVERS_RESPONSE)
-      const { listServers } = await import('../../packages/server/src/controllers/hermes/mcp')
+      const { listServers } = await import('../../packages/server/src/modules/hermes/controllers/mcp')
       const ctx = createCtx()
       await listServers(ctx)
       const body = ctx.body as any
@@ -326,7 +326,7 @@ describe('MCP Controller', () => {
 
     it('mcp_tools_list response has tools with name/description/schema', async () => {
       mcpToolsMock.mockResolvedValue(SAMPLE_TOOLS_RESPONSE)
-      const { listTools } = await import('../../packages/server/src/controllers/hermes/mcp')
+      const { listTools } = await import('../../packages/server/src/modules/hermes/controllers/mcp')
       const ctx = createCtx()
       await listTools(ctx)
       const body = ctx.body as any
