@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { fetchPetdexAsset, fetchPetdexManifest } from '../../packages/server/src/services/hermes/petdex'
+import { fetchPetdexAsset, fetchPetdexManifest } from '../../packages/server/src/modules/studio/services/pets/petdex'
 
 describe('petdex service', () => {
   afterEach(() => {
@@ -26,7 +26,7 @@ describe('petdex service', () => {
 
     expect(manifest.pets[0].spritesheetUrl).toBe('https://assets.petdex.dev/pets/desk-cat/spritesheet.webp')
     expect(manifest.pets[0].previewUrl).toBe(
-      '/api/hermes/petdex/asset?url=https%3A%2F%2Fassets.petdex.dev%2Fpets%2Fdesk-cat%2Fspritesheet.webp',
+      '/api/studio/petdex/asset?url=https%3A%2F%2Fassets.petdex.dev%2Fpets%2Fdesk-cat%2Fspritesheet.webp',
     )
   })
 

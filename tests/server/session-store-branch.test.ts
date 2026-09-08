@@ -29,12 +29,12 @@ const mocks = vi.hoisted(() => {
   }
 })
 
-vi.mock('../../packages/server/src/db/index', () => ({
+vi.mock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
   isSqliteAvailable: vi.fn(() => true),
   getDb: vi.fn(() => mocks.db),
 }))
 
-vi.mock('../../packages/server/src/db/hermes/compression-snapshot', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/compression-snapshot', () => ({
   copyCompressionSnapshot: mocks.copyCompressionSnapshot,
 }))
 
@@ -77,7 +77,7 @@ describe('createBranchedSession', () => {
   })
 
   it('copies the parent compression snapshot inside the fork transaction', async () => {
-    const { createBranchedSession } = await import('../../packages/server/src/db/hermes/session-store')
+    const { createBranchedSession } = await import('../../packages/server/src/modules/studio/repositories/session-store')
 
     const result = createBranchedSession({
       parent_session_id: 'parent-session',

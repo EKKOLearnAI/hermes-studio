@@ -1,4 +1,6 @@
 import { ref, watch } from 'vue'
+import { fetchTtsSettings, type FetchTtsSettingsResponse } from '@/api/studio/tts-settings'
+import { getActiveProfileName, getStoredUserId, hasApiKey } from '@/api/client'
 import { DOUBAO_TTS_2_RESOURCE_ID, DOUBAO_TTS_DEFAULT_VOICE } from '@/constants/doubaoTtsVoices'
 
 export type TtsProvider =
@@ -144,6 +146,51 @@ function load(): VoiceSettingsData {
 // Run migration once on import
 migrateOldKeys()
 
+let serverSettingsLoadedContext: string | null = null
+let serverSettingsPromise: Promise<void> | null = null
+let serverSettingsPromiseContext: string | null = null
+let serverSettingsGeneration = 0
+
+function serverSettingsContext(): string | null {
+  if (!hasApiKey()) return null
+  const user = getStoredUserId() ?? 'authenticated'
+  const profile = getActiveProfileName()?.trim() || 'default'
+  return `${user}:${profile}`
+}
+
+function applyServerTtsSettings(response: FetchTtsSettingsResponse) {
+  if (response.activeProvider) {
+    provider.value = response.activeProvider
+  }
+}
+
+export async function loadServerTtsSettings(force = false): Promise<void> {
+  const context = serverSettingsContext()
+  if (!context) return
+  if (serverSettingsLoadedContext === context && !force) return
+  if (serverSettingsPromise && serverSettingsPromiseContext === context && !force) {
+    return serverSettingsPromise
+  }
+
+  const generation = ++serverSettingsGeneration
+  const promise = fetchTtsSettings()
+    .then(response => {
+      if (generation !== serverSettingsGeneration || serverSettingsContext() !== context) return
+      applyServerTtsSettings(response)
+      serverSettingsLoadedContext = context
+    })
+    .finally(() => {
+      if (serverSettingsPromise === promise) {
+        serverSettingsPromise = null
+        serverSettingsPromiseContext = null
+      }
+    })
+
+  serverSettingsPromise = promise
+  serverSettingsPromiseContext = context
+  return promise
+}
+
 // ── Reactive state ──
 const provider = ref<TtsProvider>(load().provider)
 
@@ -258,6 +305,8 @@ export function useVoiceSettings() {
     doubaoModel,
     doubaoVoice,
     doubaoStylePrompt,
+
+    loadServerTtsSettings,
 
     setProvider(v: TtsProvider) { provider.value = v },
     setWebSpeechVoice(v: string) { webspeechVoice.value = v },

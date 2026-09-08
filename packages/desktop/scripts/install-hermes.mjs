@@ -148,6 +148,9 @@ function installHermesPythonRuntime() {
     run('uv', [
       'pip', 'install',
       '--python', pyBin,
+      // The exported requirements already contain the locked versions and hashes.
+      // Do not let uv rediscover upstream pyproject overrides and re-resolve them.
+      '--no-config',
       '--require-hashes',
       '--no-deps',
       '--requirement', requirementsPath,

@@ -9,24 +9,24 @@ const deleteCompressionSnapshotMock = vi.fn()
 const getRecordedUsageTotalsMock = vi.fn()
 const getUsageMock = vi.fn()
 
-vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/session-store', () => ({
   getSessionDetail: getSessionDetailMock,
   getSession: getSessionMock,
   getSessionContextMessages: getSessionContextMessagesMock,
   getSessionContextMessage: getSessionContextMessageMock,
 }))
 
-vi.mock('../../packages/server/src/db/hermes/compression-snapshot', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/compression-snapshot', () => ({
   getCompressionSnapshot: getCompressionSnapshotMock,
   deleteCompressionSnapshot: deleteCompressionSnapshotMock,
 }))
 
-vi.mock('../../packages/server/src/db/hermes/usage-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/usage-store', () => ({
   getRecordedUsageTotals: getRecordedUsageTotalsMock,
   getUsage: getUsageMock,
 }))
 
-vi.mock('../../packages/server/src/services/logger', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/logging', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }))
 
@@ -63,7 +63,7 @@ describe('cursor-aware chat usage', () => {
   })
 
   it('counts summary plus bounded cursor context without loading full history', async () => {
-    const { calcAndUpdateUsage } = await import('../../packages/server/src/services/hermes/run-chat/usage')
+    const { calcAndUpdateUsage } = await import('../../packages/server/src/modules/studio/services/chat-run/usage')
     const state: any = { messages: [], events: [], queue: [], isWorking: false }
     const emit = vi.fn()
 
@@ -82,7 +82,7 @@ describe('cursor-aware chat usage', () => {
   it('uses native Coding Agent usage without consulting messages or compression snapshots', async () => {
     getRecordedUsageTotalsMock.mockReturnValue({ inputTokens: 100, outputTokens: 40 })
     getUsageMock.mockReturnValue({ input_tokens: 70, output_tokens: 10 })
-    const { calcAndUpdateUsage } = await import('../../packages/server/src/services/hermes/run-chat/usage')
+    const { calcAndUpdateUsage } = await import('../../packages/server/src/modules/studio/services/chat-run/usage')
     const state: any = { messages: [], events: [], queue: [], isWorking: false }
 
     const usage = await calcAndUpdateUsage('session-1', state, vi.fn(), {

@@ -56,6 +56,24 @@ describe('desktop browser automation safety', () => {
     })).rejects.toThrow(/stale/)
   })
 
+  it('skips debugger cleanup when web contents are missing', () => {
+    const automation = new BrowserAutomation()
+
+    expect(() => automation.detach('missing-tab', undefined)).not.toThrow()
+  })
+
+  it('skips debugger cleanup when web contents are destroyed', () => {
+    const automation = new BrowserAutomation()
+    const destroyedContents = {
+      isDestroyed: () => true,
+      get debugger() {
+        throw new Error('debugger must not be read after destruction')
+      },
+    } as unknown as WebContents
+
+    expect(() => automation.detach('destroyed-tab', destroyedContents)).not.toThrow()
+  })
+
   it.each([
     ['password', ['type', 'password']],
     ['payment', ['type', 'text', 'name', 'card_number']],

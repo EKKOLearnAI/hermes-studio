@@ -1,8 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { createServer, type Server, type Socket } from 'node:net'
-import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import {
   DEFAULT_CODE_EXEC_LANGUAGES,
@@ -13,6 +12,7 @@ import {
   DEFAULT_TOOL_EXECUTION_TIMEOUT_MS,
 } from '../config'
 import type { AgentTool, AgentToolContext, AgentToolResult } from './types'
+import { workspaceTempEnvironment, workspaceTempRoot } from './workspace-temp'
 
 export type CodeExecLanguage = typeof DEFAULT_CODE_EXEC_LANGUAGES[number]
 
@@ -29,6 +29,7 @@ export type CodeExecToolDispatcher = (
 
 export interface CodeExecToolOptions {
   dispatch?: CodeExecToolDispatcher
+  allowedLanguages?: CodeExecLanguage[]
   nodeExecutable?: string
   pythonExecutable?: string
   timeoutMs?: number
@@ -68,41 +69,10 @@ const RPC_MAX_REQUEST_BYTES = 2 * 1024 * 1024
 const CHILD_KILL_GRACE_MS = 2_000
 
 export class CodeExecTool implements AgentTool<CodeExecInput> {
-  readonly definition = {
-    name: 'code_exec',
-    description: [
-      'Run a one-shot Node.js or Python script with programmatic access to selected Ekko tools.',
-      'Use this whenever the user asks to run, execute, or evaluate Node.js, JavaScript, or Python source code, including a one-line snippet.',
-      'Also use it for loops, branching, filtering, or three or more mechanical tool calls.',
-      'Do not probe the language runtime with terminal_exec first; code_exec resolves the requested runtime itself.',
-      'Only the script output is returned; intermediate nested tool results stay outside model context.',
-      'Node scripts import from "./ekko_tools.mjs"; Python scripts import from "ekko_tools".',
-      'Available nested tools: read_file, write_file, terminal_exec.',
-    ].join(' '),
-    parameters: {
-      type: 'object',
-      properties: {
-        language: {
-          type: 'string',
-          enum: [...DEFAULT_CODE_EXEC_LANGUAGES],
-          description: 'Script runtime. Use "node" for ESM with top-level await or "python" for Python 3.',
-        },
-        code: {
-          type: 'string',
-          description: [
-            'Source code to execute. Print or console.log only the final reduced result.',
-            'Node example: import { read_file } from "./ekko_tools.mjs"; const result = await read_file({ path: "README.md" }).',
-            'Python example: from ekko_tools import read_file; result = read_file(path="README.md").',
-            'Nested tools return objects with ok, content, error, and data fields.',
-          ].join(' '),
-        },
-      },
-      required: ['language', 'code'],
-      additionalProperties: false,
-    },
-  }
+  readonly definition: AgentTool['definition']
 
   private readonly dispatch?: CodeExecToolDispatcher
+  private readonly allowedLanguages: CodeExecLanguage[]
   private readonly nodeExecutable: string
   private readonly pythonExecutable?: string
   private readonly timeoutMs: number
@@ -113,6 +83,8 @@ export class CodeExecTool implements AgentTool<CodeExecInput> {
 
   constructor(options: CodeExecToolOptions = {}) {
     this.dispatch = options.dispatch
+    this.allowedLanguages = normalizedAllowedLanguages(options.allowedLanguages)
+    this.definition = codeExecDefinition(this.allowedLanguages)
     this.nodeExecutable = options.nodeExecutable || process.execPath
     this.pythonExecutable = options.pythonExecutable
     this.timeoutMs = positiveInteger(options.timeoutMs, DEFAULT_TOOL_EXECUTION_TIMEOUT_MS)
@@ -124,9 +96,11 @@ export class CodeExecTool implements AgentTool<CodeExecInput> {
 
   async execute(input: CodeExecInput, context: AgentToolContext = {}): Promise<AgentToolResult> {
     if (!this.dispatch) return codeExecFailure('code_exec tool dispatch is unavailable.')
-    const language = normalizedLanguage(input.language)
+    const language = normalizedLanguage(input.language, this.allowedLanguages)
     if (!language) {
-      return codeExecFailure('code_exec language must be "node" or "python".')
+      return codeExecFailure(
+        `code_exec language must be one of: ${this.allowedLanguages.join(', ')}.`,
+      )
     }
     const code = typeof input.code === 'string' ? input.code : ''
     if (!code.trim()) return codeExecFailure('code_exec requires non-empty source code.')
@@ -140,7 +114,9 @@ export class CodeExecTool implements AgentTool<CodeExecInput> {
 
     const startedAt = Date.now()
     const workDirectory = context.cwd || context.workspaceRoot || process.cwd()
-    const stagingDirectory = await mkdtemp(join(tmpdir(), 'ekko-code-exec-'))
+    const tempDirectory = workspaceTempRoot(context)
+    await mkdir(tempDirectory, { recursive: true })
+    const stagingDirectory = await mkdtemp(join(tempDirectory, 'code-exec-'))
     const controller = new AbortController()
     const nestedContext = { ...context, signal: controller.signal }
     let timedOut = false
@@ -175,6 +151,7 @@ export class CodeExecTool implements AgentTool<CodeExecInput> {
 
       const childEnv = codeExecChildEnvironment({
         stagingDirectory,
+        tempDirectory,
         language,
         rpc,
       })
@@ -277,9 +254,53 @@ export class CodeExecTool implements AgentTool<CodeExecInput> {
   }
 }
 
-function normalizedLanguage(value: unknown): CodeExecLanguage | undefined {
+function normalizedLanguage(
+  value: unknown,
+  allowedLanguages: readonly CodeExecLanguage[] = DEFAULT_CODE_EXEC_LANGUAGES,
+): CodeExecLanguage | undefined {
   const language = String(value || '').trim().toLowerCase()
-  return DEFAULT_CODE_EXEC_LANGUAGES.find(candidate => candidate === language)
+  return allowedLanguages.find(candidate => candidate === language)
+}
+
+function normalizedAllowedLanguages(value?: CodeExecLanguage[]): CodeExecLanguage[] {
+  const configured = value ?? [...DEFAULT_CODE_EXEC_LANGUAGES]
+  return [...new Set(configured)].filter(language => DEFAULT_CODE_EXEC_LANGUAGES.includes(language))
+}
+
+function codeExecDefinition(languages: readonly CodeExecLanguage[]): AgentTool['definition'] {
+  return {
+    name: 'code_exec',
+    description: [
+      'Run a one-shot Node.js or Python script with programmatic access to selected Ekko tools.',
+      'Use this whenever the user asks to run, execute, or evaluate Node.js, JavaScript, or Python source code, including a one-line snippet.',
+      'Also use it for loops, branching, filtering, or three or more mechanical tool calls.',
+      'Do not probe the language runtime with terminal_exec first; code_exec resolves the requested runtime itself.',
+      'Only the script output is returned; intermediate nested tool results stay outside model context.',
+      'Node scripts import from "./ekko_tools.mjs"; Python scripts import from "ekko_tools".',
+      'Available nested tools: read_file, write_file, terminal_exec.',
+    ].join(' '),
+    parameters: {
+      type: 'object',
+      properties: {
+        language: {
+          type: 'string',
+          enum: [...languages],
+          description: 'Script runtime. Use "node" for ESM with top-level await or "python" for Python 3.',
+        },
+        code: {
+          type: 'string',
+          description: [
+            'Source code to execute. Print or console.log only the final reduced result.',
+            'Node example: import { read_file } from "./ekko_tools.mjs"; const result = await read_file({ path: "README.md" }).',
+            'Python example: from ekko_tools import read_file; result = read_file(path="README.md").',
+            'Nested tools return objects with ok, content, error, and data fields.',
+          ].join(' '),
+        },
+      },
+      required: ['language', 'code'],
+      additionalProperties: false,
+    },
+  }
 }
 
 function resolvePythonRuntime(explicit?: string): Omit<CodeExecRuntime, 'scriptFileName'> | undefined {
@@ -440,6 +461,7 @@ async function closeServer(server: Server, sockets: Set<Socket>): Promise<void> 
 
 function codeExecChildEnvironment(input: {
   stagingDirectory: string
+  tempDirectory: string
   language: CodeExecLanguage
   rpc: CodeExecRpcServer
 }): NodeJS.ProcessEnv {
@@ -463,6 +485,7 @@ function codeExecChildEnvironment(input: {
     if (value === undefined) continue
     if (exactNames.has(key) || key.startsWith('LC_')) env[key] = value
   }
+  Object.assign(env, workspaceTempEnvironment(input.tempDirectory))
   env.EKKO_CODE_RPC_HOST = input.rpc.host
   env.EKKO_CODE_RPC_PORT = String(input.rpc.port)
   env.EKKO_CODE_RPC_TOKEN = input.rpc.token

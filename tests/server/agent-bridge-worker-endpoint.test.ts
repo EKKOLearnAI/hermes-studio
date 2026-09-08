@@ -36,7 +36,7 @@ sys.modules["bridge_runtime"] = bridge_runtime
 
 spec = importlib.util.spec_from_file_location(
     "bridge_transport",
-    "packages/server/src/services/hermes/agent-bridge/python/bridge_transport.py",
+    "packages/server/src/modules/hermes/services/bridge/python/bridge_transport.py",
 )
 bridge_transport = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
@@ -80,7 +80,7 @@ sys.modules["bridge_runtime"] = bridge_runtime
 
 spec = importlib.util.spec_from_file_location(
     "bridge_transport",
-    "packages/server/src/services/hermes/agent-bridge/python/bridge_transport.py",
+    "packages/server/src/modules/hermes/services/bridge/python/bridge_transport.py",
 )
 bridge_transport = importlib.util.module_from_spec(spec)
 assert spec.loader is not None

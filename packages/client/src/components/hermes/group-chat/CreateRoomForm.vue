@@ -9,7 +9,7 @@ import { useProfilesStore } from '@/stores/hermes/profiles'
 import { canScopedCodingAgentUseProvider } from '@/utils/codingAgentProviders'
 import { generateGroupChatInviteCode } from '@/utils/group-chat-invite-code'
 import { inferCodingAgentApiMode, normalizeCodingAgentApiMode } from '@/api/coding-agents'
-import type { RoomAgentInput, RoomSummaryConfig } from '@/api/hermes/group-chat'
+import type { RoomAgentInput, RoomSummaryConfig } from '@/api/studio/group-chat'
 
 type InputLikeInstance = {
     focus: () => void

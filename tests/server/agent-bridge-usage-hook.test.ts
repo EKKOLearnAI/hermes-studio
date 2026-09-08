@@ -47,7 +47,7 @@ sys.modules["bridge_runtime"] = bridge_runtime
 
 spec = importlib.util.spec_from_file_location(
     "bridge_pool",
-    "packages/server/src/services/hermes/agent-bridge/python/bridge_pool.py",
+    "packages/server/src/modules/hermes/services/bridge/python/bridge_pool.py",
 )
 bridge_pool = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
@@ -155,7 +155,7 @@ sys.modules["hermes_cli.plugins"] = plugins
 
 spec = importlib.util.spec_from_file_location(
     "bridge_pool",
-    "packages/server/src/services/hermes/agent-bridge/python/bridge_pool.py",
+    "packages/server/src/modules/hermes/services/bridge/python/bridge_pool.py",
 )
 bridge_pool = importlib.util.module_from_spec(spec)
 assert spec.loader is not None

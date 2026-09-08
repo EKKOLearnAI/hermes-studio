@@ -42,8 +42,8 @@ const voiceSettingsMock = vi.hoisted(() => {
   }
 })
 
-vi.mock('@/api/hermes/tts-settings', () => ttsApiMock)
-vi.mock('@/api/hermes/stt-settings', () => sttApiMock)
+vi.mock('@/api/studio/tts-settings', () => ttsApiMock)
+vi.mock('@/api/studio/stt-settings', () => sttApiMock)
 vi.mock('@/composables/useVoiceSettings', () => ({ useVoiceSettings: () => voiceSettingsMock }))
 vi.mock('@/composables/useSttSettings', () => ({
   useSttSettings: () => ({

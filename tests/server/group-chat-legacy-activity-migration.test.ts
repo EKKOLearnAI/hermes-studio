@@ -9,7 +9,7 @@ const dbState = vi.hoisted(() => ({
   db: null as DatabaseSync | null,
 }))
 
-vi.mock('../../packages/server/src/db/index', () => ({
+vi.mock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
   getDb: () => dbState.db,
   isSqliteAvailable: () => Boolean(dbState.db),
 }))
@@ -66,8 +66,8 @@ describe('group chat legacy activity migration', () => {
       'INSERT INTO gc_messages (id, roomId, senderId, senderName, content, timestamp, role, finish_reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
     ).run('history-streaming', 'room-z', 'agent-1', 'Agent', 'stream fragment', cutoff - 250, 'assistant', 'streaming')
 
-    const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
-    const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
+    const { initAllHermesTables } = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
+    const { GroupChatServer } = await import('../../packages/server/src/modules/studio/sockets/group-chat')
     initAllHermesTables()
     const server = new GroupChatServer(httpServer)
 
@@ -116,7 +116,7 @@ describe('group chat legacy activity migration', () => {
         'INSERT INTO gc_messages (id, roomId, senderId, senderName, content, timestamp) VALUES (?, ?, ?, ?, ?, ?)',
       ).run('future-on-first-upgrade', 'room-1', 'user-1', 'User', 'future', 1_000_001)
 
-      const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
+      const { initAllHermesTables } = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
       vi.useFakeTimers()
       vi.setSystemTime(1_000_000)
       initAllHermesTables()
@@ -143,8 +143,8 @@ describe('group chat legacy activity migration', () => {
   }, 15_000)
 
   it('orders profile, authenticated-member, and owner room lists by activity', async () => {
-    const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
-    const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
+    const { initAllHermesTables } = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
+    const { GroupChatServer } = await import('../../packages/server/src/modules/studio/sockets/group-chat')
     initAllHermesTables()
     const server = new GroupChatServer(httpServer)
     const storage = server.getStorage()
@@ -169,8 +169,8 @@ describe('group chat legacy activity migration', () => {
   })
 
   it('does not let new tool or streaming messages affect any room activity ordering path', async () => {
-    const { initAllHermesTables } = await import('../../packages/server/src/db/hermes/schemas')
-    const { GroupChatServer } = await import('../../packages/server/src/services/hermes/group-chat')
+    const { initAllHermesTables } = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
+    const { GroupChatServer } = await import('../../packages/server/src/modules/studio/sockets/group-chat')
     initAllHermesTables()
     const server = new GroupChatServer(httpServer)
     const storage = server.getStorage()

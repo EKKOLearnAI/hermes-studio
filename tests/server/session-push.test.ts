@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   formatSessionPushContent,
   SessionPushNotifier,
-} from '../../packages/server/src/services/social-messages/session-push'
-import type { SocialMessageTarget } from '../../packages/server/src/services/social-messages/targets'
+} from '../../packages/server/src/modules/studio/services/social-messages/session-push'
+import type { SocialMessageTarget } from '../../packages/server/src/modules/studio/services/social-messages/targets'
 
 function pushTarget(
   platform: SocialMessageTarget['platform'],

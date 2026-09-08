@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { CodingAgentRunManager } from '../../packages/server/src/services/coding-agents/runtime/run-manager'
+import { CodingAgentRunManager } from '../../packages/server/src/modules/coding-agents/services/runtime/run-manager'
 
 const realE2eEnabled = process.env.PI_REAL_RPC_E2E === '1'
 const describeReal = realE2eEnabled ? describe : describe.skip

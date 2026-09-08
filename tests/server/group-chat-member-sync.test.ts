@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { socketHandlers, mockSocket, mockIo } = vi.hoisted(() => {
   const socketHandlers = new Map<string, (...args: any[]) => void>()
@@ -22,14 +22,19 @@ vi.mock('socket.io-client', () => ({
   io: mockIo,
 }))
 
-vi.mock('../../packages/server/src/services/auth', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/auth/token-auth', () => ({
   getToken: vi.fn(async () => 'test-token'),
 }))
 
-import { AgentClients, groupBridgeSessionId } from '../../packages/server/src/services/hermes/group-chat/agent-clients'
-import { GroupChatServer } from '../../packages/server/src/services/hermes/group-chat'
-import { canManageGroupChatRoom, isGroupChatRoomOwner } from '../../packages/server/src/services/hermes/group-chat/access'
-import { groupChatRoutes, setGroupChatServer } from '../../packages/server/src/routes/hermes/group-chat'
+import { AgentClients, groupBridgeSessionId } from '../../packages/server/src/modules/studio/services/group-chat/agent-clients'
+import { GroupChatServer } from '../../packages/server/src/modules/studio/sockets/group-chat'
+import type { GroupRoomSummaryService } from '../../packages/server/src/modules/studio/services/group-chat/room-summary'
+import { canManageGroupChatRoom, isGroupChatRoomOwner } from '../../packages/server/src/modules/studio/services/group-chat/access'
+import { groupChatRoutes, setGroupChatServer } from '../../packages/server/src/modules/studio/routes/group-chat'
+import {
+  resetAgentStatusRegistryForTests,
+  updateAgentStatus,
+} from '../../packages/server/src/modules/studio/public/agent-status-registry'
 
 function routeHandler(path: string, method: string) {
   const layer = (groupChatRoutes as any).stack.find((item: any) => item.path === path && item.methods.includes(method))
@@ -37,10 +42,36 @@ function routeHandler(path: string, method: string) {
   return layer.stack[0]
 }
 
+function createRoomSummaryServiceMock(): Pick<GroupRoomSummaryService, 'getState'> {
+  return {
+    getState: vi.fn((roomId: string) => ({
+      roomId,
+      summary: '',
+      summaryThroughMessageId: '',
+      summaryThroughMessageTimestamp: 0,
+      summarizedTurnCount: 0,
+      status: 'idle',
+      version: 0,
+      updatedAt: 0,
+      lastError: null,
+    })),
+  }
+}
+
 describe('Group Chat member/agent identity sync', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     socketHandlers.clear()
+    resetAgentStatusRegistryForTests()
+    updateAgentStatus('hermes', {
+      installed: true,
+      source: 'user-cli',
+      path: '/usr/local/bin/hermes',
+    })
+  })
+
+  afterEach(() => {
+    resetAgentStatusRegistryForTests()
   })
 
   it('distinguishes profile-based room managers from the room owner for @all', () => {
@@ -340,7 +371,7 @@ describe('Group Chat member/agent identity sync', () => {
     }
     setGroupChatServer(chatServer as any)
 
-    const handler = routeHandler('/api/hermes/group-chat/rooms/:roomId/agents', 'POST')
+    const handler = routeHandler('/api/studio/group-chat/rooms/:roomId/agents', 'POST')
     const ctx: any = {
       params: { roomId: 'room-1' },
       request: { body: { profile: 'default', name: 'Worker' } },
@@ -376,7 +407,7 @@ describe('Group Chat member/agent identity sync', () => {
     }
     setGroupChatServer(chatServer as any)
 
-    const handler = routeHandler('/api/hermes/group-chat/rooms/:roomId/agents', 'POST')
+    const handler = routeHandler('/api/studio/group-chat/rooms/:roomId/agents', 'POST')
     const ctx: any = {
       params: { roomId: 'room-1' },
       request: { body: { profile: 'default', name: 'Worker' } },
@@ -413,7 +444,7 @@ describe('Group Chat member/agent identity sync', () => {
     }
     setGroupChatServer(chatServer as any)
 
-    const handler = routeHandler('/api/hermes/group-chat/rooms/:roomId/agents', 'POST')
+    const handler = routeHandler('/api/studio/group-chat/rooms/:roomId/agents', 'POST')
     const ctx: any = {
       params: { roomId: 'room-1' },
       request: { body: { profile: 'default', name: 'Worker' } },
@@ -453,7 +484,7 @@ describe('Group Chat member/agent identity sync', () => {
     }
     setGroupChatServer(chatServer as any)
 
-    const handler = routeHandler('/api/hermes/group-chat/rooms/:roomId/agents', 'POST')
+    const handler = routeHandler('/api/studio/group-chat/rooms/:roomId/agents', 'POST')
     const ctx: any = {
       params: { roomId: 'room-1' },
       request: { body: { profile: 'default', name: 'Worker' } },
@@ -475,7 +506,7 @@ describe('Group Chat member/agent identity sync', () => {
       'Worker',
       '',
       0,
-      { agent: 'hermes', provider: '', model: '', apiMode: '', reasoningEffort: '' },
+      { agent: 'hermes', agentMode: 'scoped', provider: '', model: '', apiMode: '', reasoningEffort: '' },
     )
     expect(removeRoomAgent).toHaveBeenCalledWith('room-1', 'row-1')
     expect(chatServer.agentClients.removeAgentFromRoom).toHaveBeenCalledWith('room-1', 'agent-stable-1')
@@ -514,7 +545,7 @@ describe('Group Chat member/agent identity sync', () => {
     }
     setGroupChatServer(chatServer as any)
 
-    const handler = routeHandler('/api/hermes/group-chat/rooms/:roomId/agents/:agentId', 'DELETE')
+    const handler = routeHandler('/api/studio/group-chat/rooms/:roomId/agents/:agentId', 'DELETE')
     const ctx: any = {
       params: { roomId: 'room-1', agentId: 'row-1' },
       status: 200,
@@ -546,7 +577,7 @@ describe('Group Chat member/agent identity sync', () => {
     }
     setGroupChatServer(chatServer as any)
 
-    const handler = routeHandler('/api/hermes/group-chat/rooms/:roomId', 'DELETE')
+    const handler = routeHandler('/api/studio/group-chat/rooms/:roomId', 'DELETE')
     const ctx: any = {
       params: { roomId: 'room-1' },
       state: { user: { id: 1, username: 'root', role: 'super_admin' } },
@@ -572,7 +603,7 @@ describe('Group Chat member/agent identity sync', () => {
     }
     setGroupChatServer(chatServer as any)
 
-    const handler = routeHandler('/api/hermes/group-chat/rooms/:roomId', 'DELETE')
+    const handler = routeHandler('/api/studio/group-chat/rooms/:roomId', 'DELETE')
     const ctx: any = {
       params: { roomId: 'room-1' },
       state: { user: { id: 1, username: 'root', role: 'super_admin' } },
@@ -1045,7 +1076,7 @@ describe('Group Chat member/agent identity sync', () => {
     }
     setGroupChatServer(chatServer as any)
 
-    const handler = routeHandler('/api/hermes/group-chat/rooms/:roomId/clear-context', 'POST')
+    const handler = routeHandler('/api/studio/group-chat/rooms/:roomId/clear-context', 'POST')
     const ctx: any = {
       params: { roomId: 'room-1' },
       state: { user: { id: 1, username: 'root', role: 'super_admin' } },
@@ -1072,7 +1103,7 @@ describe('Group Chat member/agent identity sync', () => {
     }
     setGroupChatServer(chatServer as any)
 
-    const handler = routeHandler('/api/hermes/group-chat/rooms/:roomId/clear-context', 'POST')
+    const handler = routeHandler('/api/studio/group-chat/rooms/:roomId/clear-context', 'POST')
     const ctx: any = {
       params: { roomId: 'room-1' },
       state: { user: { id: 1, username: 'root', role: 'super_admin' } },
@@ -1326,6 +1357,7 @@ describe('Group Chat member/agent identity sync', () => {
     server.userInfoMap = new Map([['agent-stable-1', { name: 'Worker', description: 'runtime agent' }]])
     server.typingState = new Map()
     server.contextStatusState = new Map()
+    server.roomSummaryService = createRoomSummaryServiceMock()
     server.storage = {
       getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room', inviteCode: 'secret', ownerAuthUserId: 7 })),
       getRoomAgentByAgentId: vi.fn(() => ({ id: 'row-1', roomId: 'room-1', agentId: 'agent-stable-1', profile: 'default', name: 'Worker', description: '', invited: 0 })),
@@ -1346,6 +1378,8 @@ describe('Group Chat member/agent identity sync', () => {
 
     server.handleJoin(socket, { roomId: 'room-1' }, ack)
 
+    expect(server.roomSummaryService.getState).toHaveBeenCalledWith('room-1')
+    expect(ack.mock.calls[0][0].roomSummary).toMatchObject({ roomId: 'room-1', status: 'idle' })
     expect(server.storage.getRoomAgentByAgentId).toHaveBeenCalledWith('room-1', 'agent-stable-1')
     expect(server.storage.addRoomMember).not.toHaveBeenCalled()
     expect(socket.join).toHaveBeenCalledWith('room-1')
@@ -1362,6 +1396,7 @@ describe('Group Chat member/agent identity sync', () => {
     server.userInfoMap = new Map([['auth:42', { name: 'alice', description: '' }]])
     server.typingState = new Map()
     server.contextStatusState = new Map()
+    server.roomSummaryService = createRoomSummaryServiceMock()
     server.storage = {
       getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room', inviteCode: 'secret', ownerAuthUserId: 7 })),
       getRoomAgentByAgentId: vi.fn(() => null),
@@ -1407,6 +1442,7 @@ describe('Group Chat member/agent identity sync', () => {
     server.userInfoMap = new Map([['auth:42', { name: 'alice', description: '' }]])
     server.typingState = new Map()
     server.contextStatusState = new Map()
+    server.roomSummaryService = createRoomSummaryServiceMock()
     server.storage = {
       getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room', inviteCode: null, ownerAuthUserId: 42 })),
       getRoomAgentByAgentId: vi.fn(() => null),
@@ -1463,6 +1499,7 @@ describe('Group Chat member/agent identity sync', () => {
     server.userInfoMap = new Map([['auth:42', { name: 'alice', description: '' }]])
     server.typingState = new Map()
     server.contextStatusState = new Map()
+    server.roomSummaryService = createRoomSummaryServiceMock()
     server.nsp = { to: vi.fn(() => ({ emit })) }
     server.storage = {
       getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room', inviteCode: null, ownerAuthUserId: 42 })),
@@ -1527,6 +1564,7 @@ describe('Group Chat member/agent identity sync', () => {
     server.userInfoMap = new Map([['auth:42', { name: 'alice', description: '' }]])
     server.typingState = new Map()
     server.contextStatusState = new Map()
+    server.roomSummaryService = createRoomSummaryServiceMock()
     server.nsp = { to: vi.fn(() => ({ emit })) }
     server.storage = {
       getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room', inviteCode: null, ownerAuthUserId: 42 })),
@@ -1581,6 +1619,7 @@ describe('Group Chat member/agent identity sync', () => {
     server.userInfoMap = new Map([['auth:42', { name: 'alice-login', description: '' }]])
     server.typingState = new Map()
     server.contextStatusState = new Map()
+    server.roomSummaryService = createRoomSummaryServiceMock()
     server.storage = {
       getRoomAgentByAgentId: vi.fn(() => null),
       getMemberByUserId: vi.fn(() => null),
@@ -1639,7 +1678,7 @@ describe('Group Chat member/agent identity sync', () => {
       ensureDefaultRoomWorkspace: (roomId: string, profile: string) => `/managed/group-chat/${profile}/${roomId}`,
     } as any)
 
-    const handler = routeHandler('/api/hermes/group-chat/rooms', 'POST')
+    const handler = routeHandler('/api/studio/group-chat/rooms', 'POST')
     const ctx: any = {
       state: { user: { id: 42, username: 'alice-login', role: 'admin' } },
       request: {
@@ -1740,7 +1779,7 @@ describe('Group Chat member/agent identity sync', () => {
     }
     setGroupChatServer({ getStorage: () => storage } as any)
 
-    const handler = routeHandler('/api/hermes/group-chat/rooms', 'GET')
+    const handler = routeHandler('/api/studio/group-chat/rooms', 'GET')
     const ctx: any = {
       state: { user: { id: 2, username: 'ops', role: 'admin', profiles: ['default', 'research'] } },
       status: 200,
@@ -1761,7 +1800,7 @@ describe('Group Chat member/agent identity sync', () => {
     }
     setGroupChatServer({ getStorage: () => storage } as any)
 
-    const handler = routeHandler('/api/hermes/group-chat/rooms', 'GET')
+    const handler = routeHandler('/api/studio/group-chat/rooms', 'GET')
     const ctx: any = {
       state: { user: { id: 1, username: 'admin', role: 'super_admin' } },
       status: 200,
@@ -1776,6 +1815,7 @@ describe('Group Chat member/agent identity sync', () => {
 
   it('routes trusted @mentions and always checks persisted public messages', async () => {
     const server = Object.create(GroupChatServer.prototype) as any
+    server.notifiedGroupMessages = new Set<string>()
     const emit = vi.fn()
     server.rooms = new Map([
       ['room-1', {
@@ -1884,6 +1924,7 @@ describe('Group Chat member/agent identity sync', () => {
     server.userInfoMap = new Map([['auth:42', { name: '郑工', description: '' }]])
     server.typingState = new Map()
     server.contextStatusState = new Map()
+    server.roomSummaryService = createRoomSummaryServiceMock()
     server.storage = {
       getRoom: vi.fn(() => ({ id: 'room-1', name: 'Family Room', inviteCode: 'secret' })),
       getRoomAgentByAgentId: vi.fn(() => null),
@@ -1935,6 +1976,7 @@ describe('Group Chat member/agent identity sync', () => {
     server.userInfoMap = new Map([['auth:42', { name: 'default-name', description: '' }]])
     server.typingState = new Map()
     server.contextStatusState = new Map()
+    server.roomSummaryService = createRoomSummaryServiceMock()
     server.storage = {
       getRoom: vi.fn(() => ({ id: 'room-2', name: 'Work Room', inviteCode: 'work123' })),
       getRoomAgentByAgentId: vi.fn(() => null),
@@ -1986,6 +2028,7 @@ describe('Group Chat member/agent identity sync', () => {
     }]])
     server.typingState = new Map()
     server.contextStatusState = new Map()
+    server.roomSummaryService = createRoomSummaryServiceMock()
     server.storage = {
       getRoom: vi.fn(() => ({ id: 'room-1', name: 'Room' })),
       getRoomAgentByAgentId: vi.fn(() => null),

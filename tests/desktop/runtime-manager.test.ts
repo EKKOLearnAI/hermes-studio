@@ -38,6 +38,9 @@ function tempDir(prefix: string): string {
 }
 
 function createRuntimeFiles(root: string, options: { standardWindowsVenv?: boolean } = {}) {
+  mkdirSync(join(root, 'python'), { recursive: true })
+  writeFileSync(join(root, 'python', 'run_agent.py'), '')
+  writeFileSync(join(root, 'python', 'cli.py'), '')
   if (process.platform === 'win32') {
     const pythonRoot = options.standardWindowsVenv
       ? join(root, 'python', 'venv')

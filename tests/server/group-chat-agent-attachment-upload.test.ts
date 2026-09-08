@@ -25,7 +25,7 @@ const mocks = vi.hoisted(() => ({
   })),
 }))
 
-vi.mock('../../packages/server/src/services/hermes/group-chat/runtime', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/group-chat/runtime', () => ({
   getGroupChatRuntimeServer: () => ({
     getStorage: () => ({
       getRoom: () => ({
@@ -38,7 +38,7 @@ vi.mock('../../packages/server/src/services/hermes/group-chat/runtime', () => ({
   }),
 }))
 
-vi.mock('../../packages/server/src/services/hermes/group-chat/remote-workspace-auth', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/group-chat/remote-workspace-auth', () => ({
   beginRemoteWorkspaceGrantOperation: () => ({
     grant: {
       roomId: 'room-1',
@@ -50,18 +50,18 @@ vi.mock('../../packages/server/src/services/hermes/group-chat/remote-workspace-a
   }),
 }))
 
-vi.mock('../../packages/server/src/services/hermes/group-chat/remote-workspace-files', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/group-chat/remote-workspace-files', () => ({
   MAX_REMOTE_WORKSPACE_TRANSFER_BYTES: 20 * 1024 * 1024,
   openRemoteWorkspaceDownload: vi.fn(),
   performRemoteWorkspaceAction: mocks.action,
   uploadRemoteWorkspaceFile: mocks.upload,
 }))
 
-vi.mock('../../packages/server/src/services/hermes/group-chat/workspace-files', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/group-chat/workspace-files', () => ({
   resolveGroupWorkspacePath: mocks.resolvePath,
 }))
 
-vi.mock('../../packages/server/src/services/hermes/group-chat/attachments', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/group-chat/attachments', () => ({
   storeAgentGroupChatAttachment: mocks.storeAttachment,
 }))
 
@@ -72,7 +72,7 @@ describe('group chat Agent attachment upload', () => {
 
   it('publishes the returned upload path as a separate Agent attachment message', async () => {
     const { uploadRemoteWorkspaceFileContent } = await import(
-      '../../packages/server/src/controllers/hermes/group-chat-remote-workspace'
+      '../../packages/server/src/modules/studio/controllers/group-chat-remote-workspace'
     )
     const headers: Record<string, string> = {
       authorization: 'Bearer valid_grant',
@@ -117,7 +117,7 @@ describe('group chat Agent attachment upload', () => {
 
   it('does not publish JSON writes as Agent attachment messages', async () => {
     const { remoteWorkspaceAction } = await import(
-      '../../packages/server/src/controllers/hermes/group-chat-remote-workspace'
+      '../../packages/server/src/modules/studio/controllers/group-chat-remote-workspace'
     )
     const ctx: any = {
       request: {
@@ -154,7 +154,7 @@ describe('group chat Agent attachment upload', () => {
   it('does not publish read-only JSON actions', async () => {
     mocks.action.mockResolvedValueOnce({ ok: true, path: '', entries: [] } as any)
     const { remoteWorkspaceAction } = await import(
-      '../../packages/server/src/controllers/hermes/group-chat-remote-workspace'
+      '../../packages/server/src/modules/studio/controllers/group-chat-remote-workspace'
     )
     const ctx: any = {
       request: { body: { action: 'list', path: '' } },

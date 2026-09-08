@@ -6,30 +6,37 @@ import {
 import {
   DEFAULT_AUTOMATIC_MEMORY_TOKEN_BUDGET,
   DEFAULT_MEMORY_RECENT_MESSAGE_LIMIT,
-  DEFAULT_MEMORY_REVIEW_EVERY_USER_MESSAGES,
   DEFAULT_MEMORY_SEARCH_RESULT_LIMIT,
 } from '../config'
-import { RuleBasedMemoryExtractor } from './extraction'
 import { resolveMemoryQuery } from './retrieval'
 import { canonicalizeMemoryDraft, memoryKindForCanonicalKey, normalizeMemoryNode } from './schema'
+import { memoryScopeAllowed, normalizeMemoryScopes, PROFILE_MEMORY_SCOPE } from './scope'
 import { stableJson } from './store'
 import type {
   MemoryAuditEvent,
+  MemoryAuditQuery,
+  MemoryBatchInput,
+  MemoryBatchOperation,
+  MemoryBatchResult,
   MemoryContext,
-  MemoryExtraction,
-  MemoryExtractor,
+  MemoryCreateInput,
+  MemoryDeleteInput,
+  MemoryExpireInput,
   MemoryForgetInput,
   MemoryForgetResult,
   MemoryMessage,
+  MemoryMessageListInput,
   MemoryMessageRole,
   MemoryNode,
-  MemoryProposeUpdateInput,
-  MemoryProposeUpdateResult,
+  MemoryWriteInput,
+  MemoryWriteResult,
   MemoryQuery,
   MemoryQueryResult,
   MemoryRuntimeIdentity,
+  MemoryWritePolicy,
   MemoryStore,
-  MemorySummary,
+  MemoryStoreMutation,
+  MemoryUpdateInput,
 } from './types'
 
 const MEMORY_CANDIDATE_LIMIT = 500
@@ -44,17 +51,15 @@ const ALWAYS_RECALLED_MEMORY_KINDS: NonNullable<MemoryQuery['kinds']> = [
 
 export interface MemoryServiceOptions {
   store?: MemoryStore
-  extractor?: MemoryExtractor
   enabled?: boolean
   warning?: string
+  storageMode?: 'persistent' | 'ephemeral'
+  onWarning?: (error: unknown) => void
   recentMessageLimit?: number
   automaticRecallTokenBudget?: number
   searchResultLimit?: number
   /** @deprecated Use searchResultLimit. Automatic recall now uses automaticRecallTokenBudget. */
   nodeLimit?: number
-  reviewEveryUserMessages?: number
-  /** @deprecated Use reviewEveryUserMessages. */
-  summaryEveryMessages?: number
 }
 
 export interface MemoryCaptureMessage {
@@ -65,20 +70,27 @@ export interface MemoryCaptureMessage {
   createdAt?: string
 }
 
+interface PreparedMemoryMutation {
+  result: MemoryWriteResult
+  mutation?: MemoryStoreMutation
+  conflictKey?: string
+}
+
 export class MemoryService {
   private readonly store?: MemoryStore
-  private readonly extractor: MemoryExtractor
-  private readonly enabled: boolean
-  private readonly recentMessageLimit: number
-  private readonly automaticRecallTokenBudget: number
-  private readonly searchResultLimit: number
-  private readonly reviewEveryUserMessages: number
+  private enabled: boolean
+  private recentMessageLimit: number
+  private automaticRecallTokenBudget: number
+  private searchResultLimit: number
   private readonly warnings = new Set<string>()
-  private extractionQueue: Promise<void> = Promise.resolve()
+  private readonly storageMode: 'persistent' | 'ephemeral'
+  private readonly onWarning?: (error: unknown) => void
+  private captureQueue: Promise<void> = Promise.resolve()
 
   constructor(options: MemoryServiceOptions = {}) {
     this.store = options.store
-    this.extractor = options.extractor ?? new RuleBasedMemoryExtractor()
+    this.onWarning = options.onWarning
+    this.storageMode = options.storageMode ?? 'persistent'
     this.enabled = options.enabled ?? Boolean(options.store)
     this.recentMessageLimit = options.recentMessageLimit ?? DEFAULT_MEMORY_RECENT_MESSAGE_LIMIT
     this.automaticRecallTokenBudget = positiveInteger(
@@ -89,19 +101,36 @@ export class MemoryService {
       options.searchResultLimit ?? options.nodeLimit,
       DEFAULT_MEMORY_SEARCH_RESULT_LIMIT,
     )
-    this.reviewEveryUserMessages = Math.max(
-      1,
-      Math.floor(
-        options.reviewEveryUserMessages
-        ?? options.summaryEveryMessages
-        ?? DEFAULT_MEMORY_REVIEW_EVERY_USER_MESSAGES,
-      ),
-    )
     if (options.warning) this.warnings.add(options.warning)
+  }
+
+  configure(options: Pick<
+    MemoryServiceOptions,
+    | 'enabled'
+    | 'recentMessageLimit'
+    | 'automaticRecallTokenBudget'
+    | 'searchResultLimit'
+  >): void {
+    this.enabled = options.enabled ?? Boolean(this.store)
+    this.recentMessageLimit = options.recentMessageLimit ?? DEFAULT_MEMORY_RECENT_MESSAGE_LIMIT
+    this.automaticRecallTokenBudget = positiveInteger(
+      options.automaticRecallTokenBudget,
+      DEFAULT_AUTOMATIC_MEMORY_TOKEN_BUDGET,
+    )
+    this.searchResultLimit = memorySearchLimit(
+      options.searchResultLimit,
+      DEFAULT_MEMORY_SEARCH_RESULT_LIMIT,
+    )
   }
 
   get isEnabled(): boolean {
     return this.enabled && Boolean(this.store)
+  }
+
+  get toolUnavailableReason(): string | undefined {
+    return this.storageMode === 'ephemeral'
+      ? 'Persistent Ekko memory is unavailable. The active store is ephemeral, so its contents cannot determine whether durable memories exist and memory mutations are disabled for this run.'
+      : undefined
   }
 
   async captureMessages(identity: MemoryRuntimeIdentity, messages: MemoryCaptureMessage[]): Promise<string[]> {
@@ -169,8 +198,7 @@ export class MemoryService {
                 })
               : Promise.resolve([]),
           ]).then(groups => uniqueMemoryNodes(groups.flat()))
-      const [latestSummary, recentMessages, relevantCandidates, exactCandidates] = await Promise.all([
-        this.store.getLatestSummary({ sessionId: identity.sessionId }),
+      const [recentMessages, relevantCandidates, exactCandidates] = await Promise.all([
         this.store.listRecentMessages({ sessionId: identity.sessionId, limit: this.recentMessageLimit }),
         this.store.queryNodes({
           ...baseQuery,
@@ -192,7 +220,6 @@ export class MemoryService {
       )
       const nodes = selection.nodes
       return {
-        latestSummary,
         recentMessages,
         activeTasks: nodes.filter(node => node.type === 'task'),
         relevantNodes: nodes,
@@ -225,7 +252,12 @@ export class MemoryService {
         ? this.store.queryNodes({ ...scoped, queryText: undefined, limit: MEMORY_CANDIDATE_LIMIT })
         : Promise.resolve([]),
     ])
-    return resolveMemoryQuery(exactCandidates, relevantCandidates, query.queryText, limit)
+    return resolveMemoryQuery(
+      exactCandidates,
+      relevantCandidates,
+      query.queryText,
+      limit,
+    )
   }
 
   async get(id: string, identity?: Partial<MemoryRuntimeIdentity>): Promise<MemoryNode | undefined> {
@@ -234,56 +266,184 @@ export class MemoryService {
     return node && isNodeAccessible(node, identity) ? node : undefined
   }
 
-  async proposeUpdate(input: MemoryProposeUpdateInput): Promise<MemoryProposeUpdateResult> {
-    if (!this.isEnabled || !this.store) return { accepted: false, reason: 'Memory store is disabled.' }
-    const actor = input.actor || 'ekko-agent'
-    if (input.operation === 'expire') {
-      if (!input.targetId) return { accepted: false, reason: 'expire requires targetId.' }
-      const target = await this.get(input.targetId, input.identity)
-      if (!target) return { accepted: false, reason: 'Memory node not found.' }
-      const revisionError = validateExpectedRevision(target, input.expectedRevision)
-      if (revisionError) return { accepted: false, reason: revisionError }
-      const changed = await this.store.updateNodeStatus({
-        nodeId: input.targetId,
-        status: 'expired',
-        reason: input.reason,
-        actor,
-        expectedRevision: input.expectedRevision,
-        sessionId: input.identity?.sessionId,
+  async list(query: MemoryQuery = {}): Promise<MemoryNode[]> {
+    if (!this.isEnabled || !this.store) return []
+    return this.store.queryNodes({
+      ...query,
+      profileId: query.profileId || 'default',
+    })
+  }
+
+  async create(input: MemoryCreateInput): Promise<MemoryWriteResult> {
+    return this.write({
+      ...input,
+      operation: 'create',
+    })
+  }
+
+  async update(id: string, input: MemoryUpdateInput): Promise<MemoryWriteResult> {
+    return this.write({
+      ...input,
+      operation: 'update',
+      targetId: id,
+      node: input.node ?? {},
+    })
+  }
+
+  async expire(id: string, input: MemoryExpireInput): Promise<MemoryWriteResult> {
+    return this.write({
+      ...input,
+      operation: 'expire',
+      targetId: id,
+      node: {},
+    })
+  }
+
+  async delete(id: string, input: MemoryDeleteInput): Promise<MemoryForgetResult> {
+    return this.forget({
+      ...input,
+      id,
+    })
+  }
+
+  async listMessages(input: MemoryMessageListInput): Promise<MemoryMessage[]> {
+    if (!this.isEnabled || !this.store) return []
+    if (input.afterMessageId) {
+      return this.store.listMessagesAfter({
+        sessionId: input.sessionId,
+        messageId: input.afterMessageId,
+        limit: input.limit,
       })
-      const node = changed ? await this.get(input.targetId, input.identity) : undefined
-      return changed
-        ? { accepted: true, nodeId: input.targetId, action: 'expired', node }
-        : { accepted: false, reason: 'Memory revision changed before expiration.' }
     }
-    if (input.operation === 'delete') {
-      if (!input.targetId) return { accepted: false, reason: 'delete requires targetId.' }
-      const target = await this.get(input.targetId, input.identity)
-      if (!target) return { accepted: false, reason: 'Memory node not found.' }
-      const revisionError = validateExpectedRevision(target, input.expectedRevision)
-      if (revisionError) return { accepted: false, reason: revisionError }
-      const changed = await this.store.deleteNode({
-        nodeId: input.targetId,
-        mode: 'soft',
-        reason: input.reason,
-        actor,
-        expectedRevision: input.expectedRevision,
-        sessionId: input.identity?.sessionId,
-      })
-      const node = changed ? await this.get(input.targetId, input.identity) : undefined
-      return changed
-        ? { accepted: true, nodeId: input.targetId, action: 'deleted', node }
-        : { accepted: false, reason: 'Memory revision changed before deletion.' }
+    return this.store.listRecentMessages({
+      sessionId: input.sessionId,
+      limit: input.limit ?? this.recentMessageLimit,
+    })
+  }
+
+  async listAuditEvents(query: MemoryAuditQuery = {}): Promise<MemoryAuditEvent[]> {
+    if (!this.isEnabled || !this.store) return []
+    return this.store.listAuditEvents({
+      ...query,
+      profileId: query.profileId || 'default',
+    })
+  }
+
+  async write(input: MemoryWriteInput): Promise<MemoryWriteResult> {
+    if (!this.isEnabled || !this.store) return { accepted: false, reason: 'Memory store is disabled.' }
+    const prepared = await this.prepareWrite(input)
+    if (prepared.mutation) await this.store.applyMutations([prepared.mutation])
+    return prepared.result
+  }
+
+  async applyBatch(input: MemoryBatchInput): Promise<MemoryBatchResult> {
+    if (!this.isEnabled || !this.store) {
+      return { accepted: false, done: true, results: [], reason: 'Memory store is disabled.' }
+    }
+    if (!Array.isArray(input.operations) || !input.operations.length) {
+      return { accepted: false, done: true, results: [], reason: 'operations must contain at least one memory change.' }
     }
 
-    if (input.operation === 'update' || input.operation === 'supersede') {
-      if (!input.targetId) return { accepted: false, reason: `${input.operation} requires targetId.` }
+    const prepared: PreparedMemoryMutation[] = []
+    const claimedKeys = new Map<string, number>()
+    for (const [index, operation] of input.operations.entries()) {
+      const mutation = operation.operation === 'delete'
+        ? await this.prepareDelete({
+            ...operation,
+            actor: input.actor,
+            identity: input.identity,
+          })
+        : await this.prepareWrite({
+            ...operation,
+            actor: input.actor,
+            identity: input.identity,
+            explicitUserIntent: operation.explicitUserIntent ?? input.explicitUserIntent,
+          })
+      if (!mutation.result.accepted) {
+        return {
+          accepted: false,
+          done: true,
+          results: [],
+          failedOperationIndex: index,
+          reason: `Operation ${index + 1}: ${mutation.result.reason || 'Memory mutation was rejected.'} No operations were applied.`,
+        }
+      }
+      if (mutation.conflictKey) {
+        const previous = claimedKeys.get(mutation.conflictKey)
+        if (previous !== undefined) {
+          return {
+            accepted: false,
+            done: true,
+            results: [],
+            failedOperationIndex: index,
+            reason: `Operation ${index + 1} conflicts with operation ${previous + 1}; one atomic batch cannot mutate the same memory slot twice. No operations were applied.`,
+          }
+        }
+        claimedKeys.set(mutation.conflictKey, index)
+      }
+      prepared.push(mutation)
+    }
+
+    try {
+      await this.store.applyMutations(prepared.flatMap(item => item.mutation ? [item.mutation] : []))
+    } catch (error) {
+      return {
+        accepted: false,
+        done: true,
+        results: [],
+        reason: `Atomic memory batch failed and was rolled back: ${error instanceof Error ? error.message : String(error)}`,
+      }
+    }
+    return {
+      accepted: true,
+      done: true,
+      results: prepared.map(item => item.result),
+    }
+  }
+
+  private async prepareWrite(input: MemoryWriteInput): Promise<PreparedMemoryMutation> {
+    const store = this.store!
+    const actor = input.actor || 'ekko-agent'
+    if (input.operation === 'expire') {
+      if (!input.targetId) return rejectedMutation('expire requires targetId.')
       const target = await this.get(input.targetId, input.identity)
-      if (!target || target.status !== 'active') return { accepted: false, reason: 'Active memory node not found.' }
+      if (!target) return rejectedMutation('Memory node not found.')
       const revisionError = validateExpectedRevision(target, input.expectedRevision)
-      if (revisionError) return { accepted: false, reason: revisionError }
+      if (revisionError) return rejectedMutation(revisionError)
+      const updatedAt = new Date().toISOString()
+      const node: MemoryNode = {
+        ...target,
+        status: 'expired',
+        revision: target.revision + 1,
+        updatedAt,
+      }
+      return {
+        result: { accepted: true, nodeId: input.targetId, action: 'expired', node },
+        mutation: {
+          type: 'status',
+          nodeId: input.targetId,
+          status: 'expired',
+          reason: input.reason,
+          actor,
+          expectedRevision: input.expectedRevision,
+          sessionId: input.identity?.sessionId,
+          updatedAt,
+        },
+        conflictKey: `node:${target.id}`,
+      }
+    }
+    if (input.operation === 'update' || input.operation === 'supersede') {
+      if (!input.targetId) return rejectedMutation(`${input.operation} requires targetId.`)
+      const target = await this.get(input.targetId, input.identity)
+      if (!target || target.status !== 'active') return rejectedMutation('Active memory node not found.')
+      const revisionError = validateExpectedRevision(target, input.expectedRevision)
+      if (revisionError) return rejectedMutation(revisionError)
       const slot = memoryKindForCanonicalKey(target.key)
-      if (!slot) return { accepted: false, reason: 'Memory has no server-controlled canonical key.' }
+      if (!slot) return rejectedMutation('Memory has no server-controlled canonical key.')
+      const changesValue = input.node.valueJson !== undefined || input.valuePatch !== undefined || Boolean(input.unsetValueFields?.length)
+      if (changesValue && (!input.node.title?.trim() || !input.node.content?.trim())) {
+        return rejectedMutation('A value-changing memory update requires title and content derived from its supporting user evidence.')
+      }
       const valueJson = applyValuePatch(
         input.node.valueJson === undefined ? target.valueJson : input.node.valueJson,
         input.valuePatch,
@@ -296,6 +456,8 @@ export class MemoryService {
         parentId: target.id,
         supersedesId: target.id,
         profileId: target.profileId,
+        scope: target.scope,
+        origin: input.identity?.origin || target.origin,
         key: target.key,
         domain: target.domain,
         categoryPath: target.categoryPath,
@@ -306,41 +468,53 @@ export class MemoryService {
         sourceMessageIds: uniqueValues([...target.sourceMessageIds, ...(input.node.sourceMessageIds || [])]),
         createdAt: undefined,
       })
-      if (!canonical.accepted) return canonical
+      if (!canonical.accepted) return rejectedMutation(canonical.reason)
       const normalized = normalizeMemoryNode({
         draft: canonical.draft,
-        identity: input.identity,
+        identity: writableIdentityForNode(input.identity, target),
         explicitUserIntent: input.explicitUserIntent,
       })
-      if (!normalized.accepted) return normalized
+      if (!normalized.accepted) return rejectedMutation(normalized.reason)
       const now = new Date().toISOString()
       const node: MemoryNode = { id: randomUUID(), ...normalized.node, updatedAt: now }
-      await this.store.supersedeNode({
-        oldNodeId: target.id,
-        newNode: node,
-        reason: input.reason,
-        actor,
-        sessionId: input.identity?.sessionId,
-      })
-      return { accepted: true, nodeId: node.id, action: 'updated', node }
+      return {
+        result: { accepted: true, nodeId: node.id, action: 'updated', node },
+        mutation: {
+          type: 'supersede',
+          oldNodeId: target.id,
+          newNode: node,
+          reason: input.reason,
+          actor,
+          sessionId: input.identity?.sessionId,
+        },
+        conflictKey: `node:${target.id}`,
+      }
     }
 
-    const canonical = canonicalizeMemoryDraft(input.kind, input.itemKey, input.node)
-    if (!canonical.accepted) return canonical
+    const canonical = canonicalizeMemoryDraft(input.kind, input.itemKey, {
+      ...input.node,
+      ...(input.scope ? { scope: input.scope } : {}),
+      ...(input.identity?.origin ? { origin: input.identity.origin } : {}),
+    })
+    if (!canonical.accepted) return rejectedMutation(canonical.reason)
     const normalized = normalizeMemoryNode({
       draft: canonical.draft,
       identity: input.identity,
       explicitUserIntent: input.explicitUserIntent,
     })
-    if (!normalized.accepted) return normalized
+    if (!normalized.accepted) return rejectedMutation(normalized.reason)
     const now = new Date().toISOString()
     let node: MemoryNode = { id: randomUUID(), ...normalized.node, revision: 1, updatedAt: now }
-    const existing = (await this.store.queryNodes({
-      ...memoryQuery(input.identity as MemoryRuntimeIdentity, { key: node.key, includeExpired: false }),
+    const existing = (await store.queryNodes({
+      ...memoryQuery(input.identity as MemoryRuntimeIdentity, {
+        key: node.key,
+        scopes: [node.scope || PROFILE_MEMORY_SCOPE],
+        includeExpired: false,
+      }),
       limit: 2,
     }))[0]
     if (existing && stableJson(existing.valueJson) === stableJson(node.valueJson) && existing.content === node.content) {
-      return { accepted: true, nodeId: existing.id, action: 'noop', node: existing }
+      return { result: { accepted: true, nodeId: existing.id, action: 'noop', node: existing } }
     }
     if (existing) {
       node = {
@@ -350,25 +524,72 @@ export class MemoryService {
         supersedesId: existing.id,
         sourceMessageIds: uniqueValues([...existing.sourceMessageIds, ...node.sourceMessageIds]),
       }
-      await this.store.supersedeNode({
-        oldNodeId: existing.id,
-        newNode: node,
-        reason: input.reason,
-        actor,
-        sessionId: input.identity?.sessionId,
-      })
-      return { accepted: true, nodeId: node.id, action: 'updated', node }
+      return {
+        result: { accepted: true, nodeId: node.id, action: 'updated', node },
+        mutation: {
+          type: 'supersede',
+          oldNodeId: existing.id,
+          newNode: node,
+          reason: input.reason,
+          actor,
+          sessionId: input.identity?.sessionId,
+        },
+        conflictKey: `node:${existing.id}`,
+      }
     }
 
-    await this.store.upsertNode(node, {
-      eventType: 'create',
-      sessionId: input.identity?.sessionId,
-      profileId: node.profileId,
-      actor,
-      reason: input.reason,
-      payload: { type: node.type, key: node.key },
-    })
-    return { accepted: true, nodeId: node.id, action: 'created', node }
+    return {
+      result: { accepted: true, nodeId: node.id, action: 'created', node },
+      mutation: {
+        type: 'upsert',
+        node,
+        audit: {
+          eventType: 'create',
+          sessionId: input.identity?.sessionId,
+          profileId: node.profileId,
+          actor,
+          reason: input.reason,
+          payload: { type: node.type, key: node.key },
+        },
+      },
+      conflictKey: `slot:${memoryNodeSlotKey(node)}`,
+    }
+  }
+
+  private async prepareDelete(
+    input: Extract<MemoryBatchOperation, { operation: 'delete' }> & {
+      actor?: string
+      identity?: Partial<MemoryRuntimeIdentity>
+    },
+  ): Promise<PreparedMemoryMutation> {
+    const target = await this.get(input.targetId, input.identity)
+    if (!target) return rejectedMutation('Memory node not found.')
+    const revisionError = validateExpectedRevision(target, input.expectedRevision)
+    if (revisionError) return rejectedMutation(revisionError)
+    const mode = input.mode || 'soft'
+    const updatedAt = new Date().toISOString()
+    const node: MemoryNode = mode === 'soft'
+      ? {
+          ...target,
+          status: 'deleted',
+          revision: target.revision + 1,
+          updatedAt,
+        }
+      : target
+    return {
+      result: { accepted: true, nodeId: target.id, action: 'deleted', node },
+      mutation: {
+        type: 'delete',
+        nodeId: target.id,
+        mode,
+        reason: input.reason,
+        actor: input.actor || 'ekko-agent',
+        expectedRevision: input.expectedRevision,
+        sessionId: input.identity?.sessionId,
+        updatedAt,
+      },
+      conflictKey: `node:${target.id}`,
+    }
   }
 
   async forget(input: MemoryForgetInput): Promise<MemoryForgetResult> {
@@ -376,45 +597,86 @@ export class MemoryService {
     if (!this.isEnabled || !this.store) {
       return { deletedIds: [], mode, reason: 'Memory store is disabled.' }
     }
-    if (!input.id && !input.domain && !input.type && !input.key && input.valueJson === undefined) {
+    const hasBroadSelector = Boolean(
+      input.domain ||
+      input.categoryPathPrefix?.length ||
+      input.type ||
+      input.key ||
+      input.valueJson !== undefined,
+    )
+    if (
+      !input.all &&
+      !input.targets?.length &&
+      !input.id &&
+      !hasBroadSelector
+    ) {
       return { deletedIds: [], mode, reason: 'A memory selector is required.' }
     }
-    const candidates = input.id
-      ? [await this.get(input.id, input.identity)].filter((node): node is MemoryNode => Boolean(node))
-      : await this.store.queryNodes(memoryQuery(input.identity as MemoryRuntimeIdentity, {
-          domain: input.domain,
-          categoryPathPrefix: input.categoryPathPrefix,
-          types: input.type ? [input.type] : undefined,
-          key: input.key,
-          valueJson: input.valueJson,
-          includeExpired: true,
-          limit: 100,
-        }))
+    const selectorCount = Number(input.all === true) +
+      Number(Boolean(input.targets?.length)) +
+      Number(Boolean(input.id)) +
+      Number(hasBroadSelector)
+    if (selectorCount > 1) {
+      return { deletedIds: [], mode, reason: 'Use exactly one memory selector: all, targets, id, or a broad query.' }
+    }
+    const exactTargets = input.targets?.length
+      ? [...new Map(input.targets.map(target => [target.id, target])).values()]
+      : undefined
+    const expectedRevisions = new Map<string, number>()
+    let candidates: MemoryNode[] = []
+    if (exactTargets) {
+      const resolved = await Promise.all(exactTargets.map(async target => ({
+        target,
+        node: await this.get(target.id, input.identity),
+      })))
+      const missing = resolved.find(item => !item.node)
+      if (missing) return { deletedIds: [], mode, reason: `Memory node not found: ${missing.target.id}` }
+      candidates = resolved.map(item => item.node!)
+      for (const { target, node } of resolved) {
+        const revisionError = validateExpectedRevision(node!, target.expectedRevision)
+        if (revisionError) return { deletedIds: [], mode, reason: revisionError }
+        expectedRevisions.set(target.id, target.expectedRevision)
+      }
+    } else if (input.id) {
+      candidates = [await this.get(input.id, input.identity)].filter((node): node is MemoryNode => Boolean(node))
+    } else {
+      const baseQuery = memoryQuery(input.identity as MemoryRuntimeIdentity, {
+        domain: input.all ? undefined : input.domain,
+        categoryPathPrefix: input.all ? undefined : input.categoryPathPrefix,
+        types: input.all || !input.type ? undefined : [input.type],
+        key: input.all ? undefined : input.key,
+        valueJson: input.all ? undefined : input.valueJson,
+        includeExpired: true,
+      })
+      for (let offset = 0; ; offset += 500) {
+        const page = await this.store.queryNodes({ ...baseQuery, limit: 500, offset })
+        candidates.push(...page)
+        if (page.length < 500) break
+      }
+    }
     if (!candidates.length) return { deletedIds: [], mode, reason: 'No matching memory was found.' }
     if (input.id) {
       const revisionError = validateExpectedRevision(candidates[0], input.expectedRevision)
       if (revisionError) return { deletedIds: [], mode, reason: revisionError }
     }
-    if ((!input.confirmed && candidates.length > 1) || (mode === 'hard' && !input.confirmed)) {
-      return {
-        deletedIds: [],
-        mode,
-        requiresConfirmation: true,
-        reason: mode === 'hard' ? 'Hard delete requires confirmation.' : 'Multiple memories matched; confirmation is required.',
-      }
-    }
-    const deletedIds: string[] = []
-    for (const node of candidates) {
-      const deleted = await this.store.deleteNode({
+    try {
+      await this.store.applyMutations(candidates.map(node => ({
+        type: 'delete' as const,
         nodeId: node.id,
         mode,
         reason: input.reason,
         actor: input.actor || 'ekko-agent',
-        expectedRevision: input.id ? input.expectedRevision : undefined,
+        expectedRevision: expectedRevisions.get(node.id) ?? (input.id ? input.expectedRevision : node.revision),
         sessionId: input.identity?.sessionId,
-      })
-      if (deleted) deletedIds.push(node.id)
+      })))
+    } catch (error) {
+      return {
+        deletedIds: [],
+        mode,
+        reason: `Atomic memory deletion failed and was rolled back: ${error instanceof Error ? error.message : String(error)}`,
+      }
     }
+    const deletedIds = candidates.map(node => node.id)
     return {
       deletedIds,
       deletedMemories: candidates.filter(node => deletedIds.includes(node.id)).map(node => ({
@@ -426,30 +688,20 @@ export class MemoryService {
     }
   }
 
-  scheduleExtraction(identity: MemoryRuntimeIdentity): void {
-    if (!this.isEnabled || !this.store) return
-    this.extractionQueue = this.extractionQueue
-      .then(() => this.extractAndPersist(identity, this.extractor, true))
-      .catch(error => this.recordWarning(error))
-  }
-
-  scheduleRunCompletion(
+  scheduleCapture(
     identity: MemoryRuntimeIdentity,
     messages: MemoryCaptureMessage[],
-    extractor: MemoryExtractor = this.extractor,
+    writePolicy: MemoryWritePolicy = 'automatic',
   ): void {
     if (!this.isEnabled || !this.store) return
-    const forceReview = hasHighSignalMemoryCandidate(messages)
-    this.extractionQueue = this.extractionQueue
-      .then(async () => {
-        await this.captureMessages(identity, messages)
-        await this.extractAndPersist(identity, extractor, forceReview)
-      })
+    if (writePolicy === 'explicit-only' && !hasExplicitMemoryIntent(messages)) return
+    this.captureQueue = this.captureQueue
+      .then(() => this.captureMessages(identity, messages).then(() => undefined))
       .catch(error => this.recordWarning(error))
   }
 
   async drain(): Promise<void> {
-    await this.extractionQueue
+    await this.captureQueue
   }
 
   close(): void {
@@ -458,97 +710,6 @@ export class MemoryService {
 
   contextPrompt(context: MemoryContext): string {
     return buildMemoryContextPrompt(context)
-  }
-
-  private async extractAndPersist(
-    identity: MemoryRuntimeIdentity,
-    extractor: MemoryExtractor = this.extractor,
-    forceReview = false,
-  ): Promise<void> {
-    if (!this.store) return
-    const state = await this.store.getSessionState(identity.sessionId)
-    const messages = await this.store.listMessagesAfter({
-      sessionId: identity.sessionId,
-      messageId: state?.lastExtractedMessageId,
-      limit: 100,
-    })
-    if (!messages.length) return
-    const newUserMessageCount = messages.filter(message => message.role === 'user').length
-    if (!forceReview && newUserMessageCount < this.reviewEveryUserMessages) return
-
-    const previousSummary = await this.store.getLatestSummary({ sessionId: identity.sessionId })
-    const extraction = await extractor.extract({ ...identity, previousSummary, messages })
-    for (const operation of extraction.nodes) {
-      if (operation.operation === 'ignore') continue
-      await this.proposeUpdate({
-        operation: operation.operation,
-        kind: operation.kind,
-        itemKey: operation.itemKey,
-        targetId: operation.targetId,
-        expectedRevision: operation.expectedRevision,
-        node: {
-          ...operation.node,
-          sourceMessageIds: operation.node.sourceMessageIds?.length
-            ? operation.node.sourceMessageIds
-            : messages.map(message => message.id),
-        },
-        reason: operation.reason,
-        actor: 'memory-extractor',
-        explicitUserIntent: operation.explicitUserIntent,
-        identity,
-      })
-    }
-
-    const sinceSummary = await this.store.listMessagesAfter({
-      sessionId: identity.sessionId,
-      messageId: state?.lastSummaryMessageId,
-      limit: 500,
-    })
-    let lastSummaryMessageId = state?.lastSummaryMessageId
-    if (extraction.summaryPatch) {
-      const summary = buildSummary(identity.sessionId, previousSummary, sinceSummary, extraction)
-      await this.store.appendSummary(summary)
-      await this.store.appendAuditEvent({
-        id: randomUUID(),
-        eventType: 'summary',
-        sessionId: identity.sessionId,
-        profileId: identity.profileId || 'default',
-        actor: 'memory-extractor',
-        reason: extraction.fallbackReason ? 'Periodic chained summary (safe fallback)' : 'Periodic chained summary',
-        payload: {
-          summaryId: summary.id,
-          fromMessageId: summary.fromMessageId,
-          toMessageId: summary.toMessageId,
-          ...(extraction.fallbackReason ? { fallbackReason: extraction.fallbackReason } : {}),
-        },
-        createdAt: summary.createdAt,
-      })
-      lastSummaryMessageId = sinceSummary.at(-1)?.id
-    }
-    const lastExtractedMessageId = messages.at(-1)?.id
-    await this.store.setSessionState({
-      sessionId: identity.sessionId,
-      lastExtractedMessageId,
-      lastSummaryMessageId,
-      updatedAt: new Date().toISOString(),
-    })
-    await this.store.appendAuditEvent({
-      id: randomUUID(),
-      eventType: 'extract',
-      sessionId: identity.sessionId,
-      profileId: identity.profileId || 'default',
-      actor: 'memory-extractor',
-      reason: extraction.fallbackReason
-        ? 'Processed new conversation messages using safe fallback'
-        : 'Processed new conversation messages',
-      payload: {
-        fromMessageId: messages[0].id,
-        toMessageId: lastExtractedMessageId,
-        operations: extraction.nodes.length,
-        ...(extraction.fallbackReason ? { fallbackReason: extraction.fallbackReason } : {}),
-      },
-      createdAt: new Date().toISOString(),
-    })
   }
 
   private disabledContext(): MemoryContext {
@@ -574,6 +735,11 @@ export class MemoryService {
   private recordWarning(error: unknown): void {
     const message = error instanceof Error ? error.message : String(error)
     this.warnings.add(message)
+    try {
+      this.onWarning?.(error)
+    } catch {
+      // Diagnostics must never replace the underlying memory degradation path.
+    }
   }
 }
 
@@ -581,6 +747,7 @@ function memoryQuery(identity: Partial<MemoryRuntimeIdentity> | undefined, overr
   return {
     ...overrides,
     profileId: identity?.profileId || 'default',
+    scopes: overrides.scopes ?? normalizeMemoryScopes(identity?.recallScopes),
   }
 }
 
@@ -658,16 +825,43 @@ function messageSignature(message: MemoryCaptureMessage): string {
     .digest('hex')
 }
 
-function hasHighSignalMemoryCandidate(messages: MemoryCaptureMessage[]): boolean {
+export function hasExplicitMemoryIntent(messages: MemoryCaptureMessage[]): boolean {
   const latestUser = [...messages].reverse().find(message => message.role === 'user')?.content || ''
-  const highSignalPatterns = [
-    /(?:记住|记下来|保存(?:这个|这条|我的)?|以后(?:都|请)?|长期|忘掉|忘记|别记|删除.{0,8}(?:记忆|偏好|记录)|更正|改成|更新.{0,8}(?:记忆|偏好|信息))/i,
-    /(?:我(?:是|叫|来自|住在|常住|在.{0,12}工作|的名字是|的职业是|的身份是)|我的(?:名字|职业|身份|家乡|住址|系统|环境|工作流|习惯|偏好|项目)(?:是|为|用)|叫我|称呼我|你是我的|我是你的)/i,
-    /(?:我(?:喜欢|偏好|习惯|通常|总是|从不|不喜欢|讨厌|不吃|不用|需要|希望|要求)|别再|不要再|以后别|对我(?:要|请)|我对.{0,12}(?:过敏|不耐受))/i,
-    /(?:不是.{0,30}(?:而是|是)|其实我|我现在|我已经不|之前.{0,20}(?:错了|不对)|纠正一下)/i,
-    /(?:remember|from now on|forget|delete (?:that|this|my) memory|update my memory|my name is|call me|i am|i'm|i live|i work|i use|i prefer|i like|i dislike|i hate|i always|i never|i need|i want you to|don't call me|do not call me|actually,? i|not .{0,30} but)/i,
-  ]
-  return highSignalPatterns.some(pattern => pattern.test(latestUser))
+  return /(?:记住|记下来|保存(?:到|为)?记忆|以后(?:都|请)?|从现在起|更正.{0,8}(?:记忆|偏好|信息)|更新.{0,8}(?:记忆|偏好|信息)|remember|from now on|update my memory)/i.test(latestUser)
+    || hasExplicitMemoryForgetIntent(messages)
+}
+
+export function hasExplicitMemoryForgetIntent(messages: MemoryCaptureMessage[]): boolean {
+  const latestUser = [...messages].reverse().find(message => message.role === 'user')?.content || ''
+  const chineseIntent = /(?:忘掉|忘记|别记|不再记)|(?:删除|清掉|清除|清空)(?:掉|一下)?(?:(?:我(?:的)?|你(?:的|(?:所)?(?:保存|记住|记录)的)?|已保存(?:的)?|这(?:条|些)?|(?:所有|全部)(?:的)?)){0,3}(?:记忆|偏好|记录)|(?:删除|清掉|清除|清空)(?:掉|一下)?(?:我的|关于我的)(?:个人)?信息/giu
+  const englishIntent = /\bforget\b|\b(?:delete|clear|erase)\s+(?:that|this|my|the|all|every).{0,20}\b(?:memories|memory|preference|record)s?\b/giu
+  return hasNonNegatedIntent(latestUser, chineseIntent)
+    || hasNonNegatedIntent(latestUser, englishIntent)
+}
+
+export function hasExplicitMemoryForgetAllIntent(messages: MemoryCaptureMessage[]): boolean {
+  const latestUser = [...messages].reverse().find(message => message.role === 'user')?.content || ''
+  const chineseForgetAll = /(?:忘掉|忘记|删除|清掉|清除|清空)/.test(latestUser)
+    && /(?:所有|全部)/.test(latestUser)
+    && /(?:记忆|偏好|记录|信息)/.test(latestUser)
+  return chineseForgetAll
+    || /(?:forget|delete|clear|erase).{0,16}(?:all|every).{0,16}(?:memories|memory|preferences|records)/i.test(latestUser)
+}
+
+function rejectedMutation(reason: string): PreparedMemoryMutation {
+  return { result: { accepted: false, reason } }
+}
+
+function memoryNodeSlotKey(node: MemoryNode): string {
+  return stableJson([node.profileId, node.scope || PROFILE_MEMORY_SCOPE, node.key])
+}
+
+function hasNonNegatedIntent(text: string, pattern: RegExp): boolean {
+  for (const match of text.matchAll(pattern)) {
+    const prefix = text.slice(Math.max(0, match.index! - 12), match.index)
+    if (!/(?:不要|别|禁止|不得|不能|不可|无需|无须|切勿|do\s+not|don't|never)\s*$/iu.test(prefix)) return true
+  }
+  return false
 }
 
 function validateExpectedRevision(node: MemoryNode, expectedRevision: number | undefined): string | undefined {
@@ -698,44 +892,6 @@ function uniqueValues(values: string[]): string[] {
   return [...new Set(values.map(value => value.trim()).filter(Boolean))]
 }
 
-function buildSummary(
-  sessionId: string,
-  previous: MemorySummary | undefined,
-  messages: MemoryMessage[],
-  extraction: MemoryExtraction,
-): MemorySummary {
-  const userText = messages.filter(message => message.role === 'user').map(message => message.content)
-  const assistantText = messages.filter(message => message.role === 'assistant').map(message => message.content)
-  const now = new Date().toISOString()
-  return {
-    id: randomUUID(),
-    sessionId,
-    parentSummaryId: previous?.id,
-    fromMessageId: messages[0].id,
-    toMessageId: messages.at(-1)!.id,
-    summary: extraction.summaryPatch!,
-    currentGoal: extraction.currentGoal,
-    constraints: extraction.constraints ?? collectMatches(userText, /(?:必须|不要|不能|constraint)[:：]?\s*([^。\n]+)/gi),
-    preferences: extraction.preferences ?? collectMatches(userText, /(?:喜欢|偏好|prefer)[:：]?\s*([^。\n]+)/gi),
-    decisions: extraction.decisions ?? collectMatches(userText, /(?:决定|采用|decision)[:：]?\s*([^。\n]+)/gi),
-    completedWork: extraction.completedWork ?? collectMatches(assistantText, /(?:已完成|完成了|completed)[:：]?\s*([^。\n]+)/gi),
-    pendingWork: extraction.pendingWork ?? collectMatches([...userText, ...assistantText], /(?:待办|下一步|pending)[:：]?\s*([^。\n]+)/gi),
-    knownIssues: extraction.knownIssues ?? collectMatches([...userText, ...assistantText], /(?:问题|错误|issue)[:：]?\s*([^。\n]+)/gi),
-    createdAt: now,
-  }
-}
-
-function collectMatches(values: string[], pattern: RegExp): string[] {
-  const output = new Set<string>()
-  for (const value of values) {
-    pattern.lastIndex = 0
-    for (const match of value.matchAll(pattern)) {
-      if (match[1]?.trim()) output.add(match[1].trim())
-    }
-  }
-  return [...output].slice(0, 10)
-}
-
 function emptyContext(diagnostics: MemoryContext['diagnostics']): MemoryContext {
   return {
     recentMessages: [],
@@ -749,5 +905,22 @@ function emptyContext(diagnostics: MemoryContext['diagnostics']): MemoryContext 
 }
 
 function isNodeAccessible(node: MemoryNode, identity: Partial<MemoryRuntimeIdentity> | undefined): boolean {
-  return (identity?.profileId || 'default') === node.profileId
+  if ((identity?.profileId || 'default') !== node.profileId) return false
+  if (identity?.recallScopes?.length) return memoryScopeAllowed(node.scope, identity.recallScopes)
+  // Session-bound callers are runtime actors and inherit the safe profile-only
+  // default. Sessionless callers are administrative APIs that already own the
+  // profile and need to inspect scoped cards for maintenance.
+  return !identity?.sessionId || memoryScopeAllowed(node.scope, [PROFILE_MEMORY_SCOPE])
+}
+
+function writableIdentityForNode(
+  identity: Partial<MemoryRuntimeIdentity> | undefined,
+  node: MemoryNode,
+): Partial<MemoryRuntimeIdentity> {
+  if (identity?.writeScopes?.length) return identity
+  return {
+    ...identity,
+    writeScopes: [node.scope || PROFILE_MEMORY_SCOPE],
+    defaultWriteScope: node.scope || PROFILE_MEMORY_SCOPE,
+  }
 }
