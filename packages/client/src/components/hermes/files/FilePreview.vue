@@ -463,6 +463,7 @@ onBeforeUnmount(() => {
 
 .preview-source {
   align-self: stretch;
+  min-width: 0;
   width: 100%;
   height: 100%;
   overflow: auto;
@@ -470,6 +471,11 @@ onBeforeUnmount(() => {
   font-size: 13px;
   line-height: 1.55;
   scrollbar-width: none;
+
+  // Let long rows contribute to the scroller's horizontal overflow.
+  :deep(.vue-recycle-scroller__item-wrapper) {
+    overflow: visible;
+  }
 
   &:focus-visible {
     outline: 2px solid rgba(var(--accent-primary-rgb), 0.72);

@@ -342,7 +342,9 @@ test('opens GitHub-style line anchors and reveals the requested range in the sid
       contentType: 'text/plain; charset=utf-8',
       body: Array.from(
         { length: 600 },
-        (_, index) => index === 549 ? 'const targetLine = 550' : `const line${index + 1} = ${index + 1}`,
+        (_, index) => index === 549
+          ? `const targetLine = 550 // ${'long source content '.repeat(20)}END_OF_LINE`
+          : `const line${index + 1} = ${index + 1}`,
       ).join('\n'),
     })
   })
@@ -373,6 +375,25 @@ test('opens GitHub-style line anchors and reveals the requested range in the sid
   await expect.poll(() => source.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
   if (evidenceDir) {
     await page.screenshot({ path: `${evidenceDir}/02-line-range-preview.png`, animations: 'disabled' })
+  }
+
+  // A located line must remain readable beyond the side panel's width.
+  const initialScrollTop = await source.evaluate(element => element.scrollTop)
+  await source.evaluate(element => { element.scrollLeft = element.scrollWidth })
+  await expect.poll(() => source.evaluate(element => element.scrollLeft)).toBeGreaterThan(0)
+  await expect.poll(() => target.locator('code').evaluate(element => {
+    const text = element.firstChild!
+    const range = document.createRange()
+    range.setStart(text, text.textContent!.length - 'END_OF_LINE'.length)
+    range.setEnd(text, text.textContent!.length)
+    const tail = range.getBoundingClientRect()
+    const viewport = element.closest('.preview-source')!.getBoundingClientRect()
+    return tail.left >= viewport.left && tail.right <= viewport.right
+  })).toBe(true)
+  expect(await source.evaluate(element => element.scrollTop)).toBe(initialScrollTop)
+  await expect(target).toHaveClass(/is-target-line/)
+  if (evidenceDir) {
+    await page.screenshot({ path: `${evidenceDir}/03-long-line-scrolled.png`, animations: 'disabled' })
   }
 
   const requestUrl = new URL(previewRequestUrl)
