@@ -60,19 +60,19 @@ const configMock = vi.hoisted(() => ({
   appHome: '/Users/test/.hermes-web-ui',
 }))
 
-vi.mock('../../packages/server/src/services/config-helpers', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/profile-config', () => ({
   updateConfigYamlForProfile: updateConfigYamlForProfileMock,
 }))
 
-vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/profiles/profile', () => ({
   listProfileNamesFromDisk: listProfileNamesFromDiskMock,
 }))
 
-vi.mock('../../packages/server/src/config', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/config', () => ({
   config: configMock,
 }))
 
-vi.mock('../../packages/server/src/services/logger', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/logging', () => ({
   logger: {
     info: vi.fn(),
     warn: vi.fn(),
@@ -101,12 +101,13 @@ describe('studio MCP autoinject', () => {
   })
 
   afterEach(() => {
+    vi.unstubAllEnvs()
     delete process.env.HERMES_WEB_UI_MCP_BIN
     for (const root of fixtureRoots.splice(0).reverse()) rmSync(root, { recursive: true, force: true })
   })
 
   it('injects bundled MCP server into every profile without relying on a global PATH shim', async () => {
-    const { injectBundledMcpServer } = await import('../../packages/server/src/services/hermes/studio-mcp-autoinject')
+    const { injectBundledMcpServer } = await import('../../packages/server/src/modules/hermes/services/mcp/studio-autoinject')
 
     const result = await injectBundledMcpServer()
 
@@ -117,6 +118,7 @@ describe('studio MCP autoinject', () => {
       command: process.execPath,
       args: [stableLauncher, 'api'],
       env: {
+        ELECTRON_RUN_AS_NODE: '1',
         HERMES_WEB_UI_URL: 'http://127.0.0.1:8648',
         HERMES_WEB_UI_HOME: '/Users/test/.hermes-web-ui',
         HERMES_WEBUI_STATE_DIR: '/Users/test/.hermes-web-ui',
@@ -169,8 +171,31 @@ describe('studio MCP autoinject', () => {
     expect(result.command).toBe(process.execPath)
   })
 
+  it.each([undefined, '0'])('repairs managed MCP Node mode %s and then leaves the config unchanged', async (runAsNode) => {
+    vi.stubEnv('HERMES_DESKTOP', 'true')
+    vi.stubEnv('ELECTRON_RUN_AS_NODE', undefined)
+    const { injectBundledMcpServer } = await import('../../packages/server/src/modules/hermes/services/mcp/studio-autoinject')
+    await injectBundledMcpServer()
+    const updater = updateConfigYamlForProfileMock.mock.calls[0][1]
+    const initial = await updater({})
+    for (const server of Object.values(initial.data.mcp_servers) as any[]) {
+      expect(server.command).toBe(process.execPath)
+      expect(server.env.ELECTRON_RUN_AS_NODE).toBe('1')
+      if (runAsNode === undefined) delete server.env.ELECTRON_RUN_AS_NODE
+      else server.env.ELECTRON_RUN_AS_NODE = runAsNode
+    }
+    initial.data.mcp_servers['hermes-studio-api'].timeout = 42
+    const repaired = await updater(initial.data)
+    expect(repaired.result.status).toBe('updated')
+    for (const server of Object.values(repaired.data.mcp_servers) as any[]) {
+      expect(server.env.ELECTRON_RUN_AS_NODE).toBe('1')
+    }
+    expect(repaired.data.mcp_servers['hermes-studio-api'].timeout).toBe(42)
+    expect((await updater(repaired.data)).result.status).toBe('unchanged')
+  })
+
   it('migrates an existing managed use server from the default MCP timeout', async () => {
-    const { injectBundledMcpServer } = await import('../../packages/server/src/services/hermes/studio-mcp-autoinject')
+    const { injectBundledMcpServer } = await import('../../packages/server/src/modules/hermes/services/mcp/studio-autoinject')
     await injectBundledMcpServer()
 
     const updater = updateConfigYamlForProfileMock.mock.calls[0][1]
@@ -186,7 +211,7 @@ describe('studio MCP autoinject', () => {
   })
 
   it('preserves an existing timeout on an unrelated managed server during config resync', async () => {
-    const { injectBundledMcpServer } = await import('../../packages/server/src/services/hermes/studio-mcp-autoinject')
+    const { injectBundledMcpServer } = await import('../../packages/server/src/modules/hermes/services/mcp/studio-autoinject')
     await injectBundledMcpServer()
 
     const updater = updateConfigYamlForProfileMock.mock.calls[0][1]
@@ -204,7 +229,7 @@ describe('studio MCP autoinject', () => {
 
   it('skips autoinject for transient preview homes by default', async () => {
     configMock.appHome = '/private/tmp/wui-preview-home'
-    const { injectBundledMcpServer } = await import('../../packages/server/src/services/hermes/studio-mcp-autoinject')
+    const { injectBundledMcpServer } = await import('../../packages/server/src/modules/hermes/services/mcp/studio-autoinject')
 
     const result = await injectBundledMcpServer()
 
@@ -214,7 +239,7 @@ describe('studio MCP autoinject', () => {
 
   it('keeps the same browser MCP entry in desktop mode', async () => {
     process.env.HERMES_DESKTOP = 'true'
-    const { injectBundledMcpServer } = await import('../../packages/server/src/services/hermes/studio-mcp-autoinject')
+    const { injectBundledMcpServer } = await import('../../packages/server/src/modules/hermes/services/mcp/studio-autoinject')
     const result = await injectBundledMcpServer()
     const injected = await updateConfigYamlForProfileMock.mock.calls[0][1]({})
     expect(injected.data.mcp_servers['hermes-studio-browser']).toMatchObject({
@@ -225,7 +250,7 @@ describe('studio MCP autoinject', () => {
   })
 
   it('does not remove the desktop browser entry when a Web UI process resyncs the shared profile', async () => {
-    const { injectBundledMcpServer } = await import('../../packages/server/src/services/hermes/studio-mcp-autoinject')
+    const { injectBundledMcpServer } = await import('../../packages/server/src/modules/hermes/services/mcp/studio-autoinject')
     await injectBundledMcpServer()
 
     const updater = updateConfigYamlForProfileMock.mock.calls[0][1]
@@ -240,7 +265,7 @@ describe('studio MCP autoinject', () => {
 
   it('skips autoinject for a transient bundled launcher even with a stable app home', async () => {
     process.env.HERMES_WEB_UI_MCP_BIN = createLauncherFixture(tmpdir())
-    const { injectBundledMcpServer } = await import('../../packages/server/src/services/hermes/studio-mcp-autoinject')
+    const { injectBundledMcpServer } = await import('../../packages/server/src/modules/hermes/services/mcp/studio-autoinject')
 
     const result = await injectBundledMcpServer()
 
@@ -250,7 +275,7 @@ describe('studio MCP autoinject', () => {
 
   it('skips autoinject for a bundled launcher inside a linked Git worktree', async () => {
     process.env.HERMES_WEB_UI_MCP_BIN = createLauncherFixture(process.cwd(), 'worktree')
-    const { injectBundledMcpServer } = await import('../../packages/server/src/services/hermes/studio-mcp-autoinject')
+    const { injectBundledMcpServer } = await import('../../packages/server/src/modules/hermes/services/mcp/studio-autoinject')
 
     const result = await injectBundledMcpServer()
 
@@ -260,7 +285,7 @@ describe('studio MCP autoinject', () => {
 
   it('keeps autoinject enabled for a submodule-style Git checkout', async () => {
     process.env.HERMES_WEB_UI_MCP_BIN = createLauncherFixture(process.cwd(), 'submodule')
-    const { injectBundledMcpServer } = await import('../../packages/server/src/services/hermes/studio-mcp-autoinject')
+    const { injectBundledMcpServer } = await import('../../packages/server/src/modules/hermes/services/mcp/studio-autoinject')
 
     const result = await injectBundledMcpServer()
 
@@ -269,7 +294,7 @@ describe('studio MCP autoinject', () => {
   })
 
   it('does not treat worktrees-shaped separate git dirs as linked worktrees', async () => {
-    const { injectBundledMcpServer } = await import('../../packages/server/src/services/hermes/studio-mcp-autoinject')
+    const { injectBundledMcpServer } = await import('../../packages/server/src/modules/hermes/services/mcp/studio-autoinject')
 
     for (const marker of ['separate-worktrees', 'nested-submodule-worktrees'] as const) {
       vi.clearAllMocks()
@@ -287,7 +312,7 @@ describe('studio MCP autoinject', () => {
       createLauncherFixture(tmpdir()),
       createLauncherFixture(process.cwd(), 'worktree'),
     ]
-    const { injectBundledMcpServer } = await import('../../packages/server/src/services/hermes/studio-mcp-autoinject')
+    const { injectBundledMcpServer } = await import('../../packages/server/src/modules/hermes/services/mcp/studio-autoinject')
 
     for (const target of targets) {
       vi.clearAllMocks()
@@ -303,7 +328,7 @@ describe('studio MCP autoinject', () => {
   it('allows transient preview autoinject when explicitly requested', async () => {
     configMock.appHome = '/private/tmp/wui-preview-home'
     process.env.HERMES_WEB_UI_ALLOW_TRANSIENT_MCP_AUTOINJECT = '1'
-    const { injectBundledMcpServer } = await import('../../packages/server/src/services/hermes/studio-mcp-autoinject')
+    const { injectBundledMcpServer } = await import('../../packages/server/src/modules/hermes/services/mcp/studio-autoinject')
 
     await injectBundledMcpServer()
 
@@ -311,7 +336,7 @@ describe('studio MCP autoinject', () => {
   })
 
   it('respects a user-disabled managed MCP server entry', async () => {
-    const { injectBundledMcpServer } = await import('../../packages/server/src/services/hermes/studio-mcp-autoinject')
+    const { injectBundledMcpServer } = await import('../../packages/server/src/modules/hermes/services/mcp/studio-autoinject')
 
     await injectBundledMcpServer()
 
@@ -343,7 +368,7 @@ describe('studio MCP autoinject', () => {
   })
 
   it('cleans a disabled legacy managed MCP server entry before injecting split servers', async () => {
-    const { injectBundledMcpServer } = await import('../../packages/server/src/services/hermes/studio-mcp-autoinject')
+    const { injectBundledMcpServer } = await import('../../packages/server/src/modules/hermes/services/mcp/studio-autoinject')
 
     await injectBundledMcpServer()
 
@@ -371,7 +396,7 @@ describe('studio MCP autoinject', () => {
   })
 
   it('updates old managed PATH-only MCP entries to the bundled node script', async () => {
-    const { injectBundledMcpServer } = await import('../../packages/server/src/services/hermes/studio-mcp-autoinject')
+    const { injectBundledMcpServer } = await import('../../packages/server/src/modules/hermes/services/mcp/studio-autoinject')
 
     await injectBundledMcpServer()
 
@@ -410,7 +435,7 @@ describe('studio MCP autoinject', () => {
   it('uses the desktop runtime node for bundled MCP servers when available', async () => {
     process.env.HERMES_DESKTOP = 'true'
     process.env.HERMES_AGENT_NODE = '/runtime/node'
-    const { injectBundledMcpServer } = await import('../../packages/server/src/services/hermes/studio-mcp-autoinject')
+    const { injectBundledMcpServer } = await import('../../packages/server/src/modules/hermes/services/mcp/studio-autoinject')
 
     await injectBundledMcpServer()
 
@@ -431,7 +456,7 @@ describe('studio MCP autoinject', () => {
   })
 
   it('removes stale injected tokens from managed server config', async () => {
-    const { injectBundledMcpServer } = await import('../../packages/server/src/services/hermes/studio-mcp-autoinject')
+    const { injectBundledMcpServer } = await import('../../packages/server/src/modules/hermes/services/mcp/studio-autoinject')
 
     await injectBundledMcpServer()
 
@@ -459,7 +484,7 @@ describe('studio MCP autoinject', () => {
   })
 
   it('skips an unmanaged existing server entry', async () => {
-    const { injectBundledMcpServer } = await import('../../packages/server/src/services/hermes/studio-mcp-autoinject')
+    const { injectBundledMcpServer } = await import('../../packages/server/src/modules/hermes/services/mcp/studio-autoinject')
 
     await injectBundledMcpServer()
 

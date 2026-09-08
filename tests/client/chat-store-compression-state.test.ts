@@ -11,7 +11,7 @@ const chatApi = vi.hoisted(() => ({
   socketEmit: vi.fn(),
 }))
 
-vi.mock('@/api/hermes/chat', () => ({
+vi.mock('@/api/studio/chat', () => ({
   startRunViaSocket: chatApi.startRunViaSocket,
   resumeSession: chatApi.resumeSession,
   registerSessionHandlers: chatApi.registerSessionHandlers,
@@ -31,7 +31,7 @@ vi.mock('@/api/client', () => ({
   hasApiKey: () => false,
 }))
 
-vi.mock('@/api/hermes/sessions', () => ({
+vi.mock('@/api/studio/sessions', () => ({
   archiveSession: vi.fn(),
   deleteSession: vi.fn(),
   fetchSession: vi.fn(),
@@ -41,7 +41,7 @@ vi.mock('@/api/hermes/sessions', () => ({
   setSessionModel: vi.fn(),
 }))
 
-vi.mock('@/api/hermes/download', () => ({
+vi.mock('@/api/studio/download', () => ({
   getDownloadUrl: (_path: string, name: string) => `/download/${name}`,
 }))
 
@@ -1391,5 +1391,123 @@ describe('chat store compression state', () => {
     const tool = store.activeSession?.messages.find((message: Message) => message.id === 'tool-1')
     expect(tool?.toolStatus).toBe('done')
     expect(tool?.toolResult).toEqual({ ok: true })
+  })
+
+  it('scopes repeated tool ids in registered session handlers', async () => {
+    const store = useChatStore()
+    store.sessions = [makeSession('session-1')]
+    await store.switchSession('session-1')
+    store.activeSession!.messages = [{
+      id: 'old-tool',
+      role: 'tool',
+      content: '',
+      timestamp: Date.now() - 1_000,
+      toolName: 'Command',
+      toolCallId: 'item_2',
+      toolResult: 'old result',
+      toolStatus: 'done',
+      runMarker: 'run-a',
+    }]
+
+    handlers.onToolStarted({
+      event: 'tool.started',
+      tool: 'Command',
+      tool_call_id: 'item_2',
+      arguments: { command: 'ls' },
+      run_marker: 'run-b',
+    })
+    handlers.onToolCompleted({
+      event: 'tool.completed',
+      tool: 'Command',
+      tool_call_id: 'item_2',
+      output: 'new result',
+      run_marker: 'run-b',
+    })
+
+    expect(store.activeSession?.messages.filter(message => message.role === 'tool')).toEqual([
+      expect.objectContaining({
+        id: 'old-tool',
+        runMarker: 'run-a',
+        toolResult: 'old result',
+      }),
+      expect.objectContaining({
+        runMarker: 'run-b',
+        toolStatus: 'done',
+        toolResult: 'new result',
+      }),
+    ])
+  })
+
+  it('scopes repeated tool ids while replaying resume events', async () => {
+    chatApi.resumeSession.mockImplementation((sessionId: string, onResumed: (data: any) => void) => {
+      onResumed({
+        session_id: sessionId,
+        isWorking: true,
+        messages: [
+          {
+            id: 1,
+            role: 'assistant',
+            content: '',
+            run_marker: 'run-a',
+            tool_calls: [{
+              id: 'item_2',
+              type: 'function',
+              function: { name: 'Command', arguments: '{"command":"pwd"}' },
+            }],
+            finish_reason: 'tool_calls',
+            timestamp: 1,
+          },
+          {
+            id: 2,
+            role: 'tool',
+            content: 'old result',
+            tool_name: 'Command',
+            tool_call_id: 'item_2',
+            run_marker: 'run-a',
+            timestamp: 2,
+          },
+        ],
+        events: [
+          {
+            event: 'tool.started',
+            data: {
+              event: 'tool.started',
+              tool: 'Command',
+              tool_call_id: 'item_2',
+              arguments: { command: 'ls' },
+              run_marker: 'run-b',
+            },
+          },
+          {
+            event: 'tool.completed',
+            data: {
+              event: 'tool.completed',
+              tool: 'Command',
+              tool_call_id: 'item_2',
+              output: 'new result',
+              run_marker: 'run-b',
+            },
+          },
+        ],
+      })
+      return {} as any
+    })
+    const store = useChatStore()
+    store.sessions = [makeSession('session-1')]
+
+    await store.switchSession('session-1')
+
+    expect(store.messages.filter(message => message.role === 'tool')).toEqual([
+      expect.objectContaining({
+        runMarker: 'run-a',
+        toolStatus: 'done',
+        toolResult: 'old result',
+      }),
+      expect.objectContaining({
+        runMarker: 'run-b',
+        toolStatus: 'done',
+        toolResult: 'new result',
+      }),
+    ])
   })
 })

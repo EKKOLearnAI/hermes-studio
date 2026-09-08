@@ -3,7 +3,7 @@ import { once } from 'node:events'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
-import { CodingAgentRunManager } from '../../packages/server/src/services/coding-agents/runtime/run-manager'
+import { CodingAgentRunManager } from '../../packages/server/src/modules/coding-agents/services/runtime/run-manager'
 
 const describeWindows = process.platform === 'win32' ? describe : describe.skip
 const roots: string[] = []

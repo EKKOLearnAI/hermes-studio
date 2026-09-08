@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   beginFeishuQrRegistration,
   pollFeishuQrRegistration,
-} from '../../packages/server/src/services/social-messages/feishu-onboarding'
+} from '../../packages/server/src/modules/studio/services/social-messages/feishu-onboarding'
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {

@@ -9,7 +9,7 @@ const spawnMock = vi.hoisted(() => vi.fn())
 
 vi.mock('node:child_process', () => ({ spawn: spawnMock }))
 
-vi.mock('../../packages/server/src/config', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/config', () => ({
   config: {
     get appHome() {
       return state.appHome
@@ -25,7 +25,7 @@ function makeTempDir(): string {
   return directory
 }
 
-function installSparseTestModel(manager: typeof import('../../packages/server/src/services/hermes/local-stt-model-manager')) {
+function installSparseTestModel(manager: typeof import('../../packages/server/src/modules/studio/services/voice/stt/local-model-manager')) {
   const root = manager.localSttModelDirectory()
   mkdirSync(root, { recursive: true })
   const files: Record<string, number> = {
@@ -103,7 +103,7 @@ describe('local STT model manager', () => {
   })
 
   it('reports the fixed model as unavailable until all files and the validation manifest exist', async () => {
-    const manager = await import('../../packages/server/src/services/hermes/local-stt-model-manager')
+    const manager = await import('../../packages/server/src/modules/studio/services/voice/stt/local-model-manager')
     expect(manager.getLocalSttModelStatus()).toMatchObject({
       id: manager.LOCAL_STT_MODEL_ID,
       installed: false,
@@ -145,7 +145,7 @@ describe('local STT model manager', () => {
   })
 
   it('resolves the Cloudflare and GitHub channels to the same pinned release asset', async () => {
-    const manager = await import('../../packages/server/src/services/hermes/local-stt-model-manager')
+    const manager = await import('../../packages/server/src/modules/studio/services/voice/stt/local-model-manager')
     expect(manager.localSttModelAssetUrl('cf')).toBe(
       `https://download.ekkolearnai.com/${manager.LOCAL_STT_MODEL_RELEASE_TAG}/${manager.LOCAL_STT_MODEL_ASSET_NAME}`,
     )
@@ -155,7 +155,7 @@ describe('local STT model manager', () => {
   })
 
   it('wraps raw 16 kHz mono s16le PCM for local inference without ffmpeg', async () => {
-    const manager = await import('../../packages/server/src/services/hermes/local-stt-model-manager')
+    const manager = await import('../../packages/server/src/modules/studio/services/voice/stt/local-model-manager')
     const pcm = Buffer.from([0x00, 0x00, 0xff, 0x7f, 0x00, 0x80])
 
     const wav = manager.prepareLocalSttWav(pcm, 'audio/x-pcm; rate=16000; channels=1')
@@ -171,7 +171,7 @@ describe('local STT model manager', () => {
   })
 
   it('rejects compressed local STT input instead of depending on ffmpeg', async () => {
-    const manager = await import('../../packages/server/src/services/hermes/local-stt-model-manager')
+    const manager = await import('../../packages/server/src/modules/studio/services/voice/stt/local-model-manager')
 
     expect(() => manager.prepareLocalSttWav(Buffer.from('webm'), 'audio/webm')).toThrow(
       'Local STT accepts PCM WAV or raw 16 kHz mono s16le PCM audio',
@@ -181,7 +181,7 @@ describe('local STT model manager', () => {
   it('reuses one child recognizer across stream chunks and exits it during shutdown', async () => {
     const child = createFakeModelProcess()
     spawnMock.mockReturnValue(child)
-    const manager = await import('../../packages/server/src/services/hermes/local-stt-model-manager')
+    const manager = await import('../../packages/server/src/modules/studio/services/voice/stt/local-model-manager')
     installSparseTestModel(manager)
     const wav = Buffer.concat([Buffer.from('RIFF'), Buffer.alloc(4), Buffer.from('WAVE'), Buffer.alloc(64)])
 
@@ -214,7 +214,7 @@ describe('local STT model manager', () => {
 
   it('flushes enough trailing silence for the streaming recognizer to emit final words', async () => {
     spawnMock.mockReturnValue(createFakeModelProcess())
-    const manager = await import('../../packages/server/src/services/hermes/local-stt-model-manager')
+    const manager = await import('../../packages/server/src/modules/studio/services/voice/stt/local-model-manager')
     installSparseTestModel(manager)
 
     const session = await manager.createLocalSttStreamSession('7:default')
@@ -228,7 +228,7 @@ describe('local STT model manager', () => {
 
   it('disables external wave buffers for Electron compatibility', async () => {
     spawnMock.mockReturnValue(createFakeModelProcess())
-    const manager = await import('../../packages/server/src/services/hermes/local-stt-model-manager')
+    const manager = await import('../../packages/server/src/modules/studio/services/voice/stt/local-model-manager')
     installSparseTestModel(manager)
 
     const session = await manager.createLocalSttStreamSession('7:default')
@@ -241,7 +241,7 @@ describe('local STT model manager', () => {
 
   it('does not allow another profile owner to use a local stream session', async () => {
     spawnMock.mockReturnValue(createFakeModelProcess())
-    const manager = await import('../../packages/server/src/services/hermes/local-stt-model-manager')
+    const manager = await import('../../packages/server/src/modules/studio/services/voice/stt/local-model-manager')
     installSparseTestModel(manager)
     const session = await manager.createLocalSttStreamSession('7:default')
 

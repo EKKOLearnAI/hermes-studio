@@ -12,6 +12,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import type { EkkoExternalSkillDirectory } from '../skills/external-directories'
 import type { AgentTool, AgentToolContext, AgentToolResult } from './types'
 
 interface SkillListInput extends Record<string, unknown> {
@@ -36,18 +37,43 @@ export interface SkillManageInput extends Record<string, unknown> {
   confirmed?: boolean
 }
 
-interface DiscoveredSkill {
+export interface DiscoveredSkill {
   name: string
   description: string
+  keywords: string[]
+  category: string
+  source: 'local' | 'external'
+  sourcePath?: string
+  enabled: boolean
   content: string
   root: string
   directory: string
   managedByEkko: boolean
+  builtIn: boolean
+  validationStatus: SkillValidationStatus
+  validationError?: string
+}
+
+export type SkillValidationStatus = 'valid' | 'needs_metadata' | 'invalid'
+
+export interface SkillValidationIssue {
+  name: string
+  status: Exclude<SkillValidationStatus, 'valid'>
+  error: string
+  directory: string
+  sha256: string
+}
+
+export interface SkillRoutingResolution {
+  names: string[]
+  matches: DiscoveredSkill[]
 }
 
 const MAX_SKILL_CONTENT_CHARS = 250_000
 const MAX_SUPPORT_FILE_CHARS = 1_000_000
 const SKILL_METADATA_FILE = '.ekko-skill.json'
+const BUILTIN_SKILL_MANIFEST_FILE = '.ekko-builtin-skills.json'
+const BUILTIN_SKILL_MANIFEST_OWNER = 'ekko-agent'
 const SKILL_BACKUP_DIRECTORY = '.ekko-backups'
 const SKILL_ARCHIVE_DIRECTORY = '.ekko-archive'
 const SKILL_NAME_PATTERN = /^[a-z0-9](?:[a-z0-9_-]{0,62}[a-z0-9])?$/
@@ -86,17 +112,23 @@ class SkillReadTracker {
 }
 
 export class SkillListTool implements AgentTool<SkillListInput> {
-  constructor(private readonly skillDirectory?: string) {}
+  readonly concurrency = 'parallel' as const
+
+  constructor(
+    private readonly skillDirectory?: string,
+    private readonly externalSkillDirectories: EkkoExternalSkillDirectory[] = [],
+    private readonly disabledSkillNames: string[] = [],
+  ) {}
 
   readonly definition = {
     name: 'skill_list',
-    description: 'List or search skills in this Ekko Agent instance\'s configured skill directory. Use this before skill_view when a task may benefit from specialized instructions.',
+    description: 'Fallback discovery for skills in this Ekko Agent instance\'s configured skill directory. Available skill names are already present in the system prompt; use skill_view directly when one clearly matches.',
     parameters: {
       type: 'object',
       properties: {
         query: {
           type: 'string',
-          description: 'Optional case-insensitive search across skill names and descriptions.',
+          description: 'Optional case-insensitive search across skill names, descriptions, and maintained keywords.',
         },
       },
       additionalProperties: false,
@@ -105,10 +137,25 @@ export class SkillListTool implements AgentTool<SkillListInput> {
 
   async execute(input: SkillListInput): Promise<AgentToolResult> {
     const query = String(input.query || '').trim().toLowerCase()
-    const discovered = await discoverSkills(this.skillDirectory)
+    const discovered = await discoverSkills(
+      this.skillDirectory,
+      this.externalSkillDirectories,
+      this.disabledSkillNames,
+    )
     const matches = discovered
-      .filter(skill => !query || `${skill.name}\n${skill.description}`.toLowerCase().includes(query))
-      .map(({ name, description, managedByEkko }) => ({ name, description, managedByEkko }))
+      .filter(skill => !query || `${skill.name}\n${skill.description}\n${skill.keywords.join('\n')}`.toLowerCase().includes(query))
+      .map(({ name, description, category, source, sourcePath, enabled, managedByEkko, builtIn, validationStatus, validationError }) => ({
+        name,
+        description,
+        category,
+        source: builtIn ? 'builtin' : source,
+        ...(sourcePath ? { sourcePath } : {}),
+        enabled,
+        managedByEkko,
+        builtIn,
+        validationStatus,
+        ...(validationError ? { validationError } : {}),
+      }))
     const payload = {
       query: query || undefined,
       count: matches.length,
@@ -128,20 +175,24 @@ export class SkillListTool implements AgentTool<SkillListInput> {
 }
 
 export class SkillViewTool implements AgentTool<SkillViewInput> {
+  readonly concurrency = 'parallel' as const
+
   constructor(
     private readonly skillDirectory?: string,
     private readonly tracker = new SkillReadTracker(),
+    private readonly externalSkillDirectories: EkkoExternalSkillDirectory[] = [],
+    private readonly disabledSkillNames: string[] = [],
   ) {}
 
   readonly definition = {
     name: 'skill_view',
-    description: 'Load the complete SKILL.md instructions for one skill in this Ekko Agent instance\'s configured skill directory. Use skill_list first to discover the exact skill name.',
+    description: 'Load the complete SKILL.md instructions for one skill in this Ekko Agent instance\'s configured skill directory. Use an exact name from the system prompt or skill_list.',
     parameters: {
       type: 'object',
       properties: {
         name: {
           type: 'string',
-          description: 'Exact skill name returned by skill_list.',
+          description: 'Exact skill name from the system prompt or skill_list.',
         },
         filePath: {
           type: 'string',
@@ -158,7 +209,11 @@ export class SkillViewTool implements AgentTool<SkillViewInput> {
     const requestedName = String(input.name || '').trim()
     if (!requestedName) return failure('skill_view requires an exact skill name.')
 
-    const skill = (await discoverSkills(this.skillDirectory))
+    const skill = (await discoverSkills(
+      this.skillDirectory,
+      this.externalSkillDirectories,
+      this.disabledSkillNames,
+    ))
       .find(candidate => candidate.name.toLowerCase() === requestedName.toLowerCase())
     if (!skill) {
       return failure(`Skill not found: ${requestedName}. Call skill_list to discover available skills.`)
@@ -174,17 +229,27 @@ export class SkillViewTool implements AgentTool<SkillViewInput> {
     if (content === null) return failure(`Skill file not found: ${requestedFilePath || 'SKILL.md'}.`)
     this.tracker.mark(context.runId, filePath, content)
     const displayFile = readsMainSkillFile ? 'SKILL.md' : requestedFilePath
+    const sha256 = contentHash(content)
 
     return {
       ok: true,
-      content: `[skill_view] name=${skill.name} (${content.length} chars) file=${displayFile}\n${content}`,
+      content: `[skill_view] name=${skill.name} (${content.length} chars) file=${displayFile} sha256=${sha256} baseDirectory=${skill.directory}\n${content}`,
       data: {
         name: skill.name,
         description: skill.description,
         filePath: displayFile,
+        baseDirectory: skill.directory,
         characters: content.length,
-        sha256: contentHash(content),
+        sha256,
         managedByEkko: skill.managedByEkko,
+        builtIn: skill.builtIn,
+        category: skill.category,
+        source: skill.builtIn ? 'builtin' : skill.source,
+        sourcePath: skill.sourcePath,
+        enabled: skill.enabled,
+        keywords: skill.keywords,
+        validationStatus: skill.validationStatus,
+        validationError: skill.validationError,
       },
     }
   }
@@ -201,7 +266,8 @@ export class SkillManageTool implements AgentTool<SkillManageInput> {
     description: [
       'Manage reusable Ekko skills in the configured profile skill directory.',
       'Prefer patch over edit. Read an existing target with skill_view in the same run before changing it.',
-      'Creates and updates are backed up when replacing existing content; delete requires confirmed=true and archives instead of erasing.',
+      'Every created or updated SKILL.md must maintain compact English ASCII frontmatter metadata.keywords for deterministic host-side discovery.',
+      'Creates and updates are backed up when replacing existing content; built-in skills cannot be deleted, while other deletes require confirmed=true and archive instead of erasing.',
     ].join(' '),
     parameters: {
       type: 'object',
@@ -451,6 +517,9 @@ export class SkillManageTool implements AgentTool<SkillManageInput> {
     if (context.skillMutationSource === 'background-review') {
       return failure('Background review cannot delete skills.')
     }
+    if (skill.builtIn) {
+      return failure(`Built-in skill cannot be deleted: ${skill.name}.`)
+    }
     if (input.confirmed !== true) {
       return failure('delete requires confirmed=true. The skill will be moved to a recoverable hidden archive.')
     }
@@ -486,11 +555,21 @@ export class SkillManageTool implements AgentTool<SkillManageInput> {
   }
 }
 
-export function createSkillTools(skillDirectory?: string): AgentTool[] {
+export interface CreateSkillToolsOptions {
+  externalSkillDirectories?: EkkoExternalSkillDirectory[]
+  disabledSkillNames?: string[]
+}
+
+export function createSkillTools(
+  skillDirectory?: string,
+  options: CreateSkillToolsOptions = {},
+): AgentTool[] {
   const tracker = new SkillReadTracker()
+  const externalSkillDirectories = options.externalSkillDirectories ?? []
+  const disabledSkillNames = options.disabledSkillNames ?? []
   const tools: AgentTool[] = [
-    new SkillListTool(skillDirectory),
-    new SkillViewTool(skillDirectory, tracker),
+    new SkillListTool(skillDirectory, externalSkillDirectories, disabledSkillNames),
+    new SkillViewTool(skillDirectory, tracker, externalSkillDirectories, disabledSkillNames),
   ]
   if (configuredSkillDirectory(skillDirectory)) {
     tools.push(new SkillManageTool(skillDirectory, tracker))
@@ -498,7 +577,11 @@ export function createSkillTools(skillDirectory?: string): AgentTool[] {
   return tools
 }
 
-async function discoverSkills(skillDirectory?: string): Promise<DiscoveredSkill[]> {
+async function discoverSkills(
+  skillDirectory?: string,
+  externalSkillDirectories: EkkoExternalSkillDirectory[] = [],
+  disabledSkillNames: string[] = [],
+): Promise<DiscoveredSkill[]> {
   const directory = String(skillDirectory || '').trim()
   if (!directory) return []
   const skills = new Map<string, DiscoveredSkill>()
@@ -506,9 +589,64 @@ async function discoverSkills(skillDirectory?: string): Promise<DiscoveredSkill[
   const root = resolve(directory)
   if (!await isDirectory(root)) return []
   const realRoot = await realpath(root).catch(() => root)
-  await scanSkillDirectory(realRoot, realRoot, skills, visited)
+  const builtInSkillNames = await readBuiltInSkillNames(realRoot)
+  const disabled = new Set(disabledSkillNames.map(name => name.toLowerCase()))
+  await scanSkillDirectory(
+    realRoot,
+    realRoot,
+    skills,
+    visited,
+    builtInSkillNames,
+    'local',
+    undefined,
+    disabled,
+  )
+
+  for (const external of externalSkillDirectories) {
+    const externalRoot = resolve(external.directory)
+    if (!await isDirectory(externalRoot)) continue
+    const realExternalRoot = await realpath(externalRoot).catch(() => externalRoot)
+    if (realExternalRoot === realRoot) continue
+    await scanSkillDirectory(
+      realExternalRoot,
+      realExternalRoot,
+      skills,
+      visited,
+      new Set(),
+      'external',
+      external.sourcePath,
+      disabled,
+    )
+  }
 
   return [...skills.values()].sort((left, right) => left.name.localeCompare(right.name))
+}
+
+/**
+ * Validates only the writable Profile-local Skill tree. External directories
+ * are intentionally excluded because Ekko treats them as read-only sources.
+ */
+export async function inspectLocalSkillValidationIssues(
+  skillDirectory?: string,
+): Promise<SkillValidationIssue[]> {
+  const skills = await discoverSkills(skillDirectory)
+  return skills.flatMap(skill => skill.validationStatus === 'valid'
+    ? []
+    : [{
+        name: skill.name,
+        status: skill.validationStatus,
+        error: skill.validationError || 'SKILL.md failed validation.',
+        directory: skill.directory,
+        sha256: contentHash(skill.content),
+      }])
+}
+
+/**
+ * Returns the compact Profile-specific catalog injected into the model prompt.
+ * Descriptions, keywords, paths, and skill bodies deliberately stay out.
+ */
+export async function listSkillNames(skillDirectory?: string): Promise<string[]> {
+  return (await resolveSkillRouting(skillDirectory)).names
 }
 
 async function scanSkillDirectory(
@@ -516,6 +654,10 @@ async function scanSkillDirectory(
   directory: string,
   skills: Map<string, DiscoveredSkill>,
   visited: Set<string>,
+  builtInSkillNames: Set<string>,
+  source: 'local' | 'external',
+  sourcePath: string | undefined,
+  disabledSkillNames: Set<string>,
 ): Promise<void> {
   const realDirectory = await realpath(directory).catch(() => resolve(directory))
   if (!isContainedPath(root, realDirectory)) return
@@ -527,13 +669,22 @@ async function scanSkillDirectory(
     const name = basename(realDirectory)
     const key = name.toLowerCase()
     if (!skills.has(key)) {
+      const validation = skillValidationResult(name, skillContent)
       skills.set(key, {
         name,
         description: extractSkillDescription(skillContent),
+        keywords: extractSkillKeywords(skillContent),
+        category: skillCategory(root, realDirectory),
+        source,
+        ...(sourcePath ? { sourcePath } : {}),
+        enabled: !disabledSkillNames.has(key),
         content: skillContent,
         root,
         directory: realDirectory,
         managedByEkko: await isEkkoManagedSkill(realDirectory),
+        builtIn: builtInSkillNames.has(name.toLowerCase()),
+        validationStatus: validation.status,
+        ...(validation.error ? { validationError: validation.error } : {}),
       })
     }
     return
@@ -552,8 +703,66 @@ async function scanSkillDirectory(
     const entryPath = join(directory, entry.name)
     if (!entry.isDirectory() && !entry.isSymbolicLink()) continue
     if (!await isDirectory(entryPath)) continue
-    await scanSkillDirectory(root, entryPath, skills, visited)
+    await scanSkillDirectory(
+      root,
+      entryPath,
+      skills,
+      visited,
+      builtInSkillNames,
+      source,
+      sourcePath,
+      disabledSkillNames,
+    )
   }
+}
+
+/**
+ * Deterministically selects file-backed skills for one effective user message.
+ * Names and explicit frontmatter keywords are the only routing inputs; long
+ * descriptions and skill bodies never participate in automatic selection.
+ */
+export async function matchSkillsForUserMessage(
+  skillDirectory: string | undefined,
+  userMessage: string,
+  externalSkillDirectories: EkkoExternalSkillDirectory[] = [],
+  disabledSkillNames: string[] = [],
+): Promise<DiscoveredSkill[]> {
+  return (await resolveSkillRouting(
+    skillDirectory,
+    userMessage,
+    externalSkillDirectories,
+    disabledSkillNames,
+  )).matches
+}
+
+/** Resolves prompt names and deterministic exact matches from one directory scan. */
+export async function resolveSkillRouting(
+  skillDirectory: string | undefined,
+  userMessage = '',
+  externalSkillDirectories: EkkoExternalSkillDirectory[] = [],
+  disabledSkillNames: string[] = [],
+): Promise<SkillRoutingResolution> {
+  const skills = await discoverSkills(skillDirectory, externalSkillDirectories, disabledSkillNames)
+  const enabledSkills = skills.filter(skill => skill.enabled && skill.validationStatus !== 'invalid')
+  const normalizedMessage = normalizeMatchText(userMessage)
+  return {
+    names: enabledSkills.map(skill => skill.name),
+    matches: normalizedMessage
+      ? enabledSkills.filter(skill => {
+          const terms = [
+            skill.name,
+            skill.name.replaceAll(/[-_]+/g, ' '),
+            ...(skill.validationStatus === 'valid' ? skill.keywords : []),
+          ]
+          return terms.some(term => matchNormalizedTerm(normalizedMessage, term))
+        })
+      : [],
+  }
+}
+
+function skillCategory(root: string, directory: string): string {
+  const parts = relative(root, directory).split(sep).filter(Boolean)
+  return parts.length > 1 ? parts.slice(0, -1).join('/') : 'misc'
 }
 
 function extractSkillDescription(content: string): string {
@@ -571,6 +780,26 @@ function extractSkillDescription(content: string): string {
     return trimmed.slice(0, 240)
   }
   return ''
+}
+
+function extractSkillKeywords(content: string): string[] {
+  const frontmatter = skillFrontmatter(content)
+  if (!frontmatter) return []
+  return listFrontmatterValues(frontmatter, 'keywords')
+}
+
+async function readBuiltInSkillNames(root: string): Promise<Set<string>> {
+  const raw = await readContainedText(root, join(root, BUILTIN_SKILL_MANIFEST_FILE))
+  if (!raw) return new Set()
+  try {
+    const parsed = JSON.parse(raw) as Record<string, { owner?: unknown }>
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return new Set()
+    return new Set(Object.entries(parsed)
+      .filter(([, entry]) => entry?.owner === BUILTIN_SKILL_MANIFEST_OWNER)
+      .map(([name]) => name.toLowerCase()))
+  } catch {
+    return new Set()
+  }
 }
 
 async function readText(path: string): Promise<string | null> {
@@ -783,7 +1012,7 @@ async function isEkkoManagedSkill(skillDirectory: string): Promise<boolean> {
   return Boolean(await readSkillMetadata(skillDirectory))
 }
 
-function validateSkillContent(name: string, content: string): string | null {
+export function validateSkillContent(name: string, content: string): string | null {
   if (!content.trim()) return 'Skill content cannot be empty.'
   const frontmatter = content.match(/^---\s*\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/)
   if (!frontmatter) return 'SKILL.md must start with YAML frontmatter.'
@@ -793,13 +1022,97 @@ function validateSkillContent(name: string, content: string): string | null {
     return `SKILL.md frontmatter name must be "${name}".`
   }
   if (!description) return 'SKILL.md frontmatter requires a description.'
+  const keywords = listFrontmatterValues(frontmatter[1], 'keywords')
+  if (!keywords.length) {
+    return 'SKILL.md frontmatter requires at least one non-empty metadata.keywords entry.'
+  }
+  if (keywords.length > 8) return 'SKILL.md frontmatter supports at most 8 keywords.'
+  if (keywords.some(keyword => keyword.length > 80)) {
+    return 'SKILL.md frontmatter keywords must not exceed 80 characters each.'
+  }
+  if (keywords.some(keyword => !/^[\x20-\x7e]+$/.test(keyword))) {
+    return 'SKILL.md frontmatter metadata.keywords must use English ASCII text or technical identifiers.'
+  }
   if (!content.slice(frontmatter[0].length).trim()) return 'SKILL.md requires a Markdown body after frontmatter.'
   return null
+}
+
+export function skillValidationResult(
+  name: string,
+  content: string,
+): { status: SkillValidationStatus; error?: string } {
+  const error = validateSkillContent(name, content)
+  if (!error) return { status: 'valid' }
+  return {
+    status: /keywords/i.test(error) ? 'needs_metadata' : 'invalid',
+    error,
+  }
 }
 
 function scalarFrontmatterValue(frontmatter: string, key: string): string {
   const match = frontmatter.match(new RegExp(`^${key}:\\s*(.+)$`, 'im'))
   return match?.[1]?.trim().replace(/^(['"])(.*)\1$/, '$2') || ''
+}
+
+function skillFrontmatter(content: string): string {
+  return content.match(/^---\s*\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/)?.[1] || ''
+}
+
+function listFrontmatterValues(frontmatter: string, key: string): string[] {
+  const lines = frontmatter.split(/\r?\n/)
+  let start = lines.findIndex(line => new RegExp(`^${key}:`, 'i').test(line))
+  if (start < 0) {
+    const metadataStart = lines.findIndex(line => /^metadata:\s*$/i.test(line))
+    if (metadataStart >= 0) {
+      for (let index = metadataStart + 1; index < lines.length; index += 1) {
+        if (/^\S/.test(lines[index])) break
+        if (new RegExp(`^\\s+${key}:`, 'i').test(lines[index])) {
+          start = index
+          break
+        }
+      }
+    }
+  }
+  if (start < 0) return []
+  const firstValue = lines[start].slice(lines[start].indexOf(':') + 1).trim()
+  const keyIndent = lines[start].match(/^\s*/)?.[0].length ?? 0
+  const values: string[] = []
+  if (firstValue) {
+    if (!firstValue.startsWith('[') || !firstValue.endsWith(']')) return []
+    values.push(...firstValue.slice(1, -1).split(','))
+  } else {
+    for (let index = start + 1; index < lines.length; index += 1) {
+      const line = lines[index]
+      if (line.trim() && (line.match(/^\s*/)?.[0].length ?? 0) <= keyIndent) break
+      const match = line.match(/^\s+-\s*(.*?)\s*$/)
+      if (match) values.push(match[1])
+    }
+  }
+  const seen = new Set<string>()
+  return values
+    .map(value => value.trim().replace(/^(['"])(.*)\1$/, '$2').trim())
+    .filter(value => {
+      const normalized = value.toLocaleLowerCase()
+      if (!value || seen.has(normalized)) return false
+      seen.add(normalized)
+      return true
+    })
+}
+
+function normalizeMatchText(value: string): string {
+  return String(value || '')
+    .normalize('NFKC')
+    .toLocaleLowerCase()
+    .replaceAll(/\s+/g, ' ')
+    .trim()
+}
+
+function matchNormalizedTerm(normalizedMessage: string, rawTerm: string): boolean {
+  const term = normalizeMatchText(rawTerm)
+  if (!term) return false
+  if (!/^[a-z0-9][a-z0-9 ._+/#-]*$/i.test(term)) return normalizedMessage.includes(term)
+  const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`(^|[^a-z0-9])${escaped}(?=$|[^a-z0-9])`, 'i').test(normalizedMessage)
 }
 
 function normalizeSkillName(value: unknown): string | null {

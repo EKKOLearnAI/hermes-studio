@@ -1,6 +1,20 @@
-import type { ModelProviderConfig, ModelProviderType, ModelRequestStyle } from './types'
+import type { EkkoConfig } from '../config'
+import type {
+  ModelClient,
+  ModelClientOptions,
+  ModelProviderConfig,
+  ModelProviderType,
+  ModelRequest,
+  ModelRequestStyle,
+} from './types'
 import { authorizedModelProviderPreset } from './authorized-providers'
+import {
+  modelApiModeToRequestStyle,
+  requestStyleToModelApiMode,
+  type EkkoModelApiMode,
+} from './provider-presets'
 import { DEFAULT_MODEL_REQUEST_TIMEOUT_MS } from '../config'
+import { createModelClient } from './registry'
 
 export interface ResolveModelProviderConfigInput {
   provider: string
@@ -18,11 +32,27 @@ export interface ResolvedModelProviderConfigs {
   inferredRequestStyle: ModelRequestStyle
 }
 
+export interface ResolveConfiguredModelProviderInput {
+  config: EkkoConfig
+  provider?: string
+  model?: string
+  apiKey?: string
+  baseUrl?: string
+  apiMode?: EkkoModelApiMode
+}
+
+export interface CreateConfiguredModelClientInput extends ResolveConfiguredModelProviderInput {
+  clientOptions?: ModelClientOptions
+}
+
 export function requestStyleFromApiMode(apiMode?: string): ModelRequestStyle | undefined {
   const normalized = String(apiMode || '').toLowerCase()
   if (normalized === 'chat_completions') return 'openai-chat'
   if (normalized === 'codex_responses') return 'openai-responses'
   if (normalized === 'anthropic_messages') return 'anthropic-messages'
+  if (normalized === 'gemini_contents') return 'gemini-contents'
+  if (normalized === 'prompt_completion') return 'prompt-completion'
+  if (normalized === 'custom_runtime') return 'custom-runtime'
   return undefined
 }
 
@@ -59,16 +89,33 @@ export function createProviderConfig(input: {
   timeoutMs?: number
 }): ModelProviderConfig {
   const authorizedPreset = authorizedModelProviderPreset(input.provider, input.apiKey)
+  const vision = knownModelVisionCapability(input.provider, input.baseUrl, input.model)
   return {
     id: authorizedPreset?.id || input.provider || 'openai',
     type: providerTypeForStyle(input.provider, input.requestStyle),
+    apiMode: authorizedPreset?.apiMode || requestStyleToModelApiMode(input.requestStyle),
     requestStyle: input.requestStyle,
     baseUrl: input.baseUrl || authorizedPreset?.baseUrl,
     apiKey: input.apiKey || undefined,
     defaultModel: input.model,
     headers: authorizedPreset?.headers,
     timeoutMs: input.timeoutMs,
+    ...(vision === undefined ? {} : { capabilities: { vision } }),
   }
+}
+
+function knownModelVisionCapability(
+  provider: string,
+  baseUrl: string | undefined,
+  model: string,
+): boolean | undefined {
+  const providerKey = String(provider || '').trim().toLowerCase()
+  const url = String(baseUrl || '').trim().toLowerCase()
+  const modelKey = String(model || '').trim().toLowerCase()
+  const isGlm = providerKey === 'glm' || providerKey === 'zai' ||
+    url.includes('bigmodel.cn') || url.includes('api.z.ai')
+  if (!isGlm || !modelKey.startsWith('glm-')) return undefined
+  return /^glm-[a-z0-9.]*v(?:-|$)/i.test(modelKey)
 }
 
 export function resolveModelProviderConfigs(input: ResolveModelProviderConfigInput): ResolvedModelProviderConfigs {
@@ -100,5 +147,72 @@ export function resolveModelProviderConfigs(input: ResolveModelProviderConfigInp
     fallbackProviderConfig,
     requestStyle,
     inferredRequestStyle,
+  }
+}
+
+/** Resolve one persisted provider, with an optional per-call credential override. */
+export function resolveConfiguredModelProvider(
+  input: ResolveConfiguredModelProviderInput,
+): ModelProviderConfig {
+  const provider = String(input.provider || input.config.model.defaultProvider || '').trim()
+  if (!provider) {
+    throw new Error('No model provider was selected and model.defaultProvider is not configured.')
+  }
+  const settings = input.config.model.providers[provider]
+  if (!settings) throw new Error(`Configured model provider not found: ${provider}`)
+
+  const authorization = input.config.model.authorizations[provider]
+  const apiKey = input.apiKey ?? authorization?.accessToken ?? settings.apiKey
+  const preset = authorizedModelProviderPreset(provider, apiKey)
+  const configuredApiMode = input.apiMode || authorization?.apiMode || settings.apiMode
+  const apiModeStyle = configuredApiMode ? modelApiModeToRequestStyle(configuredApiMode) : undefined
+  const defaultModel = String(
+    input.model ||
+    (provider === input.config.model.defaultProvider ? input.config.model.defaultModel : '') ||
+    settings.defaultModel,
+  ).trim()
+  if (!defaultModel) throw new Error(`Model provider ${provider} has no default model.`)
+
+  return {
+    id: preset?.id || provider,
+    type: settings.type,
+    apiMode: configuredApiMode
+      ? configuredApiMode
+      : requestStyleToModelApiMode(settings.requestStyle || preset?.requestStyle || requestStyleForConfig(provider, settings.baseUrl)),
+    requestStyle: apiModeStyle || settings.requestStyle || preset?.requestStyle || requestStyleForConfig(provider, settings.baseUrl),
+    openAIChatReasoningReplayFormat: settings.openAIChatReasoningReplayFormat,
+    apiKey,
+    baseUrl: input.baseUrl || authorization?.baseUrl || settings.baseUrl || preset?.baseUrl,
+    endpointPath: settings.endpointPath,
+    defaultModel,
+    headers: {
+      ...(preset?.headers || {}),
+      ...(settings.headers || {}),
+    },
+    timeoutMs: settings.timeoutMs ?? input.config.model.requestTimeoutMs,
+    capabilities: settings.capabilities,
+  }
+}
+
+export function createConfiguredModelClient(
+  input: CreateConfiguredModelClientInput,
+): ModelClient {
+  return createModelClient(resolveConfiguredModelProvider(input), input.clientOptions)
+}
+
+export function modelRequestDefaultsFromConfig(
+  config: EkkoConfig,
+  provider?: string,
+): Omit<ModelRequest, 'messages' | 'tools' | 'stream'> {
+  const selectedProvider = String(provider || config.model.defaultProvider || '').trim()
+  const providerModel = selectedProvider
+    ? config.model.providers[selectedProvider]?.defaultModel
+    : undefined
+  return {
+    model: config.model.defaultModel || providerModel,
+    ...(config.model.temperature === undefined ? {} : { temperature: config.model.temperature }),
+    ...(config.model.maxTokens === undefined ? {} : { maxTokens: config.model.maxTokens }),
+    reasoningEffort: config.model.reasoningEffort,
+    reasoningSummary: config.model.reasoningSummary,
   }
 }

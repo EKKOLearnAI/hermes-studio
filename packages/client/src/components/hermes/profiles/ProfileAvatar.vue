@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import multiavatar from '@multiavatar/multiavatar'
+import boring from 'boring-avatars-vanilla'
 import type { ProfileAvatar } from '@/api/hermes/profiles'
 
 const props = withDefaults(defineProps<{
@@ -12,7 +12,11 @@ const props = withDefaults(defineProps<{
 })
 
 const fallbackSeed = computed(() => props.name || 'default')
-const generatedSvg = computed(() => multiavatar(props.avatar?.seed || fallbackSeed.value))
+const generatedSvg = computed(() => boring({
+  name: props.avatar?.seed || fallbackSeed.value,
+  variant: 'beam',
+  size: props.size,
+}))
 const style = computed(() => ({
   width: `${props.size}px`,
   height: `${props.size}px`,

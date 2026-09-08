@@ -10,7 +10,7 @@ import {
   type ManagedUser,
   type UserRole,
   type UserStatus,
-} from '@/api/auth'
+} from '@/api/studio/auth'
 
 const { t } = useI18n()
 const message = useMessage()

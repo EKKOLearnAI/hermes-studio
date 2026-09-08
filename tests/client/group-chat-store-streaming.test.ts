@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import type { ChatMessage, RoomInfo } from '@/api/hermes/group-chat'
+import type { ChatMessage, RoomInfo } from '@/api/studio/group-chat'
 
 const groupChatApiMock = vi.hoisted(() => {
   const handlers = new Map<string, Function[]>()
@@ -52,10 +52,10 @@ const authApiMock = vi.hoisted(() => ({
 }))
 const fetchMock = vi.hoisted(() => vi.fn())
 
-vi.mock('@/api/hermes/group-chat', () => groupChatApiMock)
+vi.mock('@/api/studio/group-chat', () => groupChatApiMock)
 vi.mock('@/api/client', () => clientApiMock)
-vi.mock('@/api/auth', () => authApiMock)
-vi.mock('@/api/hermes/download', () => ({ getDownloadUrl: vi.fn((path: string) => `/download?path=${path}`) }))
+vi.mock('@/api/studio/auth', () => authApiMock)
+vi.mock('@/api/studio/download', () => ({ getDownloadUrl: vi.fn((path: string) => `/download?path=${path}`) }))
 vi.stubGlobal('fetch', fetchMock)
 
 function emitSocket(event: string, payload: unknown) {
@@ -1065,7 +1065,7 @@ describe('group chat store streaming merge', () => {
 
     expect(fetchMock).toHaveBeenCalledOnce()
     const [url, options] = fetchMock.mock.calls[0]
-    expect(url).toBe('/api/hermes/group-chat/rooms/room-1/attachments')
+    expect(url).toBe('/api/studio/group-chat/rooms/room-1/attachments')
     expect(options.method).toBe('POST')
     expect(options.headers.Authorization).toBe('Bearer test-token')
     expect(options.headers['X-Hermes-Profile']).toBeUndefined()

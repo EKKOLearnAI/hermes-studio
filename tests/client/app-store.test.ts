@@ -3,17 +3,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 
 const mockSystemApi = vi.hoisted(() => ({
-  checkHealth: vi.fn(),
   fetchAvailableModels: vi.fn(),
   addCustomModel: vi.fn(),
   removeCustomModel: vi.fn(),
   updateDefaultModel: vi.fn(),
   updateModelAlias: vi.fn(),
   updateModelVisibility: vi.fn(),
+}))
+const mockStudioSystemApi = vi.hoisted(() => ({
+  checkHealth: vi.fn(),
   triggerUpdate: vi.fn(),
 }))
 
 vi.mock('@/api/hermes/system', () => mockSystemApi)
+vi.mock('@/api/studio/system', () => mockStudioSystemApi)
 vi.mock('@/api/client', () => ({ hasApiKey: () => true }))
 
 import { useAppStore } from '@/stores/hermes/app'
@@ -171,7 +174,7 @@ describe('App Store', () => {
   })
 
   it('marks the client stale when the served Web UI version changes', async () => {
-    mockSystemApi.checkHealth.mockResolvedValue({
+    mockStudioSystemApi.checkHealth.mockResolvedValue({
       status: 'ok',
       webui_version: '0.5.17',
       webui_latest: '0.5.17',
@@ -188,7 +191,7 @@ describe('App Store', () => {
   })
 
   it('does not mark the client stale when the served Web UI version matches this bundle', async () => {
-    mockSystemApi.checkHealth.mockResolvedValue({
+    mockStudioSystemApi.checkHealth.mockResolvedValue({
       status: 'ok',
       webui_version: 'test',
       webui_latest: 'test',
@@ -203,7 +206,7 @@ describe('App Store', () => {
   })
 
   it('records Docker runtime state from the health response', async () => {
-    mockSystemApi.checkHealth.mockResolvedValue({
+    mockStudioSystemApi.checkHealth.mockResolvedValue({
       status: 'ok',
       webui_version: 'test',
       webui_update_available: false,
@@ -219,7 +222,7 @@ describe('App Store', () => {
 
   it('clears the updating state and reports failure when self-update request fails', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
-    mockSystemApi.triggerUpdate.mockRejectedValue(new Error('install failed'))
+    mockStudioSystemApi.triggerUpdate.mockRejectedValue(new Error('install failed'))
     const store = useAppStore()
 
     const ok = await store.doUpdate()

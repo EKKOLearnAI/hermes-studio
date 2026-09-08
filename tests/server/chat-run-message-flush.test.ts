@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // Mock DB module before importing
 const addMessageMock = vi.fn()
-vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/session-store', () => ({
   addMessage: addMessageMock,
   getSession: vi.fn(),
   getSessionDetail: vi.fn(),
@@ -11,31 +11,31 @@ vi.mock('../../packages/server/src/db/hermes/session-store', () => ({
   updateSessionStats: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/services/logger', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/logging', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }))
 
-vi.mock('../../packages/server/src/lib/context-compressor', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/context-compressor', () => ({
   ChatContextCompressor: class {},
   countTokens: vi.fn(() => 1),
   SUMMARY_PREFIX: '[Summary] ',
 }))
 
-vi.mock('../../packages/server/src/db/hermes/compression-snapshot', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/compression-snapshot', () => ({
   getCompressionSnapshot: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/lib/llm-json', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/chat-run/llm-json', () => ({
   parseLLMJSON: vi.fn(),
   parseToolArguments: vi.fn(),
   parseAnthropicContentArray: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/lib/llm-prompt', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/runs/prompt', () => ({
   getSystemPrompt: vi.fn(() => ''),
 }))
 
-vi.mock('../../packages/server/src/db/hermes/usage-store', () => ({
+vi.mock('../../packages/server/src/modules/studio/repositories/usage-store', () => ({
   updateUsage: vi.fn(),
 }))
 
@@ -245,7 +245,7 @@ describe('chat-run message flush', () => {
   })
 
   it('records MoA display rows without creating model-context tool messages', async () => {
-    const { recordBridgeMoaDisplayTool } = await import('../../packages/server/src/services/hermes/run-chat/bridge-message')
+    const { recordBridgeMoaDisplayTool } = await import('../../packages/server/src/modules/studio/services/chat-run/bridge-message')
     const state = createSessionState()
 
     recordBridgeMoaDisplayTool(

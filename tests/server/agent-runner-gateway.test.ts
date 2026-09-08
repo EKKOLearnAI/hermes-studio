@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { AgentRunGateway, ProviderApiError } from '../../packages/server/src/services/coding-agents/shared/gateway'
+import { AgentRunGateway, ProviderApiError } from '../../packages/server/src/modules/coding-agents/protocol/gateway'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -30,6 +30,21 @@ describe('agent run gateway', () => {
       }),
       body: '{"model":"m"}',
     }))
+  })
+
+  it.each([false, true])('omits upstream authorization for keyless requests (stream=%s)', async (stream) => {
+    const fetchMock = vi.fn(async () => new Response(stream ? 'data: [DONE]\n\n' : '{}', {
+      headers: { 'Content-Type': stream ? 'text/event-stream' : 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const gateway = new AgentRunGateway()
+    const request = { url: 'https://opencode.ai/zen/v1/chat/completions', apiKey: '', body: { stream } }
+    if (stream) {
+      for await (const _chunk of await gateway.streamBytes(request)) { /* drain */ }
+    } else await gateway.completeJson(request)
+    const headers = new Headers((fetchMock.mock.calls[0] as any)[1].headers)
+    expect(headers.has('authorization')).toBe(false)
+    expect(headers.has('x-api-key')).toBe(false)
   })
 
   it('throws structured provider errors', async () => {

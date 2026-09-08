@@ -2,10 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { buildSessionCategoryMenuChildren, resolveRecentSessionCategoryLabel } from '@/components/hermes/chat/session-category-menu'
 
 describe('session category menu', () => {
-  it('disables the current named category without adding a check mark', () => {
+  it('offers creating a category before the existing destinations', () => {
     const options = buildSessionCategoryMenuChildren({
-      categories: [{ id: 1, name: 'Work' }, { id: 2, name: 'Personal' }],
-      currentCategoryId: 1,
+      categories: [{ id: 1, name: 'Work' }],
+      currentCategoryId: null,
+      createCategoryLabel: 'Create new category',
       uncategorizedLabel: 'Uncategorized',
       loadFailedLabel: 'Failed to load categories',
       retryLabel: 'Retry',
@@ -14,6 +15,47 @@ describe('session category menu', () => {
     })
 
     expect(options).toEqual([
+      { label: 'Create new category', key: 'category:create', disabled: false },
+      { type: 'divider', key: 'category:create-divider' },
+      { label: 'Uncategorized', key: 'category:none', disabled: true },
+      { label: 'Work', key: 'category:1', disabled: false },
+    ])
+  })
+
+  it('disables category creation while destinations are still loading', () => {
+    const options = buildSessionCategoryMenuChildren({
+      categories: [],
+      currentCategoryId: null,
+      createCategoryLabel: 'Create new category',
+      uncategorizedLabel: 'Uncategorized',
+      loadFailedLabel: 'Failed to load categories',
+      retryLabel: 'Retry',
+      loadFailed: false,
+      loading: true,
+    })
+
+    expect(options[0]).toEqual({
+      label: 'Create new category',
+      key: 'category:create',
+      disabled: true,
+    })
+  })
+
+  it('disables the current named category without adding a check mark', () => {
+    const options = buildSessionCategoryMenuChildren({
+      categories: [{ id: 1, name: 'Work' }, { id: 2, name: 'Personal' }],
+      currentCategoryId: 1,
+      createCategoryLabel: 'Create new category',
+      uncategorizedLabel: 'Uncategorized',
+      loadFailedLabel: 'Failed to load categories',
+      retryLabel: 'Retry',
+      loadFailed: false,
+      loading: false,
+    })
+
+    expect(options).toEqual([
+      { label: 'Create new category', key: 'category:create', disabled: false },
+      { type: 'divider', key: 'category:create-divider' },
       { label: 'Uncategorized', key: 'category:none', disabled: false },
       { label: 'Work', key: 'category:1', disabled: true },
       { label: 'Personal', key: 'category:2', disabled: false },
@@ -24,6 +66,7 @@ describe('session category menu', () => {
     const options = buildSessionCategoryMenuChildren({
       categories: [{ id: 1, name: 'Work' }],
       currentCategoryId: null,
+      createCategoryLabel: 'Create new category',
       uncategorizedLabel: 'Uncategorized',
       loadFailedLabel: 'Failed to load categories',
       retryLabel: 'Retry',
@@ -31,7 +74,7 @@ describe('session category menu', () => {
       loading: false,
     })
 
-    expect(options[0]).toEqual({
+    expect(options[2]).toEqual({
       label: 'Uncategorized',
       key: 'category:none',
       disabled: true,
@@ -42,6 +85,7 @@ describe('session category menu', () => {
     expect(buildSessionCategoryMenuChildren({
       categories: [],
       currentCategoryId: null,
+      createCategoryLabel: 'Create new category',
       uncategorizedLabel: 'Uncategorized',
       loadFailedLabel: 'Failed to load categories',
       retryLabel: 'Retry',

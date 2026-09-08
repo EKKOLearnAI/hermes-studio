@@ -281,13 +281,13 @@ Normal session detail should include summary metadata without patch bodies, or
 the client can request summaries separately:
 
 ```text
-GET /api/hermes/sessions/:id/workspace-run-changes
+GET /api/studio/sessions/:id/workspace-run-changes
 ```
 
 Patch bodies load on demand:
 
 ```text
-GET /api/hermes/sessions/:id/workspace-run-changes/:changeId/files/:fileId
+GET /api/studio/sessions/:id/workspace-run-changes/:changeId/files/:fileId
 ```
 
 The patch endpoint returns one file row with `patch`.

@@ -117,7 +117,7 @@ Ekko creates detached child tasks in
 isolated child provider context.
 
 `scheduleBackgroundContinuation()` in
-`packages/server/src/services/hermes/run-chat/handle-ekko-agent-run.ts` converts
+`packages/server/src/modules/studio/services/chat-run/handle-ekko-agent-run.ts` converts
 `subagent.complete` into a `QueuedRun`. The entry contains the hidden child
 result prompt but no origin history or history boundary.
 
@@ -129,8 +129,8 @@ instructionMessages + currentCompressedSessionHistory + callbackMessage
 ```
 
 `buildCompressedHistory()` reads current database state. The queue transport in
-`packages/server/src/services/hermes/run-chat/types.ts` and
-`packages/server/src/services/hermes/run-chat/index.ts` also has no field for a
+`packages/server/src/modules/studio/services/chat-run/types.ts` and
+`packages/server/src/modules/studio/sockets/chat-run.ts` also has no field for a
 callback-owned context fork.
 
 There is a second contamination path in the runtime. `AgentRuntime` caches

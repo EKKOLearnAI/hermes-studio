@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 let db: DatabaseSync
 
-vi.mock('../../packages/server/src/db/index', () => ({
+vi.mock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
   isSqliteAvailable: () => true,
   getDb: () => db,
   jsonSet: vi.fn(),
@@ -48,7 +48,7 @@ describe('usage store agent breakdown', () => {
     insert.run('new-codex', 'coding_agent', 'codex', 80, 20, 30, 'codex-model', 'default', now)
     insert.run('hermes-1', 'hermes', 'hermes', 30, 3, 6, 'hermes-model', 'default', now)
 
-    const { getLocalUsageStats } = await import('../../packages/server/src/db/hermes/usage-store')
+    const { getLocalUsageStats } = await import('../../packages/server/src/modules/studio/repositories/usage-store')
     expect(getLocalUsageStats('default', 7).by_agent).toEqual([
       { agent: 'claude_code', input_tokens: 100, output_tokens: 10, cache_read_tokens: 40, cache_write_tokens: 0, reasoning_tokens: 0, sessions: 1 },
       { agent: 'codex', input_tokens: 80, output_tokens: 20, cache_read_tokens: 30, cache_write_tokens: 0, reasoning_tokens: 0, sessions: 1 },

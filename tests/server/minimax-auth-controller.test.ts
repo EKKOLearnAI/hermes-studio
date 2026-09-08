@@ -61,8 +61,9 @@ describe('MiniMax Coding Plan OAuth controller', () => {
         }),
       })
     vi.stubGlobal('fetch', fetchMock)
+    await import('../../packages/server/src/bootstrap/agent-profile-adapter')
     const { start, poll } = await import(
-      '../../packages/server/src/controllers/hermes/minimax-auth'
+      '../../packages/server/src/modules/hermes/controllers/minimax-auth'
     )
 
     const startCtx = makeCtx({ region: 'global' })
@@ -108,7 +109,7 @@ describe('MiniMax Coding Plan OAuth controller', () => {
 
   it('keeps a selected MiniMax model when applying the OAuth provider', async () => {
     const { applyMiniMaxOAuthDefaultModel } = await import(
-      '../../packages/server/src/controllers/hermes/minimax-auth'
+      '../../packages/server/src/modules/hermes/controllers/minimax-auth'
     )
     expect(applyMiniMaxOAuthDefaultModel({
       model: {

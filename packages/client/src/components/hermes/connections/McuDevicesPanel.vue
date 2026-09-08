@@ -11,7 +11,7 @@ import {
   fetchMcuDevices,
   updateMcuDeviceName,
   type McuDevice,
-} from '@/api/hermes/mcu-devices'
+} from '@/api/studio/mcu-devices'
 
 const { t } = useI18n()
 const message = useMessage()

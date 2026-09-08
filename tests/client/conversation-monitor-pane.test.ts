@@ -8,7 +8,7 @@ const mockConversationsApi = vi.hoisted(() => ({
   fetchConversationDetail: vi.fn(),
 }))
 
-vi.mock('@/api/hermes/conversations', () => mockConversationsApi)
+vi.mock('@/api/studio/conversations', () => mockConversationsApi)
 
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({

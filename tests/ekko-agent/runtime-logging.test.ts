@@ -8,8 +8,6 @@ import {
   EKKO_LOG_FILE_NAME,
   EkkoFileLogger,
   EkkoRuntimeLogger,
-  MemoryService,
-  ModelMemoryExtractor,
   SkillReviewService,
 } from '../../packages/ekko-agent/src'
 import type { ModelClient, ModelRequest } from '../../packages/ekko-agent/src'
@@ -107,7 +105,7 @@ describe('Ekko runtime request logging', () => {
     expect(raw).not.toContain('model.started')
   })
 
-  it('uses the same compact request logger for memory and skill-review model calls', async () => {
+  it('uses the same compact request logger for skill-review model calls', async () => {
     const client: ModelClient = {
       provider: 'test-provider',
       requestStyle: 'custom-runtime',
@@ -118,43 +116,11 @@ describe('Ekko runtime request logging', () => {
         jsonMode: false,
         systemPrompt: true,
       },
-      create: vi.fn(async (request: ModelRequest) => ({
-        content: request.metadata?.purpose === 'ekko-memory-summary'
-          ? JSON.stringify({
-              recentTopic: '',
-              currentGoal: '',
-              constraints: [],
-              preferences: [],
-              decisions: [],
-              completedWork: [],
-              pendingWork: [],
-              knownIssues: [],
-            })
-          : 'Nothing to save.',
-      })),
+      create: vi.fn(async () => ({ content: 'Nothing to save.' })),
       stream: vi.fn(),
     }
     const fileLogger = new EkkoFileLogger({ directory: root })
     const requestLogger = new EkkoRuntimeLogger(fileLogger, { profile: 'default' })
-    const memory = new MemoryService({ enabled: false })
-    const extractor = new ModelMemoryExtractor({
-      modelClient: client,
-      memory,
-      requestLogger,
-      requestRunId: 'parent-run',
-      requestLogContext: { sessionId: 'session-1', turnId: 'turn-1' },
-    })
-    await extractor.extract({
-      sessionId: 'session-1',
-      messages: [{
-        id: 'message-1',
-        sessionId: 'session-1',
-        role: 'user',
-        content: 'remember nothing',
-        createdAt: new Date().toISOString(),
-      }],
-    })
-
     const skillDirectory = join(root, 'skills')
     await mkdir(skillDirectory, { recursive: true })
     const review = new SkillReviewService({ skillDirectory })
@@ -166,12 +132,10 @@ describe('Ekko runtime request logging', () => {
       requestLogContext: { sessionId: 'session-1', turnId: 'turn-1' },
     })
     await review.drain()
-    memory.close()
 
     const records = fileLogger.query()
-    expect(records).toHaveLength(2)
+    expect(records).toHaveLength(1)
     expect(records.map(record => (record.data as { purpose: string }).purpose)).toEqual([
-      'ekko-memory-summary',
       'ekko-skill-review',
     ])
     expect(records.every(record => record.event === 'model.request')).toBe(true)

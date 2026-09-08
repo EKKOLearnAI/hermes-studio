@@ -9,6 +9,7 @@ import type { AgentMessage, ModelClient, ModelRequest, ModelResponse, ModelUsage
 import { AgentToolRegistry } from '../tools/registry'
 import { createSkillTools } from '../tools/skills'
 import type { EkkoRuntimeLogContext, EkkoRuntimeLogger } from '../logging/runtime-logger'
+import type { EkkoExternalSkillDirectory } from './external-directories'
 
 export interface SkillReviewUsageEvent {
   purpose: 'ekko-skill-review'
@@ -32,6 +33,8 @@ export interface SkillReviewScheduleInput {
 
 export interface SkillReviewServiceOptions {
   skillDirectory: string
+  externalSkillDirectories?: EkkoExternalSkillDirectory[]
+  disabledSkillNames?: string[]
   maxSteps?: number
   maxModelRetries?: number
   maxTokens?: number
@@ -65,7 +68,10 @@ export class SkillReviewService {
 
   private async review(reviewId: string, input: SkillReviewScheduleInput): Promise<number> {
     const tools = new AgentToolRegistry()
-    tools.registerMany(createSkillTools(this.options.skillDirectory))
+    tools.registerMany(createSkillTools(this.options.skillDirectory, {
+      externalSkillDirectories: this.options.externalSkillDirectories,
+      disabledSkillNames: this.options.disabledSkillNames,
+    }))
     const messages: AgentMessage[] = [
       createSystemMessage(EKKO_SKILL_REVIEW_PROMPT),
       createUserMessage(buildReviewTranscript(input.messages, this.options.maxTranscriptChars ?? 16_000)),
@@ -174,7 +180,8 @@ SAFETY AND QUALITY
 - Before changing an existing file, read that exact file with skill_view in this review.
 - Prefer skill_manage action=patch over a full edit.
 - Never delete a skill from background review.
-- New skills need YAML frontmatter with matching lowercase name and a concise description, followed by clear triggers, procedure, pitfalls, and verification.
+- New skills need YAML frontmatter with a matching lowercase name, concise description, and compact metadata.keywords containing 3–5 specific English phrases. Keywords are host-only exact-match metadata; only Skill names are injected into the main model for multilingual intent routing.
+- When an existing skill's supported requests or boundaries change, maintain its metadata.keywords in the same update. Use English ASCII text or technical identifiers only; do not add translations, exhaustive synonyms, or broad single-word keywords.
 - Keep changes small and grounded in evidence from the completed turn.
 
 If nothing durable and reusable was learned, respond exactly: Nothing to save.`

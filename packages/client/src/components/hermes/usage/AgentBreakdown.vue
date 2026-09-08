@@ -11,6 +11,9 @@ const agentLabels: Record<string, string> = {
   hermes: 'hermes',
   claude_code: 'claudeCode',
   codex: 'codex',
+  pi: 'pi',
+  grok: 'grok',
+  opencode: 'opencode',
   ekko_agent: 'ekkoAgent',
 }
 
