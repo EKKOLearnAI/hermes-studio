@@ -121,6 +121,16 @@ describe('useSpeech WebSpeech playback', () => {
     )
   })
 
+  it('keeps collapsed thinking blocks out of speech text', () => {
+    const speech = useSpeech()
+
+    expect(speech.extractReadableText(
+      '<think>hidden plan</think>Visible answer. '
+      + '<thinking>legacy hidden plan</thinking>More detail. '
+      + '<reasoning>hidden rationale</reasoning>Done.',
+    )).toBe('Visible answer. More detail. Done.')
+  })
+
   it('does not crash when Web Speech is unavailable', () => {
     Object.defineProperty(window, 'speechSynthesis', {
       configurable: true,
