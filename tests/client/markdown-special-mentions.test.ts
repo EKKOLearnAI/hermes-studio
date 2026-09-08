@@ -21,7 +21,7 @@ vi.mock('naive-ui', async (importOriginal) => {
   }
 })
 
-vi.mock('@/api/hermes/download', () => ({
+vi.mock('@/api/studio/download', () => ({
   downloadFile: vi.fn(),
   getDownloadUrl: vi.fn((path: string) => `/download?path=${encodeURIComponent(path)}`),
 }))

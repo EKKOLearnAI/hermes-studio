@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   createMcuSpeechSegmenter,
   normalizeMcuSpeechText,
-} from '../../packages/server/src/services/global-agent/mcu-speech-segmenter'
+} from '../../packages/server/src/modules/studio/services/global-agent/mcu-speech-segmenter'
 
 describe('MCU speech segmenter', () => {
   it('waits for markdown links to close before emitting speech', () => {

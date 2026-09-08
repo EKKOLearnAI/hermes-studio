@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   normalizeMessageContentForStorage,
   normalizeMessageContentForStorageRole,
-} from '../../packages/server/src/db/hermes/message-content'
+} from '../../packages/server/src/modules/studio/repositories/message-content'
 
 describe('message content normalization', () => {
   it('summarizes multimodal envelopes without persisting base64 images', () => {

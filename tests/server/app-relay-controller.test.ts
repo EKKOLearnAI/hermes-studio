@@ -27,12 +27,12 @@ const {
   })),
 }))
 
-vi.mock('../../packages/server/src/services/app-relay/client', () => ({
+vi.mock('../../packages/server/src/modules/studio/services/app-relay/client', () => ({
   getAppRelayClient,
   startAppRelayClient,
   stopAppRelayClient,
 }))
-vi.mock('../../packages/server/src/services/system-info', () => ({
+vi.mock('../../packages/server/src/modules/studio/public/system-info', () => ({
   getDeviceIdentity,
   getAppRelayDeviceIdentity: getDeviceIdentity,
   createAppRelayDeviceSignature,
@@ -55,7 +55,7 @@ describe('app relay controller', () => {
     }
     getAppRelayClient.mockReturnValue(null)
     startAppRelayClient.mockReturnValue(client)
-    const { connectAppRelayController } = await import('../../packages/server/src/controllers/app-relay')
+    const { connectAppRelayController } = await import('../../packages/server/src/modules/studio/controllers/app-relay')
     const ctx: any = { status: 200 }
 
     await connectAppRelayController(ctx)
@@ -79,7 +79,7 @@ describe('app relay controller', () => {
   })
 
   it('disconnects App relay without touching the MCU relay registry', async () => {
-    const { disconnectAppRelayController } = await import('../../packages/server/src/controllers/app-relay')
+    const { disconnectAppRelayController } = await import('../../packages/server/src/modules/studio/controllers/app-relay')
     const ctx: any = {}
 
     await disconnectAppRelayController(ctx)
@@ -95,7 +95,7 @@ describe('app relay controller', () => {
       usesRelayUrl: vi.fn(() => true),
     }
     getAppRelayClient.mockReturnValue(client)
-    const { connectAppRelayController } = await import('../../packages/server/src/controllers/app-relay')
+    const { connectAppRelayController } = await import('../../packages/server/src/modules/studio/controllers/app-relay')
     const ctx: any = { status: 200 }
 
     await connectAppRelayController(ctx)

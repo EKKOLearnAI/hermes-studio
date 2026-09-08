@@ -3,9 +3,10 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ProfileAvatar from '@/components/hermes/profiles/ProfileAvatar.vue'
 import { formatChatTimestamp } from '@/utils/chat-timestamp'
-import type { ChatMessage, MemberInfo, RoomAgent } from '@/api/hermes/group-chat'
+import type { ChatMessage, MemberInfo, RoomAgent } from '@/api/studio/group-chat'
 import { groupMessageAgent, parseStoredAvatar } from '@/utils/group-agent-avatar'
 import GroupMessageItem from './GroupMessageItem.vue'
+import ToolRunSummary from '../chat/ToolRunSummary.vue'
 import GroupAgentMessageAvatar from './GroupAgentMessageAvatar.vue'
 import GroupAgentRobotIcon from './GroupAgentRobotIcon.vue'
 
@@ -32,6 +33,7 @@ const items = computed(() =>
 const runToolItems = computed(() =>
     items.value.filter(item => item.role === 'tool').reverse()
 )
+const toolsActive = computed(() => !!props.message.isStreaming || runToolItems.value.some(item => item.toolStatus === 'running'))
 const transcriptItems = computed(() =>
     runToolItems.value.length > 0
         ? items.value.filter(item => item.role !== 'tool')
@@ -79,58 +81,65 @@ function handleToolListWheel(event: WheelEvent): void {
 
 <template>
     <div class="group-agent-run" :data-run-id="message.run_id || undefined">
-        <div
-            class="run-avatar"
-            :class="{ 'run-avatar-active': active }"
-            :aria-busy="active"
-        >
-            <GroupAgentMessageAvatar
-                v-if="agentInfo"
-                :agent="agentInfo"
-                :owner="agentOwnerInfo"
-                :mentionable="!!activeAgentInfo"
-                :size="36"
-                @mention="emit('mentionAgent', $event)"
-            />
-            <ProfileAvatar
-                v-else
-                :name="message.senderName || message.senderId || 'user'"
-                :avatar="senderAvatar"
-                :size="36"
-            />
-        </div>
         <div class="run-column">
             <div class="run-header">
+                <div
+                    class="run-avatar"
+                    :class="{ 'run-avatar-active': active }"
+                    :aria-busy="active"
+                >
+                    <GroupAgentMessageAvatar
+                        v-if="agentInfo"
+                        :agent="agentInfo"
+                        :owner="agentOwnerInfo"
+                        :mentionable="!!activeAgentInfo"
+                        :size="22"
+                        @mention="emit('mentionAgent', $event)"
+                    />
+                    <ProfileAvatar
+                        v-else
+                        :name="message.senderName || message.senderId || 'user'"
+                        :avatar="senderAvatar"
+                        :size="22"
+                    />
+                </div>
                 <span class="run-agent-name">{{ message.senderName }}</span>
                 <GroupAgentRobotIcon v-if="agentInfo" class="run-agent-icon" />
             </div>
             <div class="run-card" :class="{ streaming: message.isStreaming }">
-                <div
+                <ToolRunSummary
                     v-if="runToolItems.length"
-                    class="run-tool-list"
-                    tabindex="0"
-                    role="region"
-                    :aria-label="t('chat.showToolCalls')"
-                    :data-agent-id="stableAgentId"
-                    :data-run-id="message.run_id || undefined"
-                    @wheel="handleToolListWheel"
+                    class="run-tools"
+                    :run-id="message.run_id || message.id"
+                    :tools="runToolItems"
+                    :active="toolsActive"
                 >
                     <div
-                        v-for="item in runToolItems"
-                        :key="item.id"
-                        class="run-tool-item"
-                        :data-message-id="item.id"
+                        class="run-tool-list"
+                        tabindex="0"
+                        role="region"
+                        :aria-label="t('chat.showToolCalls')"
+                        :data-agent-id="stableAgentId"
+                        :data-run-id="message.run_id || undefined"
+                        @wheel="handleToolListWheel"
                     >
-                        <GroupMessageItem
-                            :message="item"
-                            :agents="agents"
-                            :members="members"
-                            :current-user-id="currentUserId"
-                            :allow-speech="props.allowSpeech"
-                            embedded
-                        />
+                        <div
+                            v-for="item in runToolItems"
+                            :key="item.id"
+                            class="run-tool-item"
+                            :data-message-id="item.id"
+                        >
+                            <GroupMessageItem
+                                :message="item"
+                                :agents="agents"
+                                :members="members"
+                                :current-user-id="currentUserId"
+                                :allow-speech="props.allowSpeech"
+                                embedded
+                            />
+                        </div>
                     </div>
-                </div>
+                </ToolRunSummary>
                 <div v-if="transcriptItems.length" class="run-transcript">
                     <div
                         v-for="item in transcriptItems"
@@ -160,7 +169,6 @@ function handleToolListWheel(event: WheelEvent): void {
 .group-agent-run {
     display: flex;
     align-items: flex-start;
-    gap: 10px;
     min-width: 0;
     max-width: 100%;
     padding: 2px 0;
@@ -169,10 +177,9 @@ function handleToolListWheel(event: WheelEvent): void {
 
 .run-avatar {
     position: relative;
-    width: 36px;
-    height: 36px;
-    flex: 0 0 36px;
-    margin-top: 2px;
+    width: 22px;
+    height: 22px;
+    flex: 0 0 22px;
     overflow: visible;
     border-radius: 50%;
 }
@@ -251,7 +258,7 @@ function handleToolListWheel(event: WheelEvent): void {
 .run-column {
     display: flex;
     flex-direction: column;
-    min-width: min(260px, calc(100% - 46px));
+    min-width: min(260px, 85%);
     width: fit-content;
     max-width: min(85%, 920px);
 }
@@ -259,14 +266,22 @@ function handleToolListWheel(event: WheelEvent): void {
 .run-header {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding-bottom: 2px;
+    gap: 6px;
+    padding-bottom: 6px;
+    color: $text-secondary;
+    font-size: 12px;
+    line-height: 22px;
 }
 
 .run-agent-name {
-    color: $text-primary;
-    font-size: 13px;
-    font-weight: 600;
+    min-width: 0;
+    max-width: 240px;
+    overflow: hidden;
+    color: inherit;
+    font-size: inherit;
+    font-weight: 400;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .run-agent-icon {
@@ -289,6 +304,11 @@ function handleToolListWheel(event: WheelEvent): void {
     .run-transcript-item + .run-transcript-item {
         border-top: 1px solid rgba(var(--text-primary-rgb), 0.08);
     }
+}
+
+.run-tools {
+    box-sizing: border-box;
+    padding: 6px;
 }
 
 .run-tool-list {
@@ -317,7 +337,7 @@ function handleToolListWheel(event: WheelEvent): void {
     min-width: 0;
 }
 
-.run-tool-list + .run-transcript {
+.run-tools + .run-transcript {
     border-top: 1px solid rgba(var(--text-primary-rgb), 0.08);
 }
 
@@ -336,11 +356,11 @@ function handleToolListWheel(event: WheelEvent): void {
     backdrop-filter: blur(8px) saturate(110%);
 }
 
-@media (max-width: 768px) {
+@media (max-width: $breakpoint-mobile) {
     .run-column {
-        min-width: min(260px, calc(100% - 46px));
+        min-width: 0;
         width: fit-content;
-        max-width: calc(100% - 46px);
+        max-width: 100%;
     }
 }
 </style>

@@ -31,7 +31,7 @@ vi.mock('@/api/client', () => ({
   hasApiKey: mockHasApiKey,
 }))
 
-vi.mock('@/api/auth', () => ({
+vi.mock('@/api/studio/auth', () => ({
   fetchAuthStatus: mockFetchAuthStatus,
   loginWithPassword: mockLoginWithPassword,
 }))

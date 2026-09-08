@@ -21,7 +21,8 @@ function writeProfile(profile: string, config: string, env = '', auth = '{}\n') 
 }
 
 async function loadRefresh() {
-  return import('../../packages/server/src/services/hermes/provider-model-refresh')
+  await import('../../packages/server/src/bootstrap/agent-profile-adapter')
+  return import('../../packages/server/src/modules/hermes/services/providers/provider-model-refresh')
 }
 
 beforeEach(() => {
@@ -123,7 +124,7 @@ describe('provider model refresh', () => {
       ],
     }), { status: 200, headers: { 'content-type': 'application/json' } }))
     vi.stubGlobal('fetch', fetchMock)
-    vi.doMock('../../packages/server/src/services/hermes/authorized-provider-credentials', () => ({
+    vi.doMock('../../packages/server/src/modules/hermes/services/providers/authorized-provider-credentials', () => ({
       resolveAuthorizedProviderRuntimeCredentials: vi.fn().mockResolvedValue({
         apiKey: 'profile-codex-token',
         baseUrl: 'https://chatgpt.com/backend-api/codex',
@@ -174,7 +175,7 @@ describe('provider model refresh', () => {
     }), { status: 200, headers: { 'content-type': 'application/json' } })))
 
     const { writeProviderModelCatalogEntry } = await import(
-      '../../packages/server/src/services/hermes/model-catalog-cache'
+      '../../packages/server/src/modules/hermes/services/providers/model-catalog-cache'
     )
     await writeProviderModelCatalogEntry({
       provider: 'xai-oauth',

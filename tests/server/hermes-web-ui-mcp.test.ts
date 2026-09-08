@@ -77,7 +77,7 @@ describe('hermes-web-ui MCP server', () => {
                 },
               },
             },
-            '/api/chat-run/runs': {
+            '/api/studio/chat-run/runs': {
               post: {
                 tags: ['Chat Run'],
                 requestBody: {
@@ -117,7 +117,7 @@ describe('hermes-web-ui MCP server', () => {
         })
         return
       }
-      if (req.url === '/api/chat-run/runs') {
+      if (req.url === '/api/studio/chat-run/runs') {
         chatRunHits += 1
         let raw = ''
         req.on('data', chunk => { raw += chunk })
@@ -145,6 +145,7 @@ describe('hermes-web-ui MCP server', () => {
         HERMES_WEB_UI_URL: `http://127.0.0.1:${address.port}`,
         HERMES_WEB_UI_HOME: home,
         HERMES_WEB_UI_PROFILE: 'research',
+        AUTH_TOKEN: '',
       },
     })
     child.stdout.on('data', (chunk) => {
@@ -171,14 +172,14 @@ describe('hermes-web-ui MCP server', () => {
       name: 'hermes_studio_api_request',
       arguments: {
         method: 'POST',
-        path: '/api/chat-run/runs',
+        path: '/api/studio/chat-run/runs',
         body: {},
       },
     })
     writeRpc(child, 7, 'tools/call', {
       name: 'hermes_studio_api_openapi_get',
       arguments: {
-        path: '/api/chat-run/runs',
+        path: '/api/studio/chat-run/runs',
         method: 'POST',
       },
     })
@@ -249,7 +250,7 @@ describe('hermes-web-ui MCP server', () => {
       operationCount: 1,
       operations: [{
         method: 'POST',
-        path: '/api/chat-run/runs',
+        path: '/api/studio/chat-run/runs',
         requestBody: {
           fields: [
             { name: 'input', required: true, type: 'string' },
@@ -290,7 +291,7 @@ describe('hermes-web-ui MCP server', () => {
       name: 'hermes_studio_api_request',
       arguments: {
         method: 'POST',
-        path: '/api/chat-run/runs',
+        path: '/api/studio/chat-run/runs',
         body: { input: 'hello' },
       },
     })
@@ -322,7 +323,7 @@ describe('hermes-web-ui MCP server', () => {
   it('exposes the curated Hermes Studio use catalog through one compact category tool', async () => {
     const server = createServer((req, res) => {
       res.setHeader('content-type', 'application/json')
-      if (req.url === '/api/chat-run/runs') {
+      if (req.url === '/api/studio/chat-run/runs') {
         let raw = ''
         req.on('data', chunk => { raw += chunk })
         req.on('end', () => {
@@ -334,15 +335,15 @@ describe('hermes-web-ui MCP server', () => {
         })
         return
       }
-      if (req.url === '/api/hermes/sessions?limit=2&source=coding_agent') {
+      if (req.url === '/api/studio/sessions?limit=2&source=coding_agent') {
         res.end(JSON.stringify({ sessions: [{ id: 'session-1' }] }))
         return
       }
-      if (req.url === '/api/hermes/sessions/count?source=coding_agent') {
+      if (req.url === '/api/studio/sessions/count?source=coding_agent') {
         res.end(JSON.stringify({ count: 7 }))
         return
       }
-      if (req.url === '/api/hermes/usage/stats?days=7') {
+      if (req.url === '/api/studio/usage/stats?days=7') {
         res.end(JSON.stringify({
           total_input_tokens: 100,
           total_output_tokens: 40,
@@ -358,11 +359,11 @@ describe('hermes-web-ui MCP server', () => {
         }))
         return
       }
-      if (req.url === '/api/hermes/sessions/session-1' && req.method === 'GET') {
+      if (req.url === '/api/studio/sessions/session-1' && req.method === 'GET') {
         res.end(JSON.stringify({ id: 'session-1', title: 'Session 1' }))
         return
       }
-      if (req.url === '/api/hermes/sessions/session-1/context') {
+      if (req.url === '/api/studio/sessions/session-1/context') {
         res.end(JSON.stringify({
           session_id: 'session-1',
           title: 'Session 1',
@@ -379,15 +380,15 @@ describe('hermes-web-ui MCP server', () => {
         }))
         return
       }
-      if (req.url === '/api/hermes/sessions/session-1' && req.method === 'DELETE') {
+      if (req.url === '/api/studio/sessions/session-1' && req.method === 'DELETE') {
         res.end(JSON.stringify({ ok: true, deleted: true }))
         return
       }
-      if (req.url === '/api/hermes/sessions/conversations/session-1/messages?humanOnly=0') {
+      if (req.url === '/api/studio/sessions/conversations/session-1/messages?humanOnly=0') {
         res.end(JSON.stringify({ messages: [{ role: 'system', content: 'internal' }] }))
         return
       }
-      if (req.url === '/api/hermes/sessions/session-1/rename' && req.method === 'POST') {
+      if (req.url === '/api/studio/sessions/session-1/rename' && req.method === 'POST') {
         let raw = ''
         req.on('data', chunk => { raw += chunk })
         req.on('end', () => {
@@ -425,7 +426,7 @@ describe('hermes-web-ui MCP server', () => {
         res.end(JSON.stringify({ success: true, deleted: 'custom:edge-router' }))
         return
       }
-      if (req.url === '/api/hermes/performance/runtime') {
+      if (req.url === '/api/studio/performance/runtime') {
         res.end(JSON.stringify({
           timestamp: 123456,
           bridge: {
@@ -439,15 +440,46 @@ describe('hermes-web-ui MCP server', () => {
         }))
         return
       }
-      if (req.url === '/api/hermes/workflows?profile=default') {
+      if (req.url === '/api/studio/mobile-location/request' && req.method === 'POST') {
+        let raw = ''
+        req.on('data', chunk => { raw += chunk })
+        req.on('end', () => {
+          res.end(JSON.stringify({
+            ok: true,
+            status: 'success',
+            location: {
+              latitude: 31.2304,
+              longitude: 121.4737,
+              accuracyMeters: 65,
+              coordinateSystem: 'wgs84',
+              timestamp: 123456789,
+            },
+            body: raw ? JSON.parse(raw) : null,
+          }))
+        })
+        return
+      }
+      if (req.url === '/api/studio/mobile-calendar/request' && req.method === 'POST') {
+        let raw = ''
+        req.on('data', chunk => { raw += chunk })
+        req.on('end', () => {
+          res.end(JSON.stringify({
+            ok: true,
+            status: 'success',
+            body: raw ? JSON.parse(raw) : null,
+          }))
+        })
+        return
+      }
+      if (req.url === '/api/studio/workflows?profile=default') {
         res.end(JSON.stringify({ workflows: [{ id: 'workflow-1', name: 'Demo workflow', profile: 'default' }] }))
         return
       }
-      if (req.url === '/api/hermes/workflows/workflow-1' && req.method === 'GET') {
+      if (req.url === '/api/studio/workflows/workflow-1' && req.method === 'GET') {
         res.end(JSON.stringify({ workflow: { id: 'workflow-1', name: 'Demo workflow', profile: 'default' } }))
         return
       }
-      if (req.url === '/api/hermes/workflows' && req.method === 'POST') {
+      if (req.url === '/api/studio/workflows' && req.method === 'POST') {
         let raw = ''
         req.on('data', chunk => { raw += chunk })
         req.on('end', () => {
@@ -455,7 +487,7 @@ describe('hermes-web-ui MCP server', () => {
         })
         return
       }
-      if (req.url === '/api/hermes/workflows/workflow-1' && req.method === 'PATCH') {
+      if (req.url === '/api/studio/workflows/workflow-1' && req.method === 'PATCH') {
         let raw = ''
         req.on('data', chunk => { raw += chunk })
         req.on('end', () => {
@@ -463,11 +495,11 @@ describe('hermes-web-ui MCP server', () => {
         })
         return
       }
-      if (req.url === '/api/hermes/workflows/workflow-1/runs?limit=5') {
+      if (req.url === '/api/studio/workflows/workflow-1/runs?limit=5') {
         res.end(JSON.stringify({ runs: [{ id: 'run-1', workflow_id: 'workflow-1', status: 'completed', node_sessions: [] }] }))
         return
       }
-      if (req.url === '/api/hermes/workflows/workflow-1/run' && req.method === 'POST') {
+      if (req.url === '/api/studio/workflows/workflow-1/run' && req.method === 'POST') {
         let raw = ''
         req.on('data', chunk => { raw += chunk })
         req.on('end', () => {
@@ -475,11 +507,11 @@ describe('hermes-web-ui MCP server', () => {
         })
         return
       }
-      if (req.url === '/api/hermes/workflows/workflow-1/runs/run-1/stop' && req.method === 'POST') {
+      if (req.url === '/api/studio/workflows/workflow-1/runs/run-1/stop' && req.method === 'POST') {
         res.end(JSON.stringify({ ok: true, run: { id: 'run-1', status: 'canceled' } }))
         return
       }
-      if (req.url === '/api/hermes/workflows/workflow-1/runs/run-1/rerun-from-node' && req.method === 'POST') {
+      if (req.url === '/api/studio/workflows/workflow-1/runs/run-1/rerun-from-node' && req.method === 'POST') {
         let raw = ''
         req.on('data', chunk => { raw += chunk })
         req.on('end', () => {
@@ -487,11 +519,11 @@ describe('hermes-web-ui MCP server', () => {
         })
         return
       }
-      if (req.url === '/api/hermes/workflows/workflow-1/runs/run-1' && req.method === 'DELETE') {
+      if (req.url === '/api/studio/workflows/workflow-1/runs/run-1' && req.method === 'DELETE') {
         res.end(JSON.stringify({ ok: true, deleted_run: 'run-1' }))
         return
       }
-      if (req.url === '/api/hermes/workflows/workflow-1' && req.method === 'DELETE') {
+      if (req.url === '/api/studio/workflows/workflow-1' && req.method === 'DELETE') {
         res.end(JSON.stringify({ ok: true, deleted_workflow: 'workflow-1' }))
         return
       }
@@ -508,6 +540,7 @@ describe('hermes-web-ui MCP server', () => {
       env: {
         ...process.env,
         HERMES_WEB_UI_URL: `http://127.0.0.1:${address.port}`,
+        HERMES_STUDIO_SESSION_ID: 'studio-codex-session',
       },
     })
     child.stdout.on('data', (chunk) => {
@@ -532,12 +565,42 @@ describe('hermes-web-ui MCP server', () => {
       name: 'hermes_studio_use_toolset',
       arguments: { action: 'describe', tool: 'hermes_studio_use_workflow_rerun_node' },
     })
+    writeRpc(child, 37, 'tools/call', {
+      name: 'hermes_studio_use_toolset',
+      arguments: { action: 'describe', tool: 'hermes_studio_use_chat_run' },
+    })
     writeRpc(child, 35, 'tools/call', {
       name: 'hermes_studio_use_toolset',
       arguments: {
         action: 'call',
         tool: 'hermes_studio_use_sessions_count',
         arguments: { source: 'coding_agent' },
+      },
+    })
+    writeRpc(child, 136, 'tools/call', {
+      name: 'hermes_studio_use_toolset',
+      arguments: {
+        action: 'call',
+        tool: 'hermes_studio_use_mobile_location',
+        arguments: {
+          session_id: 'session-1',
+          purpose: 'Find nearby restaurants',
+          accuracy: 'coarse',
+          timeout_ms: 10000,
+        },
+      },
+    })
+    writeRpc(child, 36, 'tools/call', {
+      name: 'hermes_studio_use_toolset',
+      arguments: {
+        action: 'call',
+        tool: 'hermes_studio_use_mobile_calendar',
+        arguments: {
+          session_id: 'codex-runtime-thread-id',
+          action: 'list',
+          purpose: 'Verify calendar access',
+          limit: 20,
+        },
       },
     })
     writeRpc(child, 3, 'tools/call', {
@@ -683,7 +746,7 @@ describe('hermes-web-ui MCP server', () => {
     expect(list.result.tools[0].description).toContain('internal delegation')
 
     const catalog = JSON.parse((await waitForRpc(responses, 32)).result.content[0].text)
-    expect(catalog).toMatchObject({ toolset: 'use', operation_count: 25 })
+    expect(catalog).toMatchObject({ toolset: 'use', operation_count: 28 })
     expect(catalog.operations.map((tool: any) => tool.name)).toEqual(expect.arrayContaining([
       'hermes_studio_use_chat_run',
       'hermes_studio_use_sessions_count',
@@ -691,12 +754,26 @@ describe('hermes-web-ui MCP server', () => {
       'hermes_studio_use_session_context',
       'hermes_studio_use_provider_add',
       'hermes_studio_use_worker_status',
+      'hermes_studio_use_mobile_location',
+      'hermes_studio_use_mobile_calendar',
+      'hermes_studio_use_mobile_reminders',
       'hermes_studio_use_workflows_list',
       'hermes_studio_use_workflow_rerun_node',
     ]))
     expect(catalog.operations.some((tool: any) => tool.name === 'hermes_studio_use_workflow_run_rerun_from_node')).toBe(false)
     const workflowRunStartTool = JSON.parse((await waitForRpc(responses, 33)).result.content[0].text)
     const workflowRerunTool = JSON.parse((await waitForRpc(responses, 34)).result.content[0].text)
+    const chatRunTool = JSON.parse((await waitForRpc(responses, 37)).result.content[0].text)
+    expect(chatRunTool?.inputSchema?.properties?.coding_agent_id?.enum).toEqual([
+      'claude-code',
+      'codex',
+      'pi',
+      'grok',
+      'opencode',
+      'ekko-agent',
+    ])
+    expect(chatRunTool?.inputSchema?.properties?.agent_id?.enum)
+      .toEqual(chatRunTool?.inputSchema?.properties?.coding_agent_id?.enum)
     for (const tool of [workflowRunStartTool, workflowRerunTool]) {
       expect(tool?.inputSchema?.properties?.timeout_ms).toMatchObject({
         type: 'integer', minimum: 1000, maximum: 86400000,
@@ -705,7 +782,35 @@ describe('hermes-web-ui MCP server', () => {
     }
     const gatewaySessionCount = JSON.parse((await waitForRpc(responses, 35)).result.content[0].text)
     expect(gatewaySessionCount.count).toBe(7)
+    const mobileLocation = JSON.parse((await waitForRpc(responses, 136)).result.content[0].text)
+    expect(mobileLocation).toMatchObject({
+      ok: true,
+      status: 'success',
+      location: {
+        latitude: 31.2304,
+        longitude: 121.4737,
+        coordinateSystem: 'wgs84',
+      },
+      body: {
+        session_id: 'session-1',
+        purpose: 'Find nearby restaurants',
+        accuracy: 'coarse',
+        timeout_ms: 10000,
+      },
+    })
 
+    const mobileCalendar = JSON.parse((await waitForRpc(responses, 36)).result.content[0].text)
+    expect(mobileCalendar).toMatchObject({
+      ok: true,
+      status: 'success',
+      body: {
+        capability: 'calendar',
+        session_id: 'studio-codex-session',
+        action: 'list',
+        purpose: 'Verify calendar access',
+        limit: 20,
+      },
+    })
     const chatRun = JSON.parse((await waitForRpc(responses, 3)).result.content[0].text)
     expect(chatRun.body).toMatchObject({ input: 'hello', session_id: 'session-1', include_events: true })
     const sessions = JSON.parse((await waitForRpc(responses, 4)).result.content[0].text)

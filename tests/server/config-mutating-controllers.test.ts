@@ -4,19 +4,19 @@ import { join } from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import YAML from 'js-yaml'
 
-vi.mock('../../packages/server/src/services/hermes/hermes-cli', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/runtime/cli', () => ({
   pinSkill: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/db/hermes/sessions-db', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/history/sessions-db', () => ({
   getSkillUsageStatsFromDb: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/db', () => ({
+vi.mock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
   getDb: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/db/hermes/schemas', () => ({
+vi.mock('../../packages/server/src/modules/studio/infrastructure/database/schemas', () => ({
   MODEL_CONTEXT_TABLE: 'model_context',
 }))
 
@@ -27,13 +27,15 @@ let hermesHome = ''
 async function loadModelsController() {
   vi.resetModules()
   process.env.HERMES_HOME = hermesHome
-  return import('../../packages/server/src/controllers/hermes/models')
+  await import('../../packages/server/src/bootstrap/agent-profile-adapter')
+  return import('../../packages/server/src/modules/hermes/controllers/models')
 }
 
 async function loadSkillsController() {
   vi.resetModules()
   process.env.HERMES_HOME = hermesHome
-  return import('../../packages/server/src/controllers/hermes/skills')
+  await import('../../packages/server/src/bootstrap/agent-profile-adapter')
+  return import('../../packages/server/src/modules/hermes/controllers/skills')
 }
 
 function makeCtx(body: unknown): any {

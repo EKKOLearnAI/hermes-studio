@@ -21,7 +21,7 @@ namespace {
 #define HERMES_MCU_FIRMWARE_VERSION "v1"
 #endif
 #ifndef HERMES_MCU_FIRMWARE_MANIFEST_PATH
-#define HERMES_MCU_FIRMWARE_MANIFEST_PATH "/api/hermes/mcu/firmware/v1/manifest"
+#define HERMES_MCU_FIRMWARE_MANIFEST_PATH "/api/studio/mcu/firmware/v1/manifest"
 #endif
 #ifndef HERMES_PIN_BATTERY_ADC
 #define HERMES_PIN_BATTERY_ADC 3
@@ -72,11 +72,11 @@ const IPAddress kApIp(192, 168, 4, 1);
 const IPAddress kApGateway(192, 168, 4, 1);
 const IPAddress kApSubnet(255, 255, 255, 0);
 constexpr char kMissingSttPromptPcmUrl[] =
-    "/api/hermes/mcu/audio/missing-stt-24k.s16le.pcm";
+    "/api/studio/mcu/audio/missing-stt-24k.s16le.pcm";
 constexpr char kNoDevicePromptPcmUrl[] =
-    "/api/hermes/mcu/audio/no-device-24k.s16le.pcm";
+    "/api/studio/mcu/audio/no-device-24k.s16le.pcm";
 constexpr char kTokenInvalidPromptPcmUrl[] =
-    "/api/hermes/mcu/audio/token-invalid-24k.s16le.pcm";
+    "/api/studio/mcu/audio/token-invalid-24k.s16le.pcm";
 constexpr int kPinI2cSda = HERMES_PIN_I2C_SDA;
 constexpr int kPinI2cScl = HERMES_PIN_I2C_SCL;
 constexpr int kPinI2sDout = HERMES_PIN_I2S_DOUT;
@@ -4978,7 +4978,7 @@ String activeVoiceTurnEndpoint() {
   endpoint.trim();
   while (endpoint.endsWith("/")) endpoint.remove(endpoint.length() - 1);
   if (endpoint.length() == 0) return "";
-  endpoint += F("/api/hermes/mcu/voice-turn");
+  endpoint += F("/api/studio/mcu/voice-turn");
   return endpoint;
 }
 

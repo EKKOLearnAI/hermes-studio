@@ -1,21 +1,21 @@
 import { describe, expect, it, vi } from 'vitest'
-import { countTokens } from '../../packages/server/src/lib/context-compressor'
+import { countTokens } from '../../packages/server/src/modules/studio/services/context-compressor'
 import {
   estimateGroupHistoryMessageTokens,
   groupBridgeReasoningDeltaFromEvent,
   groupContextTokensWithFixedOverhead,
-} from '../../packages/server/src/services/hermes/group-chat/agent-clients'
-import { ContextEngine } from '../../packages/server/src/services/hermes/context-engine/compressor'
+} from '../../packages/server/src/modules/studio/services/group-chat/agent-clients'
+import { ContextEngine } from '../../packages/server/src/modules/studio/services/group-chat/context-engine/compressor'
 import type {
   GatewayCaller,
   MessageFetcher,
   StoredMessage,
-} from '../../packages/server/src/services/hermes/context-engine/types'
+} from '../../packages/server/src/modules/studio/services/group-chat/types'
 import {
   sliceGroupMessagesCanonical,
   sliceGroupMessagesForSnapshotTail,
   sortGroupMessagesCanonical,
-} from '../../packages/server/src/services/hermes/group-chat/group-message-ordering'
+} from '../../packages/server/src/modules/studio/services/group-chat/group-message-ordering'
 
 function makeMessage(overrides: Partial<StoredMessage>): StoredMessage {
   return {

@@ -1,4 +1,4 @@
-import type { ChatMessage, RoomAgent } from '@/api/hermes/group-chat'
+import type { ChatMessage, RoomAgent } from '@/api/studio/group-chat'
 import type { ProfileAvatar } from '@/api/hermes/profiles'
 
 const DEFAULT_AGENT_ICONS: Record<RoomAgent['agent'], string> = {
@@ -7,6 +7,8 @@ const DEFAULT_AGENT_ICONS: Record<RoomAgent['agent'], string> = {
     codex: '/coding-agents/codex-openai.png',
     claude: '/coding-agents/claude-code.svg',
     pi: '/coding-agents/pi.svg',
+    grok: '/coding-agents/grok.svg',
+    opencode: '/coding-agents/opencode.png',
 }
 
 export function parseStoredAvatar(raw: unknown): ProfileAvatar | null {
@@ -54,6 +56,7 @@ export function groupMessageAgent(message: ChatMessage, agents: RoomAgent[]): Ro
         roomId: message.roomId,
         agentId: message.senderId,
         agent: agentType,
+        agentMode: 'scoped',
         profile: message.senderAgentProfile || '',
         provider: message.senderAgentProvider || '',
         model: message.senderAgentModel || '',

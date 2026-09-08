@@ -90,6 +90,90 @@ describe('ekko-agent model requests', () => {
     ]))
   })
 
+  it('retries a streamed response whose tool call has an empty function name', async () => {
+    const encoder = new TextEncoder()
+    let call = 0
+    const fetchMock = vi.fn(async () => {
+      call += 1
+      const frames = call === 1
+        ? [
+            'data: {"id":"chatcmpl_invalid","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_invalid","type":"function","function":{"name":"","arguments":""}}]},"finish_reason":"tool_calls"}]}\n\n',
+            'data: [DONE]\n\n',
+          ]
+        : [
+            'data: {"id":"chatcmpl_recovered","choices":[{"delta":{"content":"Recovered"},"finish_reason":"stop"}]}\n\n',
+            'data: [DONE]\n\n',
+          ]
+      return new Response(new ReadableStream({
+        start(controller) {
+          for (const frame of frames) controller.enqueue(encoder.encode(frame))
+          controller.close()
+        },
+      }), { status: 200 })
+    })
+    const client = createModelClient(providerConfig, { fetch: fetchMock })
+    const runtime = new AgentRuntime({ modelClient: client })
+
+    const result = await runtime.run({ messages: ['Answer without an empty tool call.'] })
+
+    expect(result.output.content).toBe('Recovered')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(result.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'model.retry',
+        error: expect.stringContaining('complete id and function name'),
+      }),
+    ]))
+  })
+
+  it('filters invalid Chat tool history and its orphaned tool result', () => {
+    const payload = toOpenAIChatPayload(providerConfig, {
+      messages: [
+        { role: 'user', content: 'Check the weather.' },
+        {
+          role: 'assistant',
+          content: '',
+          toolCalls: [{ id: 'call_invalid', name: '', arguments: {} }],
+        },
+        {
+          role: 'tool',
+          content: 'orphaned result',
+          toolCallId: 'call_invalid',
+          name: '',
+        },
+        { role: 'user', content: 'Try again.' },
+      ],
+      tools: [{ name: 'weather', parameters: { type: 'object' } }],
+    })
+
+    expect(payload.messages).toEqual([
+      expect.objectContaining({ role: 'user', content: 'Check the weather.' }),
+      expect.objectContaining({ role: 'user', content: 'Try again.' }),
+    ])
+  })
+
+  it('normalizes empty Chat tool arguments and drops incomplete parallel calls', () => {
+    const response = normalizeOpenAIChatResponse('deepseek', {
+      choices: [{
+        message: {
+          content: '',
+          tool_calls: [
+            { id: 'call_valid', type: 'function', function: { name: 'weather', arguments: '' } },
+            { id: 'call_invalid', type: 'function', function: { name: '', arguments: '{}' } },
+          ],
+        },
+        finish_reason: 'tool_calls',
+      }],
+    })
+
+    expect(response.toolCalls).toEqual([{
+      id: 'call_valid',
+      name: 'weather',
+      arguments: {},
+      rawArguments: '{}',
+    }])
+  })
+
   it('remembers image-rejecting Chat targets across client instances', async () => {
     const model = `text-only-memory-test-${Date.now()}-${Math.random()}`
     const config: ModelProviderConfig = {
@@ -209,6 +293,7 @@ describe('ekko-agent model requests', () => {
     expect(authorizedModelProviderPreset('openai-codex')).toMatchObject({
       id: 'openai-codex',
       baseUrl: 'https://chatgpt.com/backend-api/codex',
+      apiMode: 'codex_responses',
       requestStyle: 'openai-responses',
     })
     expect(authorizedModelProviderPreset('xai-oauth')).toMatchObject({
@@ -219,6 +304,7 @@ describe('ekko-agent model requests', () => {
     expect(authorizedModelProviderPreset('qwen-oauth')).toMatchObject({
       id: 'qwen-oauth',
       baseUrl: 'https://portal.qwen.ai/v1',
+      apiMode: 'chat_completions',
       requestStyle: 'openai-chat',
     })
     expect(authorizedModelProviderPreset('claude-oauth')).toMatchObject({
@@ -229,6 +315,7 @@ describe('ekko-agent model requests', () => {
     expect(authorizedModelProviderPreset('minimax-oauth')).toMatchObject({
       id: 'minimax-oauth',
       baseUrl: 'https://api.minimax.io/anthropic',
+      apiMode: 'anthropic_messages',
       requestStyle: 'anthropic-messages',
     })
   })
@@ -567,6 +654,36 @@ describe('ekko-agent model requests', () => {
     })
   })
 
+  it('omits tool choice for DeepSeek thinking models across providers', () => {
+    const request = {
+      messages: [{ role: 'user' as const, content: 'Remember this.' }],
+      tools: [{ name: 'memory_write', parameters: { type: 'object' } }],
+      toolChoice: 'required' as const,
+    }
+    const thinkingPayload = toOpenAIChatPayload({
+      id: 'custom:deepseek-relay',
+      type: 'openai-compatible',
+      requestStyle: 'openai-chat',
+      baseUrl: 'https://relay.example/v1',
+      defaultModel: 'deepseek/deepseek-v4-flash',
+    }, request)
+    const legacyNonThinkingPayload = toOpenAIChatPayload({
+      id: 'custom:deepseek-relay',
+      type: 'openai-compatible',
+      requestStyle: 'openai-chat',
+      baseUrl: 'https://relay.example/v1',
+      defaultModel: 'deepseek-chat',
+    }, request)
+
+    expect(thinkingPayload).toMatchObject({
+      tools: [expect.objectContaining({
+        function: expect.objectContaining({ name: 'memory_write' }),
+      })],
+    })
+    expect(thinkingPayload).not.toHaveProperty('tool_choice')
+    expect(legacyNonThinkingPayload.tool_choice).toBe('required')
+  })
+
   it('strips tool choice inside AgentRuntime when its tool registry is empty', async () => {
     const create = vi.fn(async () => ({ content: 'done' }))
     const runtime = new AgentRuntime({
@@ -646,11 +763,31 @@ describe('ekko-agent model requests', () => {
       apiKey: 'secret',
       defaultModel: 'glm-5.2',
       timeoutMs: 300_000,
+      capabilities: { vision: false },
     })
     expect(resolved.fallbackProviderConfig).toMatchObject({
       requestStyle: 'openai-chat',
       defaultModel: 'glm-5.2',
+      capabilities: { vision: false },
     })
+  })
+
+  it('marks GLM V models as vision-capable while keeping text GLM models text-only', () => {
+    const text = resolveModelProviderConfigs({
+      provider: 'glm',
+      baseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4',
+      model: 'glm-5.3',
+      apiMode: 'codex_responses',
+    })
+    const vision = resolveModelProviderConfigs({
+      provider: 'glm',
+      baseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4',
+      model: 'glm-5v-turbo',
+      apiMode: 'chat_completions',
+    })
+
+    expect(text.providerConfig.capabilities?.vision).toBe(false)
+    expect(vision.providerConfig.capabilities?.vision).toBe(true)
   })
 
   it('infers anthropic provider configs from anthropic URLs', () => {
@@ -741,6 +878,37 @@ describe('ekko-agent model requests', () => {
       tool_calls: [expect.objectContaining({ id: 'call_weather' })],
     })
     expect(payload.messages[1]).not.toHaveProperty('reasoning')
+  })
+
+  it('includes empty reasoning_content for synthetic DeepSeek tool-call messages', () => {
+    const payload = toOpenAIChatPayload(providerConfig, {
+      messages: [
+        { role: 'user', content: 'Use the matched skill.' },
+        {
+          role: 'assistant',
+          content: '',
+          toolCalls: [{
+            id: 'skill-auto-1',
+            name: 'skill_view',
+            arguments: { name: 'matched-skill' },
+          }],
+        },
+        {
+          role: 'tool',
+          content: 'Matched skill instructions.',
+          toolCallId: 'skill-auto-1',
+          name: 'skill_view',
+        },
+      ],
+      tools: [{ name: 'memory_search' }],
+    })
+
+    expect(payload.messages[1]).toMatchObject({
+      role: 'assistant',
+      content: '',
+      reasoning_content: '',
+      tool_calls: [expect.objectContaining({ id: 'skill-auto-1' })],
+    })
   })
 
   it.each([

@@ -7,7 +7,7 @@ describe('Hermes schema initialization', () => {
     vi.resetModules()
     const { DatabaseSync } = await import('node:sqlite')
     db = new DatabaseSync(':memory:')
-    vi.doMock('../../packages/server/src/db/index', () => ({
+    vi.doMock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
       getDb: () => db,
       getStoragePath: () => ':memory:',
     }))
@@ -16,13 +16,13 @@ describe('Hermes schema initialization', () => {
   afterEach(() => {
     db?.close()
     db = null
-    vi.doUnmock('../../packages/server/src/db/index')
+    vi.doUnmock('../../packages/server/src/modules/studio/infrastructure/database/index')
     vi.resetModules()
   })
 
   it('initializes all tables with correct schemas', async () => {
     const { initAllHermesTables, USAGE_TABLE, SESSIONS_TABLE, SESSION_CATEGORIES_TABLE, MESSAGES_TABLE, GC_ROOMS_TABLE, GC_MESSAGES_TABLE, GC_ROOM_AGENTS_TABLE, USERS_TABLE, USER_PROFILES_TABLE, SOCIAL_MESSAGE_ACCOUNTS_TABLE, SOCIAL_MESSAGE_RUNTIME_STATES_TABLE, DEVICES_TABLE, MCU_DEVICES_TABLE } =
-      await import('../../packages/server/src/db/hermes/schemas')
+      await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
 
     expect(() => initAllHermesTables()).not.toThrow()
 
@@ -107,7 +107,7 @@ describe('Hermes schema initialization', () => {
 
   it('preserves existing data when adding safe schema columns', async () => {
     const { initAllHermesTables, USAGE_TABLE, USAGE_SCHEMA } =
-      await import('../../packages/server/src/db/hermes/schemas')
+      await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
 
     // Create table with minimal schema
     db.exec(`CREATE TABLE "${USAGE_TABLE}" (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, created_at INTEGER NOT NULL)`)
@@ -131,7 +131,7 @@ describe('Hermes schema initialization', () => {
 
   it('adds room agent model configuration columns to a legacy group chat table', async () => {
     const { initAllHermesTables, GC_ROOM_AGENTS_TABLE } =
-      await import('../../packages/server/src/db/hermes/schemas')
+      await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
 
     db.exec(`CREATE TABLE "${GC_ROOM_AGENTS_TABLE}" (
       id TEXT PRIMARY KEY,
@@ -163,7 +163,7 @@ describe('Hermes schema initialization', () => {
 
   it('adds category, reasoning effort, and push setting columns to an existing sessions table', async () => {
     const { initAllHermesTables, SESSIONS_SCHEMA, SESSIONS_TABLE } =
-      await import('../../packages/server/src/db/hermes/schemas')
+      await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
     const legacyColumns = Object.entries(SESSIONS_SCHEMA)
       .filter(([name]) => name !== 'category_id' && name !== 'reasoning_effort' && name !== 'push_enabled')
       .map(([name, definition]) => `"${name}" ${definition}`)
@@ -191,7 +191,7 @@ describe('Hermes schema initialization', () => {
       WORKFLOW_RUNS_TABLE,
       WORKFLOW_RUN_NODE_SESSIONS_SCHEMA,
       WORKFLOW_RUN_NODE_SESSIONS_TABLE,
-    } = await import('../../packages/server/src/db/hermes/schemas')
+    } = await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
     const createLegacyTable = (table: string, schema: Record<string, string>, omitted: string[]) => {
       const columns = Object.entries(schema)
         .filter(([name]) => !omitted.includes(name))
@@ -217,7 +217,7 @@ describe('Hermes schema initialization', () => {
 
   it('handles single-column primary key tables correctly', async () => {
     const { initAllHermesTables, GC_ROOM_AGENTS_TABLE } =
-      await import('../../packages/server/src/db/hermes/schemas')
+      await import('../../packages/server/src/modules/studio/infrastructure/database/schemas')
 
     expect(() => initAllHermesTables()).not.toThrow()
 

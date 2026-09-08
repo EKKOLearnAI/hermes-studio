@@ -400,7 +400,7 @@ vi.mock('naive-ui', () => ({
   }),
 }))
 
-vi.mock('@/api/hermes/stt-settings', () => ({
+vi.mock('@/api/studio/stt-settings', () => ({
   fetchSttSettings: mockFetchSttSettings,
   saveSttSettings: mockSaveSttSettings,
   saveActiveSttProvider: mockSaveActiveSttProvider,
@@ -409,11 +409,11 @@ vi.mock('@/api/hermes/stt-settings', () => ({
   deleteSttBaseUrlPreset: mockDeleteSttBaseUrlPreset,
 }))
 
-vi.mock('@/api/hermes/stt', () => ({
+vi.mock('@/api/studio/stt', () => ({
   transcribeSpeech: mockTranscribeSpeech,
 }))
 
-vi.mock('@/api/hermes/local-stt-model', () => ({
+vi.mock('@/api/studio/local-stt-model', () => ({
   fetchLocalSttModelStatus: mockFetchLocalSttModelStatus,
   downloadLocalSttModel: mockDownloadLocalSttModel,
 }))
@@ -431,7 +431,7 @@ vi.mock('@/composables/usePcmStreamRecorder', () => ({
   }),
 }))
 
-vi.mock('@/api/hermes/tts-settings', () => ({
+vi.mock('@/api/studio/tts-settings', () => ({
   fetchTtsSettings: mockFetchTtsSettings,
   saveTtsSettings: mockSaveTtsSettings,
   saveActiveTtsProvider: mockSaveActiveTtsProvider,
@@ -444,7 +444,7 @@ vi.mock('@/api/hermes/system', () => ({
   fetchProviderModels: mockFetchProviderModels,
 }))
 
-vi.mock('@/api/hermes/voice-provider-probe', () => ({
+vi.mock('@/api/studio/voice-provider-probe', () => ({
   probeVoiceProvider: mockProbeVoiceProvider,
 }))
 
