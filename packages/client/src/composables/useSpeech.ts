@@ -19,6 +19,7 @@ export interface OpenaiTtsOptions {
   voice?: string
   rate?: string   // Edge TTS rate format, e.g. "+20%"
   pitch?: string  // Edge TTS pitch format, e.g. "-8Hz"
+  speed?: string | number
   stylePrompt?: string
   provider?: Exclude<TtsProviderId, 'mimo'>
 }
