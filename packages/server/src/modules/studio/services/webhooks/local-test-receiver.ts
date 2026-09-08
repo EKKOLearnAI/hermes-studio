@@ -96,7 +96,7 @@ export async function validateLocalChatWebhookTestDelivery(
     return {
       ok: false,
       status: 400,
-      response: { error: 'Invalid Hermes Studio webhook test payload' },
+      response: { error: 'Invalid Ekko Studio webhook test payload' },
     }
   }
 

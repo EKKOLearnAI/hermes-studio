@@ -1,6 +1,6 @@
 {
-  "name": "Hermes Studio",
-  "short_name": "Hermes",
+  "name": "Ekko Studio",
+  "short_name": "Ekko Studio",
   "description": "Self-hosted AI chat dashboard for Hermes Agent",
   "start_url": "/#/hermes/chat",
   "scope": "/",

@@ -1,17 +1,17 @@
-# Hermes Studio installation
+# Ekko Studio installation
 
 Use the installation form already chosen by the user. Desktop is the recommended end-user installation; npm, Docker, and source installs serve different deployment needs.
 
 ## Desktop application
 
-Install the latest platform and architecture-specific package from the Hermes Studio GitHub Releases page. The packaged app bundles the Studio server and can manage a Hermes Runtime separately.
+Install the latest platform and architecture-specific package from the Ekko Studio GitHub Releases page. The packaged app bundles the Studio server and can manage a Hermes Runtime separately.
 
 Once a managed Runtime is ready, packaged Desktop installs managed command shims:
 
 - `hermes-studio` opens the Desktop app.
 - `hermes-studio web ...` runs the bundled Web UI CLI.
 - `hermes-studio cli ...` runs the managed Hermes CLI after a Runtime is installed.
-- `hermes-studio-mcp [api|browser|devices|use]` starts one Studio MCP toolset.
+- `ekko-studio-mcp [api|browser|devices|use]` starts one Studio MCP toolset.
 
 First validate the Desktop installation by launching the app, opening the Agents page, and confirming Ekko appears as built in. After a Runtime is ready, validate its installed shims with:
 

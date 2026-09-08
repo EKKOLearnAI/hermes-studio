@@ -111,7 +111,7 @@ JavaScript 运行时也会为不与根字段冲突的 Profile 安装直接属性
 | `createRuntime(options?)` | `CreateEkkoRuntimeOptions` | `AgentRuntime` | 兼容的安装级 runtime 工厂。 |
 | `close()` | 无 | `void` | 幂等关闭监听、memory 与数据库；Profile Agent 不单独关闭共享资源。 |
 
-持久数据库修复并通过自检后，当前 Setup 仍保持临时内存库直到本轮结束，避免在一次 run 中混用新旧连接。Hermes Studio 会在所有活动 run 与后台任务结束后自动关闭该 Setup，下一次 run 自动重建并连接已修复的持久数据库；故障期间写入临时库的数据不迁移。独立宿主需要在同一边界自行重建 Setup。`restartRequired` 表示“当前 Setup 需要被宿主重载”，在 Studio 中不要求用户手动重启应用。
+持久数据库修复并通过自检后，当前 Setup 仍保持临时内存库直到本轮结束，避免在一次 run 中混用新旧连接。Ekko Studio 会在所有活动 run 与后台任务结束后自动关闭该 Setup，下一次 run 自动重建并连接已修复的持久数据库；故障期间写入临时库的数据不迁移。独立宿主需要在同一边界自行重建 Setup。`restartRequired` 表示“当前 Setup 需要被宿主重载”，在 Studio 中不要求用户手动重启应用。
 
 根容器还保留配置/模型兼容转发方法：`readConfig`、`updateConfig`、`replaceConfig`、`resetConfig`；`list/get/set/update/deleteModelProviderPreset`、`installModelProviderPreset`；`list/get/set/update/deleteModelProvider`、`setDefaultModel`；`list/get/set/update/deleteModelAuthorization`、`modelAuthorizationNeedsRefresh`、`refreshModelAuthorization`、`resolveModelAuthorization`。参数和返回值与下文对应的 `config`、`model`、`authorization` 方法相同。
 
@@ -395,7 +395,7 @@ API mode 固定映射：`chat_completions` → `openai-chat`，`codex_responses`
 
 `EkkoMcpServerConfig` 支持两种传输：stdio 使用 `command`，可选 `args` 和字符串 `env`；远程服务使用 `type: "streamable_http"`、`url` 和可选字符串 `headers`。`enabled` 控制是否加载。两种传输均使用官方 MCP Client；新 runtime 自动读取所选 Profile 的配置，显式 run-level `toolContext.mcpServers` 仍可覆盖它。
 
-`compression` 是供 Host 集成的策略配置，不属于 `AgentRuntime` 内部会话存储。独立 Host 可以读取 `ekko.readConfig().compression` 实现压缩生命周期；Hermes Studio 当前仍统一读取主配置中的压缩策略，暂不应用 Ekko 的该配置段。一次 Run 显式提供的消息和 runtime options 仍优先于安装级默认值。
+`compression` 是供 Host 集成的策略配置，不属于 `AgentRuntime` 内部会话存储。独立 Host 可以读取 `ekko.readConfig().compression` 实现压缩生命周期；Ekko Studio 当前仍统一读取主配置中的压缩策略，暂不应用 Ekko 的该配置段。一次 Run 显式提供的消息和 runtime options 仍优先于安装级默认值。
 
 ## 文档 harness
 

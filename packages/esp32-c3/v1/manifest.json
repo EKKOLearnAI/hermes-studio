@@ -1,5 +1,5 @@
 {
-  "name": "HStudio ESP32-C3 Wi-Fi Setup Firmware v1",
+  "name": "Ekko Studio ESP32-C3 Wi-Fi Setup Firmware v1",
   "firmwareVersion": "v1",
   "version": "v1-esp32-c3-wifi-setup-oled",
   "buildDate": "2026-08-08",
@@ -17,7 +17,7 @@
   },
   "features": [
     "Wi-Fi setup portal",
-    "Open HStudio-WIFI setup access point",
+    "Open Ekko Studio-WIFI setup access point",
     "Pre-AP Wi-Fi network scan dropdown",
     "Manual Wi-Fi SSID fallback",
     "Provisioning success page with LAN IP redirect",

@@ -249,38 +249,38 @@ describe('Ekko configuration services', () => {
     expect(listEkkoMcpServers('work', setup).find(server => server.name === 'local-tools')?.config.enabled).toBe(false)
 
     const managedApi = listEkkoMcpServers('work', setup)
-      .find(server => server.name === 'hermes-studio-api')!
-    await updateEkkoMcpServer('work', 'hermes-studio-api', {
+      .find(server => server.name === 'ekko-studio-api')!
+    await updateEkkoMcpServer('work', 'ekko-studio-api', {
       ...managedApi.config,
       args: [...(managedApi.config.args ?? []), '--edited'],
     }, setup)
     expect(listEkkoMcpServers('work', setup)
-      .find(server => server.name === 'hermes-studio-api')).toMatchObject({
+      .find(server => server.name === 'ekko-studio-api')).toMatchObject({
         managed: true,
         config: { args: expect.arrayContaining(['--edited']) },
       })
 
-    await setEkkoMcpServerEnabled('work', 'hermes-studio-api', false, setup)
+    await setEkkoMcpServerEnabled('work', 'ekko-studio-api', false, setup)
     expect(listEkkoMcpServers('work', setup)
-      .find(server => server.name === 'hermes-studio-api')).toMatchObject({
+      .find(server => server.name === 'ekko-studio-api')).toMatchObject({
         managed: true,
         config: { enabled: false },
       })
-    expect((resolveEkkoMcpServers('work', undefined, setup)?.['hermes-studio-api'] as { enabled?: boolean })?.enabled)
+    expect((resolveEkkoMcpServers('work', undefined, setup)?.['ekko-studio-api'] as { enabled?: boolean })?.enabled)
       .toBe(false)
     expect(listEkkoMcpServers('default', setup)
-      .find(server => server.name === 'hermes-studio-api')?.config.enabled).toBe(true)
+      .find(server => server.name === 'ekko-studio-api')?.config.enabled).toBe(true)
 
     const stored = JSON.parse(await readFile(setup.layout.configPath, 'utf8'))
     expect(stored.mcp.profiles.work.servers['local-tools']).toMatchObject({ command: 'node', enabled: false })
-    expect(stored.mcp.profiles.work.servers['hermes-studio-api']).toMatchObject({ enabled: false })
+    expect(stored.mcp.profiles.work.servers['ekko-studio-api']).toMatchObject({ enabled: false })
     await deleteEkkoMcpServer('work', 'local-tools', setup)
     expect(listEkkoMcpServers('work', setup).some(server => server.name === 'local-tools')).toBe(false)
-    await deleteEkkoMcpServer('work', 'hermes-studio-api', setup)
-    expect(listEkkoMcpServers('work', setup).some(server => server.name === 'hermes-studio-api')).toBe(false)
-    await createEkkoMcpServer('work', 'hermes-studio-api', { command: 'custom-api' }, setup)
+    await deleteEkkoMcpServer('work', 'ekko-studio-api', setup)
+    expect(listEkkoMcpServers('work', setup).some(server => server.name === 'ekko-studio-api')).toBe(false)
+    await createEkkoMcpServer('work', 'ekko-studio-api', { command: 'custom-api' }, setup)
     expect(listEkkoMcpServers('work', setup)
-      .find(server => server.name === 'hermes-studio-api')).toMatchObject({
+      .find(server => server.name === 'ekko-studio-api')).toMatchObject({
         managed: false,
         config: { command: 'custom-api' },
       })

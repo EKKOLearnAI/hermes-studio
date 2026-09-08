@@ -176,8 +176,8 @@ function isBridgeRunSource(source?: string): boolean {
 function mobileLocationRunInstruction(sessionId: string | undefined, source: string | undefined): string {
   if (!sessionId || source === 'workflow' || source === 'group_chat') return ''
   return [
-    `The current Hermes Studio chat session id is ${JSON.stringify(sessionId)}.`,
-    'Only when the user explicitly asks to use their current mobile-device location, use hermes_studio_use_toolset to describe and call hermes_studio_use_mobile_location with this exact session_id.',
+    `The current Ekko Studio chat session id is ${JSON.stringify(sessionId)}.`,
+    'Only when the user explicitly asks to use their current mobile-device location, use ekko_studio_use_toolset to describe and call ekko_studio_use_mobile_location with this exact session_id.',
     'The App will show a one-time confirmation before sharing WGS84 coordinates. Never request location proactively, in a delegated subtask, in a workflow node, or for background tracking.',
   ].join(' ')
 }
@@ -185,9 +185,9 @@ function mobileLocationRunInstruction(sessionId: string | undefined, source: str
 function mobileCalendarRunInstruction(sessionId: string | undefined, source: string | undefined): string {
   if (!sessionId || source === 'workflow' || source === 'group_chat') return ''
   return [
-    `The current Hermes Studio direct-chat session id is ${JSON.stringify(sessionId)}.`,
-    'Only when the user explicitly asks to read or change calendar events, use hermes_studio_use_toolset to describe and call hermes_studio_use_mobile_calendar with this exact session_id.',
-    'Only when the user explicitly asks to read or change reminders, use hermes_studio_use_toolset to describe and call hermes_studio_use_mobile_reminders with this exact session_id.',
+    `The current Ekko Studio direct-chat session id is ${JSON.stringify(sessionId)}.`,
+    'Only when the user explicitly asks to read or change calendar events, use ekko_studio_use_toolset to describe and call ekko_studio_use_mobile_calendar with this exact session_id.',
+    'Only when the user explicitly asks to read or change reminders, use ekko_studio_use_toolset to describe and call ekko_studio_use_mobile_reminders with this exact session_id.',
     'The App always asks the user to share once or confirm the write. Never use these tools proactively, in delegated/workflow/group tasks, or for background access. Delete only the exact listed item after fresh App confirmation; never delete a whole recurring series.',
   ].join(' ')
 }

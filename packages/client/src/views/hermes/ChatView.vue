@@ -33,7 +33,7 @@ const contentMode = computed<ChatContentMode>(() => {
   if (route.name === 'hermes.models') return 'models'
   return 'chat'
 })
-const productTitle = 'Hermes Studio'
+const productTitle = 'Ekko Studio'
 const tabTitle = computed(() => {
   if (route.name !== 'hermes.session' && route.name !== 'desktop.chat') return productTitle
   return chatStore.activeSession?.title?.trim() || productTitle

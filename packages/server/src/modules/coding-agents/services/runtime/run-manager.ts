@@ -332,7 +332,7 @@ function hasManagedHermesMcpConfig(run: ManagedCodingAgentRun): boolean {
     if (!piHome) return false
     try {
       const config = readFileSync(join(piHome, 'mcp.json'), 'utf-8')
-      return config.includes('"hermes-studio-api"') && config.includes('"hermes-studio-use"')
+      return config.includes('"ekko-studio-api"') && config.includes('"ekko-studio-use"')
     } catch {
       return false
     }
@@ -342,7 +342,7 @@ function hasManagedHermesMcpConfig(run: ManagedCodingAgentRun): boolean {
     if (!grokHome) return false
     try {
       const config = readFileSync(join(grokHome, 'config.toml'), 'utf-8')
-      return config.includes('[mcp_servers.hermes-studio-api]') && config.includes('[mcp_servers.hermes-studio-use]')
+      return config.includes('[mcp_servers.ekko-studio-api]') && config.includes('[mcp_servers.ekko-studio-use]')
     } catch {
       return false
     }
@@ -352,7 +352,7 @@ function hasManagedHermesMcpConfig(run: ManagedCodingAgentRun): boolean {
     if (!configDir) return false
     try {
       const config = readFileSync(join(configDir, 'opencode.json'), 'utf-8')
-      return config.includes('"hermes-studio-api"') && config.includes('"hermes-studio-use"')
+      return config.includes('"ekko-studio-api"') && config.includes('"ekko-studio-use"')
     } catch {
       return false
     }

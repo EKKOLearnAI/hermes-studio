@@ -11,6 +11,10 @@ const STUDIO_MANAGED_NAMES = new Set([
   'hermes-studio-browser',
   'hermes-studio-devices',
   'hermes-studio-use',
+  'ekko-studio-api',
+  'ekko-studio-browser',
+  'ekko-studio-devices',
+  'ekko-studio-use',
 ])
 const MANAGED_ENV_KEY = 'HERMES_WEB_UI_MANAGED_MCP'
 const PROBE_TIMEOUT_MS = 5_000

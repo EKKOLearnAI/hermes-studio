@@ -14,8 +14,10 @@ describe('desktop updater helpers', () => {
     expect(pendingUpdateDirectories({
       appDataPath: 'C:\\Users\\A\\AppData\\Roaming',
       localAppData: 'C:\\Users\\A\\AppData\\Local',
-      appName: 'Hermes Studio',
+      appName: 'Ekko Studio',
     })).toEqual(expect.arrayContaining([
+      'C:\\Users\\A\\AppData\\Local/Ekko Studio-updater/pending',
+      'C:\\Users\\A\\AppData\\Local/ekko-studio-updater/pending',
       'C:\\Users\\A\\AppData\\Local/Hermes Studio-updater/pending',
       'C:\\Users\\A\\AppData\\Local/hermes-studio-updater/pending',
       'C:\\Users\\A\\AppData\\Roaming/hermes-studio-updater/pending',

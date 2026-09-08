@@ -11,21 +11,27 @@ import { setupGlobalEkkoAgent } from './manager'
 
 const MANAGED_ENV_KEY = 'HERMES_WEB_UI_MANAGED_MCP'
 const MANAGED_SERVERS: ReadonlyArray<{ name: string; toolset: string }> = [
-  { name: 'hermes-studio-api', toolset: 'api' },
-  { name: 'hermes-studio-browser', toolset: 'browser' },
-  { name: 'hermes-studio-devices', toolset: 'devices' },
-  { name: 'hermes-studio-use', toolset: 'use' },
+  { name: 'ekko-studio-api', toolset: 'api' },
+  { name: 'ekko-studio-browser', toolset: 'browser' },
+  { name: 'ekko-studio-devices', toolset: 'devices' },
+  { name: 'ekko-studio-use', toolset: 'use' },
 ]
 const MANAGED_SERVER_NAMES = new Set(MANAGED_SERVERS.map(server => server.name))
 const LEGACY_MANAGED_SERVER_NAMES = new Set([
-  'hermes-studio',
+  'hermes-studio-api',
+  'hermes-studio-browser',
+  'hermes-studio-devices',
+  'hermes-studio-use',
   'hermes-studio-mcp',
+  'hermes-studio',
+  'ekko-studio-mcp',
   'hermes-web-ui-mcp',
 ])
 const LEGACY_MANAGED_COMMANDS = new Set([
   'hermes-lan-peer-mcp',
   'hermes-devices-mcp',
   'hermes-web-ui-mcp',
+  'ekko-studio-mcp',
   'hermes-studio-mcp',
 ])
 const MCP_SERVER_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/
@@ -85,9 +91,9 @@ function shouldInjectManagedMcpServers(): boolean {
 function candidateBundledMcpScripts(): string[] {
   return [
     process.env.HERMES_WEB_UI_MCP_BIN,
-    join(process.cwd(), 'bin/hermes-studio-mcp.mjs'),
-    join(__dirname, '../../../bin/hermes-studio-mcp.mjs'),
-    join(__dirname, '../../../../../../bin/hermes-studio-mcp.mjs'),
+    join(process.cwd(), 'bin/ekko-studio-mcp.mjs'),
+    join(__dirname, '../../../bin/ekko-studio-mcp.mjs'),
+    join(__dirname, '../../../../../../bin/ekko-studio-mcp.mjs'),
     join(process.cwd(), 'bin/hermes-web-ui-mcp.mjs'),
     join(__dirname, '../../../bin/hermes-web-ui-mcp.mjs'),
     join(__dirname, '../../../../../../bin/hermes-web-ui-mcp.mjs'),
@@ -107,8 +113,8 @@ function managedCommandConfig(toolset: string): Pick<EkkoMcpServerConfig, 'comma
   if (bundledScript) {
     return { command: runtimeNodePath() || process.execPath, args: [bundledScript, toolset] }
   }
-  if (isDesktopRuntime()) return { command: 'hermes-studio-mcp', args: [toolset] }
-  return { command: 'hermes-studio-mcp', args: [toolset] }
+  if (isDesktopRuntime()) return { command: 'ekko-studio-mcp', args: [toolset] }
+  return { command: 'ekko-studio-mcp', args: [toolset] }
 }
 
 function managedMcpServerConfig(
@@ -173,7 +179,7 @@ export function injectManagedEkkoMcpServers(
       result.targets.push({
         profile,
         status: 'skipped',
-        reason: `existing ${unmanagedCollision.name} MCP server is not managed by Hermes Studio`,
+        reason: `existing ${unmanagedCollision.name} MCP server is not managed by Ekko Studio`,
       })
       continue
     }
@@ -181,6 +187,16 @@ export function injectManagedEkkoMcpServers(
     let profileChanged = false
     let injected = false
     let hadManagedExisting = false
+    for (const { name } of MANAGED_SERVERS) {
+      const legacyName = name.replace(/^ekko-/, 'hermes-')
+      const legacy = servers[legacyName]
+      if (!servers[name] && isManagedServerConfig(legacy)) {
+        servers[name] = legacy
+        delete servers[legacyName]
+        profileChanged = true
+      }
+    }
+
     for (const [name, server] of Object.entries(servers)) {
       if (MANAGED_SERVER_NAMES.has(name)) continue
       if (!LEGACY_MANAGED_SERVER_NAMES.has(name) && !isManagedServerConfig(server)) continue

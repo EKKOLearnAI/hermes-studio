@@ -19,6 +19,10 @@ const STUDIO_MANAGED_NAMES = new Set([
   'hermes-studio-browser',
   'hermes-studio-devices',
   'hermes-studio-use',
+  'ekko-studio-api',
+  'ekko-studio-browser',
+  'ekko-studio-devices',
+  'ekko-studio-use',
 ])
 const MANAGED_ENV_KEY = 'HERMES_WEB_UI_MANAGED_MCP'
 
@@ -447,7 +451,7 @@ export async function upsertCodingAgentMcpServer(
   config: Record<string, any>,
   scope: CodingAgentConfigScope = {},
 ): Promise<{ ok: true; name: string }> {
-  const normalizedName = name.trim()
+  const normalizedName = name.trim().replace(/^hermes-studio-(api|browser|devices|use)$/, 'ekko-studio-$1')
   if (!normalizedName || normalizedName.length > 128 || /[/\\\x00-\x1f]/.test(normalizedName)) {
     const error = new Error('Valid server name is required')
     ;(error as any).status = 400

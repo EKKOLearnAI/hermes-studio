@@ -1,5 +1,5 @@
 <p align="center">
-  <strong>Hermes Studio</strong>
+  <strong>Ekko Studio</strong>
   <a href="./README_zh.md">中文</a>
 </p>
 
@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/EKKOLearnAI/hermes-studio/releases/latest">Download Hermes Studio Desktop</a>
+  <a href="https://github.com/EKKOLearnAI/hermes-studio/releases/latest">Download Ekko Studio Desktop</a>
   ·
   <a href="https://hermes-studio.ai/#/docs/getting-started">Documentation</a>
   ·
@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <img src="https://github.com/EKKOLearnAI/hermes-studio/blob/main/packages/client/src/assets/image.gif" alt="Hermes Studio Demo" width="680"/>
+  <img src="https://github.com/EKKOLearnAI/hermes-studio/blob/main/packages/client/src/assets/image.gif" alt="Ekko Studio Demo" width="680"/>
 </p>
 
 <p align="center">
@@ -29,7 +29,7 @@
 
 ## Core Capabilities
 
-| Area | What Hermes Studio does |
+| Area | What Ekko Studio does |
 | --- | --- |
 | Multi-agent runtime | Runs Hermes, Ekko, Claude Code, Codex, and Pi with streaming responses, tool traces, generated-file previews, persistent sessions, and standalone desktop chat windows. |
 | Studio workspace | Provides shared chats, group chat, global-agent runs, workflows, files, voice, media, devices, themes, logs, usage, and App connectivity across agent runtimes. |
@@ -40,7 +40,7 @@
 
 ## Agent and Platform Boundaries
 
-Hermes Studio is the shared product platform, not a sixth agent. It coordinates
+Ekko Studio is the shared product platform, not a sixth agent. It coordinates
 five concrete runtimes grouped into three agent families:
 
 | Agent family | Runtime | Owned behavior |
@@ -198,7 +198,7 @@ Unified configuration for **10 platforms** in one page:
 ### Admin & Runtime Management
 
 - Device and LAN peer views for local-network discovery and peer tooling
-- MCP manager for the managed `hermes-studio` server, profile injection, and `api` / `browser` / `devices` / `use` toolsets
+- MCP manager for the managed `ekko-studio-*` servers, profile injection, and `api` / `browser` / `devices` / `use` toolsets
 - Runtime version and version-preview tooling for testing newer builds in isolation
 - Performance monitor views for super administrators
 
@@ -258,7 +258,7 @@ hermes-web-ui reset-default-login
 - Bundles the Studio runtime and starts the local server automatically
 - Uses Cloudflare download endpoints for desktop auto-update metadata and assets first
 - Falls back to GitHub Releases `latest` assets if the Cloudflare update feed is unavailable
-- Windows upgrades attempt to close an existing Hermes Studio process before replacing files
+- Windows upgrades attempt to close an existing Ekko Studio process before replacing files
 
 ---
 
@@ -266,7 +266,7 @@ hermes-web-ui reset-default-login
 
 ### Desktop App (Recommended)
 
-Download the latest **Hermes Studio** desktop installer from
+Download the latest **Ekko Studio** desktop installer from
 [GitHub Releases](https://github.com/EKKOLearnAI/hermes-studio/releases/latest).
 
 Desktop builds are published for macOS, Windows, and Linux, with separate
@@ -281,14 +281,14 @@ desktop app, bundled Hermes Agent CLI, and bundled server CLI do not conflict:
 
 | Command | Description |
 | --- | --- |
-| `hermes-studio` | Open the Hermes Studio desktop app |
+| `hermes-studio` | Open the Ekko Studio desktop app |
 | `hermes-studio cli ...` | Run the bundled Hermes Agent CLI |
 | `hermes-studio web ...` | Run the bundled `hermes-web-ui` command |
 | `hermes-studio -h` | Show wrapper help |
-| `hermes-studio-mcp [api\|browser\|devices\|use]` | Run one managed Studio MCP toolset |
+| `ekko-studio-mcp [api\|browser\|devices\|use]` | Run one managed Studio MCP toolset |
 
 Use `hermes-studio cli -h` for Hermes Agent CLI help and
-`hermes-studio web -h` for server CLI help. `hermes-studio-mcp` defaults to the
+`hermes-studio web -h` for server CLI help. `ekko-studio-mcp` defaults to the
 `api` toolset; choose `browser`, `devices`, or `use` to keep the exposed MCP
 surface focused on the current task.
 
@@ -339,7 +339,7 @@ and package installs such as `pip install hermes-agent`.
 
 ## Studio Environment Variables
 
-These variables configure Hermes Studio, its local Hermes runtime integration, and development/preview helpers. Provider API keys and Hermes Agent settings are normally managed through Hermes profiles; environment variables here are process-level overrides.
+These variables configure Ekko Studio, its local Hermes runtime integration, and development/preview helpers. Provider API keys and Hermes Agent settings are normally managed through Hermes profiles; environment variables here are process-level overrides.
 
 | Variable | Default | Description |
 | --- | --- | --- |
@@ -350,7 +350,7 @@ These variables configure Hermes Studio, its local Hermes runtime integration, a
 | `HERMES_APP_ENTITLEMENT_PUBLIC_KEY` | built in | Optional PEM public-key override for RS256 App entitlements. The expected issuer is `hermes-studio-server` and audience is `ekko-studio`. |
 | `HERMES_WEB_UI_HOME` | `~/.hermes-web-ui` | Studio data home for auth token, credentials, logs, DB, and default uploads. `HERMES_WEBUI_STATE_DIR` is also supported as a compatibility alias. |
 | `HERMES_WEBUI_STATE_DIR` | unset | Compatibility alias for `HERMES_WEB_UI_HOME`. |
-| `HERMES_WEB_UI_DISABLE_MCP_AUTOINJECT` | unset | Disable startup injection of the managed `hermes-studio` MCP server into Hermes profile configs. |
+| `HERMES_WEB_UI_DISABLE_MCP_AUTOINJECT` | unset | Disable startup injection of the managed `ekko-studio-*` MCP servers into Hermes profile configs. |
 | `HERMES_WEB_UI_ALLOW_TRANSIENT_MCP_AUTOINJECT` | unset | Allow managed MCP injection when `HERMES_WEB_UI_HOME` is under a temporary directory, such as Version Preview runtimes. |
 | `UPLOAD_DIR` | `$HERMES_WEB_UI_HOME/upload` | Upload root override. Files are stored below profile-scoped subdirectories. |
 | `CORS_ORIGINS` | same host only | Comma- or space-separated cross-origin allowlist for HTTP, Socket.IO, and WebSocket requests. Set `*` only when you intentionally need legacy wildcard CORS. |
@@ -385,7 +385,7 @@ These variables configure Hermes Studio, its local Hermes runtime integration, a
 | `HERMES_BRIDGE_MAX_TURNS` | profile/default | Maximum turn override for bridge runs. |
 | `HERMES_BRIDGE_SUPPRESS_PLATFORM_HINT` | `cli` | Controls bridge platform hint suppression passed to Hermes Agent. |
 | `HERMES_OPENROUTER_APP_REFERER` | `https://hermes-studio.ai` | OpenRouter attribution referer sent by bridge runs. |
-| `HERMES_OPENROUTER_APP_TITLE` | `Hermes Studio` | OpenRouter attribution title sent by bridge runs. |
+| `HERMES_OPENROUTER_APP_TITLE` | `Ekko Studio` | OpenRouter attribution title sent by bridge runs. |
 | `HERMES_OPENROUTER_APP_CATEGORIES` | `cli-agent,personal-agent` | OpenRouter attribution categories sent by bridge runs. |
 | `HERMES_WEB_UI_MANAGED_GATEWAY` | enabled | Controls Studio-managed Hermes gateway process handling. Set `0`, `false`, `no`, or `off` to use `hermes gateway start` instead. |
 | `HERMES_WEB_UI_DISABLE_GATEWAY_AUTOSTART` | unset | Skip startup gateway checks/autostart. Set `1`, `true`, `yes`, or `on` for dashboard-only deployments where another service owns Hermes gateway lifecycle. |
@@ -416,7 +416,7 @@ These variables configure Hermes Studio, its local Hermes runtime integration, a
 | `hermes-web-ui update` / `upgrade` | Update to the latest version and restart |
 | `hermes-web-ui version` / `-v` | Show the version |
 | `hermes-web-ui -h` | Show help |
-| `hermes-web-ui-mcp [api\|browser\|devices\|use]` | Run one managed Studio MCP toolset (same as `hermes-studio-mcp`) |
+| `hermes-web-ui-mcp [api\|browser\|devices\|use]` | Run one managed Studio MCP toolset (same as `ekko-studio-mcp`) |
 
 Add `--no-open` to `start` or `client` when no browser should open.
 
@@ -493,6 +493,8 @@ full ownership tree, dependency rules, and API migration contract, see
 
 [BSL-1.1](./LICENSE)
 
-The license covers Hermes Studio, the `hermes-web-ui` npm package and CLI,
+The license covers Ekko Studio, the `hermes-web-ui` npm package and CLI,
 desktop applications, firmware, release
 artifacts, documentation, and associated files in this repository.
+
+The MCP entry point is `bin/ekko-studio-mcp.mjs`; tools use the `ekko_studio_*` prefix. Existing `hermes-studio-mcp` / `hermes-web-ui-mcp` commands and `hermes_studio_*` calls remain compatible. Restart the MCP client to discover the new tool names. Studio migrates managed server configurations to `ekko-studio-api`, `ekko-studio-browser`, `ekko-studio-devices`, and `ekko-studio-use`.
