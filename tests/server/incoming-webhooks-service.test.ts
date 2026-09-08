@@ -10,18 +10,18 @@ const mocks = vi.hoisted(() => ({
   restartGateway: vi.fn().mockResolvedValue({ running: true }),
 }))
 
-vi.mock('../../packages/server/src/services/hermes/hermes-profile', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/profiles/profile', () => ({
   getProfileDir: vi.fn(() => mocks.profileDir),
 }))
 
-vi.mock('../../packages/server/src/services/config-helpers', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/profiles/config', () => ({
   readConfigYamlForProfile: vi.fn(async () => structuredClone(mocks.config)),
   updateConfigYamlForProfile: vi.fn(async (_profile: string, updater: (config: Record<string, any>) => Record<string, any>) => {
     mocks.config = updater(structuredClone(mocks.config))
   }),
 }))
 
-vi.mock('../../packages/server/src/services/hermes/gateway-autostart', () => ({
+vi.mock('../../packages/server/src/modules/hermes/services/gateway/autostart', () => ({
   getGatewayRuntimeStatusForProfile: vi.fn(async () => mocks.runtime),
   restartGatewayForProfile: mocks.restartGateway,
 }))
@@ -32,7 +32,7 @@ import {
   listIncomingWebhooks,
   removeIncomingWebhook,
   setIncomingWebhookEnabled,
-} from '../../packages/server/src/services/hermes/incoming-webhooks'
+} from '../../packages/server/src/modules/hermes/services/incoming-webhooks'
 
 let tempDir = ''
 
