@@ -135,6 +135,7 @@ export default {
   browser: {
     title: '浏览器', settings: '浏览器设置', desktopOnly: '内置浏览器仅在 Hermes Studio 桌面端可用。', newTab: '新标签页',
     back: '后退', forward: '前进', reload: '刷新', stop: '停止', addressPlaceholder: '搜索或输入网址',
+    undoAnnotation: '撤销上一个', deleteAnnotation: '删除标注 {index}',
     selectElement: '选择元素', selectRegion: '框选区域', annotationPlaceholder: '描述希望 Agent 检查或修改的内容…', selectionData: '浏览器选区数据', annotationAdded: '截图已添加到对话输入框', annotationCount: '已标注 {count} 处', annotationLabel: '标注 {index}', clearAnnotations: '清除标注', finishAnnotation: '完成',
     agent: 'Agent', agentControlling: '{agent} 正在控制此标签页', agentWaiting: '{agent} 正在等待你的确认', takeOver: '接管', tabCrashed: '此标签页已崩溃。', recoverTab: '重新加载', profiles: '配置档案', profileName: '配置名称', addProfile: '添加配置', currentProfile: '当前使用', switchProfile: '切换使用', editProfile: '编辑配置',
     profileDirectory: 'Profile 数据目录', downloadDirectory: '下载目录', profileRootDirectory: '配置根目录', chooseProfileRootDirectory: '选择空目录', profileRootDirectoryHint: '请选择空目录。浏览器数据使用 {data}，下载文件使用 {download}。', proxy: '代理', proxyMode: '代理模式', proxyDirect: '直连', proxySystem: '系统代理', proxyCustom: '自定义代理', proxyServer: '代理服务器', proxyServerPlaceholder: '例如：http://127.0.0.1:7890 或 socks5://127.0.0.1:1080',

@@ -115,6 +115,7 @@ export interface DesktopBrowserBridge {
   updateAnnotationNote: (tabId: string, marker: number, note: string) => Promise<boolean>
   captureAnnotations: (tabId: string) => Promise<DesktopBrowserSelection['screenshot']>
   clearAnnotations: (tabId: string) => Promise<boolean>
+  removeAnnotation?: (tabId: string, marker: number) => Promise<boolean>
   onAnnotationRequest: (callback: (request: { tabId: string; mode: 'element' | 'region' }) => void) => () => void
   onStateChange: (callback: (state: DesktopBrowserState) => void) => () => void
 }
