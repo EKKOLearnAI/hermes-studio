@@ -8,7 +8,9 @@ export async function canBindTcpPort(port: number): Promise<boolean> {
     const server = createServer()
     server.unref()
     server.once('error', () => resolve(false))
-    server.listen(port, '127.0.0.1', () => {
+    // Match the Web UI server, which listens on all local interfaces. On macOS
+    // a loopback-only probe can incorrectly succeed beside a wildcard listener.
+    server.listen(port, () => {
       server.close(() => resolve(true))
     })
   })
@@ -32,8 +34,6 @@ export async function releaseOccupiedWebUiPort(
   token: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<boolean> {
-  if (await canBindTcpPort(port)) return false
-
   let response: Response
   try {
     response = await fetchImpl(`http://127.0.0.1:${port}/api/desktop/shutdown`, {
