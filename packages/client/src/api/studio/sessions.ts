@@ -106,6 +106,38 @@ export interface HermesSessionPage {
   limit: number
 }
 
+export interface SessionPinsResult {
+  pinnedIds: string[]
+}
+
+function sessionPinsPath(profile: string, suffix = ''): string {
+  const params = new URLSearchParams({ profile })
+  return `/api/studio/session-pins${suffix}?${params}`
+}
+
+export async function fetchSessionPins(profile: string): Promise<SessionPinsResult> {
+  return request<SessionPinsResult>(sessionPinsPath(profile))
+}
+
+export async function mergeSessionPins(profile: string, pinnedIds: string[]): Promise<SessionPinsResult> {
+  return request<SessionPinsResult>(sessionPinsPath(profile, '/merge'), {
+    method: 'POST',
+    body: JSON.stringify({ pinnedIds }),
+  })
+}
+
+export async function setSessionPinned(
+  profile: string,
+  sessionId: string,
+  pinned: boolean,
+  mergePinnedIds?: string[],
+): Promise<SessionPinsResult> {
+  return request<SessionPinsResult>(sessionPinsPath(profile, `/${encodeURIComponent(sessionId)}`), {
+    method: 'PUT',
+    body: JSON.stringify({ pinned, ...(mergePinnedIds ? { mergePinnedIds } : {}) }),
+  })
+}
+
 export interface HermesMessage {
   id: number
   session_id: string

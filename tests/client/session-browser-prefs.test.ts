@@ -1,7 +1,21 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { nextTick } from 'vue'
+import { setApiKey } from '@/api/client'
+
+const pinApi = vi.hoisted(() => ({
+  fetch: vi.fn(async () => ({ pinnedIds: [] as string[] })),
+  merge: vi.fn(async (_profile: string, pinnedIds: string[]) => ({ pinnedIds })),
+  set: vi.fn(async (_profile?: string, _sessionId?: string, _pinned?: boolean, _mergePinnedIds?: string[]) => ({ pinnedIds: [] as string[] })),
+}))
+
+vi.mock('@/api/studio/sessions', () => ({
+  fetchSessionPins: pinApi.fetch,
+  mergeSessionPins: pinApi.merge,
+  setSessionPinned: pinApi.set,
+}))
+
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import { useSessionBrowserPrefsStore } from '@/stores/hermes/session-browser-prefs'
 
@@ -9,6 +23,16 @@ describe('session browser prefs store', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     window.localStorage.clear()
+    pinApi.fetch.mockClear()
+    pinApi.merge.mockClear()
+    pinApi.set.mockClear()
+    pinApi.fetch.mockResolvedValue({ pinnedIds: [] })
+    pinApi.merge.mockImplementation(async (_profile, pinnedIds) => ({ pinnedIds }))
+    pinApi.set.mockImplementation(async (_profile, sessionId, pinned, mergePinnedIds = []) => ({
+      pinnedIds: pinned && sessionId
+        ? [...new Set([...mergePinnedIds, sessionId])]
+        : mergePinnedIds.filter(id => id !== sessionId),
+    }))
   })
 
   it('persists pins per profile and prunes missing sessions', () => {
@@ -21,11 +45,11 @@ describe('session browser prefs store', () => {
     store.togglePinned('session-1')
     store.togglePinned('session-2')
     expect(store.pinnedIds).toEqual(['session-1', 'session-2'])
-    expect(JSON.parse(window.localStorage.getItem('hermes_session_pins_v1_default') || '[]')).toEqual(['session-1', 'session-2'])
+    expect(JSON.parse(window.localStorage.getItem('hermes_session_pins_v1_anonymous_default') || '[]')).toEqual(['session-1', 'session-2'])
 
     expect(store.pruneMissingSessions(['session-2'])).toBe(true)
     expect(store.pinnedIds).toEqual(['session-2'])
-    expect(JSON.parse(window.localStorage.getItem('hermes_session_pins_v1_default') || '[]')).toEqual(['session-2'])
+    expect(JSON.parse(window.localStorage.getItem('hermes_session_pins_v1_anonymous_default') || '[]')).toEqual(['session-2'])
   })
 
   it('does not erase saved pins when the current session list is transiently empty', () => {
@@ -36,7 +60,7 @@ describe('session browser prefs store', () => {
     store.togglePinned('session-1')
     expect(store.pruneMissingSessions([])).toBe(false)
     expect(store.pinnedIds).toEqual(['session-1'])
-    expect(JSON.parse(window.localStorage.getItem('hermes_session_pins_v1_default') || '[]')).toEqual(['session-1'])
+    expect(JSON.parse(window.localStorage.getItem('hermes_session_pins_v1_anonymous_default') || '[]')).toEqual(['session-1'])
   })
 
   it('persists whether the recent group is collapsed', () => {
@@ -83,7 +107,7 @@ describe('session browser prefs store', () => {
     store.togglePinned('default-session')
     store.setHumanOnly(false)
 
-    window.localStorage.setItem('hermes_session_pins_v1_work', JSON.stringify(['work-session']))
+    window.localStorage.setItem('hermes_session_pins_v1_anonymous_work', JSON.stringify(['work-session']))
     window.localStorage.setItem('hermes_human_only_v1_work', JSON.stringify(true))
 
     profilesStore.activeProfileName = 'work'
@@ -93,10 +117,85 @@ describe('session browser prefs store', () => {
     expect(store.pinnedIds).toEqual(['work-session'])
     expect(store.humanOnly).toBe(true)
 
+    pinApi.fetch.mockResolvedValue({ pinnedIds: ['default-session'] })
     profilesStore.activeProfileName = 'default'
     await nextTick()
 
     expect(store.pinnedIds).toEqual(['default-session'])
     expect(store.humanOnly).toBe(false)
+  })
+
+  it('merges legacy local pins once and adopts the server result on a new device', async () => {
+    window.localStorage.setItem('hermes_session_pins_v1_default', JSON.stringify(['desktop-pin']))
+    pinApi.merge.mockResolvedValue({ pinnedIds: ['mobile-pin', 'desktop-pin'] })
+
+    const store = useSessionBrowserPrefsStore()
+    await store.syncPins()
+
+    expect(pinApi.merge).toHaveBeenCalledWith('default', ['desktop-pin'])
+    expect(store.pinnedIds).toEqual(['mobile-pin', 'desktop-pin'])
+    expect(window.localStorage.getItem('hermes_session_pins_migrated_v2_anonymous_default')).toBe('true')
+  })
+
+  it('loads server pins instead of stale local pins after migration', async () => {
+    window.localStorage.setItem('hermes_session_pins_v1_anonymous_default', JSON.stringify(['stale-local']))
+    window.localStorage.setItem('hermes_session_pins_migrated_v2_anonymous_default', 'true')
+    pinApi.fetch.mockResolvedValue({ pinnedIds: ['remote-pin'] })
+
+    const store = useSessionBrowserPrefsStore()
+    await store.syncPins()
+
+    expect(pinApi.merge).not.toHaveBeenCalled()
+    expect(pinApi.fetch).toHaveBeenCalledWith('default')
+    expect(store.pinnedIds).toEqual(['remote-pin'])
+  })
+
+  it('does not carry one signed-in user pin cache into another account', async () => {
+    const jwt = (sub: number) => `x.${btoa(JSON.stringify({ sub }))}.x`
+    setApiKey(jwt(1))
+    window.localStorage.setItem('hermes_session_pins_v1_1_default', JSON.stringify(['user-one-pin']))
+    const store = useSessionBrowserPrefsStore()
+    expect(store.pinnedIds).toEqual(['user-one-pin'])
+
+    setApiKey(jwt(2))
+    pinApi.merge.mockResolvedValue({ pinnedIds: ['user-two-pin'] })
+    await store.syncPins()
+
+    expect(pinApi.merge).toHaveBeenCalledWith('default', [])
+    expect(store.pinnedIds).toEqual(['user-two-pin'])
+  })
+
+  it('migrates all legacy pins before the first toggle writes shared state', async () => {
+    window.localStorage.setItem('hermes_session_pins_v1_default', JSON.stringify(['legacy-pin']))
+    pinApi.set.mockResolvedValue({ pinnedIds: ['legacy-pin', 'new-pin'] })
+    const store = useSessionBrowserPrefsStore()
+
+    await store.togglePinned('new-pin')
+
+    expect(pinApi.merge).not.toHaveBeenCalled()
+    expect(pinApi.set).toHaveBeenCalledWith('default', 'new-pin', true, ['legacy-pin', 'new-pin'])
+    expect(window.localStorage.getItem('hermes_session_pins_migrated_v2_anonymous_default')).toBe('true')
+  })
+
+  it('rolls back an optimistic pin when the shared write fails', async () => {
+    window.localStorage.setItem('hermes_session_pins_migrated_v2_anonymous_default', 'true')
+    pinApi.set.mockRejectedValue(new Error('offline'))
+    const store = useSessionBrowserPrefsStore()
+
+    await expect(store.togglePinned('failed-pin')).resolves.toBe(false)
+
+    expect(store.pinnedIds).toEqual([])
+    expect(JSON.parse(window.localStorage.getItem('hermes_session_pins_v1_anonymous_default') || '[]')).toEqual([])
+  })
+
+  it('writes pin toggles to the shared server preference', async () => {
+    window.localStorage.setItem('hermes_session_pins_migrated_v2_anonymous_default', 'true')
+    pinApi.set.mockResolvedValue({ pinnedIds: ['shared-session'] })
+    const store = useSessionBrowserPrefsStore()
+
+    await store.togglePinned('shared-session')
+
+    expect(pinApi.set).toHaveBeenCalledWith('default', 'shared-session', true, undefined)
+    expect(store.pinnedIds).toEqual(['shared-session'])
   })
 })

@@ -42,6 +42,11 @@ import {
 } from '../public/sessions'
 import type { UsageStatsAgentRow, UsageStatsModelRow, UsageStatsDailyRow } from '../public/sessions'
 import { deleteWorkspaceRunChangesForSession, getWorkspaceRunChangeFile as getWorkspaceRunChangeFileFromDb, listWorkspaceRunChangesForAssistantMessages, listWorkspaceRunChangesForSession } from '../public/sessions'
+import {
+  listSessionPins as listStoredSessionPins,
+  mergeSessionPins as mergeStoredSessionPins,
+  setSessionPinned as setStoredSessionPinned,
+} from '../public/sessions'
 import { getActiveProfileDir, getActiveProfileName, getProfileDir, listProfileNamesFromDisk, readConfigYamlForProfile } from '../public/profile-config'
 import { isNearestExistingRealPathWithin, isPathWithin, relativePathFromBase } from '../services/files/path'
 import {
@@ -99,6 +104,52 @@ function filterArchivedSessions<T extends { is_archived?: number | boolean | nul
 function requestedProfile(ctx: any): string | undefined {
   const value = ctx.state?.profile?.name || (typeof ctx.query?.profile === 'string' ? ctx.query.profile.trim() : '')
   return value || undefined
+}
+
+function sessionPinUserId(ctx: any): number {
+  const userId = Number(ctx.state?.user?.id)
+  return Number.isSafeInteger(userId) && userId > 0 ? userId : 0
+}
+
+export async function listSessionPins(ctx: any) {
+  const profile = requestedProfile(ctx) || 'default'
+  ctx.body = { pinnedIds: listStoredSessionPins(sessionPinUserId(ctx), profile) }
+}
+
+export async function mergeSessionPins(ctx: any) {
+  const pinnedIds = ctx.request.body?.pinnedIds
+  if (!Array.isArray(pinnedIds)) {
+    ctx.status = 400
+    ctx.body = { error: 'pinnedIds must be an array' }
+    return
+  }
+  const profile = requestedProfile(ctx) || 'default'
+  ctx.body = { pinnedIds: mergeStoredSessionPins(sessionPinUserId(ctx), profile, pinnedIds) }
+}
+
+export async function setSessionPinned(ctx: any) {
+  const body = ctx.request.body as { pinned?: boolean; mergePinnedIds?: string[] } | undefined
+  const { pinned, mergePinnedIds } = body || {}
+  if (typeof pinned !== 'boolean') {
+    ctx.status = 400
+    ctx.body = { error: 'pinned must be a boolean' }
+    return
+  }
+  try {
+    const profile = requestedProfile(ctx) || 'default'
+    ctx.body = {
+      pinnedIds: setStoredSessionPinned(
+        sessionPinUserId(ctx),
+        profile,
+        ctx.params.id,
+        pinned,
+        mergePinnedIds,
+      ),
+    }
+  } catch (error) {
+    ctx.status = 400
+    ctx.body = { error: error instanceof Error ? error.message : 'Invalid session pin' }
+  }
 }
 
 async function notifyBridgeSessionModelChanged(

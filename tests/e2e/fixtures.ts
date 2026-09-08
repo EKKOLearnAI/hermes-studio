@@ -49,6 +49,7 @@ interface MockHermesApiOptions {
   tokenValidationStatus?: number
   initialProfileName?: 'default' | 'research'
   sessions?: unknown[]
+  sessionPins?: Record<string, string[]>
   sessionCategories?: Array<{ id: number; name: string; created_at?: number; updated_at?: number }>
   journey?: MockJourneyPayload
   skills?: MockSkillsPayload
@@ -164,6 +165,7 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
   const tokenValidationStatus = options.tokenValidationStatus ?? 200
   let activeProfileName = options.initialProfileName ?? 'research'
   const sessionCategories = [...(options.sessionCategories ?? [])]
+  const sessionPins = options.sessionPins ?? {}
   let workflowSchedules: any[] = [...(options.workflowSchedules ?? [])]
   const skillBundles = [...(options.bundles ?? [])]
   let channelCredentialsPresent = options.channelCredentials ?? false
@@ -477,6 +479,38 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
 
     if (pathname === '/api/studio/workflows') {
       await route.fulfill(jsonResponse({ workflows: options.workflows ?? [] }, tokenValidationStatus))
+      return
+    }
+
+    if (pathname === '/api/studio/session-pins') {
+      const profile = url.searchParams.get('profile') || activeProfileName
+      await route.fulfill(jsonResponse({ pinnedIds: [...(sessionPins[profile] || [])] }))
+      return
+    }
+
+    if (pathname === '/api/studio/session-pins/merge' && request.method() === 'POST') {
+      const profile = url.searchParams.get('profile') || activeProfileName
+      const body = JSON.parse(request.postData() || '{}') as { pinnedIds?: unknown[] }
+      sessionPins[profile] = [...new Set([
+        ...(sessionPins[profile] || []),
+        ...(Array.isArray(body.pinnedIds) ? body.pinnedIds.filter((id): id is string => typeof id === 'string') : []),
+      ])]
+      await route.fulfill(jsonResponse({ pinnedIds: [...sessionPins[profile]] }))
+      return
+    }
+
+    if (pathname.startsWith('/api/studio/session-pins/') && request.method() === 'PUT') {
+      const profile = url.searchParams.get('profile') || activeProfileName
+      const sessionId = decodeURIComponent(pathname.slice('/api/studio/session-pins/'.length))
+      const body = JSON.parse(request.postData() || '{}') as { pinned?: unknown; mergePinnedIds?: unknown[] }
+      const current = [...new Set([
+        ...(sessionPins[profile] || []),
+        ...(Array.isArray(body.mergePinnedIds) ? body.mergePinnedIds.filter((id): id is string => typeof id === 'string') : []),
+      ])]
+      sessionPins[profile] = body.pinned === true
+        ? [...new Set([...current, sessionId])]
+        : current.filter(id => id !== sessionId)
+      await route.fulfill(jsonResponse({ pinnedIds: [...sessionPins[profile]] }))
       return
     }
 

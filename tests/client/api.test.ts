@@ -16,7 +16,7 @@ import { getApiKey, setApiKey, clearApiKey, hasApiKey, getStoredUserRole, isStor
 import { downloadFile, getDownloadUrl } from '../../packages/client/src/api/studio/download'
 import { uploadFiles } from '../../packages/client/src/api/studio/files'
 import { importSkill } from '../../packages/client/src/api/hermes/skills'
-import { archiveSession, batchDeleteSessions, exportSession, fetchHermesSessionGroups, fetchHermesSessionPage, importHermesSession, unarchiveSession } from '../../packages/client/src/api/studio/sessions'
+import { archiveSession, batchDeleteSessions, exportSession, fetchHermesSessionGroups, fetchHermesSessionPage, fetchSessionPins, importHermesSession, mergeSessionPins, setSessionPinned, unarchiveSession } from '../../packages/client/src/api/studio/sessions'
 import router from '@/router'
 
 function fakeJwt(payload: Record<string, unknown>) {
@@ -109,11 +109,17 @@ describe('API Client', () => {
     it('clears token and redirects on 401 for local BFF endpoints', async () => {
       setApiKey('secret-key')
       localStorage.setItem('hermes_active_profile_name', 'research')
+      localStorage.setItem('hermes_session_pins_v1_research', '["old-user-pin"]')
+      localStorage.setItem('hermes_session_pins_v1_7_research', '["old-user-pin"]')
+      localStorage.setItem('hermes_session_pins_migrated_v2_7_research', 'true')
       mockFetch.mockResolvedValue({ ok: false, status: 401 })
 
       await expect(request('/api/studio/sessions')).rejects.toThrow('Unauthorized')
       expect(hasApiKey()).toBe(false)
       expect(localStorage.getItem('hermes_active_profile_name')).toBeNull()
+      expect(localStorage.getItem('hermes_session_pins_v1_research')).toBeNull()
+      expect(localStorage.getItem('hermes_session_pins_v1_7_research')).toBeNull()
+      expect(localStorage.getItem('hermes_session_pins_migrated_v2_7_research')).toBeNull()
       expect(router.replace).toHaveBeenCalledWith({ name: 'login' })
     })
 
@@ -388,6 +394,32 @@ describe('API Client', () => {
   })
 
   describe('sessions API', () => {
+    it('reads, merges, and updates profile-scoped session pins', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ pinnedIds: ['one'] }),
+      })
+
+      await fetchSessionPins('travel')
+      await mergeSessionPins('travel', ['desktop-pin'])
+      await setSessionPinned('travel', 'session/a', true)
+
+      expect(mockFetch.mock.calls.map(([url]) => url)).toEqual([
+        '/api/studio/session-pins?profile=travel',
+        '/api/studio/session-pins/merge?profile=travel',
+        '/api/studio/session-pins/session%2Fa?profile=travel',
+      ])
+      expect(mockFetch.mock.calls[1][1]).toMatchObject({
+        method: 'POST',
+        body: JSON.stringify({ pinnedIds: ['desktop-pin'] }),
+      })
+      expect(mockFetch.mock.calls[2][1]).toMatchObject({
+        method: 'PUT',
+        body: JSON.stringify({ pinned: true }),
+      })
+    })
+
     it('requests source-group pages with pinned and routed sessions included', async () => {
       mockFetch.mockResolvedValue({
         ok: true,

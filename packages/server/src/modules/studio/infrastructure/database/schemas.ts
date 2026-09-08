@@ -106,6 +106,15 @@ export const SESSIONS_INDEXES = {
   idx_sessions_category_id: 'CREATE INDEX IF NOT EXISTS idx_sessions_category_id ON sessions(category_id)',
 }
 
+export const SESSION_PIN_PREFERENCES_TABLE = 'session_pin_preferences'
+
+export const SESSION_PIN_PREFERENCES_SCHEMA: Record<string, string> = {
+  user_id: 'INTEGER NOT NULL DEFAULT 0',
+  profile: "TEXT NOT NULL DEFAULT 'default'",
+  pinned_ids_json: "TEXT NOT NULL DEFAULT '[]'",
+  updated_at: 'INTEGER NOT NULL DEFAULT 0',
+}
+
 export const MESSAGES_TABLE = 'messages'
 
 export const MESSAGES_SCHEMA: Record<string, string> = {
@@ -1524,6 +1533,9 @@ export function initAllHermesTables(): void {
     })
     syncTable(SESSIONS_TABLE, SESSIONS_SCHEMA, {
       indexes: SESSIONS_INDEXES,
+    })
+    syncTable(SESSION_PIN_PREFERENCES_TABLE, SESSION_PIN_PREFERENCES_SCHEMA, {
+      primaryKey: 'user_id, profile',
     })
     createIndexes(db, SESSION_CATEGORIES_INDEXES)
     createIndexes(db, SESSIONS_INDEXES)

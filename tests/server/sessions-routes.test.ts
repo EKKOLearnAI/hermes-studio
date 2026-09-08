@@ -7,6 +7,9 @@ const listCategoriesMock = vi.fn(async (ctx: any) => { ctx.body = { categories: 
 const createCategoryMock = vi.fn(async (ctx: any) => { ctx.body = { category: { id: 1, name: ctx.request.body.name } } })
 const renameCategoryMock = vi.fn(async (ctx: any) => { ctx.body = { category: { id: Number(ctx.params.id), name: ctx.request.body.name } } })
 const removeCategoryMock = vi.fn(async (ctx: any) => { ctx.body = { ok: true } })
+const listSessionPinsMock = vi.fn(async (ctx: any) => { ctx.body = { pinnedIds: [] } })
+const mergeSessionPinsMock = vi.fn(async (ctx: any) => { ctx.body = { pinnedIds: ctx.request.body.pinnedIds } })
+const setSessionPinnedMock = vi.fn(async (ctx: any) => { ctx.body = { pinnedIds: [ctx.params.id] } })
 const listMock = vi.fn(async (ctx: any) => { ctx.body = { sessions: [{ id: 's1' }] } })
 const countMock = vi.fn(async (ctx: any) => { ctx.body = { count: 1 } })
 const listHermesSessionsMock = vi.fn(async (ctx: any) => { ctx.body = { sessions: [{ id: 'hermes-1' }] } })
@@ -55,6 +58,9 @@ vi.mock('../../packages/server/src/modules/studio/controllers/sessions', () => (
   createCategory: createCategoryMock,
   renameCategory: renameCategoryMock,
   removeCategory: removeCategoryMock,
+  listSessionPins: listSessionPinsMock,
+  mergeSessionPins: mergeSessionPinsMock,
+  setSessionPinned: setSessionPinnedMock,
   list: listMock,
   count: countMock,
   listHermesSessions: listHermesSessionsMock,
@@ -106,6 +112,9 @@ describe('session routes', () => {
     createCategoryMock.mockClear()
     renameCategoryMock.mockClear()
     removeCategoryMock.mockClear()
+    listSessionPinsMock.mockClear()
+    mergeSessionPinsMock.mockClear()
+    setSessionPinnedMock.mockClear()
     listMock.mockClear()
     countMock.mockClear()
     listHermesSessionsMock.mockClear()
@@ -150,6 +159,9 @@ describe('session routes', () => {
       '/api/studio/sessions/conversations/:id/messages/paginated',
       '/api/studio/session-categories',
       '/api/studio/session-categories/:id',
+      '/api/studio/session-pins',
+      '/api/studio/session-pins/merge',
+      '/api/studio/session-pins/:id',
       '/api/studio/sessions',
       '/api/studio/sessions/count',
       '/api/studio/sessions/hermes',
@@ -225,6 +237,30 @@ describe('session routes', () => {
     const assignCtx: any = { query: {}, request: { body: { categoryId: 1 } }, body: null, params: { id: 'session-1' } }
     await assignLayer.stack[0](assignCtx)
     expect(setCategoryMock).toHaveBeenCalledWith(assignCtx)
+  })
+
+  it('delegates profile-scoped session pin routes', async () => {
+    const { sessionRoutes } = await import('../../packages/server/src/modules/studio/routes/sessions')
+    const listLayer = sessionRoutes.stack.find((entry: any) =>
+      entry.path === '/api/studio/session-pins' && entry.methods.includes('HEAD'),
+    )!
+    const mergeLayer = sessionRoutes.stack.find((entry: any) =>
+      entry.path === '/api/studio/session-pins/merge' && entry.methods.includes('POST'),
+    )!
+    const setLayer = sessionRoutes.stack.find((entry: any) =>
+      entry.path === '/api/studio/session-pins/:id' && entry.methods.includes('PUT'),
+    )!
+    const listCtx: any = { query: { profile: 'travel' }, request: { body: {} }, body: null, params: {} }
+    const mergeCtx: any = { query: { profile: 'travel' }, request: { body: { pinnedIds: ['old'] } }, body: null, params: {} }
+    const setCtx: any = { query: { profile: 'travel' }, request: { body: { pinned: true } }, body: null, params: { id: 'new' } }
+
+    await listLayer.stack[0](listCtx, async () => {})
+    await mergeLayer.stack[0](mergeCtx, async () => {})
+    await setLayer.stack[0](setCtx, async () => {})
+
+    expect(listSessionPinsMock.mock.calls[0][0]).toBe(listCtx)
+    expect(mergeSessionPinsMock.mock.calls[0][0]).toBe(mergeCtx)
+    expect(setSessionPinnedMock.mock.calls[0][0]).toBe(setCtx)
   })
 
   it('delegates session count route before the session id route', async () => {
