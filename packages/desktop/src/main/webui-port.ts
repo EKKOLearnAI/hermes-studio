@@ -4,12 +4,18 @@ const DEFAULT_WEB_UI_SHUTDOWN_FORCE_EXIT_MS = 10_000
 const PORT_RELEASE_GRACE_MS = 1_000
 const PORT_POLL_INTERVAL_MS = 100
 
-function webUiShutdownWaitTimeoutMs(): number {
-  const configured = Number(process.env.HERMES_WEB_UI_SHUTDOWN_FORCE_EXIT_MS)
+export function getWebUiPortReleaseTimeoutMs(
+  env: Record<string, string | undefined> = process.env,
+): number {
+  const configured = Number(env.HERMES_WEB_UI_SHUTDOWN_FORCE_EXIT_MS)
   const forceExitMs = Number.isFinite(configured) && configured > 0
     ? configured
     : DEFAULT_WEB_UI_SHUTDOWN_FORCE_EXIT_MS
   return forceExitMs + PORT_RELEASE_GRACE_MS
+}
+
+function webUiBindHost(env: Record<string, string | undefined> = process.env): string {
+  return env.BIND_HOST?.trim() || '0.0.0.0'
 }
 
 export async function canBindTcpPort(port: number, host = '127.0.0.1'): Promise<boolean> {
@@ -41,7 +47,8 @@ export async function releaseOccupiedWebUiPort(
   token: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<boolean> {
-  const timeoutMs = webUiShutdownWaitTimeoutMs()
+  const timeoutMs = getWebUiPortReleaseTimeoutMs()
+  const bindHost = webUiBindHost()
   let response: Response
   try {
     response = await fetchImpl(`http://127.0.0.1:${port}/api/desktop/shutdown`, {
@@ -54,9 +61,10 @@ export async function releaseOccupiedWebUiPort(
   }
 
   if (response.status !== 202) return false
-  // The Web UI listens on 0.0.0.0. Probe the same IPv4 wildcard address so an
-  // IPv6 wildcard bind cannot report success while the real listener remains.
-  if (!await waitForTcpPort(port, '0.0.0.0', timeoutMs)) {
+  // Probe the same address family and bind host as the Web UI. In particular,
+  // do not let an IPv4 wildcard probe report success beside a loopback-bound
+  // listener configured with BIND_HOST=127.0.0.1.
+  if (!await waitForTcpPort(port, bindHost, timeoutMs)) {
     throw new Error(`Existing Web UI server did not release port ${port} after shutdown`)
   }
   return true
