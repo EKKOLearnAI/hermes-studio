@@ -1325,7 +1325,9 @@ function codexRuntimeUserConfig(...contents: Array<string | null | undefined>): 
   for (const content of contents) {
     if (!content?.trim()) continue
     let section = ''
-    for (const line of content.split(/\r?\n/)) {
+    const lines = content.split(/\r?\n/)
+    for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+      const line = lines[lineIndex]
       const header = line.match(/^\s*\[([^\]]+)\]\s*$/)
       if (header) {
         section = header[1].trim()
@@ -1333,7 +1335,19 @@ function codexRuntimeUserConfig(...contents: Array<string | null | undefined>): 
       }
       const assignment = line.match(/^\s*([A-Za-z0-9_.-]+)\s*=/)
       if (!section) {
-        if (assignment && !runtimeKeys.has(assignment[1])) topLevel.set(assignment[1], line)
+        if (assignment && !runtimeKeys.has(assignment[1])) {
+          let mergedLine = line
+          let bracketDepth = (line.slice(line.indexOf('=') + 1).match(/\[/g) || []).length
+            - (line.slice(line.indexOf('=') + 1).match(/\]/g) || []).length
+          while (bracketDepth > 0 && lineIndex + 1 < lines.length) {
+            lineIndex += 1
+            const nextLine = lines[lineIndex]
+            mergedLine += `\n${nextLine}`
+            bracketDepth += (nextLine.match(/\[/g) || []).length
+              - (nextLine.match(/\]/g) || []).length
+          }
+          topLevel.set(assignment[1], mergedLine)
+        }
         continue
       }
       if (section === 'features') {
@@ -1350,9 +1364,9 @@ function codexRuntimeUserConfig(...contents: Array<string | null | undefined>): 
         || section === 'account'
         || section.startsWith('account.')
       ) continue
-      const lines = sections.get(section) || []
-      if (line.trim()) lines.push(line)
-      sections.set(section, lines)
+      const sectionLines = sections.get(section) || []
+      if (line.trim()) sectionLines.push(line)
+      sections.set(section, sectionLines)
     }
   }
 
