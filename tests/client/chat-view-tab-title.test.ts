@@ -86,7 +86,7 @@ function makeSession(title: string): Session {
 describe('ChatView tab title', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    document.title = 'Hermes Studio'
+    document.title = 'Ekko Studio'
     mockRoute.name = 'hermes.session'
     mockRoute.params = {}
     mockRoute.query = {}
@@ -117,7 +117,7 @@ describe('ChatView tab title', () => {
     expect(document.title).toBe('Implementation Notes')
 
     wrapper.unmount()
-    expect(document.title).toBe('Hermes Studio')
+    expect(document.title).toBe('Ekko Studio')
   })
 
   it('falls back to the product title when the session title is blank', () => {
@@ -126,7 +126,7 @@ describe('ChatView tab title', () => {
 
     const wrapper = mount(ChatView)
 
-    expect(document.title).toBe('Hermes Studio')
+    expect(document.title).toBe('Ekko Studio')
     wrapper.unmount()
   })
 

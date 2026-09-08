@@ -75,7 +75,7 @@ function renderFatalError(error: unknown): void {
   const container = document.createElement('main')
   container.style.cssText = 'min-height:100vh;box-sizing:border-box;padding:32px;background:#1a1a1a;color:#eee;font-family:system-ui'
   const title = document.createElement('h2')
-  title.textContent = 'Hermes Studio encountered an unexpected interface error'
+  title.textContent = 'Ekko Studio encountered an unexpected interface error'
   const details = document.createElement('pre')
   details.style.cssText = 'white-space:pre-wrap;color:#f88'
   details.textContent = error instanceof Error ? error.message : String(error)

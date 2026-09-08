@@ -35,6 +35,7 @@ export interface ResumeMessagePageOptions {
 }
 
 export interface ResumeMessagePage {
+  taskPlans?: import('../../contracts/task-plan').TaskPlanSnapshot[]
   messages: SessionMessage[]
   workspaceRunChanges?: WorkspaceRunChangeSummary[]
   messageTotal: number
@@ -250,6 +251,7 @@ export function buildAppResumeMessagePage(
     return {
       id,
       messagesCached: true,
+      ...(page.taskPlans ? { taskPlans: page.taskPlans } : {}),
       messageTotal: page.messageTotal,
       messageLoadedCount: page.messageLoadedCount,
       messagePageLimit: page.messagePageLimit,

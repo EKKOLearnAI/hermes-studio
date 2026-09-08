@@ -87,17 +87,24 @@ const CODEX_TOOL_SEARCH_MIN_VERSION = '0.128.0'
 const CODEX_TOOL_SEARCH_ALWAYS_DEFER_REMOVED_VERSION = '0.142.0'
 const CODEX_VERSION_CACHE_TTL_MS = 5 * 60 * 1000
 const HERMES_MCP_SERVERS: ReadonlyArray<{ name: string; toolset: string }> = [
-  { name: 'hermes-studio-api', toolset: 'api' },
-  { name: 'hermes-studio-browser', toolset: 'browser' },
-  { name: 'hermes-studio-devices', toolset: 'devices' },
-  { name: 'hermes-studio-use', toolset: 'use' },
+  { name: 'ekko-studio-api', toolset: 'api' },
+  { name: 'ekko-studio-browser', toolset: 'browser' },
+  { name: 'ekko-studio-devices', toolset: 'devices' },
+  { name: 'ekko-studio-use', toolset: 'use' },
 ]
 const HERMES_MCP_SERVER_NAMES: Set<string> = new Set(HERMES_MCP_SERVERS.map(server => server.name))
-const LEGACY_HERMES_MCP_SERVER_NAMES = new Set(['hermes-studio', 'hermes-studio-mcp', 'hermes-web-ui-mcp'])
+const LEGACY_HERMES_MCP_SERVER_NAMES = new Set([
+  'hermes-studio-api',
+  'hermes-studio-browser',
+  'hermes-studio-devices',
+  'hermes-studio-use',
+  'hermes-studio', 'hermes-studio-mcp', 'ekko-studio-mcp', 'hermes-web-ui-mcp',
+])
 const LEGACY_HERMES_MCP_COMMANDS = new Set([
   'hermes-lan-peer-mcp',
   'hermes-devices-mcp',
   'hermes-web-ui-mcp',
+  'ekko-studio-mcp',
   'hermes-studio-mcp',
 ])
 const HERMES_MCP_MANAGED_ENV_KEY = 'HERMES_WEB_UI_MANAGED_MCP'
@@ -1114,10 +1121,10 @@ function isDesktopRuntime(): boolean {
 function candidateBundledMcpScripts(): string[] {
   return [
     process.env.HERMES_WEB_UI_MCP_BIN,
-    join(process.cwd(), 'bin/hermes-studio-mcp.mjs'),
-    join(__dirname, '../../bin/hermes-studio-mcp.mjs'),
-    join(__dirname, '../../../../../../bin/hermes-studio-mcp.mjs'),
-    join(__dirname, '../../../../../bin/hermes-studio-mcp.mjs'),
+    join(process.cwd(), 'bin/ekko-studio-mcp.mjs'),
+    join(__dirname, '../../bin/ekko-studio-mcp.mjs'),
+    join(__dirname, '../../../../../../bin/ekko-studio-mcp.mjs'),
+    join(__dirname, '../../../../../bin/ekko-studio-mcp.mjs'),
     join(process.cwd(), 'bin/hermes-web-ui-mcp.mjs'),
     join(__dirname, '../../bin/hermes-web-ui-mcp.mjs'),
     join(__dirname, '../../../../../../bin/hermes-web-ui-mcp.mjs'),
@@ -1137,8 +1144,8 @@ function runtimeNodePath(): string | null {
 function hermesMcpCommandConfig(toolset: string): { command: string; args?: string[] } {
   const script = bundledMcpScriptPath()
   if (script) return { command: runtimeNodePath() || process.execPath, args: [script, toolset] }
-  if (isDesktopRuntime()) return { command: 'hermes-studio-mcp', args: [toolset] }
-  return { command: 'hermes-studio-mcp', args: [toolset] }
+  if (isDesktopRuntime()) return { command: 'ekko-studio-mcp', args: [toolset] }
+  return { command: 'ekko-studio-mcp', args: [toolset] }
 }
 
 function hermesMcpServerConfig(profile: string, serverName: string, toolset: string): { command: string; args?: string[]; env: Record<string, string> } {
@@ -1211,7 +1218,7 @@ function inheritClaudeSettings(existingContent: string | null | undefined = ''):
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
     const inherited = { ...parsed } as Record<string, unknown>
     // Scoped Coding Agent runs authenticate exclusively through the selected
-    // Hermes Studio profile proxy. Never inherit native Claude login/provider
+    // Ekko Studio profile proxy. Never inherit native Claude login/provider
     // routing, otherwise a stale OAuth session can override the profile.
     delete inherited.apiKeyHelper
     delete inherited.awsAuthRefresh
@@ -1637,7 +1644,7 @@ function opencodeRuntimeConfig(
       provider: {
         [OPENCODE_PROVIDER_ID]: {
           npm: '@ai-sdk/openai',
-          name: runtime.provider || 'Hermes Studio',
+          name: runtime.provider || 'Ekko Studio',
           options: {
             baseURL: runtime.baseUrl || '',
             apiKey: `{env:${OPENCODE_API_KEY_ENV}}`,

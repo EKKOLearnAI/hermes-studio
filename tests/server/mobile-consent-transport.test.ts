@@ -5,7 +5,7 @@ import { runInNewContext } from 'node:vm'
 import { expect, it } from 'vitest'
 
 it('keeps a distinct HTTP deadline and returns the business expiry without retrying', async () => {
-  const source = readFileSync('bin/hermes-studio-mcp.mjs', 'utf8')
+  const source = readFileSync('bin/ekko-studio-mcp.mjs', 'utf8')
   const fn = source.slice(source.indexOf('async function fetchMobileConsent('), source.indexOf('async function requestEnvelope('))
   let budget = 0
   const fetchConsent = runInNewContext(`${fn}; fetchMobileConsent`, {

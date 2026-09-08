@@ -1,10 +1,10 @@
 {
   "name": "hermes-studio",
   "version": "0.7.18",
-  "description": "Hermes Studio desktop distribution with bundled Python runtime and hermes-agent",
+  "description": "Ekko Studio desktop distribution with bundled Python runtime and hermes-agent",
   "homepage": "https://hermes-studio.ai",
   "author": {
-    "name": "Hermes Studio Contributors",
+    "name": "Ekko Studio Contributors",
     "email": "noreply@hermes-studio.local"
   },
   "license": "BSL-1.1",

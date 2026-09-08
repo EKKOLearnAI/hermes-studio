@@ -98,3 +98,6 @@ export {
   normalizePromptCompletionResponse,
   toPromptCompletionPayload,
 } from './model/providers/prompt-completion'
+
+export { UpdatePlanTool } from './tools/plan'
+export type { AgentPlanStep, AgentPlanUpdate, AgentTaskPlan } from './tools/plan'

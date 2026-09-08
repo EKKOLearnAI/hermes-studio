@@ -29,7 +29,7 @@ describe('coding Agent MCP runtime isolation', () => {
         healthy: { command: 'healthy-command' },
         unhealthy: { url: 'https://unhealthy.example/mcp' },
         disabled: { command: 'disabled-command', enabled: false },
-        'hermes-studio-api': {
+        'ekko-studio-api': {
           command: 'managed-command',
           env: { HERMES_WEB_UI_MANAGED_MCP: '1' },
         },
@@ -48,7 +48,7 @@ describe('coding Agent MCP runtime isolation', () => {
     expect(runtime.mcpServers.healthy).toEqual({ command: 'healthy-command' })
     expect(runtime.mcpServers.unhealthy).toBeUndefined()
     expect(runtime.mcpServers.disabled).toEqual({ command: 'disabled-command', enabled: false })
-    expect(runtime.mcpServers['hermes-studio-api']).toBeDefined()
+    expect(runtime.mcpServers['ekko-studio-api']).toBeDefined()
     expect(probe).toHaveBeenCalledTimes(2)
   })
 
@@ -69,7 +69,7 @@ describe('coding Agent MCP runtime isolation', () => {
       'command = "disabled-command"',
       'enabled = false',
       '',
-      '[mcp_servers.hermes-studio-api]',
+      '[mcp_servers.ekko-studio-api]',
       'command = "managed-command"',
       'env = { HERMES_WEB_UI_MANAGED_MCP = "1" }',
       '',
@@ -89,7 +89,7 @@ describe('coding Agent MCP runtime isolation', () => {
     expect(runtime).toContain('[mcp_servers."needs.auth"]\nurl = "https://unhealthy.example/mcp"\nenabled = false')
     expect(runtime).toContain('[mcp_servers."needs.auth".http_headers]\nAuthorization = "Bearer test-only"')
     expect(runtime).toContain('[mcp_servers.disabled]\ncommand = "disabled-command"\nenabled = false')
-    expect(runtime).toContain('[mcp_servers.hermes-studio-api]\ncommand = "managed-command"')
+    expect(runtime).toContain('[mcp_servers.ekko-studio-api]\ncommand = "managed-command"')
     expect(runtime).not.toBe(original)
     expect(probe).toHaveBeenCalledTimes(2)
   })
@@ -101,7 +101,7 @@ describe('coding Agent MCP runtime isolation', () => {
         healthy: { type: 'local', command: ['healthy-command', '--stdio'], environment: { TOKEN: 'test' } },
         unhealthy: { type: 'remote', url: 'https://unhealthy.example/mcp' },
         disabled: { type: 'local', command: ['disabled-command'], enabled: false },
-        'hermes-studio-api': { type: 'local', command: ['managed-command'], enabled: true },
+        'ekko-studio-api': { type: 'local', command: ['managed-command'], enabled: true },
       },
     }, null, 2)}\n`)
     const probe = vi.fn(async (config: Record<string, any>): Promise<CodingAgentMcpProbeResult> => (
@@ -118,7 +118,7 @@ describe('coding Agent MCP runtime isolation', () => {
     expect(runtime.mcp.healthy.command).toEqual(['healthy-command', '--stdio'])
     expect(runtime.mcp.unhealthy).toBeUndefined()
     expect(runtime.mcp.disabled).toBeDefined()
-    expect(runtime.mcp['hermes-studio-api']).toBeDefined()
+    expect(runtime.mcp['ekko-studio-api']).toBeDefined()
     expect(probe).toHaveBeenCalledTimes(2)
     expect(probe).toHaveBeenCalledWith(expect.objectContaining({
       command: 'healthy-command',

@@ -39,31 +39,31 @@ describe('Ekko MCP server context', () => {
 
     const servers = buildManagedEkkoMcpServers('work')
 
-    expect(servers['hermes-studio-api']).toEqual({
+    expect(servers['ekko-studio-api']).toEqual({
       command: process.execPath,
-      args: [join(process.cwd(), 'bin/hermes-studio-mcp.mjs'), 'api'],
+      args: [join(process.cwd(), 'bin/ekko-studio-mcp.mjs'), 'api'],
       env: {
         ELECTRON_RUN_AS_NODE: '1',
         HERMES_WEB_UI_URL: 'http://127.0.0.1:8648',
         HERMES_WEB_UI_HOME: '/Users/test/.hermes-web-ui',
         HERMES_WEBUI_STATE_DIR: '/Users/test/.hermes-web-ui',
         HERMES_WEB_UI_PROFILE: 'work',
-        HERMES_MCP_SERVER_NAME: 'hermes-studio-api',
+        HERMES_MCP_SERVER_NAME: 'ekko-studio-api',
         HERMES_MCP_TOOLSET: 'api',
         HERMES_WEB_UI_MANAGED_MCP: '1',
       },
       enabled: true,
     })
-    expect(servers['hermes-studio-browser']).toMatchObject({
-      args: [join(process.cwd(), 'bin/hermes-studio-mcp.mjs'), 'browser'],
+    expect(servers['ekko-studio-browser']).toMatchObject({
+      args: [join(process.cwd(), 'bin/ekko-studio-mcp.mjs'), 'browser'],
       env: { HERMES_WEB_UI_PROFILE: 'work', HERMES_MCP_TOOLSET: 'browser' },
     })
-    expect(servers['hermes-studio-devices']).toMatchObject({
-      args: [join(process.cwd(), 'bin/hermes-studio-mcp.mjs'), 'devices'],
+    expect(servers['ekko-studio-devices']).toMatchObject({
+      args: [join(process.cwd(), 'bin/ekko-studio-mcp.mjs'), 'devices'],
       env: { HERMES_WEB_UI_PROFILE: 'work', HERMES_MCP_TOOLSET: 'devices' },
     })
-    expect(servers['hermes-studio-use']).toMatchObject({
-      args: [join(process.cwd(), 'bin/hermes-studio-mcp.mjs'), 'use'],
+    expect(servers['ekko-studio-use']).toMatchObject({
+      args: [join(process.cwd(), 'bin/ekko-studio-mcp.mjs'), 'use'],
       env: { HERMES_WEB_UI_PROFILE: 'work', HERMES_MCP_TOOLSET: 'use' },
     })
   })
@@ -79,21 +79,21 @@ describe('Ekko MCP server context', () => {
       { profile: 'default', status: 'injected' },
       { profile: 'work', status: 'injected' },
     ]))
-    expect(setup.config.getMcpServer('hermes-studio-browser', 'work')).toMatchObject({
+    expect(setup.config.getMcpServer('ekko-studio-browser', 'work')).toMatchObject({
       enabled: true,
       env: { HERMES_WEB_UI_PROFILE: 'work' },
     })
 
     const servers = resolveEkkoMcpServers('default', {
-      'hermes-studio-api': { command: 'custom-api' },
+      'ekko-studio-api': { command: 'custom-api' },
       custom: { command: 'custom-mcp' },
     }, setup)
 
-    expect(servers?.['hermes-studio-api']).toEqual({ command: 'custom-api' })
+    expect(servers?.['ekko-studio-api']).toEqual({ command: 'custom-api' })
     expect(servers?.custom).toEqual({ command: 'custom-mcp' })
-    expect(servers?.['hermes-studio-browser']).toBeDefined()
-    expect(servers?.['hermes-studio-devices']).toBeDefined()
-    expect(servers?.['hermes-studio-use']).toBeDefined()
+    expect(servers?.['ekko-studio-browser']).toBeDefined()
+    expect(servers?.['ekko-studio-devices']).toBeDefined()
+    expect(servers?.['ekko-studio-use']).toBeDefined()
   })
 
   it('repairs persisted managed MCP launch environments without a bundled Node', async () => {
@@ -120,22 +120,46 @@ describe('Ekko MCP server context', () => {
     } = await import('../../packages/server/src/modules/ekko/services/mcp')
 
     injectManagedEkkoMcpServers(setup)
-    await setEkkoMcpServerEnabled('work', 'hermes-studio-api', false, setup)
+    await setEkkoMcpServerEnabled('work', 'ekko-studio-api', false, setup)
     configMock.port = 8748
     const reinjection = injectManagedEkkoMcpServers(setup)
 
     expect(reinjection.targets).toContainEqual({ profile: 'work', status: 'updated' })
-    expect(setup.config.getMcpServer('hermes-studio-api', 'work')).toMatchObject({
+    expect(setup.config.getMcpServer('ekko-studio-api', 'work')).toMatchObject({
       enabled: false,
       env: { HERMES_WEB_UI_URL: 'http://127.0.0.1:8748' },
     })
   })
 
+  it.each([false, true])('migrates Hermes split names and keeps disabled servers (new names already present: %s)', async (coexisting) => {
+    const { injectManagedEkkoMcpServers } = await import('../../packages/server/src/modules/ekko/services/mcp')
+    injectManagedEkkoMcpServers(setup)
+    const stale = structuredClone(setup.config.read())
+    for (const profile of Object.values(stale.mcp.profiles)) {
+      for (const [name, server] of Object.entries(profile.servers)) {
+        server.enabled = false
+        profile.servers[name.replace(/^ekko-/, 'hermes-')] = { ...server }
+        if (!coexisting) delete profile.servers[name]
+      }
+      profile.servers.custom = { command: 'user-command', enabled: true }
+    }
+    setup.config.replace(stale)
+    const result = injectManagedEkkoMcpServers(setup)
+    expect(result.targets.every(target => target.status === 'updated')).toBe(true)
+    const servers = setup.config.listMcpServers('work')
+    expect(Object.keys(servers).some(name => name.startsWith('hermes-studio-'))).toBe(false)
+    expect(servers['ekko-studio-use'].enabled).toBe(false)
+    expect(servers['ekko-studio-api'].args).toContain(join(process.cwd(), 'bin/ekko-studio-mcp.mjs'))
+    expect(servers.custom.command).toBe('user-command')
+    expect(Object.keys(servers)).toHaveLength(5)
+    expect(injectManagedEkkoMcpServers(setup).targets.every(target => target.status === 'unchanged')).toBe(true)
+  })
+
   it('keeps the browser toolset available for the Electron desktop runtime', async () => {
     process.env.HERMES_DESKTOP = 'true'
     const { buildManagedEkkoMcpServers } = await import('../../packages/server/src/modules/ekko/services/mcp')
-    const browser = buildManagedEkkoMcpServers('default')['hermes-studio-browser'] as any
-    expect(browser.args).toEqual([join(process.cwd(), 'bin/hermes-studio-mcp.mjs'), 'browser'])
+    const browser = buildManagedEkkoMcpServers('default')['ekko-studio-browser'] as any
+    expect(browser.args).toEqual([join(process.cwd(), 'bin/ekko-studio-mcp.mjs'), 'browser'])
     expect(browser.env.HERMES_MCP_TOOLSET).toBe('browser')
   })
 
@@ -159,6 +183,6 @@ describe('Ekko MCP server context', () => {
 
     process.env.HERMES_WEB_UI_ALLOW_TRANSIENT_MCP_AUTOINJECT = '1'
     injectManagedEkkoMcpServers(setup)
-    expect(resolveEkkoMcpServers('default', undefined, setup)?.['hermes-studio-api']).toBeDefined()
+    expect(resolveEkkoMcpServers('default', undefined, setup)?.['ekko-studio-api']).toBeDefined()
   })
 })

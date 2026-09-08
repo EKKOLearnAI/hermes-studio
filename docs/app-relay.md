@@ -1,6 +1,6 @@
 # App connection relay
 
-App Relay lets the mobile App reach a Hermes Studio instance without exposing
+App Relay lets the mobile App reach a Ekko Studio instance without exposing
 the Studio HTTP server to the Internet. It is independent from the MCU
 `/global-agent` connection.
 

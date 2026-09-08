@@ -7,6 +7,10 @@ interface ManagedMcpOverrides {
   configs?: Record<string, Record<string, Record<string, Record<string, unknown>>>>
 }
 
+function canonicalManagedName(name: string): string {
+  return name.replace(/^hermes-studio-(api|browser|devices|use)$/, 'ekko-studio-$1')
+}
+
 function overridesPath(): string {
   return join(getWebUiHome(), 'coding-agent', 'mcp-overrides.json')
 }
@@ -16,7 +20,23 @@ function readOverrides(): ManagedMcpOverrides {
   if (!existsSync(path)) return {}
   try {
     const parsed = JSON.parse(readFileSync(path, 'utf-8'))
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    for (const profiles of Object.values(parsed.disabled || {}) as Array<Record<string, string[]>>) {
+      for (const [profile, names] of Object.entries(profiles)) {
+        profiles[profile] = names.map(canonicalManagedName)
+      }
+    }
+    for (const profiles of Object.values(parsed.configs || {}) as Array<Record<string, Record<string, unknown>>>) {
+      for (const configs of Object.values(profiles)) {
+        for (const name of Object.keys(configs)) {
+          const canonical = canonicalManagedName(name)
+          if (canonical === name) continue
+          if (!Object.hasOwn(configs, canonical)) configs[canonical] = configs[name]
+          delete configs[name]
+        }
+      }
+    }
+    return parsed
   } catch {
     return {}
   }
@@ -39,7 +59,7 @@ export function getManagedMcpServerOverride(
   profile: string,
   name: string,
 ): Record<string, unknown> {
-  const value = readOverrides().configs?.[id]?.[profile]?.[name]
+  const value = readOverrides().configs?.[id]?.[profile]?.[canonicalManagedName(name)]
   return value && typeof value === 'object' && !Array.isArray(value) ? { ...value } : {}
 }
 
@@ -49,6 +69,7 @@ export function setManagedMcpServerOverride(
   name: string,
   config: Record<string, unknown>,
 ): void {
+  name = canonicalManagedName(name)
   const value = readOverrides()
   const configs = value.configs ||= {}
   const byAgent = configs[id] ||= {}
@@ -69,6 +90,7 @@ export function setManagedMcpServerEnabled(
   name: string,
   enabled: boolean,
 ): void {
+  name = canonicalManagedName(name)
   const value = readOverrides()
   const disabled = value.disabled ||= {}
   const byAgent = disabled[id] ||= {}

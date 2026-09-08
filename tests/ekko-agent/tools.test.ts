@@ -480,6 +480,7 @@ describe('ekko-agent tools', () => {
       'skill_list',
       'skill_view',
       'terminal_exec',
+      'update_plan',
       'view_image',
       'write_file',
     ])

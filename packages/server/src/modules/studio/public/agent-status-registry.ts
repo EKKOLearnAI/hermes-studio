@@ -64,7 +64,7 @@ const DEFAULTS: Record<AgentStatusId, Omit<AgentStatusRecord, 'updatedAt'>> = {
   'ekko-agent': {
     id: 'ekko-agent',
     name: 'Ekko',
-    provider: 'Hermes Studio',
+    provider: 'Ekko Studio',
     kind: 'built-in',
     installed: true,
     version: '',

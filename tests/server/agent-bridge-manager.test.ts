@@ -59,7 +59,7 @@ describe('agent bridge manager command resolution', () => {
     if (tempDir) rmSync(tempDir, { recursive: true, force: true })
   })
 
-  it('prefers the Hermes Studio bundled runtime env over a user-installed Hermes command', async () => {
+  it('prefers the Ekko Studio bundled runtime env over a user-installed Hermes command', async () => {
     const bundledRoot = join(tempDir, 'studio-runtime')
     const bundledPython = join(bundledRoot, 'bin', 'python3')
     const installedBin = join(tempDir, 'user-install', 'bin')
@@ -190,7 +190,7 @@ describe('agent bridge manager command resolution', () => {
     const env = buildAgentBridgeProcessEnv('ipc:///tmp/test.sock', '/tmp/hermes-home', '/tmp/hermes-agent')
 
     expect(env.HERMES_OPENROUTER_APP_REFERER).toBe('https://hermes-studio.ai')
-    expect(env.HERMES_OPENROUTER_APP_TITLE).toBe('Hermes Studio')
+    expect(env.HERMES_OPENROUTER_APP_TITLE).toBe('Ekko Studio')
     expect(env.HERMES_OPENROUTER_APP_CATEGORIES).toBe('cli-agent,personal-agent')
   })
 

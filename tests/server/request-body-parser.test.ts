@@ -14,7 +14,7 @@ afterEach(async () => {
 })
 
 describe('request body parser', () => {
-  it('parses the text/plain file body sent by the Hermes Studio curl command', async () => {
+  it('parses the text/plain file body sent by the Ekko Studio curl command', async () => {
     const app = new Koa()
     app.use(createRequestBodyParser())
     app.use(ctx => {

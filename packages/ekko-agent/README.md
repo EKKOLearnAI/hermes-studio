@@ -1,6 +1,6 @@
 # Ekko Agent
 
-Ekko Agent is a standalone TypeScript agent runtime used by Hermes Studio. It
+Ekko Agent is a standalone TypeScript agent runtime used by Ekko Studio. It
 owns the model loop, provider adapters, tools, memory, skills, delegation,
 approvals, and structured request logging.
 
@@ -184,7 +184,7 @@ threshold decision without starting a model call. A standalone Ekko host can
 instead implement and own its internal compression lifecycle. The global
 `compression` config provides a host policy surface for future integrations:
 `enabled`, `threshold`, `targetRatio`, `protectLastN`, and `protectFirstN`.
-Hermes Studio currently continues to read compression policy from its main
+Ekko Studio currently continues to read compression policy from its main
 configuration and does not apply this Ekko config section.
 
 Model context and memory evidence are separate inputs. A host that adds derived
@@ -250,7 +250,7 @@ do not fail startup. Every run receives current recovery details as temporary
 system context; this context is never captured as memory. Built-in repair tools
 own the source/target paths and migrations, run a deterministic self-check after
 repair, and clear an incident only when the matching revision passes. A repaired
-persistent database leaves the current run on ephemeral storage; Hermes Studio
+persistent database leaves the current run on ephemeral storage; Ekko Studio
 automatically closes that Setup after all active runs finish, so the next run
 opens the repaired persistent database. Standalone hosts must recreate their
 Setup at the same completed-run boundary.
@@ -286,7 +286,7 @@ Each Profile receives `1password`, `apple-notes`, `apple-reminders`,
 `xlsx`. Startup
 installs missing built-ins and updates only
 an unchanged Ekko-installed copy. A user-edited or pre-existing same-name Skill
-is never overwritten. `image-gen` and `grok-image-to-video` use Hermes Studio's
+is never overwritten. `image-gen` and `grok-image-to-video` use Ekko Studio's
 local media endpoints and require a matching configured Studio Profile. The
 document Skills bundle their Python helpers, references, tests, and license
 notices; optional Python, LibreOffice, Poppler, OCR, and model dependencies are

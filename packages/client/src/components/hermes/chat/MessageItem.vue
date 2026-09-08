@@ -16,6 +16,7 @@ import { useFilesStore } from "@/stores/hermes/files";
 import { useToolPanelStore } from "@/stores/hermes/tool-panel";
 import { useSettingsStore } from "@/stores/hermes/settings";
 import { chatSessionAgentAvatar, type ChatAgentAvatar } from "@/utils/chat-agent-avatar";
+import TaskPlanCard from './TaskPlanCard.vue';
 import ToolChangeCard from "./ToolChangeCard.vue";
 import {
   copyTextToClipboard,
@@ -897,7 +898,8 @@ onBeforeUnmount(() => {
     :class="[message.role, { highlight }]"
     :id="`message-${message.id}`"
   >
-    <template v-if="message.role === 'tool'">
+    <TaskPlanCard v-if="message.taskPlan" :plan="message.taskPlan" />
+    <template v-else-if="message.role === 'tool'">
       <div
         class="tool-line"
         :class="{ expandable: hasInlineToolDetails || isSubagentTool, 'subagent-entry': isSubagentTool }"

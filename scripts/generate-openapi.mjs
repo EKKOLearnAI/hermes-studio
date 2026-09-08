@@ -19,8 +19,8 @@ const packageJson = JSON.parse(readFileSync(join(rootDir, 'package.json'), 'utf-
 const openapi = {
   openapi: '3.0.3',
   info: {
-    title: 'Hermes Studio API',
-    description: 'Hermes Studio API — chat sessions, scheduled jobs, platform channels, model management, skills, memory, logs, file browser, group chat, and terminal.',
+    title: 'Ekko Studio API',
+    description: 'Ekko Studio API — chat sessions, scheduled jobs, platform channels, model management, skills, memory, logs, file browser, group chat, and terminal.',
     version: packageJson.version,
   },
   servers: [
@@ -883,7 +883,7 @@ openapi.paths['/api/studio/chat-run/runs'] = {
   post: {
     tags: ['Chat Run'],
     summary: 'Run chat and wait for completion',
-    description: 'Starts a Hermes Studio chat run through the chat-run transport and waits for a terminal result. Use this from HTTP/MCP callers that cannot consume Socket.IO streams.',
+    description: 'Starts a Ekko Studio chat run through the chat-run transport and waits for a terminal result. Use this from HTTP/MCP callers that cannot consume Socket.IO streams.',
     operationId: 'runChatOnce',
     security: [{ BearerAuth: [] }],
     requestBody: {
@@ -913,7 +913,7 @@ openapi.paths['/api/studio/chat-run/runs'] = {
               },
               profile: {
                 type: 'string',
-                description: 'Hermes Studio profile name. Defaults to the authenticated request profile or default.',
+                description: 'Ekko Studio profile name. Defaults to the authenticated request profile or default.',
               },
               provider: {
                 type: 'string',
