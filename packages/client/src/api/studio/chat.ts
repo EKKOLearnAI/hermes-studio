@@ -1,5 +1,7 @@
 import type { TaskPlanSnapshot } from '@/utils/task-plan'
 import { io, type Socket } from 'socket.io-client'
+import { disconnectBackgroundStatusObservers } from './background-status'
+import { onAuthInvalidated } from '../auth-invalidation'
 import { getBaseUrlValue, getApiKey } from '../client'
 import type { ChatCodingAgentId } from '../coding-agents'
 import type { ProviderApiMode } from './provider-api-mode'
@@ -812,58 +814,67 @@ export function connectChatRun(requestedProfile?: string | null, transport: Chat
     timeout: 30000,
   })
 
+  // Retained callbacks from a replaced/invalidated socket must not dispatch
+  // into handlers registered by a later authenticated session.
+  const ownerSocket = chatRunSocket
+  const on = (event: string, handler: (event: RunEvent) => void) => {
+    ownerSocket.on(event, (data: RunEvent) => {
+      if (chatRunSocket === ownerSocket) handler(data)
+    })
+  }
+
   // Register global listeners only once per socket connection
   if (!globalListenersRegistered) {
     // Message events
-    chatRunSocket.on('message.delta', globalMessageDeltaHandler)
-    chatRunSocket.on('message.interim', globalMessageInterimHandler)
-    chatRunSocket.on('reasoning.delta', globalReasoningDeltaHandler)
-    chatRunSocket.on('thinking.delta', globalThinkingDeltaHandler)
-    chatRunSocket.on('reasoning.available', globalReasoningAvailableHandler)
-    chatRunSocket.on('moa.reference', globalReasoningDeltaHandler)
-    chatRunSocket.on('moa.aggregating', globalAgentEventHandler)
+    on('message.delta', globalMessageDeltaHandler)
+    on('message.interim', globalMessageInterimHandler)
+    on('reasoning.delta', globalReasoningDeltaHandler)
+    on('thinking.delta', globalThinkingDeltaHandler)
+    on('reasoning.available', globalReasoningAvailableHandler)
+    on('moa.reference', globalReasoningDeltaHandler)
+    on('moa.aggregating', globalAgentEventHandler)
 
     // Tool events
-    chatRunSocket.on('tool.started', globalToolStartedHandler)
-    chatRunSocket.on('tool.completed', globalToolCompletedHandler)
-    chatRunSocket.on('tool.failed', globalToolCompletedHandler)
-    chatRunSocket.on('workspace.diff.completed', globalWorkspaceDiffCompletedHandler)
-    chatRunSocket.on('subagent.start', globalSubagentEventHandler)
-    chatRunSocket.on('subagent.tool', globalSubagentEventHandler)
-    chatRunSocket.on('subagent.progress', globalSubagentEventHandler)
-    chatRunSocket.on('subagent.text', globalSubagentEventHandler)
-    chatRunSocket.on('subagent.thinking', globalSubagentEventHandler)
-    chatRunSocket.on('subagent.complete', globalSubagentEventHandler)
-    chatRunSocket.on('delegation.updated', globalSubagentEventHandler)
+    on('tool.started', globalToolStartedHandler)
+    on('tool.completed', globalToolCompletedHandler)
+    on('tool.failed', globalToolCompletedHandler)
+    on('workspace.diff.completed', globalWorkspaceDiffCompletedHandler)
+    on('subagent.start', globalSubagentEventHandler)
+    on('subagent.tool', globalSubagentEventHandler)
+    on('subagent.progress', globalSubagentEventHandler)
+    on('subagent.text', globalSubagentEventHandler)
+    on('subagent.thinking', globalSubagentEventHandler)
+    on('subagent.complete', globalSubagentEventHandler)
+    on('delegation.updated', globalSubagentEventHandler)
 
     // Run lifecycle events
-    chatRunSocket.on('run.started', globalRunStartedHandler)
-    chatRunSocket.on('run.failed', globalRunFailedHandler)
-    chatRunSocket.on('run.completed', globalRunCompletedHandler)
-    chatRunSocket.on('run.queued', globalRunQueuedHandler)
-    chatRunSocket.on('run.queue_insertion.updated', globalQueueInsertionUpdatedHandler)
-    chatRunSocket.on('approval.requested', globalApprovalRequestedHandler)
-    chatRunSocket.on('approval.resolved', globalApprovalResolvedHandler)
-    chatRunSocket.on('run.peer_user_message', globalPeerUserMessageHandler)
-    chatRunSocket.on('clarify.requested', globalClarifyRequestedHandler)
-    chatRunSocket.on('clarify.resolved', globalClarifyResolvedHandler)
+    on('run.started', globalRunStartedHandler)
+    on('run.failed', globalRunFailedHandler)
+    on('run.completed', globalRunCompletedHandler)
+    on('run.queued', globalRunQueuedHandler)
+    on('run.queue_insertion.updated', globalQueueInsertionUpdatedHandler)
+    on('approval.requested', globalApprovalRequestedHandler)
+    on('approval.resolved', globalApprovalResolvedHandler)
+    on('run.peer_user_message', globalPeerUserMessageHandler)
+    on('clarify.requested', globalClarifyRequestedHandler)
+    on('clarify.resolved', globalClarifyResolvedHandler)
 
     // Compression events
-    chatRunSocket.on('compression.started', globalCompressionStartedHandler)
-    chatRunSocket.on('compression.completed', globalCompressionCompletedHandler)
-    chatRunSocket.on('abort.started', globalAbortStartedHandler)
-    chatRunSocket.on('abort.timeout', globalAbortTimeoutHandler)
-    chatRunSocket.on('abort.completed', globalAbortCompletedHandler)
+    on('compression.started', globalCompressionStartedHandler)
+    on('compression.completed', globalCompressionCompletedHandler)
+    on('abort.started', globalAbortStartedHandler)
+    on('abort.timeout', globalAbortTimeoutHandler)
+    on('abort.completed', globalAbortCompletedHandler)
 
-    // Usage events
-    chatRunSocket.on('usage.updated', globalUsageUpdatedHandler)
-    chatRunSocket.on('plan.updated', globalAgentEventHandler)
-    chatRunSocket.on('agent.event', globalAgentEventHandler)
-    chatRunSocket.on('run.reattach_failed', globalRunReattachFailedHandler)
-    chatRunSocket.on('session.command', globalSessionCommandHandler)
-    chatRunSocket.on('session.title.updated', globalSessionTitleUpdatedHandler)
-    chatRunSocket.on('session.workspace.updated', globalSessionWorkspaceUpdatedHandler)
-    chatRunSocket.on('session.settings.updated', globalSessionSettingsUpdatedHandler)
+    // Usage and task-plan events
+    on('usage.updated', globalUsageUpdatedHandler)
+    on('plan.updated', globalAgentEventHandler)
+    on('agent.event', globalAgentEventHandler)
+    on('run.reattach_failed', globalRunReattachFailedHandler)
+    on('session.command', globalSessionCommandHandler)
+    on('session.title.updated', globalSessionTitleUpdatedHandler)
+    on('session.workspace.updated', globalSessionWorkspaceUpdatedHandler)
+    on('session.settings.updated', globalSessionSettingsUpdatedHandler)
 
     globalListenersRegistered = true
   }
@@ -872,15 +883,19 @@ export function connectChatRun(requestedProfile?: string | null, transport: Chat
 }
 
 export function disconnectChatRun(): void {
+  disconnectBackgroundStatusObservers()
+  sessionEventHandlers.clear()
   if (chatRunSocket) {
+    chatRunSocket.removeAllListeners()
     chatRunSocket.disconnect()
     chatRunSocket = null
     chatRunSocketProfile = null
     chatRunSocketTransport = 'chat-run'
     globalListenersRegistered = false
-    sessionEventHandlers.clear()
   }
 }
+
+onAuthInvalidated(disconnectChatRun)
 
 function removeSocketListener(socket: Socket, event: string, handler: (...args: any[]) => void): void {
   const candidate = socket as Socket & {
