@@ -1385,7 +1385,7 @@ describe('session conversations controller', () => {
     }))
     localSetSessionArchivedMock.mockImplementation((id: string) => id !== 'failed-1')
 
-    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
     const ctx: any = {
       request: { body: { ids: ['session-1', 'global-1', 'failed-1'], archived: true } },
       state: {},
@@ -1409,7 +1409,7 @@ describe('session conversations controller', () => {
   })
 
   it('rejects malformed batch archive requests', async () => {
-    const mod = await import('../../packages/server/src/controllers/hermes/sessions')
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
     const ctx: any = { request: { body: { ids: [], archived: 'yes' } }, state: {}, body: null }
 
     await mod.batchArchive(ctx)

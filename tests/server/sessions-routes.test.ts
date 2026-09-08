@@ -405,8 +405,8 @@ describe('session routes', () => {
   })
 
   it('delegates batch session archive updates to the controller', async () => {
-    const { sessionRoutes } = await import('../../packages/server/src/routes/hermes/sessions')
-    const layer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/hermes/sessions/batch-archive')
+    const { sessionRoutes } = await import('../../packages/server/src/modules/studio/routes/sessions')
+    const layer = sessionRoutes.stack.find((entry: any) => entry.path === '/api/studio/sessions/batch-archive')
     const handler = layer.stack[0]
     const ctx: any = { request: { body: { ids: ['session-abc'], archived: true } }, state: {}, body: null }
 
