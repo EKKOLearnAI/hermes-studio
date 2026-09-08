@@ -55,16 +55,6 @@ vi.mock('naive-ui', async () => {
   const actual = await vi.importActual<any>('naive-ui')
   return {
     ...actual,
-    NSelect: defineComponent({
-      props: { value: { type: String, required: false, default: '' } },
-      emits: ['update:value'],
-      setup(_props, { emit }) {
-        return () => h('button', {
-          class: 'busy-mode-select',
-          onClick: () => emit('update:value', 'steer'),
-        })
-      },
-    }),
     NInputNumber: defineComponent({
       props: {
         value: { type: Number, required: false, default: null },
@@ -251,7 +241,7 @@ describe('DisplaySettings', () => {
       },
     })
 
-    await wrapper.get('.busy-mode-select').trigger('click')
+    await wrapper.findAll('select')[0].setValue('steer')
     await flushPromises()
 
     expect(mockSettingsStore.saveSection).toHaveBeenCalledWith('display', { busy_input_mode: 'steer' })
