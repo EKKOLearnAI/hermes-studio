@@ -9,7 +9,7 @@ describe('Windows installer shutdown hook', () => {
     expect(script).toContain('HERMES_STUDIO_INSTALL_DIR')
     expect(script).toContain('Get-HermesStudioRelatedProcess')
     expect(script).toContain('desktop-runtime\\active-version.json')
-    expect(script).toContain('hermes-studio-mcp|hermes_bridge\\.py|hermes_cli\\.main gateway run')
+    expect(script).toContain('(?:ekko|hermes)-studio-mcp|hermes_bridge\\.py|hermes_cli\\.main gateway run')
     expect(script).toContain('Stop-Process -Id')
   })
 
@@ -29,7 +29,9 @@ describe('Windows installer shutdown hook', () => {
     const forceDeadline = script.indexOf('$$forceDeadline = (Get-Date).AddSeconds(5)', gracefulDeadline)
     const forceStop = script.indexOf('Stop-Process -Id $$_.ProcessId -Force', gracefulDeadline)
 
-    expect(script).toContain(`nsExec::ExecToLog '"$INSTDIR\\Hermes Studio.exe" --quit'`)
+    expect(script).toContain(`nsExec::ExecToLog '"$INSTDIR\\\${EXE_NAME}" --quit'`)
+    expect(script).toContain('!insertmacro stopStudioExecutable "Ekko Studio.exe" ekko')
+    expect(script).toContain('!insertmacro stopStudioExecutable "Hermes Studio.exe" hermes')
     expect(gracefulDeadline).toBeGreaterThan(-1)
     expect(forceDeadline).toBeGreaterThan(gracefulDeadline)
     expect(forceStop).toBeGreaterThan(forceDeadline)

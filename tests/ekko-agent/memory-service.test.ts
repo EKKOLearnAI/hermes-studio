@@ -855,7 +855,7 @@ describe('MemoryService', () => {
         {
           operation: 'create',
           kind: 'project_context',
-          node: { valueJson: 'Hermes Studio', title: '项目', content: '用户在维护 Hermes Studio。' },
+          node: { valueJson: 'Ekko Studio', title: '项目', content: '用户在维护 Ekko Studio。' },
           reason: 'Missing the required itemKey.',
         },
       ],

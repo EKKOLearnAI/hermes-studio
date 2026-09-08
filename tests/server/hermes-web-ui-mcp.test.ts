@@ -138,7 +138,7 @@ describe('hermes-web-ui MCP server', () => {
     if (!address || typeof address === 'string') throw new Error('expected TCP server address')
 
     const responses = new Map<number, any>()
-    child = spawn(process.execPath, ['bin/hermes-studio-mcp.mjs'], {
+    child = spawn(process.execPath, ['bin/ekko-studio-mcp.mjs'], {
       cwd: process.cwd(),
       env: {
         ...process.env,
@@ -159,7 +159,7 @@ describe('hermes-web-ui MCP server', () => {
     writeRpc(child, 1, 'initialize', {})
     writeRpc(child, 2, 'tools/list')
     writeRpc(child, 3, 'tools/call', {
-      name: 'hermes_studio_api_request',
+      name: 'ekko_studio_api_request',
       arguments: {
         method: 'POST',
         path: '/api/test-public-requester',
@@ -169,7 +169,7 @@ describe('hermes-web-ui MCP server', () => {
     })
     writeRpc(child, 4, 'resources/list')
     writeRpc(child, 5, 'tools/call', {
-      name: 'hermes_studio_api_request',
+      name: 'ekko_studio_api_request',
       arguments: {
         method: 'POST',
         path: '/api/studio/chat-run/runs',
@@ -177,14 +177,14 @@ describe('hermes-web-ui MCP server', () => {
       },
     })
     writeRpc(child, 7, 'tools/call', {
-      name: 'hermes_studio_api_openapi_get',
+      name: 'ekko_studio_api_openapi_get',
       arguments: {
         path: '/api/studio/chat-run/runs',
         method: 'POST',
       },
     })
     writeRpc(child, 9, 'tools/call', {
-      name: 'hermes_studio_api_openapi_get',
+      name: 'ekko_studio_api_openapi_get',
       arguments: {},
     })
     writeRpc(child, 10, 'tools/call', {
@@ -198,17 +198,17 @@ describe('hermes-web-ui MCP server', () => {
 
     const initialized = await waitForRpc(responses, 1)
     expect(initialized.result.serverInfo).toMatchObject({
-      name: 'hermes-studio-mcp',
+      name: 'ekko-studio-mcp',
       version: pkg.version,
     })
     expect(initialized.result.capabilities).toEqual({ tools: {} })
-    expect(initialized.result.instructions).toContain('hermes_studio_api_openapi_get')
+    expect(initialized.result.instructions).toContain('ekko_studio_api_openapi_get')
 
     const list = await waitForRpc(responses, 2)
-    expectProviderSafeToolNames('hermes-studio-api', list.result.tools)
+    expectProviderSafeToolNames('ekko-studio-api', list.result.tools)
     expect(list.result.tools).toHaveLength(2)
-    expect(list.result.tools.some((tool: any) => tool.name === 'hermes_studio_api_request')).toBe(true)
-    expect(list.result.tools.some((tool: any) => tool.name === 'hermes_studio_lan_devices_list')).toBe(false)
+    expect(list.result.tools.some((tool: any) => tool.name === 'ekko_studio_api_request')).toBe(true)
+    expect(list.result.tools.some((tool: any) => tool.name === 'ekko_studio_lan_devices_list')).toBe(false)
 
     const response = await waitForRpc(responses, 3)
     const payload = JSON.parse(response.result.content[0].text)
@@ -220,12 +220,19 @@ describe('hermes-web-ui MCP server', () => {
       profile: 'research',
       authorization: 'Bearer profile-token',
     })
+    writeRpc(child, 11, 'tools/call', {
+      name: 'hermes_studio_api_request',
+      arguments: { method: 'POST', path: '/api/test-public-requester', body: { oldPrefix: true } },
+    })
+    const oldPrefix = JSON.parse((await waitForRpc(responses, 11)).result.content[0].text)
+    expect(oldPrefix.status).toBe(200)
+    expect(oldPrefix.body.body).toEqual({ oldPrefix: true })
     const legacyResponse = await waitForRpc(responses, 10)
     const legacyPayload = JSON.parse(legacyResponse.result.content[0].text)
     expect(legacyPayload.status).toBe(200)
     expect(legacyPayload.body.body).toEqual({ legacy: true })
     writeRpc(child, 8, 'tools/call', {
-      name: 'hermes_studio_api_openapi_get',
+      name: 'ekko_studio_api_openapi_get',
       arguments: {
         path: '/api/test-public-requester',
         method: 'POST',
@@ -288,7 +295,7 @@ describe('hermes-web-ui MCP server', () => {
     })
 
     writeRpc(child, 6, 'tools/call', {
-      name: 'hermes_studio_api_request',
+      name: 'ekko_studio_api_request',
       arguments: {
         method: 'POST',
         path: '/api/studio/chat-run/runs',
@@ -305,6 +312,7 @@ describe('hermes-web-ui MCP server', () => {
   })
 
   it.each([
+    'bin/ekko-studio-mcp.mjs',
     'bin/hermes-studio-mcp.mjs',
     'bin/hermes-web-ui-mcp.mjs',
   ])('reports the package version from the CLI entry %s', async (entry) => {
@@ -317,10 +325,42 @@ describe('hermes-web-ui MCP server', () => {
     const code = await new Promise<number | null>(resolve => child.on('close', resolve))
 
     expect(code).toBe(0)
-    expect(stdout.trim()).toBe(`hermes-studio-mcp v${pkg.version}`)
+    expect(stdout.trim()).toBe(`ekko-studio-mcp v${pkg.version}`)
   })
 
-  it('exposes the curated Hermes Studio use catalog through one compact category tool', async () => {
+  it('accepts previous tool names through the legacy entry without listing duplicate tools', async () => {
+    const responses = new Map<number, any>()
+    child = spawn(process.execPath, ['bin/hermes-studio-mcp.mjs', 'use'], {
+      cwd: process.cwd(), env: process.env,
+    })
+    let buffer = ''
+    child.stdout.on('data', chunk => {
+      buffer += String(chunk)
+      let newline: number
+      while ((newline = buffer.indexOf('\n')) !== -1) {
+        const line = buffer.slice(0, newline)
+        buffer = buffer.slice(newline + 1)
+        if (line.trim()) { const response = JSON.parse(line); responses.set(response.id, response) }
+      }
+    })
+    writeRpc(child, 1, 'tools/list')
+    expect((await waitForRpc(responses, 1)).result.tools.map((tool: any) => tool.name))
+      .toEqual(['ekko_studio_use_toolset'])
+    writeRpc(child, 2, 'tools/call', { name: 'hermes_studio_use_toolset', arguments: { action: 'list' } })
+    const catalog = JSON.parse((await waitForRpc(responses, 2)).result.content[0].text)
+    expect(catalog.operations.length).toBeGreaterThan(0)
+    expect(catalog.operations.every((tool: any) => tool.name.startsWith('ekko_studio_'))).toBe(true)
+    writeRpc(child, 3, 'tools/call', {
+      name: 'hermes_studio_use_toolset',
+      arguments: { action: 'describe', tool: 'hermes_studio_use_workflow_run_rerun_from_node' },
+    })
+    expect(JSON.parse((await waitForRpc(responses, 3)).result.content[0].text).name)
+      .toBe('ekko_studio_use_workflow_rerun_node')
+    writeRpc(child, 4, 'tools/call', { name: 'hermes_studio_api_request', arguments: { path: '/health' } })
+    expect((await waitForRpc(responses, 4)).result.isError).toBe(true)
+  })
+
+  it('exposes the curated Ekko Studio use catalog through one compact category tool', async () => {
     const server = createServer((req, res) => {
       res.setHeader('content-type', 'application/json')
       if (req.url === '/api/studio/chat-run/runs') {
@@ -535,7 +575,7 @@ describe('hermes-web-ui MCP server', () => {
     if (!address || typeof address === 'string') throw new Error('expected TCP server address')
 
     const responses = new Map<number, any>()
-    child = spawn(process.execPath, ['bin/hermes-studio-mcp.mjs', 'use'], {
+    child = spawn(process.execPath, ['bin/ekko-studio-mcp.mjs', 'use'], {
       cwd: process.cwd(),
       env: {
         ...process.env,
@@ -554,34 +594,34 @@ describe('hermes-web-ui MCP server', () => {
     writeRpc(child, 1, 'initialize', {})
     writeRpc(child, 2, 'tools/list')
     writeRpc(child, 32, 'tools/call', {
-      name: 'hermes_studio_use_toolset',
+      name: 'ekko_studio_use_toolset',
       arguments: { action: 'list' },
     })
     writeRpc(child, 33, 'tools/call', {
-      name: 'hermes_studio_use_toolset',
-      arguments: { action: 'describe', tool: 'hermes_studio_use_workflow_run_start' },
+      name: 'ekko_studio_use_toolset',
+      arguments: { action: 'describe', tool: 'ekko_studio_use_workflow_run_start' },
     })
     writeRpc(child, 34, 'tools/call', {
-      name: 'hermes_studio_use_toolset',
-      arguments: { action: 'describe', tool: 'hermes_studio_use_workflow_rerun_node' },
+      name: 'ekko_studio_use_toolset',
+      arguments: { action: 'describe', tool: 'ekko_studio_use_workflow_rerun_node' },
     })
     writeRpc(child, 37, 'tools/call', {
-      name: 'hermes_studio_use_toolset',
-      arguments: { action: 'describe', tool: 'hermes_studio_use_chat_run' },
+      name: 'ekko_studio_use_toolset',
+      arguments: { action: 'describe', tool: 'ekko_studio_use_chat_run' },
     })
     writeRpc(child, 35, 'tools/call', {
-      name: 'hermes_studio_use_toolset',
+      name: 'ekko_studio_use_toolset',
       arguments: {
         action: 'call',
-        tool: 'hermes_studio_use_sessions_count',
+        tool: 'ekko_studio_use_sessions_count',
         arguments: { source: 'coding_agent' },
       },
     })
     writeRpc(child, 136, 'tools/call', {
-      name: 'hermes_studio_use_toolset',
+      name: 'ekko_studio_use_toolset',
       arguments: {
         action: 'call',
-        tool: 'hermes_studio_use_mobile_location',
+        tool: 'ekko_studio_use_mobile_location',
         arguments: {
           session_id: 'session-1',
           purpose: 'Find nearby restaurants',
@@ -591,10 +631,10 @@ describe('hermes-web-ui MCP server', () => {
       },
     })
     writeRpc(child, 36, 'tools/call', {
-      name: 'hermes_studio_use_toolset',
+      name: 'ekko_studio_use_toolset',
       arguments: {
         action: 'call',
-        tool: 'hermes_studio_use_mobile_calendar',
+        tool: 'ekko_studio_use_mobile_calendar',
         arguments: {
           session_id: 'codex-runtime-thread-id',
           action: 'list',
@@ -604,59 +644,59 @@ describe('hermes-web-ui MCP server', () => {
       },
     })
     writeRpc(child, 3, 'tools/call', {
-      name: 'hermes_studio_use_chat_run',
+      name: 'ekko_studio_use_chat_run',
       arguments: { input: 'hello', session_id: 'session-1', include_events: true },
     })
     writeRpc(child, 4, 'tools/call', {
-      name: 'hermes_studio_use_sessions_list',
+      name: 'ekko_studio_use_sessions_list',
       arguments: { limit: 2, source: 'coding_agent' },
     })
     writeRpc(child, 5, 'tools/call', {
-      name: 'hermes_studio_use_session_get',
+      name: 'ekko_studio_use_session_get',
       arguments: { session_id: 'session-1' },
     })
     writeRpc(child, 10, 'tools/call', {
-      name: 'hermes_studio_use_sessions_count',
+      name: 'ekko_studio_use_sessions_count',
       arguments: { source: 'coding_agent' },
     })
     writeRpc(child, 6, 'tools/call', {
-      name: 'hermes_studio_use_session_messages',
+      name: 'ekko_studio_use_session_messages',
       arguments: { session_id: 'session-1', include_internal: true },
     })
     writeRpc(child, 11, 'tools/call', {
-      name: 'hermes_studio_use_session_rename',
+      name: 'ekko_studio_use_session_rename',
       arguments: { session_id: 'session-1', title: 'Renamed session' },
     })
     writeRpc(child, 12, 'tools/call', {
-      name: 'hermes_studio_use_session_delete',
+      name: 'ekko_studio_use_session_delete',
       arguments: { session_id: 'session-1' },
     })
     writeRpc(child, 7, 'tools/call', {
-      name: 'hermes_studio_use_profiles_list',
+      name: 'ekko_studio_use_profiles_list',
       arguments: {},
     })
     writeRpc(child, 8, 'tools/call', {
-      name: 'hermes_studio_use_available_models',
+      name: 'ekko_studio_use_available_models',
       arguments: {},
     })
     writeRpc(child, 30, 'tools/call', {
-      name: 'hermes_studio_use_available_models',
+      name: 'ekko_studio_use_available_models',
       arguments: { query: 'claude', limit_per_provider: 1 },
     })
     writeRpc(child, 31, 'tools/call', {
-      name: 'hermes_studio_use_available_models',
+      name: 'ekko_studio_use_available_models',
       arguments: { include_details: true },
     })
     writeRpc(child, 13, 'tools/call', {
-      name: 'hermes_studio_use_model_provider_get',
+      name: 'ekko_studio_use_model_provider_get',
       arguments: { model: 'gpt-5.1' },
     })
     writeRpc(child, 14, 'tools/call', {
-      name: 'hermes_studio_use_model_provider_get',
+      name: 'ekko_studio_use_model_provider_get',
       arguments: { model: 'Claude Sonnet' },
     })
     writeRpc(child, 15, 'tools/call', {
-      name: 'hermes_studio_use_provider_add',
+      name: 'ekko_studio_use_provider_add',
       arguments: {
         name: 'Edge Router',
         base_url: 'https://edge.example/v1',
@@ -667,7 +707,7 @@ describe('hermes-web-ui MCP server', () => {
       },
     })
     writeRpc(child, 16, 'tools/call', {
-      name: 'hermes_studio_use_provider_delete',
+      name: 'ekko_studio_use_provider_delete',
       arguments: {
         pool_key: 'custom:edge-router',
         source: 'providers',
@@ -675,27 +715,27 @@ describe('hermes-web-ui MCP server', () => {
       },
     })
     writeRpc(child, 17, 'tools/call', {
-      name: 'hermes_studio_use_usage_stats',
+      name: 'ekko_studio_use_usage_stats',
       arguments: { days: 7 },
     })
     writeRpc(child, 18, 'tools/call', {
-      name: 'hermes_studio_use_session_context',
+      name: 'ekko_studio_use_session_context',
       arguments: { session_id: 'session-1', turns: 1 },
     })
     writeRpc(child, 19, 'tools/call', {
-      name: 'hermes_studio_use_worker_status',
+      name: 'ekko_studio_use_worker_status',
       arguments: {},
     })
     writeRpc(child, 20, 'tools/call', {
-      name: 'hermes_studio_use_workflows_list',
+      name: 'ekko_studio_use_workflows_list',
       arguments: { profile: 'default' },
     })
     writeRpc(child, 21, 'tools/call', {
-      name: 'hermes_studio_use_workflow_get',
+      name: 'ekko_studio_use_workflow_get',
       arguments: { workflow_id: 'workflow-1' },
     })
     writeRpc(child, 22, 'tools/call', {
-      name: 'hermes_studio_use_workflow_create',
+      name: 'ekko_studio_use_workflow_create',
       arguments: {
         name: 'Created workflow',
         profile: 'default',
@@ -706,31 +746,31 @@ describe('hermes-web-ui MCP server', () => {
       },
     })
     writeRpc(child, 23, 'tools/call', {
-      name: 'hermes_studio_use_workflow_update',
+      name: 'ekko_studio_use_workflow_update',
       arguments: { workflow_id: 'workflow-1', name: 'Updated workflow', nodes: [{ id: 'node-2' }] },
     })
     writeRpc(child, 24, 'tools/call', {
-      name: 'hermes_studio_use_workflow_runs_list',
+      name: 'ekko_studio_use_workflow_runs_list',
       arguments: { workflow_id: 'workflow-1', limit: 5 },
     })
     writeRpc(child, 25, 'tools/call', {
-      name: 'hermes_studio_use_workflow_run_start',
+      name: 'ekko_studio_use_workflow_run_start',
       arguments: { workflow_id: 'workflow-1', start_node_ids: ['node-1'], input: 'go', timeout_ms: 1000 },
     })
     writeRpc(child, 26, 'tools/call', {
-      name: 'hermes_studio_use_workflow_run_stop',
+      name: 'ekko_studio_use_workflow_run_stop',
       arguments: { workflow_id: 'workflow-1', run_id: 'run-1' },
     })
     writeRpc(child, 27, 'tools/call', {
-      name: 'hermes_studio_use_workflow_run_rerun_from_node',
+      name: 'ekko_studio_use_workflow_run_rerun_from_node',
       arguments: { workflow_id: 'workflow-1', run_id: 'run-1', node_id: 'node-2', preserve_start_node: true, timeout_ms: 2000 },
     })
     writeRpc(child, 28, 'tools/call', {
-      name: 'hermes_studio_use_workflow_run_delete',
+      name: 'ekko_studio_use_workflow_run_delete',
       arguments: { workflow_id: 'workflow-1', run_id: 'run-1' },
     })
     writeRpc(child, 29, 'tools/call', {
-      name: 'hermes_studio_use_workflow_delete',
+      name: 'ekko_studio_use_workflow_delete',
       arguments: { workflow_id: 'workflow-1' },
     })
 
@@ -739,28 +779,28 @@ describe('hermes-web-ui MCP server', () => {
     expect(initialized.result.instructions).toContain('session management')
 
     const list = await waitForRpc(responses, 2)
-    expectProviderSafeToolNames('hermes-studio-use', list.result.tools)
+    expectProviderSafeToolNames('ekko-studio-use', list.result.tools)
     expect(list.result.tools).toHaveLength(1)
-    expect(list.result.tools[0].name).toBe('hermes_studio_use_toolset')
+    expect(list.result.tools[0].name).toBe('ekko_studio_use_toolset')
     expect(list.result.tools[0].description).toContain('workflow run lifecycle')
     expect(list.result.tools[0].description).toContain('internal delegation')
 
     const catalog = JSON.parse((await waitForRpc(responses, 32)).result.content[0].text)
     expect(catalog).toMatchObject({ toolset: 'use', operation_count: 28 })
     expect(catalog.operations.map((tool: any) => tool.name)).toEqual(expect.arrayContaining([
-      'hermes_studio_use_chat_run',
-      'hermes_studio_use_sessions_count',
-      'hermes_studio_use_usage_stats',
-      'hermes_studio_use_session_context',
-      'hermes_studio_use_provider_add',
-      'hermes_studio_use_worker_status',
-      'hermes_studio_use_mobile_location',
-      'hermes_studio_use_mobile_calendar',
-      'hermes_studio_use_mobile_reminders',
-      'hermes_studio_use_workflows_list',
-      'hermes_studio_use_workflow_rerun_node',
+      'ekko_studio_use_chat_run',
+      'ekko_studio_use_sessions_count',
+      'ekko_studio_use_usage_stats',
+      'ekko_studio_use_session_context',
+      'ekko_studio_use_provider_add',
+      'ekko_studio_use_worker_status',
+      'ekko_studio_use_mobile_location',
+      'ekko_studio_use_mobile_calendar',
+      'ekko_studio_use_mobile_reminders',
+      'ekko_studio_use_workflows_list',
+      'ekko_studio_use_workflow_rerun_node',
     ]))
-    expect(catalog.operations.some((tool: any) => tool.name === 'hermes_studio_use_workflow_run_rerun_from_node')).toBe(false)
+    expect(catalog.operations.some((tool: any) => tool.name === 'ekko_studio_use_workflow_run_rerun_from_node')).toBe(false)
     const workflowRunStartTool = JSON.parse((await waitForRpc(responses, 33)).result.content[0].text)
     const workflowRerunTool = JSON.parse((await waitForRpc(responses, 34)).result.content[0].text)
     const chatRunTool = JSON.parse((await waitForRpc(responses, 37)).result.content[0].text)
@@ -954,7 +994,7 @@ describe('hermes-web-ui MCP server', () => {
     if (!address || typeof address === 'string') throw new Error('expected TCP server address')
 
     const responses = new Map<number, any>()
-    child = spawn(process.execPath, ['bin/hermes-studio-mcp.mjs', 'devices'], {
+    child = spawn(process.execPath, ['bin/ekko-studio-mcp.mjs', 'devices'], {
       cwd: process.cwd(),
       env: {
         ...process.env,
@@ -972,7 +1012,7 @@ describe('hermes-web-ui MCP server', () => {
     writeRpc(child, 1, 'initialize', {})
     writeRpc(child, 2, 'tools/list')
     writeRpc(child, 3, 'tools/call', {
-      name: 'hermes_studio_api_request',
+      name: 'ekko_studio_api_request',
       arguments: { path: '/health' },
     })
     writeRpc(child, 4, 'tools/call', {
@@ -980,14 +1020,14 @@ describe('hermes-web-ui MCP server', () => {
       arguments: {},
     })
     writeRpc(child, 5, 'tools/call', {
-      name: 'hermes_studio_devices_toolset',
+      name: 'ekko_studio_devices_toolset',
       arguments: { action: 'list' },
     })
     writeRpc(child, 6, 'tools/call', {
-      name: 'hermes_studio_devices_toolset',
+      name: 'ekko_studio_devices_toolset',
       arguments: {
         action: 'call',
-        tool: 'hermes_studio_lan_devices_list',
+        tool: 'ekko_studio_lan_devices_list',
         arguments: {},
       },
     })
@@ -997,20 +1037,20 @@ describe('hermes-web-ui MCP server', () => {
     expect(initialized.result.instructions).toContain('interactive terminal lifecycle')
 
     const list = await waitForRpc(responses, 2)
-    expectProviderSafeToolNames('hermes-studio-devices', list.result.tools)
+    expectProviderSafeToolNames('ekko-studio-devices', list.result.tools)
     expect(list.result.tools).toHaveLength(1)
-    expect(list.result.tools[0].name).toBe('hermes_studio_devices_toolset')
+    expect(list.result.tools[0].name).toBe('ekko_studio_devices_toolset')
     expect(list.result.tools[0].description).toContain('remote file upload/download')
 
     const catalog = JSON.parse((await waitForRpc(responses, 5)).result.content[0].text)
     expect(catalog).toMatchObject({ toolset: 'devices', operation_count: 14 })
     expect(catalog.operations.map((tool: any) => tool.name)).toEqual(expect.arrayContaining([
-      'hermes_studio_lan_devices_list',
-      'hermes_studio_lan_command_exec',
-      'hermes_studio_lan_terminal_create',
-      'hermes_studio_lan_terminal_read',
-      'hermes_studio_lan_file_download',
-      'hermes_studio_lan_file_upload',
+      'ekko_studio_lan_devices_list',
+      'ekko_studio_lan_command_exec',
+      'ekko_studio_lan_terminal_create',
+      'ekko_studio_lan_terminal_read',
+      'ekko_studio_lan_file_download',
+      'ekko_studio_lan_file_upload',
     ]))
 
     const hiddenCall = await waitForRpc(responses, 3)

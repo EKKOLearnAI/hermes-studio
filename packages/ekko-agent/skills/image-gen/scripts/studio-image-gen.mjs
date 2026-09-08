@@ -105,7 +105,7 @@ const timeoutMs = Math.min(Math.floor(requestedTimeout), 1_800_000)
 
 const token = firstToken()
 if (!token) {
-  fail('Missing Hermes Studio server token. Check AUTH_TOKEN, HERMES_WEB_UI_HOME, HERMES_WEBUI_STATE_DIR, or ~/.hermes-web-ui/.token.')
+  fail('Missing Ekko Studio server token. Check AUTH_TOKEN, HERMES_WEB_UI_HOME, HERMES_WEBUI_STATE_DIR, or ~/.hermes-web-ui/.token.')
 }
 const baseUrl = String(
   process.env.HERMES_WEB_UI_URL || `http://127.0.0.1:${process.env.PORT || '8648'}`,
@@ -146,7 +146,7 @@ try {
   })
 } catch (error) {
   clearTimeout(timer)
-  fail(error?.name === 'AbortError' ? 'Hermes Studio image request timed out.' : `Hermes Studio connection failed: ${error?.message || error}`)
+  fail(error?.name === 'AbortError' ? 'Ekko Studio image request timed out.' : `Ekko Studio connection failed: ${error?.message || error}`)
 }
 clearTimeout(timer)
 
@@ -158,7 +158,7 @@ try {
   result = { error: text || response.statusText }
 }
 if (!response.ok) {
-  fail(String(result.error || `Hermes Studio returned HTTP ${response.status}.`), {
+  fail(String(result.error || `Ekko Studio returned HTTP ${response.status}.`), {
     status: response.status,
     code: result.code,
   })
@@ -166,6 +166,6 @@ if (!response.ok) {
 const outputPaths = Array.isArray(result.output_paths) ? result.output_paths.map(String) : []
 const missingOutputs = outputPaths.filter(outputPath => !existsSync(outputPath))
 if (outputPaths.length === 0 || missingOutputs.length > 0) {
-  fail('Hermes Studio reported success without verifiable image output.', { output_paths: outputPaths, missing_outputs: missingOutputs })
+  fail('Ekko Studio reported success without verifiable image output.', { output_paths: outputPaths, missing_outputs: missingOutputs })
 }
 console.log(JSON.stringify({ ...result, output_paths: outputPaths, output_verified: true }, null, 2))

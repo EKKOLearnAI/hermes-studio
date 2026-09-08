@@ -89,7 +89,7 @@ describe('bridge terminal error detection', () => {
       result: {
         completed: true,
         final_response: [
-          '# Hermes Studio 项目整体理解',
+          '# Ekko Studio 项目整体理解',
           '服务启动流程：',
           '- 创建数据目录',
           '- 初始化登录限流',

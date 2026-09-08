@@ -8,7 +8,7 @@ export interface ResponsesAdapterTarget {
   baseUrl?: string
 }
 
-const HERMES_STUDIO_NAMESPACE = 'mcp__hermes_studio'
+const HERMES_STUDIO_NAMESPACE = 'mcp__ekko_studio'
 const TOOL_SEARCH_NAME = 'tool_search'
 const RESPONSES_TOOL_OUTPUT_FORWARD_LIMIT = 32 * 1024
 const RESPONSES_TOOL_OUTPUT_HEAD_BYTES = 24 * 1024
@@ -16,32 +16,32 @@ const RESPONSES_TOOL_OUTPUT_TAIL_BYTES = 7 * 1024
 
 const HERMES_STUDIO_MCP_TOOLS = [
   {
-    name: 'hermes_studio_lan_devices_list',
+    name: 'ekko_studio_lan_devices_list',
     description: 'List known LAN and remote devices from Hermes Web UI, including pairing and online status.',
     inputSchema: inputSchema(),
   },
   {
-    name: 'hermes_studio_lan_devices_scan',
+    name: 'ekko_studio_lan_devices_scan',
     description: 'Refresh LAN device discovery cache and return known devices with pairing and online status.',
     inputSchema: inputSchema(),
   },
   {
-    name: 'hermes_studio_lan_peer_connect',
+    name: 'ekko_studio_lan_peer_connect',
     description: 'Connect to a paired LAN device by device id.',
     inputSchema: inputSchema({ device_id: { type: 'string' } }, ['device_id']),
   },
   {
-    name: 'hermes_studio_lan_peer_connections',
+    name: 'ekko_studio_lan_peer_connections',
     description: 'List active LAN peer socket connections.',
     inputSchema: inputSchema(),
   },
   {
-    name: 'hermes_studio_lan_peer_disconnect',
+    name: 'ekko_studio_lan_peer_disconnect',
     description: 'Disconnect an active LAN peer socket connection.',
     inputSchema: inputSchema({ connection_id: { type: 'string' } }, ['connection_id']),
   },
   {
-    name: 'hermes_studio_lan_terminal_create',
+    name: 'ekko_studio_lan_terminal_create',
     description: 'Create an interactive terminal on a connected LAN peer.',
     inputSchema: inputSchema({
       connection_id: { type: 'string' },
@@ -51,12 +51,12 @@ const HERMES_STUDIO_MCP_TOOLS = [
     }, ['connection_id']),
   },
   {
-    name: 'hermes_studio_lan_terminal_list',
+    name: 'ekko_studio_lan_terminal_list',
     description: 'List interactive terminals tracked for a connected LAN peer, including IDs that can be read or closed.',
     inputSchema: inputSchema({ connection_id: { type: 'string' } }, ['connection_id']),
   },
   {
-    name: 'hermes_studio_lan_terminal_input',
+    name: 'ekko_studio_lan_terminal_input',
     description: 'Write input to an interactive terminal on a connected LAN peer.',
     inputSchema: inputSchema({
       connection_id: { type: 'string' },
@@ -65,7 +65,7 @@ const HERMES_STUDIO_MCP_TOOLS = [
     }, ['connection_id', 'terminal_id', 'data']),
   },
   {
-    name: 'hermes_studio_lan_terminal_read',
+    name: 'ekko_studio_lan_terminal_read',
     description: 'Read buffered terminal output from an interactive terminal.',
     inputSchema: inputSchema({
       connection_id: { type: 'string' },
@@ -73,7 +73,7 @@ const HERMES_STUDIO_MCP_TOOLS = [
     }, ['connection_id', 'terminal_id']),
   },
   {
-    name: 'hermes_studio_lan_terminal_resize',
+    name: 'ekko_studio_lan_terminal_resize',
     description: 'Resize an interactive terminal on a connected LAN peer.',
     inputSchema: inputSchema({
       connection_id: { type: 'string' },
@@ -83,7 +83,7 @@ const HERMES_STUDIO_MCP_TOOLS = [
     }, ['connection_id', 'terminal_id', 'cols', 'rows']),
   },
   {
-    name: 'hermes_studio_lan_terminal_close',
+    name: 'ekko_studio_lan_terminal_close',
     description: 'Close an interactive terminal on a connected LAN peer.',
     inputSchema: inputSchema({
       connection_id: { type: 'string' },
@@ -91,7 +91,7 @@ const HERMES_STUDIO_MCP_TOOLS = [
     }, ['connection_id', 'terminal_id']),
   },
   {
-    name: 'hermes_studio_lan_command_exec',
+    name: 'ekko_studio_lan_command_exec',
     description: 'Run a command on a connected LAN peer using command plus args, without shell string execution.',
     inputSchema: inputSchema({
       connection_id: { type: 'string' },
@@ -102,7 +102,7 @@ const HERMES_STUDIO_MCP_TOOLS = [
     }, ['connection_id', 'command']),
   },
   {
-    name: 'hermes_studio_lan_file_download',
+    name: 'ekko_studio_lan_file_download',
     description: 'Download a file from a connected LAN peer remote path to a local path on this machine.',
     inputSchema: inputSchema({
       connection_id: { type: 'string' },
@@ -112,7 +112,7 @@ const HERMES_STUDIO_MCP_TOOLS = [
     }, ['connection_id', 'remote_path', 'local_path']),
   },
   {
-    name: 'hermes_studio_lan_file_upload',
+    name: 'ekko_studio_lan_file_upload',
     description: 'Upload a local file path from this machine to a connected LAN peer remote path.',
     inputSchema: inputSchema({
       connection_id: { type: 'string' },
@@ -123,11 +123,15 @@ const HERMES_STUDIO_MCP_TOOLS = [
   },
 ]
 
-const HERMES_STUDIO_SPLIT_MCP_TOOLS = new Map([
-  ['mcp__hermes_studio_api', [
+const HERMES_STUDIO_SPLIT_MCP_TOOLS = new Map<string, Array<{
+  name: string
+  description: string
+  inputSchema: Record<string, unknown>
+}>>([
+  ['mcp__ekko_studio_api', [
     {
-      name: 'hermes_studio_api_openapi_get',
-      description: 'Return the compact Hermes Studio API module index or filtered endpoint documentation. Call without filters first, then filter by tag, path, or method.',
+      name: 'ekko_studio_api_openapi_get',
+      description: 'Return the compact Ekko Studio API module index or filtered endpoint documentation. Call without filters first, then filter by tag, path, or method.',
       inputSchema: inputSchema({
         path: { type: 'string', description: 'Optional exact endpoint path filter.' },
         method: { type: 'string', enum: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'] },
@@ -136,8 +140,8 @@ const HERMES_STUDIO_SPLIT_MCP_TOOLS = new Map([
       }),
     },
     {
-      name: 'hermes_studio_api_request',
-      description: 'Call a documented Hermes Studio API endpoint using its relative path and structured JSON fields.',
+      name: 'ekko_studio_api_request',
+      description: 'Call a documented Ekko Studio API endpoint using its relative path and structured JSON fields.',
       inputSchema: inputSchema({
         method: { type: 'string', enum: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'] },
         path: { type: 'string', description: 'Relative /api/... or /health path. Full URLs are rejected.' },
@@ -150,19 +154,30 @@ const HERMES_STUDIO_SPLIT_MCP_TOOLS = new Map([
       }, ['path']),
     },
   ]],
-  ['mcp__hermes_studio_browser', [categoryToolset(
-    'hermes_studio_browser_toolset',
-    'Discover and invoke Hermes Studio Desktop browser operations. Covers tabs and leases, navigation, accessibility snapshots, interaction, screenshots, and console logs.',
+  ['mcp__ekko_studio_browser', [categoryToolset(
+    'ekko_studio_browser_toolset',
+    'Discover and invoke Ekko Studio Desktop browser operations. Covers tabs and leases, navigation, accessibility snapshots, interaction, screenshots, and console logs.',
   )]],
-  ['mcp__hermes_studio_devices', [categoryToolset(
-    'hermes_studio_devices_toolset',
-    'Discover and invoke Hermes Studio LAN and remote-device operations. Covers discovery, peer connections, terminals, structured commands, and file transfer.',
+  ['mcp__ekko_studio_devices', [categoryToolset(
+    'ekko_studio_devices_toolset',
+    'Discover and invoke Ekko Studio LAN and remote-device operations. Covers discovery, peer connections, terminals, structured commands, and file transfer.',
   )]],
-  ['mcp__hermes_studio_use', [categoryToolset(
-    'hermes_studio_use_toolset',
-    'Discover and invoke high-level Hermes Studio operations for explicit user-requested runs, sessions, usage, profiles, models, providers, workers, and workflows.',
+  ['mcp__ekko_studio_use', [categoryToolset(
+    'ekko_studio_use_toolset',
+    'Discover and invoke high-level Ekko Studio operations for explicit user-requested runs, sessions, usage, profiles, models, providers, workers, and workflows.',
   )]],
 ])
+
+// Historical conversations may still refer to the previous MCP namespaces.
+HERMES_STUDIO_SPLIT_MCP_TOOLS.set('mcp__hermes_studio', HERMES_STUDIO_MCP_TOOLS.map(tool => ({
+  ...tool, name: tool.name.replace(/^ekko_studio_/, 'hermes_studio_'),
+})))
+for (const [namespace, tools] of [...HERMES_STUDIO_SPLIT_MCP_TOOLS]) {
+  if (!namespace.startsWith('mcp__ekko_studio_')) continue
+  HERMES_STUDIO_SPLIT_MCP_TOOLS.set(namespace.replace('mcp__ekko_', 'mcp__hermes_'), tools.map(tool => ({
+    ...tool, name: tool.name.replace(/^ekko_studio_/, 'hermes_studio_'),
+  })))
+}
 
 const HERMES_STUDIO_MCP_TOOL_NAMESPACES = new Map<string, string>(
   HERMES_STUDIO_MCP_TOOLS.map(tool => [tool.name, HERMES_STUDIO_NAMESPACE]),

@@ -93,7 +93,7 @@ describe('ekko-agent browser tools', () => {
   it('runs the Windows agent-browser .cmd shim through cmd.exe', async () => {
     Object.defineProperty(process, 'platform', { value: 'win32' })
     process.env.ComSpec = 'C:\\Windows\\System32\\cmd.exe'
-    process.env.AGENT_BROWSER_BIN = 'C:\\Program Files\\Hermes Studio\\agent-browser.cmd'
+    process.env.AGENT_BROWSER_BIN = 'C:\\Program Files\\Ekko Studio\\agent-browser.cmd'
     mockBrowserSpawn({ success: true, data: { url: 'https://www.baidu.com/', title: 'Baidu' } })
     mockBrowserSpawn({ success: true, data: { snapshot: 'link "News" [ref=@e1]', refs: { '@e1': {} } } })
 

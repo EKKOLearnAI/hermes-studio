@@ -1,5 +1,5 @@
 appId: com.hermeswebui.studio
-productName: Hermes Studio
+productName: Ekko Studio
 copyright: Copyright © 2026
 
 directories:
@@ -87,7 +87,7 @@ mac:
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.inherit.plist
   extendInfo:
-    NSMicrophoneUsageDescription: "Hermes Studio uses the microphone for voice conversations and speech transcription."
+    NSMicrophoneUsageDescription: "Ekko Studio uses the microphone for voice conversations and speech transcription."
   artifactName: "Hermes.Studio-${version}-${arch}.${ext}"
 
 win:

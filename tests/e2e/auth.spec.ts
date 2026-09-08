@@ -7,7 +7,7 @@ test('redirects protected routes to the login screen without a token', async ({ 
   await page.goto('/#/hermes/jobs')
 
   await expect(page).toHaveURL(/#\/\?redirect=\/hermes\/jobs$/)
-  await expect(page.getByRole('heading', { name: 'Hermes Studio' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Ekko Studio' })).toBeVisible()
   await expect(page.getByPlaceholder('Username')).toBeVisible()
   await expect(page.getByPlaceholder('Password')).toBeVisible()
   expect(api.unexpectedRequests).toEqual([])

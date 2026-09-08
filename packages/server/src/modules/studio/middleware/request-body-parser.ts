@@ -3,7 +3,7 @@ import type { Context, Next } from 'koa'
 
 /**
  * Parse every request shape used by the local APIs. `text` is required by the
- * Hermes Studio command-provider bridge, which posts the TTS input file as
+ * Ekko Studio command-provider bridge, which posts the TTS input file as
  * `text/plain`.
  */
 export function createRequestBodyParser() {

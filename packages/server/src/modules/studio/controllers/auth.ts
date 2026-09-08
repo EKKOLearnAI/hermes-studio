@@ -397,7 +397,7 @@ async function localRelayMachineInfo(url: string) {
 /**
  * POST /api/auth/mcu-login
  * Authenticate with the existing username/password login for an MCU/device.
- * When remote relay is requested or a legacy relay URL is provided, connect this Hermes Studio instance to it.
+ * When remote relay is requested or a legacy relay URL is provided, connect this Ekko Studio instance to it.
  * Body: { token, id, account, password, url? }.
  */
 export async function microcontrollerLogin(ctx: Context) {

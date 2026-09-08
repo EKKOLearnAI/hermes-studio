@@ -88,7 +88,7 @@ describe('Ekko configuration API', () => {
     await fetchEkkoMcpServers()
     await createEkkoMcpServer('local-tools', config)
     await updateEkkoMcpServer('local-tools', config)
-    await setEkkoMcpServerEnabled('hermes-studio-api', false)
+    await setEkkoMcpServerEnabled('ekko-studio-api', false)
     await testEkkoMcpServer('local-tools')
     await deleteEkkoMcpServer('local-tools')
 
@@ -96,12 +96,12 @@ describe('Ekko configuration API', () => {
       '/api/ekko/mcp/servers',
       '/api/ekko/mcp/servers',
       '/api/ekko/mcp/servers/local-tools',
-      '/api/ekko/mcp/servers/hermes-studio-api',
+      '/api/ekko/mcp/servers/ekko-studio-api',
       '/api/ekko/mcp/servers/local-tools/test',
       '/api/ekko/mcp/servers/local-tools',
     ])
     expect(request.mock.calls[3]).toEqual([
-      '/api/ekko/mcp/servers/hermes-studio-api',
+      '/api/ekko/mcp/servers/ekko-studio-api',
       { method: 'PATCH', body: JSON.stringify({ enabled: false }) },
     ])
   })

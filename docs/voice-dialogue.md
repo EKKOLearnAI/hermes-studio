@@ -22,7 +22,7 @@ Hermes Web UI now supports turn-based voice input inside the existing chat UI. T
 Voice has two control planes:
 
 - **Hermes native** keeps using provider blocks already present in the profile's `config.yaml`, including local providers such as Local STT, Piper, NeuTTS, and KittenTTS.
-- **Hermes Studio** keeps upstream settings and secrets in Web UI storage. Hermes sees one command provider named `hermes-studio`, regardless of which upstream Web UI provider is active.
+- **Ekko Studio** keeps upstream settings and secrets in Web UI storage. Hermes sees one command provider named `hermes-studio`, regardless of which upstream Web UI provider is active.
 
 Selecting a Web UI-managed provider writes only the `hermes-studio` command provider into the active profile. Existing native provider blocks are merged and preserved. The command calls a profile-scoped loopback URL:
 

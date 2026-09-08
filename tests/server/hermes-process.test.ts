@@ -36,12 +36,12 @@ afterEach(() => {
 describe('Hermes process invocation', () => {
   it('bypasses the uv hermes.exe trampoline on Windows packaged installs', async () => {
     setPlatform('win32')
-    process.env.HERMES_BIN = 'C:\\Users\\me\\AppData\\Local\\Programs\\Hermes Studio\\resources\\python\\Scripts\\hermes.exe'
-    process.env.HERMES_AGENT_CLI_PYTHON = 'C:\\Users\\me\\AppData\\Local\\Programs\\Hermes Studio\\resources\\python\\python.exe'
+    process.env.HERMES_BIN = 'C:\\Users\\me\\AppData\\Local\\Programs\\Ekko Studio\\resources\\python\\Scripts\\hermes.exe'
+    process.env.HERMES_AGENT_CLI_PYTHON = 'C:\\Users\\me\\AppData\\Local\\Programs\\Ekko Studio\\resources\\python\\python.exe'
     const { execHermesWithBin } = await import('../../packages/server/src/modules/hermes/services/runtime/process')
 
     const result = await execHermesWithBin(
-      'C:\\Users\\me\\AppData\\Local\\Programs\\Hermes Studio\\resources\\python\\Scripts\\hermes.exe',
+      'C:\\Users\\me\\AppData\\Local\\Programs\\Ekko Studio\\resources\\python\\Scripts\\hermes.exe',
       ['kanban', '--board', 'default', 'create', 'demo', '--json'],
       { windowsHide: true },
     )
@@ -196,11 +196,11 @@ describe('Hermes process invocation', () => {
 
   it('defaults spawned Windows Hermes processes to hidden windows', async () => {
     setPlatform('win32')
-    process.env.HERMES_BIN = 'C:\\Hermes Studio\\resources\\python\\Scripts\\hermes.exe'
-    process.env.HERMES_AGENT_CLI_PYTHON = 'C:\\Hermes Studio\\resources\\python\\python.exe'
+    process.env.HERMES_BIN = 'C:\\Ekko Studio\\resources\\python\\Scripts\\hermes.exe'
+    process.env.HERMES_AGENT_CLI_PYTHON = 'C:\\Ekko Studio\\resources\\python\\python.exe'
     const { spawnHermesWithBin } = await import('../../packages/server/src/modules/hermes/services/runtime/process')
 
-    spawnHermesWithBin('C:\\Hermes Studio\\resources\\python\\Scripts\\hermes.exe', ['gateway', 'run'])
+    spawnHermesWithBin('C:\\Ekko Studio\\resources\\python\\Scripts\\hermes.exe', ['gateway', 'run'])
 
     expect(spawnCalls[0]).toMatchObject({
       command: process.env.HERMES_AGENT_CLI_PYTHON,

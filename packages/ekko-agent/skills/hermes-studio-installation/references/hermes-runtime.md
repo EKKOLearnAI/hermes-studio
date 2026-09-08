@@ -71,7 +71,7 @@ There are three separate upgrades:
 
 - **Desktop application:** use Desktop **Check for Updates**.
 - **Managed Runtime package:** download a newer Runtime version in Version Management, let it validate and activate, then restart. Previous inactive versions remain available until explicitly deleted.
-- **Hermes Agent source inside Runtime 0.19.1 or newer:** fully exit Hermes Studio, then run `hermes-studio cli update`. This does not upgrade Desktop or Web UI.
+- **Hermes Agent source inside Runtime 0.19.1 or newer:** fully exit Ekko Studio, then run `hermes-studio cli update`. This does not upgrade Desktop or Web UI.
 
 Do not run `hermes-studio cli update` while Studio still owns Runtime processes. Reopen Studio afterward and verify the Hermes version and Runtime path.
 
@@ -108,7 +108,7 @@ Activation writes the selected Runtime directory/version/platform and clears the
 
 Use Version Management's **Choose directory** action. The destination must already exist, be writable, not be inside the current Runtime storage, and not be the active Runtime directory or one of its children. Migration is unavailable while `HERMES_DESKTOP_RUNTIME_DIR` forces an override.
 
-Scheduling writes `pendingRuntimeRootDirectory` to `active-version.json`; it does not move files immediately. Restart Hermes Studio to apply the migration before local services start.
+Scheduling writes `pendingRuntimeRootDirectory` to `active-version.json`; it does not move files immediately. Restart Ekko Studio to apply the migration before local services start.
 
 On restart Desktop:
 

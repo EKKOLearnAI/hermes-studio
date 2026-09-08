@@ -20,6 +20,7 @@ const AGENT_AVATARS = {
 } as const satisfies Record<string, ChatAgentAvatar>
 
 export function chatSessionAgentAvatar(session?: ChatAgentSessionIdentity | null): ChatAgentAvatar {
+  if (!session) return AGENT_AVATARS['ekko-agent']
   const runtime = String(session?.codingAgentId || session?.agent || '').trim().toLowerCase()
   if (runtime === 'ekko-agent' || runtime === 'ekko_agent' || runtime === 'ekko') return AGENT_AVATARS['ekko-agent']
   if (runtime === 'claude' || runtime === 'claude-code') return AGENT_AVATARS['claude-code']

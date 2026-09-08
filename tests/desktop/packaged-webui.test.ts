@@ -137,8 +137,8 @@ describe('packaged desktop Web UI', () => {
   it('uses the electron-builder 26 desktop entry schema for deb packages', () => {
     const script = readFileSync(resolve('packages/desktop/scripts/electron-builder.mjs'), 'utf8')
 
-    expect(script).toContain('--config.linux.desktop.entry.Name=Hermes Studio')
-    expect(script).not.toContain('--config.linux.desktop.Name=Hermes Studio')
+    expect(script).toContain('--config.linux.desktop.entry.Name=Ekko Studio')
+    expect(script).not.toContain('--config.linux.desktop.Name=Ekko Studio')
   })
 
   it('accepts a package containing the server and target native dependencies', async () => {
@@ -149,7 +149,7 @@ describe('packaged desktop Web UI', () => {
       appOutDir,
       electronPlatformName: 'win32',
       arch: 1,
-      packager: { appInfo: { productFilename: 'Hermes Studio' } },
+      packager: { appInfo: { productFilename: 'Ekko Studio' } },
     } as never)).resolves.toBeUndefined()
   })
 
@@ -162,7 +162,7 @@ describe('packaged desktop Web UI', () => {
       appOutDir,
       electronPlatformName: 'win32',
       arch: 1,
-      packager: { appInfo: { productFilename: 'Hermes Studio' } },
+      packager: { appInfo: { productFilename: 'Ekko Studio' } },
     } as never)).rejects.toThrow('Packaged Web UI is incomplete')
   })
 
@@ -178,7 +178,7 @@ describe('packaged desktop Web UI', () => {
       appOutDir,
       electronPlatformName: 'win32',
       arch: 1,
-      packager: { appInfo: { productFilename: 'Hermes Studio' } },
+      packager: { appInfo: { productFilename: 'Ekko Studio' } },
     } as never)).rejects.toThrow('dist/ekko-skills/github/SKILL.md')
   })
 
@@ -191,7 +191,7 @@ describe('packaged desktop Web UI', () => {
       appOutDir,
       electronPlatformName: 'win32',
       arch: 1,
-      packager: { appInfo: { productFilename: 'Hermes Studio' } },
+      packager: { appInfo: { productFilename: 'Ekko Studio' } },
     } as never)).rejects.toThrow('sherpa-onnx-win-x64')
   })
 
@@ -204,7 +204,7 @@ describe('packaged desktop Web UI', () => {
       appOutDir,
       electronPlatformName: 'win32',
       arch: 1,
-      packager: { appInfo: { productFilename: 'Hermes Studio' } },
+      packager: { appInfo: { productFilename: 'Ekko Studio' } },
     } as never)).rejects.toThrow('sharp-win32-x64')
   })
 
@@ -218,7 +218,7 @@ describe('packaged desktop Web UI', () => {
       appOutDir,
       electronPlatformName: 'linux',
       arch: 3,
-      packager: { appInfo: { productFilename: 'Hermes Studio' } },
+      packager: { appInfo: { productFilename: 'Ekko Studio' } },
     } as never)).rejects.toThrow('sharp-libvips-linux-arm64')
   })
 
@@ -231,7 +231,7 @@ describe('packaged desktop Web UI', () => {
       appOutDir,
       electronPlatformName: 'linux',
       arch: 3,
-      packager: { appInfo: { productFilename: 'Hermes Studio' } },
+      packager: { appInfo: { productFilename: 'Ekko Studio' } },
     } as never)).resolves.toBeUndefined()
   })
 
@@ -254,7 +254,7 @@ describe('packaged desktop Web UI', () => {
       appOutDir,
       electronPlatformName: 'linux',
       arch: 1,
-      packager: { appInfo: { productFilename: 'Hermes Studio' } },
+      packager: { appInfo: { productFilename: 'Ekko Studio' } },
     } as never)).rejects.toThrow('sharp-libvips-linux-x64')
   })
 
@@ -268,7 +268,7 @@ describe('packaged desktop Web UI', () => {
       appOutDir,
       electronPlatformName: 'linux',
       arch: 3,
-      packager: { appInfo: { productFilename: 'Hermes Studio' } },
+      packager: { appInfo: { productFilename: 'Ekko Studio' } },
     } as never)).rejects.toThrow('pty.node')
   })
 })

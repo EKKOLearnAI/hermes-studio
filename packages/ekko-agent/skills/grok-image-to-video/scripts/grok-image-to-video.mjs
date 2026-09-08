@@ -83,7 +83,7 @@ if (outputPath && extname(outputPath).toLowerCase() !== '.mp4') fail('--output-p
 
 const token = firstToken()
 if (!token) {
-  fail('Missing Hermes Studio server token. Check AUTH_TOKEN, HERMES_WEB_UI_HOME, HERMES_WEBUI_STATE_DIR, or ~/.hermes-web-ui/.token.')
+  fail('Missing Ekko Studio server token. Check AUTH_TOKEN, HERMES_WEB_UI_HOME, HERMES_WEBUI_STATE_DIR, or ~/.hermes-web-ui/.token.')
 }
 const baseUrl = String(
   process.env.HERMES_WEB_UI_URL || `http://127.0.0.1:${process.env.PORT || '8648'}`,
@@ -113,7 +113,7 @@ try {
   })
 } catch (error) {
   clearTimeout(timer)
-  fail(error?.name === 'AbortError' ? 'Hermes Studio video request timed out.' : `Hermes Studio connection failed: ${error?.message || error}`)
+  fail(error?.name === 'AbortError' ? 'Ekko Studio video request timed out.' : `Ekko Studio connection failed: ${error?.message || error}`)
 }
 clearTimeout(timer)
 
@@ -125,7 +125,7 @@ try {
   result = { error: text || response.statusText }
 }
 if (!response.ok) {
-  fail(String(result.error || `Hermes Studio returned HTTP ${response.status}.`), {
+  fail(String(result.error || `Ekko Studio returned HTTP ${response.status}.`), {
     status: response.status,
     code: result.code,
     request_id: result.request_id,
@@ -133,7 +133,7 @@ if (!response.ok) {
 }
 const generatedPath = String(result.output_path || '').trim()
 if (!generatedPath || !existsSync(generatedPath)) {
-  fail('Hermes Studio reported success without a verifiable MP4 output.', {
+  fail('Ekko Studio reported success without a verifiable MP4 output.', {
     request_id: result.request_id,
     output_path: generatedPath,
   })

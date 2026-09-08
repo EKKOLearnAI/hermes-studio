@@ -48,12 +48,12 @@ describe('Grok runtime isolation', () => {
       sourceHome,
       rootDir: runtimeHome,
       systemPrompt: 'Studio instructions.',
-      managedMcpToml: '[mcp_servers.hermes-studio-api]\ncommand = "studio-mcp"\n',
+      managedMcpToml: '[mcp_servers.ekko-studio-api]\ncommand = "studio-mcp"\n',
     })
 
     expect(readFileSync(join(sourceHome, 'config.toml'), 'utf-8')).toBe('[models]\ndefault = "grok-4"\n')
     expect(readFileSync(join(sourceHome, 'AGENTS.md'), 'utf-8')).toBe('User instructions.\n')
-    expect(readFileSync(join(runtimeHome, 'config.toml'), 'utf-8')).toContain('[mcp_servers.hermes-studio-api]')
+    expect(readFileSync(join(runtimeHome, 'config.toml'), 'utf-8')).toContain('[mcp_servers.ekko-studio-api]')
     expect(readFileSync(join(runtimeHome, 'AGENTS.md'), 'utf-8')).toContain('Studio instructions.')
     expect(readFileSync(join(runtimeHome, 'AGENTS.md'), 'utf-8')).toContain('User instructions.')
     expect(readFileSync(join(runtimeHome, 'skills', 'review', 'SKILL.md'), 'utf-8')).toBe('Review skill.\n')
@@ -86,7 +86,7 @@ describe('Grok runtime isolation', () => {
         '[cli]',
         'installer = "npm"',
       ].join('\n'),
-      managedMcpToml: '[mcp_servers.hermes-studio-use]\ncommand = "studio-mcp"\n',
+      managedMcpToml: '[mcp_servers.ekko-studio-use]\ncommand = "studio-mcp"\n',
     })
 
     const config = readFileSync(join(rootDir, 'config.toml'), 'utf-8')
@@ -144,12 +144,12 @@ describe('Grok runtime isolation', () => {
       '[mcp_servers.user-tools]',
       'command = "user-mcp"',
       '',
-      '[mcp_servers.hermes-studio-api]',
+      '[mcp_servers.ekko-studio-api]',
       'command = "old-studio-mcp"',
     ].join('\n')
 
     expect(stripManagedGrokMcp(config)).toContain('[mcp_servers.user-tools]')
-    expect(stripManagedGrokMcp(config)).not.toContain('hermes-studio-api')
+    expect(stripManagedGrokMcp(config)).not.toContain('ekko-studio-api')
   })
 
   it('separates Grok settings and user MCP without persisting managed MCP', () => {
@@ -160,14 +160,14 @@ describe('Grok runtime isolation', () => {
       '[mcp_servers.user-tools]',
       'command = "user-mcp"',
       '',
-      '[mcp_servers.hermes-studio-api]',
+      '[mcp_servers.ekko-studio-api]',
       'command = "studio-mcp"',
     ].join('\n')
 
     expect(grokSettingsConfig(config)).toContain('[cli]')
     expect(grokSettingsConfig(config)).not.toContain('mcp_servers')
     expect(grokUserMcpConfig(config)).toContain('user-tools')
-    expect(grokUserMcpConfig(config)).not.toContain('hermes-studio-api')
+    expect(grokUserMcpConfig(config)).not.toContain('ekko-studio-api')
     expect(mergeGrokUserMcpConfig(config, '[mcp_servers.next]\ncommand = "next"')).toContain('[cli]')
     expect(mergeGrokUserMcpConfig(config, '[mcp_servers.next]\ncommand = "next"')).not.toContain('user-tools')
     expect(mergeGrokSettingsConfig(config, '[cli]\ninstaller = "brew"')).toContain('user-tools')
@@ -176,7 +176,7 @@ describe('Grok runtime isolation', () => {
 
 describe('Grok streaming JSON adaptation', () => {
   it('passes every prompt through a file and uses explicit new/resume session flags', () => {
-    const windowsPromptPath = 'C:/Users/Test User/AppData/Local/Hermes Studio/turn & echo injected.md'
+    const windowsPromptPath = 'C:/Users/Test User/AppData/Local/Ekko Studio/turn & echo injected.md'
     const firstTurn = buildGrokTurnArgs(['--always-approve'], 'session-1', false, windowsPromptPath)
     const resumedTurn = buildGrokTurnArgs(['--always-approve'], 'session-1', true, '/studio/turn-2.md')
 
