@@ -141,6 +141,10 @@ async function handlePasswordLogin() {
 
 .login-logo {
   margin-bottom: 24px;
+
+  img {
+    border-radius: 25%;
+  }
 }
 
 .login-title {
