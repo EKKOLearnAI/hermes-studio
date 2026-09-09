@@ -163,6 +163,7 @@ export const VOICE_API_PRESETS: VoiceApiPreset[] = [
       models: true,
       voices: true,
       stylePrompt: true,
+      speed: true,
     },
   },
   {

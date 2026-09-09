@@ -549,6 +549,7 @@ function playSpeech(content: string, autoplay = false, profileOverride = '') {
             model: voiceSettings.doubaoModel.value,
             voice: voiceSettings.doubaoVoice.value,
             stylePrompt: voiceSettings.doubaoStylePrompt.value || undefined,
+            speed: voiceSettings.doubaoSpeed.value || undefined,
         }
         if (autoplay) void speech.openaiPlay(props.message.id, content, options).catch(handleAutoplayTtsError)
         else speech.openaiToggle(props.message.id, content, options)

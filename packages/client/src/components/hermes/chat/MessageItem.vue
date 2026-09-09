@@ -779,6 +779,7 @@ function handleSpeechToggle() {
       model: voiceSettings.doubaoModel.value,
       voice: voiceSettings.doubaoVoice.value,
       stylePrompt: voiceSettings.doubaoStylePrompt.value || undefined,
+      speed: voiceSettings.doubaoSpeed.value || undefined,
     })
     return
   }
@@ -860,6 +861,7 @@ onMounted(() => {
           model: voiceSettings.doubaoModel.value,
           voice: voiceSettings.doubaoVoice.value,
           stylePrompt: voiceSettings.doubaoStylePrompt.value || undefined,
+          speed: voiceSettings.doubaoSpeed.value || undefined,
         }).catch(handleAutoplayTtsError)
       } else if (isServerTtsProvider(voiceSettings.provider.value)) {
         void speech.openaiPlay(props.message.id, content, {

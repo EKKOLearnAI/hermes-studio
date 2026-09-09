@@ -63,17 +63,28 @@ function resolveSampleRate(opts: DoubaoTtsProviderOptions): number {
   return sampleRate
 }
 
+function resolveSpeechRate(speed: string | number | undefined): number | undefined {
+  if (speed === undefined || speed === null || String(speed).trim() === '') return undefined
+  const multiplier = Number(speed)
+  if (!Number.isFinite(multiplier) || multiplier < 0.5 || multiplier > 2) {
+    throw new Error('Doubao TTS speed must be between 0.5 and 2')
+  }
+  return Math.round((multiplier - 1) * 100)
+}
+
 function buildRequestBody(text: string, opts: DoubaoTtsProviderOptions): Record<string, unknown> {
   const speaker = trimOptional(opts.voice) || DEFAULT_SPEAKER
   const prompt = trimOptional(opts.stylePrompt)
   const format = resolveAudioFormat(opts)
   const sampleRate = resolveSampleRate(opts)
+  const speechRate = resolveSpeechRate(opts.speed)
   const reqParams: Record<string, unknown> = {
     text,
     speaker,
     audio_params: {
       format,
       sample_rate: sampleRate,
+      ...(speechRate === undefined ? {} : { speech_rate: speechRate }),
     },
   }
 

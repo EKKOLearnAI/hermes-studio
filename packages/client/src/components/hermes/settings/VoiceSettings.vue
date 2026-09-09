@@ -175,6 +175,7 @@ function openaiOptionsFor(connection: VoiceApiConnection): OpenaiTtsOptions {
     pitch: connection.provider === 'edge' && Number.isFinite(edgePitch)
       ? hzToEdgePitch(edgePitch)
       : typeof options.pitch === 'string' ? options.pitch : undefined,
+    speed: typeof options.speed === 'string' || typeof options.speed === 'number' ? options.speed : undefined,
     stylePrompt: typeof options.stylePrompt === 'string' ? options.stylePrompt : undefined,
     provider,
   }
