@@ -759,7 +759,7 @@ async function handleDeleteSession(id: string, profile?: string | null) {
     return
   }
 
-  sessionBrowserPrefsStore.removePinned(id)
+  sessionBrowserPrefsStore.removePinned(id, sessionProfile)
   hermesSessions.value = hermesSessions.value.filter(s => s.id !== id)
   if (summary?.source && sourceOffsets.value[summary.source]) {
     sourceOffsets.value = {
@@ -798,7 +798,7 @@ async function handleBatchDelete() {
     const result = await batchDeleteSessions(targets)
     if (result.deleted > 0) {
       for (const target of targets) {
-        sessionBrowserPrefsStore.removePinned(target.id)
+        sessionBrowserPrefsStore.removePinned(target.id, target.profile)
       }
 
       await loadHermesSessions()

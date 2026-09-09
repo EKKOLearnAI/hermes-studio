@@ -1611,12 +1611,14 @@ function handleActiveSessionMenuSelect(key: string) {
 }
 
 async function handleDeleteSession(id: string) {
+  const profile = chatStore.sessions.find((session) => session.id === id)?.profile
+    || (chatStore.activeSession?.id === id ? chatStore.activeSession.profile : null);
   const ok = await chatStore.deleteSession(id);
   if (!ok) {
     message.error(t("common.deleteFailed"));
     return;
   }
-  sessionBrowserPrefsStore.removePinned(id);
+  sessionBrowserPrefsStore.removePinned(id, profile);
   message.success(t("chat.sessionDeleted"));
 }
 
@@ -1666,7 +1668,7 @@ async function handleBatchDelete() {
     if (result.deleted > 0) {
       // Remove from pinned sessions
       for (const target of targets) {
-        sessionBrowserPrefsStore.removePinned(target.id);
+        sessionBrowserPrefsStore.removePinned(target.id, target.profile);
       }
 
       // Remove deleted sessions from local store (without calling API again)
@@ -1936,7 +1938,7 @@ async function handleContextMenuSelect(key: string) {
     const archivedSession = contextSession.value;
     const ok = await chatStore.archiveSession(contextSessionId.value);
     if (ok) {
-      sessionBrowserPrefsStore.removePinned(contextSessionId.value);
+      sessionBrowserPrefsStore.removePinned(contextSessionId.value, archivedSession?.profile);
       if (archivedSession) {
         selectedSessionKeys.value.delete(sessionSelectionKey(archivedSession));
         selectedSessionKeys.value = new Set(selectedSessionKeys.value);

@@ -188,6 +188,73 @@ describe('session browser prefs store', () => {
     expect(JSON.parse(window.localStorage.getItem('hermes_session_pins_v1_anonymous_default') || '[]')).toEqual([])
   })
 
+  it('rolls back an automatic unpin when the shared write fails', async () => {
+    window.localStorage.setItem('hermes_session_pins_v1_anonymous_default', JSON.stringify(['pinned-session']))
+    window.localStorage.setItem('hermes_session_pins_migrated_v2_anonymous_default', 'true')
+    pinApi.set.mockRejectedValue(new Error('offline'))
+    const store = useSessionBrowserPrefsStore()
+
+    await expect(store.removePinned('pinned-session')).resolves.toBe(false)
+
+    expect(store.pinnedIds).toEqual(['pinned-session'])
+    expect(JSON.parse(window.localStorage.getItem('hermes_session_pins_v1_anonymous_default') || '[]')).toEqual(['pinned-session'])
+  })
+
+  it('rolls back each failed automatic unpin when removals overlap', async () => {
+    window.localStorage.setItem('hermes_session_pins_v1_anonymous_default', JSON.stringify(['pin-a', 'pin-b']))
+    window.localStorage.setItem('hermes_session_pins_migrated_v2_anonymous_default', 'true')
+    pinApi.set.mockRejectedValue(new Error('offline'))
+    const store = useSessionBrowserPrefsStore()
+
+    await expect(Promise.all([
+      store.removePinned('pin-a'),
+      store.removePinned('pin-b'),
+    ])).resolves.toEqual([false, false])
+
+    expect(store.pinnedIds).toEqual(['pin-a', 'pin-b'])
+    expect(JSON.parse(window.localStorage.getItem('hermes_session_pins_v1_anonymous_default') || '[]')).toEqual(['pin-a', 'pin-b'])
+  })
+
+  it('removes a deleted session pin from its own profile', async () => {
+    window.localStorage.setItem('hermes_session_pins_v1_anonymous_work', JSON.stringify(['work-session']))
+    window.localStorage.setItem('hermes_session_pins_migrated_v2_anonymous_work', 'true')
+    pinApi.set.mockResolvedValue({ pinnedIds: [] })
+    const store = useSessionBrowserPrefsStore()
+
+    await expect(store.removePinned('work-session', 'work')).resolves.toBe(true)
+
+    expect(pinApi.set).toHaveBeenCalledWith('work', 'work-session', false, undefined)
+    expect(store.pinnedIds).toEqual([])
+    expect(JSON.parse(window.localStorage.getItem('hermes_session_pins_v1_anonymous_work') || '[]')).toEqual([])
+  })
+
+  it('orders an automatic unpin before a newer repin', async () => {
+    window.localStorage.setItem('hermes_session_pins_v1_anonymous_default', JSON.stringify(['pinned-session']))
+    window.localStorage.setItem('hermes_session_pins_migrated_v2_anonymous_default', 'true')
+    let resolveUnpin!: (value: { pinnedIds: string[] }) => void
+    pinApi.set
+      .mockImplementationOnce(() => new Promise(resolve => {
+        resolveUnpin = resolve
+      }))
+      .mockResolvedValueOnce({ pinnedIds: ['pinned-session'] })
+    const store = useSessionBrowserPrefsStore()
+
+    const unpin = store.removePinned('pinned-session')
+    const repin = store.togglePinned('pinned-session')
+    await Promise.resolve()
+    expect(pinApi.set).toHaveBeenCalledTimes(1)
+
+    resolveUnpin({ pinnedIds: [] })
+    await expect(unpin).resolves.toBe(true)
+    await expect(repin).resolves.toBe(true)
+
+    expect(pinApi.set.mock.calls.map(call => [call[1], call[2]])).toEqual([
+      ['pinned-session', false],
+      ['pinned-session', true],
+    ])
+    expect(store.pinnedIds).toEqual(['pinned-session'])
+  })
+
   it('writes pin toggles to the shared server preference', async () => {
     window.localStorage.setItem('hermes_session_pins_migrated_v2_anonymous_default', 'true')
     pinApi.set.mockResolvedValue({ pinnedIds: ['shared-session'] })

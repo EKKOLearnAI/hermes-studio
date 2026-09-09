@@ -70,6 +70,49 @@ export const useSessionBrowserPrefsStore = defineStore('session-browser-prefs', 
   const recentCollapsed = ref<boolean>(loadJson<boolean>(RECENT_COLLAPSED_KEY, false))
   const showRecentSessions = ref<boolean>(loadJson<boolean>(SHOW_RECENT_SESSIONS_KEY, true))
   let pinMutationVersion = 0
+  let nextPinMutationId = 0
+  const pinMutationIds = new Map<string, number>()
+  const pinWriteQueues = new Map<string, Promise<void>>()
+
+  function pinContextKey(profile: string, owner: string): string {
+    return `${owner}\u0000${profile}`
+  }
+
+  function pinMutationKey(profile: string, owner: string, sessionId: string): string {
+    return `${pinContextKey(profile, owner)}\u0000${sessionId}`
+  }
+
+  async function runPinWrite<T>(profile: string, owner: string, write: () => Promise<T>): Promise<T> {
+    const key = pinContextKey(profile, owner)
+    const previous = pinWriteQueues.get(key) || Promise.resolve()
+    let release!: () => void
+    const current = new Promise<void>(resolve => {
+      release = resolve
+    })
+    const tail = previous.then(() => current)
+    pinWriteQueues.set(key, tail)
+    await previous
+    try {
+      return await write()
+    } finally {
+      release()
+      if (pinWriteQueues.get(key) === tail) pinWriteQueues.delete(key)
+    }
+  }
+
+  function setCachedPinned(profile: string, owner: string, sessionId: string, pinned: boolean): void {
+    const active = profileName.value === profile && pinOwner === owner
+    const current = active
+      ? pinnedIds.value
+      : loadJson<string[]>(pinsKey(profile, owner), [])
+    const hasPin = current.includes(sessionId)
+    if (hasPin === pinned) return
+    const next = pinned
+      ? [...current, sessionId]
+      : current.filter(id => id !== sessionId)
+    if (active) pinnedIds.value = next
+    saveJson(pinsKey(profile, owner), next)
+  }
 
   function reloadPinOwner(): void {
     const nextOwner = currentPinOwner()
@@ -103,14 +146,15 @@ export const useSessionBrowserPrefsStore = defineStore('session-browser-prefs', 
     const profile = profileName.value
     const owner = pinOwner
     const version = ++pinMutationVersion
+    const localPinnedIds = [...pinnedIds.value]
     try {
       const migrated = localStorage.getItem(pinMigrationKey(profile, owner)) === 'true'
-      const result = migrated
-        ? await fetchSessionPins(profile)
-        : await mergeSessionPins(profile, [
+      const result = await runPinWrite(profile, owner, () => migrated
+        ? fetchSessionPins(profile)
+        : mergeSessionPins(profile, [
             ...loadJson<string[]>(legacyPinsKey(profile), []),
-            ...pinnedIds.value,
-          ])
+            ...localPinnedIds,
+          ]))
       if (profileName.value !== profile || pinOwner !== owner || version !== pinMutationVersion) return
       pinnedIds.value = result.pinnedIds
       persistPins()
@@ -137,6 +181,9 @@ export const useSessionBrowserPrefsStore = defineStore('session-browser-prefs', 
 
     const pinned = pinnedIds.value.includes(sessionId)
     const version = ++pinMutationVersion
+    const mutationKey = pinMutationKey(profile, owner, sessionId)
+    const mutationId = ++nextPinMutationId
+    pinMutationIds.set(mutationKey, mutationId)
     try {
       const mergePinnedIds = localStorage.getItem(pinMigrationKey(profile, owner)) === 'true'
         ? undefined
@@ -144,7 +191,11 @@ export const useSessionBrowserPrefsStore = defineStore('session-browser-prefs', 
             ...loadJson<string[]>(legacyPinsKey(profile), []),
             ...pinnedIds.value,
           ]
-      const result = await setSessionPinned(profile, sessionId, pinned, mergePinnedIds)
+      const result = await runPinWrite(
+        profile,
+        owner,
+        () => setSessionPinned(profile, sessionId, pinned, mergePinnedIds),
+      )
       if (profileName.value === profile && pinOwner === owner && version === pinMutationVersion) {
         pinnedIds.value = result.pinnedIds
         persistPins()
@@ -153,25 +204,58 @@ export const useSessionBrowserPrefsStore = defineStore('session-browser-prefs', 
       localStorage.removeItem(legacyPinsKey(profile))
       return true
     } catch {
-      if (profileName.value === profile && pinOwner === owner && version === pinMutationVersion) {
-        pinnedIds.value = previous
-        persistPins()
+      if (pinMutationIds.get(mutationKey) === mutationId) {
+        setCachedPinned(profile, owner, sessionId, previous.includes(sessionId))
       }
       return false
+    } finally {
+      if (pinMutationIds.get(mutationKey) === mutationId) pinMutationIds.delete(mutationKey)
     }
   }
 
-  function removePinned(sessionId: string): boolean {
-    if (!isPinned(sessionId)) return false
-    pinnedIds.value = pinnedIds.value.filter(id => id !== sessionId)
-    persistPins()
-    const profile = profileName.value
-    ++pinMutationVersion
-    void setSessionPinned(profile, sessionId, false).then(
-      () => localStorage.setItem(pinMigrationKey(profile), 'true'),
-      () => {},
-    )
-    return true
+  async function removePinned(sessionId: string, sessionProfile?: string | null): Promise<boolean> {
+    reloadPinOwner()
+    const profile = sessionProfile || profileName.value
+    const owner = pinOwner
+    const active = profile === profileName.value
+    const previous = active
+      ? [...pinnedIds.value]
+      : loadJson<string[]>(pinsKey(profile, owner), [])
+    if (active && !previous.includes(sessionId)) return false
+    setCachedPinned(profile, owner, sessionId, false)
+    const version = active ? ++pinMutationVersion : pinMutationVersion
+    const mutationKey = pinMutationKey(profile, owner, sessionId)
+    const mutationId = ++nextPinMutationId
+    pinMutationIds.set(mutationKey, mutationId)
+    try {
+      const mergePinnedIds = localStorage.getItem(pinMigrationKey(profile, owner)) === 'true'
+        ? undefined
+        : [
+            ...loadJson<string[]>(legacyPinsKey(profile), []),
+            ...previous.filter(id => id !== sessionId),
+          ]
+      const result = await runPinWrite(
+        profile,
+        owner,
+        () => setSessionPinned(profile, sessionId, false, mergePinnedIds),
+      )
+      if (active && profileName.value === profile && pinOwner === owner && version === pinMutationVersion) {
+        pinnedIds.value = result.pinnedIds
+        persistPins()
+      } else if (!active) {
+        saveJson(pinsKey(profile, owner), result.pinnedIds)
+      }
+      localStorage.setItem(pinMigrationKey(profile, owner), 'true')
+      localStorage.removeItem(legacyPinsKey(profile))
+      return true
+    } catch {
+      if (pinMutationIds.get(mutationKey) === mutationId) {
+        setCachedPinned(profile, owner, sessionId, previous.includes(sessionId))
+      }
+      return false
+    } finally {
+      if (pinMutationIds.get(mutationKey) === mutationId) pinMutationIds.delete(mutationKey)
+    }
   }
 
   function setHumanOnly(value: boolean) {
