@@ -357,6 +357,39 @@ describe('coding agent launch preparation', () => {
     expect(parsed.custom_instructions).toBe('first line\nsecond line contains [ and ]\nthird line')
   })
 
+  it('does not treat table headers inside multiline strings as real sections', async () => {
+    const home = makeHome()
+    const globalConfigPath = join(home, 'global-home', '.codex', 'config.toml')
+    mkdirSync(dirname(globalConfigPath), { recursive: true })
+    writeFileSync(globalConfigPath, [
+      '[custom]',
+      'template = """first line',
+      '[features]',
+      'this remains string content',
+      '"""',
+      '',
+      '[features]',
+      'goals = true',
+      '',
+    ].join('\n'))
+
+    const launch = await prepareCodingAgentLaunch('codex', {
+      profile: 'default',
+      provider: 'custom:test',
+      model: 'codex-model',
+      baseUrl: 'https://api.example.com/v1',
+      apiKey: 'test-key',
+      apiMode: 'codex_responses',
+      sessionId: 'codex-multiline-table-string-session',
+      agentSessionId: 'codex-multiline-table-string-agent-session',
+    })
+    const parsed = parseToml(readFileSync(join(launch.rootDir, 'config.toml'), 'utf-8'))
+
+    expect(parsed.custom).toEqual({
+      template: 'first line\n[features]\nthis remains string content\n',
+    })
+  })
+
   it('keeps Codex array-of-table hooks out of the features table', async () => {
     const home = makeHome()
     const globalConfigPath = join(home, 'global-home', '.codex', 'config.toml')

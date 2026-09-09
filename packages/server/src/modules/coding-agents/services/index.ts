@@ -1350,6 +1350,17 @@ function scanTomlArrayBrackets(line: string, state: TomlArrayScanState): number 
   return delta
 }
 
+function isManagedCodexSection(section: string): boolean {
+  return section === 'models'
+    || section.startsWith('model.')
+    || section.startsWith('model_providers.')
+    || section.startsWith('mcp_servers.')
+    || section === 'auth'
+    || section.startsWith('auth.')
+    || section === 'account'
+    || section.startsWith('account.')
+}
+
 function codexRuntimeUserConfig(...contents: Array<string | null | undefined>): {
   topLevelLines: string[]
   sectionBlocks: string[]
@@ -1378,9 +1389,18 @@ function codexRuntimeUserConfig(...contents: Array<string | null | undefined>): 
     if (!content?.trim()) continue
     let section = ''
     let sectionKey = ''
+    const sectionScanState: TomlArrayScanState = { quote: null, multiline: false }
     const lines = content.split(/\r?\n/)
     for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
       const line = lines[lineIndex]
+      if (sectionScanState.multiline) {
+        const sectionBlock = sections.get(sectionKey)
+        if (sectionBlock && section !== 'features' && !isManagedCodexSection(section)) {
+          sectionBlock.lines.push(line)
+        }
+        scanTomlArrayBrackets(line, sectionScanState)
+        continue
+      }
       const arrayHeader = line.match(/^\s*\[\[([^\]]+)\]\]\s*$/)
       if (arrayHeader) {
         section = arrayHeader[1].trim()
@@ -1413,20 +1433,16 @@ function codexRuntimeUserConfig(...contents: Array<string | null | undefined>): 
       }
       if (section === 'features') {
         if (assignment && !runtimeFeatures.has(assignment[1])) featureLines.set(assignment[1], line)
+        scanTomlArrayBrackets(line, sectionScanState)
         continue
       }
-      if (
-        section === 'models'
-        || section.startsWith('model.')
-        || section.startsWith('model_providers.')
-        || section.startsWith('mcp_servers.')
-        || section === 'auth'
-        || section.startsWith('auth.')
-        || section === 'account'
-        || section.startsWith('account.')
-      ) continue
+      if (isManagedCodexSection(section)) {
+        scanTomlArrayBrackets(line, sectionScanState)
+        continue
+      }
       const sectionBlock = sections.get(sectionKey)
       if (sectionBlock && line.trim()) sectionBlock.lines.push(line)
+      scanTomlArrayBrackets(line, sectionScanState)
     }
   }
 
