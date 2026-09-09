@@ -15,6 +15,7 @@ import {
 } from '../public/session-agent-runtime'
 import {
   listSessions as localListSessions,
+  countSessions as localCountSessions,
   searchSessions as localSearchSessions,
   getSession as localGetSession,
   getSessionDetail as localGetSessionDetail,
@@ -494,14 +495,17 @@ export async function list(ctx: any) {
   const visibleProfiles = knownProfiles
     ? [...knownProfiles].filter(name => !allowedProfiles || allowedProfiles.has(name))
     : undefined
-  const allSessions = localListSessions(profile, source, effectiveLimit + (paginated ? 1 : 0), {
-    ...(paginated ? { offset } : {}),
+  const listOptions = {
     ...(categoryId !== undefined ? { categoryId } : {}),
     ...(includedIds !== undefined ? { includeSessionIds: includedIds } : {}),
     sources: source ? undefined : requestedSessionSources(),
     profiles: visibleProfiles,
     includeArchived: false,
     excludeSessionIds: [...getPendingDeletedSessionIds(), ...excludedIds],
+  }
+  const allSessions = localListSessions(profile, source, effectiveLimit + (paginated ? 1 : 0), {
+    ...listOptions,
+    ...(paginated ? { offset } : {}),
   })
   const sessions = filterPendingDeletedSessions(filterArchivedSessions(filterByAllowedProfiles(ctx, allSessions).filter(s =>
       isRequestedSessionSource(source, s.source) &&
@@ -509,7 +513,11 @@ export async function list(ctx: any) {
     )))
   ctx.body = {
     sessions: paginated ? sessions.slice(0, effectiveLimit) : sessions,
-    ...(paginated ? { hasMore: sessions.length > effectiveLimit, offset, limit: effectiveLimit } : {}),
+    ...(paginated ? {
+      hasMore: sessions.length > effectiveLimit, offset, limit: effectiveLimit,
+      total: profile && allowedProfiles && !allowedProfiles.has(profile)
+        ? 0 : localCountSessions(profile, source, listOptions),
+    } : {}),
   }
 }
 

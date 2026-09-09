@@ -108,7 +108,7 @@ describe('session store filtering', () => {
   })
 
   it('paginates after visibility filters with stable ordering for equal activity times', async () => {
-    const { createSession, listSessions } = await import(
+    const { createSession, listSessions, countSessions } = await import(
       '../../packages/server/src/modules/studio/repositories/session-store'
     )
     for (const id of ['chat-a', 'chat-b', 'chat-c', 'archived', 'deleted']) {
@@ -126,10 +126,13 @@ describe('session store filtering', () => {
     expect(first.map(session => session.id)).toEqual(['chat-c', 'chat-b'])
     expect(second.map(session => session.id)).toEqual(['chat-a'])
     expect(listSessions(undefined, undefined, 2, { ...options, offset: 3 })).toEqual([])
+    expect(countSessions(undefined, undefined, { ...options, offset: 100 })).toBe(3)
+    expect(countSessions(undefined, undefined, { ...options, profiles: [] })).toBe(0)
+    expect(countSessions('travel', 'cli', { includeArchived: false })).toBe(1)
   })
 
   it('pages each category and pinned selection independently before applying the limit', async () => {
-    const { createSession, listSessions } = await import('../../packages/server/src/modules/studio/repositories/session-store')
+    const { createSession, listSessions, countSessions } = await import('../../packages/server/src/modules/studio/repositories/session-store')
     const { createSessionCategory, setSessionCategory } = await import('../../packages/server/src/modules/studio/repositories/session-category-store')
     const category = createSessionCategory('Work')
     for (let index = 0; index < 25; index++) {
@@ -149,6 +152,13 @@ describe('session store filtering', () => {
     expect(none.every(row => row.id.startsWith('none-'))).toBe(true)
     expect(listSessions(undefined, undefined, 10, { includeSessionIds: ['work-24'] }).map(row => row.id)).toEqual(['work-24'])
     expect(listSessions(undefined, undefined, 10, { includeSessionIds: [] })).toEqual([])
+    expect(countSessions(undefined, undefined, options)).toBe(24)
+    expect(countSessions(undefined, undefined, { ...options, offset: 20 })).toBe(24)
+    expect(countSessions(undefined, undefined, { categoryId: null })).toBe(25)
+    expect(countSessions(undefined, undefined, { includeSessionIds: ['work-24', 'missing'] })).toBe(1)
+    expect(countSessions(undefined, undefined, { includeSessionIds: [] })).toBe(0)
+    db.prepare("UPDATE sessions SET category_id = 999 WHERE id = 'work-00'").run()
+    expect(countSessions(undefined, undefined, { categoryId: null })).toBe(26)
   })
 
   it('updates display-only message content without changing model context content', async () => {

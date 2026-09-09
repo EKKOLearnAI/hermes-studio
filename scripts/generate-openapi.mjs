@@ -319,6 +319,23 @@ function addEndpoint(paths, method, path, controllerMethod, tagInfo, content, ma
 
   const parameters = generateParameters(openapiPath, controllerSource)
   if (openapiPath === '/api/studio/sessions' && method === 'get') {
+    operation.responses['200'] = {
+      description: 'Session list. Supplying offset also returns pagination metadata and the total matching the same visibility, category, and include/exclude filters before pagination.',
+      content: {
+        'application/json': {
+          schema: {
+            type: 'object', required: ['sessions'],
+            properties: {
+              sessions: { type: 'array', items: { type: 'object', additionalProperties: true } },
+              total: { type: 'integer', minimum: 0, description: 'Total matching sessions, independent of offset and limit. Present when offset is supplied.' },
+              hasMore: { type: 'boolean' },
+              offset: { type: 'integer', minimum: 0 },
+              limit: { type: 'integer', minimum: 1 },
+            },
+          },
+        },
+      },
+    }
     for (const parameter of parameters) {
       if (parameter.name === 'category') {
         parameter.schema = { oneOf: [{ type: 'integer', minimum: 1 }, { type: 'string', enum: ['none'] }] }

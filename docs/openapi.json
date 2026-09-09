@@ -15527,7 +15527,42 @@
         ],
         "responses": {
           "200": {
-            "description": "Success"
+            "description": "Session list. Supplying offset also returns pagination metadata and the total matching the same visibility, category, and include/exclude filters before pagination.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "sessions"
+                  ],
+                  "properties": {
+                    "sessions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": true
+                      }
+                    },
+                    "total": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "Total matching sessions, independent of offset and limit. Present when offset is supplied."
+                    },
+                    "hasMore": {
+                      "type": "boolean"
+                    },
+                    "offset": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "limit": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  }
+                }
+              }
+            }
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
