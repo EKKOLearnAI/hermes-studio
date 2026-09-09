@@ -48,13 +48,9 @@ import { BrowserBroker } from './browser/browser-broker'
 import type { BrowserBounds } from './browser/browser-types'
 import { migratePendingLegacyWindowsData } from './legacy-windows-data-migration'
 import { createDesktopAppLifecycle } from './app-lifecycle'
+import { configureDesktopIdentity } from './desktop-identity'
 
-// Keep the existing Chromium profile (cookies and browser storage) across the rename.
-const existingUserData = app.isPackaged
-  ? join(app.getPath('appData'), 'Hermes Studio')
-  : app.getPath('userData')
-app.setPath('userData', existingUserData)
-app.setName('Ekko Studio')
+configureDesktopIdentity(app)
 
 const PORT = Number(process.env.HERMES_DESKTOP_PORT) || 8748
 const START_HIDDEN = process.argv.includes('--hidden')
