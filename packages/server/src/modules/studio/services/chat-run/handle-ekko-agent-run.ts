@@ -50,6 +50,7 @@ import { estimateUsageTokensFromMessages } from './usage'
 import type { BackgroundContinuationContext, ChatCodingAgentId, ContentBlock, QueuedRun, SessionState } from './types'
 import { completeWorkspaceRunCheckpoint, startWorkspaceRunCheckpoint } from './workspace-diff-tracker'
 import { selectWorkspace } from '../workspace/manager'
+import { persistSafeRunFailure } from './run-failure'
 
 export interface EkkoAgentRunSocketData {
   input: string | ContentBlock[]
@@ -1505,10 +1506,12 @@ export async function handleEkkoAgentRun(
           logger.warn(err, '[chat-run-socket] failed to write ekko-agent empty-response end marker for %s', sessionId)
         }
       }
+      const failure = persistSafeRunFailure(state, sessionId, runId || result.runId, error)
       emit('run.failed', {
         event: 'run.failed',
         run_id: runId || result.runId,
-        error,
+        error: `Agent run failed (${failure.code})`,
+        failure,
         queue_remaining: state.queue.length,
         background_pending: ekkoBackgroundPendingCount(state),
         queue_id: data.queue_id,
@@ -1608,10 +1611,13 @@ export async function handleEkkoAgentRun(
         logger.warn(updateErr, '[chat-run-socket] failed to write ekko-agent error end marker for %s', sessionId)
       }
     }
+    const failureRunId = runId || turnId
+    const failure = persistSafeRunFailure(state, sessionId, failureRunId, error)
     emit('run.failed', {
       event: 'run.failed',
-      run_id: runId,
-      error,
+      run_id: failureRunId,
+      error: `Agent run failed (${failure.code})`,
+      failure,
       queue_remaining: state.queue.length,
       background_pending: ekkoBackgroundPendingCount(state),
       queue_id: data.queue_id,

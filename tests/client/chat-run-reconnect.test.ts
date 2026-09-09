@@ -138,6 +138,30 @@ describe('chat-run socket reconnect handling', () => {
     expect(onError).not.toHaveBeenCalled()
   })
 
+  it.each([false, true])('ignores a late run completion after manual handler replacement (new run started: %s)', async started => {
+    const { startRunViaSocket } = await import('../../packages/client/src/api/studio/chat')
+    const body = { session_id: 'session-1', input: 'hello', profile: 'default', source: 'cli' as const }
+    startRunViaSocket(body, vi.fn(), vi.fn(), vi.fn())
+    const socket = socketState.sockets[0]
+    socket.__trigger('run.started', { event: 'run.started', session_id: body.session_id, run_id: 'old-run' })
+    socket.__trigger('run.completed', { event: 'run.completed', session_id: body.session_id, run_id: 'old-run' })
+
+    const onEvent = vi.fn()
+    const onDone = vi.fn()
+    startRunViaSocket(body, onEvent, onDone, vi.fn())
+    const newStarted = { event: 'run.started', session_id: body.session_id, run_id: 'new-run' }
+    if (started) socket.__trigger('run.started', newStarted)
+    onEvent.mockClear()
+
+    socket.__trigger('run.completed', { event: 'run.completed', session_id: body.session_id, run_id: 'old-run' })
+    expect(onEvent).not.toHaveBeenCalled()
+    expect(onDone).not.toHaveBeenCalled()
+
+    if (!started) socket.__trigger('run.started', newStarted)
+    socket.__trigger('message.delta', { event: 'message.delta', session_id: body.session_id, run_id: 'new-run', delta: 'Still working' })
+    expect(onEvent).toHaveBeenCalledWith(expect.objectContaining({ run_id: 'new-run' }))
+  })
+
   it.each(['new-setup-marker', undefined])('delivers a manual replacement setup failure with run identity %s', async runId => {
     const { startRunViaSocket } = await import('../../packages/client/src/api/studio/chat')
     const body = { session_id: 'session-1', input: 'hello', profile: 'default', source: 'cli' as const }

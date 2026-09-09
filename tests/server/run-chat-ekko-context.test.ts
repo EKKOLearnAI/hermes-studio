@@ -14,6 +14,11 @@ const addMessagesMock = vi.hoisted(() => vi.fn())
 const updateMessageDisplayContentMock = vi.hoisted(() => vi.fn(() => true))
 const updateSessionMock = vi.hoisted(() => vi.fn())
 const updateSessionStatsMock = vi.hoisted(() => vi.fn())
+const persistRunFailureMock = vi.hoisted(() => vi.fn((_sessionId: string, runId: string) => ({
+  id: 'failure-1',
+  runMarker: runId,
+  code: 'unknown',
+})))
 const resolveBridgeRunModelConfigMock = vi.hoisted(() => vi.fn())
 const resolveEkkoProviderRuntimeConfigMock = vi.hoisted(() => vi.fn())
 const resolveModelProviderConfigsMock = vi.hoisted(() => vi.fn())
@@ -40,6 +45,7 @@ vi.mock('../../packages/server/src/modules/studio/repositories/session-store', (
   updateMessageDisplayContent: updateMessageDisplayContentMock,
   updateSession: updateSessionMock,
   updateSessionStats: updateSessionStatsMock,
+  persistRunFailure: persistRunFailureMock,
 }))
 
 vi.mock('../../packages/server/src/modules/studio/services/chat-run/model-config', () => ({
@@ -513,7 +519,12 @@ describe('ekko-agent context usage events', () => {
       event: 'run.failed',
       payload: expect.objectContaining({
         run_id: 'run-empty-response',
-        error: 'Model provider returned an empty response after streaming and non-streaming attempts.',
+        error: 'Agent run failed (unknown)',
+        failure: expect.objectContaining({
+          id: 'failure-1',
+          runMarker: 'run-empty-response',
+          code: 'unknown',
+        }),
       }),
     })
     expect(events.some(item => item.event === 'run.completed')).toBe(false)
@@ -555,6 +566,63 @@ describe('ekko-agent context usage events', () => {
       payload: expect.objectContaining({
         run_id: 'run-failed',
         workspace_run_change: change,
+      }),
+    })
+  }, 15_000)
+
+  it('assigns a durable identity when an Ekko run fails before run.started', async () => {
+    agentRunMock.mockRejectedValueOnce(new Error('provider setup failed'))
+    const { handleEkkoAgentRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-ekko-agent-run')
+    const { nsp, socket, sessionMap, events } = makeHarness()
+
+    await handleEkkoAgentRun(nsp as any, socket as any, {
+      session_id: 'session-1',
+      input: 'fail before starting',
+      coding_agent_id: 'ekko-agent',
+      onEvent: (event: string, payload: any) => events.push({ event, payload }),
+    }, 'default', sessionMap, vi.fn(() => false))
+
+    const failed = events.find(item => item.event === 'run.failed')
+    expect(failed?.payload.run_id).toMatch(/^[0-9a-f-]{36}$/)
+    expect(persistRunFailureMock).toHaveBeenCalledWith(
+      'session-1',
+      failed?.payload.run_id,
+      'provider setup failed',
+    )
+    expect(failed?.payload.failure).toEqual(expect.objectContaining({
+      runMarker: failed?.payload.run_id,
+      code: 'unknown',
+    }))
+  }, 15_000)
+
+  it('still emits a sanitized Ekko failure when persistence is unavailable', async () => {
+    persistRunFailureMock.mockImplementationOnce(() => {
+      throw new Error('Session storage unavailable')
+    })
+    agentRunMock.mockImplementationOnce(async (input: any) => {
+      input.onEvent({ type: 'run.started', runId: 'run-without-storage', maxSteps: 3 })
+      throw new Error('private provider failure')
+    })
+    const { handleEkkoAgentRun } = await import('../../packages/server/src/modules/studio/services/chat-run/handle-ekko-agent-run')
+    const { nsp, socket, sessionMap, events } = makeHarness()
+
+    await handleEkkoAgentRun(nsp as any, socket as any, {
+      session_id: 'session-1',
+      input: 'fail safely',
+      coding_agent_id: 'ekko-agent',
+      onEvent: (event: string, payload: any) => events.push({ event, payload }),
+    }, 'default', sessionMap, vi.fn(() => false))
+
+    expect(events).toContainEqual({
+      event: 'run.failed',
+      payload: expect.objectContaining({
+        run_id: 'run-without-storage',
+        error: 'Agent run failed (unknown)',
+        failure: {
+          id: 'run-failure:run-without-storage',
+          runMarker: 'run-without-storage',
+          code: 'unknown',
+        },
       }),
     })
   }, 15_000)

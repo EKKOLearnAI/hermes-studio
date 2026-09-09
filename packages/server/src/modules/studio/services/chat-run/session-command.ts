@@ -1201,6 +1201,7 @@ function createBranchSession(parentSessionId: string, requestedTitle: string, ct
   const sourceMessages = detail?.messages || []
   const parentLast = getLastVisibleMessage(sourceMessages)
   if (!parentLast) return null
+  const branchMessages = sourceMessages.filter(message => message.role !== 'run_failure')
 
   const nowSeconds = Math.floor(Date.now() / 1000)
   const newSessionId = generateBranchSessionId()
@@ -1225,7 +1226,7 @@ function createBranchSession(parentSessionId: string, requestedTitle: string, ct
     category_id: parent.category_id ?? null,
     ended_at: nowSeconds,
     last_active: nowSeconds,
-    messages: sourceMessages.map(message => ({
+    messages: branchMessages.map(message => ({
       role: message.role,
       content: message.content,
       display_role: message.display_role,
@@ -1257,7 +1258,7 @@ function createBranchSession(parentSessionId: string, requestedTitle: string, ct
     parentLastMessageRole: parentLast?.role || null,
     createdAt: nowSeconds * 1000,
     updatedAt: nowSeconds * 1000,
-    messageCount: sourceMessages.length,
+    messageCount: branchMessages.length,
     workspace: parent.workspace || null,
   }
 }

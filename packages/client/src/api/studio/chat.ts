@@ -399,7 +399,7 @@ function globalRunCompletedHandler(event: RunEvent): void {
   if (!sid) return
 
   const handlers = sessionEventHandlers.get(sid)
-  rememberSettledRun(event)
+  if (rememberSettledRun(event)) return
   if (handlers?.onRunCompleted) {
     handlers.onRunCompleted(event)
   }

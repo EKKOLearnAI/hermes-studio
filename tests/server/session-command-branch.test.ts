@@ -117,6 +117,7 @@ describe('branch session command', () => {
       messages: [
         { id: 1, session_id: 'session-1', role: 'user', content: 'Root prompt', display_role: null, display_content: null, timestamp: 101, tool_call_id: null, tool_calls: null, tool_name: null, token_count: null, finish_reason: null, reasoning: null, reasoning_details: null, reasoning_content: null },
         { id: 2, session_id: 'session-1', role: 'assistant', content: 'Root answer', display_role: null, display_content: null, timestamp: 102, tool_call_id: null, tool_calls: null, tool_name: null, token_count: null, finish_reason: null, reasoning: null, reasoning_details: null, reasoning_content: null },
+        { id: 3, session_id: 'session-1', role: 'run_failure', content: '{"code":"timeout"}', display_role: null, display_content: null, timestamp: 103, tool_call_id: null, tool_calls: null, tool_name: null, token_count: null, finish_reason: null, reasoning: null, reasoning_details: null, reasoning_content: null },
       ],
     })
   })

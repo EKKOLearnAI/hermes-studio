@@ -5,7 +5,7 @@
 
 import type { Server, Socket } from 'socket.io'
 import { getSystemPrompt } from '../../public/runs/prompt'
-import { persistRunFailure, getFirstSessionMessageByRole, getSession, getSessionMessageCountByRole, createSession, addMessage, updateSession, updateSessionStats } from '../../repositories/session-store'
+import { getFirstSessionMessageByRole, getSession, getSessionMessageCountByRole, createSession, addMessage, updateSession, updateSessionStats } from '../../repositories/session-store'
 import { logger, bridgeLogger } from '../../public/logging'
 import { normalizeTokenUsage, recordSessionUsage } from '../usage/usage-recorder'
 import type {
@@ -50,6 +50,7 @@ import type { AuthenticatedUser } from '../../public/auth'
 import { ensureHermesRunWorkspace } from './workspace'
 import { observeRunChatPetEvent } from '../../public/pet-events'
 import { completeWorkspaceRunCheckpoint, startWorkspaceRunCheckpoint } from './workspace-diff-tracker'
+import { persistSafeRunFailure } from './run-failure'
 
 const BRIDGE_USAGE_FLUSH_DELAY_MS = 200
 const BRIDGE_TITLE_EVENT_POLL_INTERVAL_MS = 500
@@ -609,7 +610,7 @@ export async function handleBridgeRun(
   let failureRunId = runMarker
   const emit = (event: string, payload: any) => {
     if (event === 'run.failed') {
-      const failure = persistBridgeFailure(state, session_id, payload.run_id || failureRunId, payload.error)
+      const failure = persistSafeRunFailure(state, session_id, payload.run_id || failureRunId, payload.error)
       payload = { ...payload, run_id: payload.run_id || failureRunId, failure, error: `Agent run failed (${failure.code})`, result: undefined, output: undefined }
     }
     const tagged = { ...payload, session_id }
@@ -1003,7 +1004,7 @@ export async function resumeBridgeRun(
 
   const emit = (event: string, payload: any) => {
     if (event === 'run.failed') {
-      const failure = persistBridgeFailure(state, sessionId, runId, payload.error)
+      const failure = persistSafeRunFailure(state, sessionId, runId, payload.error)
       payload = { ...payload, run_id: runId, failure, error: `Agent run failed (${failure.code})`, result: undefined, output: undefined }
     }
     const tagged = { ...payload, session_id: sessionId }
@@ -1134,14 +1135,6 @@ export async function resumeBridgeRun(
       }
     }
   }
-}
-
-function persistBridgeFailure(state: SessionState, sessionId: string, runId: string, error: unknown) {
-  const failure = persistRunFailure(sessionId, runId, error)
-  if (!state.messages.some(message => message.role === 'run_failure' && message.runMarker === runId)) {
-    state.messages.push({ id: failure.id, session_id: sessionId, role: 'run_failure', content: JSON.stringify({ code: failure.code, ...(failure.status ? { status: failure.status } : {}) }), runMarker: runId, timestamp: Date.now() / 1000 })
-  }
-  return failure
 }
 
 function observePetEvent(profile: string, event: string, payload: Record<string, unknown>): void {
