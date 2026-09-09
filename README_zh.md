@@ -286,14 +286,16 @@ hermes-web-ui reset-default-login
 
 | 命令 | 说明 |
 |---|---|
-| `hermes-studio` | 打开 Ekko Studio 桌面应用 |
-| `hermes-studio cli ...` | 运行内置 Hermes Agent CLI |
-| `hermes-studio web ...` | 运行内置 `hermes-web-ui` 命令 |
-| `hermes-studio -h` | 显示 wrapper 帮助 |
+| `ekko-studio` | 打开 Ekko Studio 桌面应用 |
+| `ekko-studio cli ...` | 运行内置 Hermes Agent CLI |
+| `ekko-studio web ...` | 运行内置 `hermes-web-ui` 命令 |
+| `ekko-studio -h` | 显示 wrapper 帮助 |
 | `ekko-studio-mcp [api\|browser\|devices\|use]` | 运行指定的受管 Studio MCP 工具集 |
 
-使用 `hermes-studio cli -h` 查看 Hermes Agent CLI 帮助，使用
-`hermes-studio web -h` 查看服务端 CLI 帮助。`ekko-studio-mcp` 默认暴露
+桌面命令统一为 `ekko-studio`；安装新命令时会移除旧的受管 `hermes-studio` 命令，不保留兼容别名。
+
+使用 `ekko-studio cli -h` 查看 Hermes Agent CLI 帮助，使用
+`ekko-studio web -h` 查看服务端 CLI 帮助。`ekko-studio-mcp` 默认暴露
 `api` 工具集；按任务选择 `browser`、`devices` 或 `use`，可以缩小 MCP 暴露面。
 
 桌面自动更新会优先读取 `https://download.ekkolearnai.com/latest`。

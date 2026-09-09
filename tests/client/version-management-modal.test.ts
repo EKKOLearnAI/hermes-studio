@@ -95,7 +95,7 @@ describe('VersionManagementModal Runtime storage selector', () => {
 
     const note = wrapper.get('[data-testid="runtime-cli-update-note"]')
     expect(note.text()).toContain('runtimeVersions.cliUpdateDescription')
-    expect(note.text()).toContain('hermes-studio cli update')
+    expect(note.text()).toContain('ekko-studio cli update')
     expect(api.fetchRuntimeVersionStatus).toHaveBeenCalledWith()
   })
 

@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -69,7 +69,7 @@ describe('Ekko Studio CLI shim', () => {
     expect(content).toContain('shift')
     expect(content).toContain('exec "$APP" -- --hermes-cli "$@"')
     expect(content).toContain('exec "$NODE" "$WEBUI_SCRIPT" "$@"')
-    expect(content).toContain('Usage: hermes-studio [command] [options]')
+    expect(content).toContain('Usage: ekko-studio [command] [options]')
   })
 
   it('routes Windows cli and web subcommands through bundled runtime paths', () => {
@@ -92,7 +92,7 @@ describe('Ekko Studio CLI shim', () => {
 
     expect(command).toContain('@echo off')
     expect(command).toContain('powershell.exe -NoProfile -NonInteractive')
-    expect(command).toContain('-File "%~dp0hermes-studio.ps1" %*')
+    expect(command).toContain('-File "%~dp0ekko-studio.ps1" %*')
     expect(command).not.toContain('C:\\runtime')
     expect([...Buffer.from(command)].every(byte => byte < 0x80)).toBe(true)
     expect(appPath).toBe('C:\\Users\\Example\\AppData\\Local\\Programs\\Ekko Studio\\Ekko Studio.exe')
@@ -116,7 +116,7 @@ describe('Ekko Studio CLI shim', () => {
   windowsIt('preserves a single CLI argument when the PowerShell sidecar runs', () => {
     const homeDir = tempHome()
     const fakeNodePath = join(homeDir, 'fake-node.ps1')
-    const shimPath = join(homeDir, 'hermes-studio.ps1')
+    const shimPath = join(homeDir, 'ekko-studio.ps1')
     writeFileSync(fakeNodePath, [
       '$args | ForEach-Object {',
       '  [Console]::Out.WriteLine([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$_)))',
@@ -221,6 +221,64 @@ describe('Ekko Studio CLI shim', () => {
     expect(readFileSync(join(homeDir, '.zprofile'), 'utf-8')).toContain('export PATH="$HOME/bin:$PATH"')
   })
 
+  it.each(['darwin', 'linux', 'win32'] as const)('replaces the %s desktop command without leaving a managed legacy alias', async (platform) => {
+    const homeDir = tempHome()
+    const binDir = join(homeDir, 'bin')
+    mkdirSync(binDir)
+    const oldPaths = platform === 'win32'
+      ? [join(binDir, 'hermes-studio.cmd'), join(binDir, 'hermes-studio.ps1')]
+      : [join(binDir, 'hermes-studio')]
+    for (const oldPath of oldPaths) writeFileSync(oldPath, '# HERMES_STUDIO_CLI_SHIM\nold-command\n')
+    execFileMock.mockImplementation((_command, _args, _options, callback) => {
+      callback(null, { stdout: Buffer.from(binDir, 'utf-8').toString('base64'), stderr: '' })
+    })
+    const options = {
+      homeDir, platform, executablePath: process.execPath,
+      env: { PATH: binDir },
+    }
+
+    const result = await installHermesStudioCliShim(options)
+
+    expect(result.status).toBe('installed')
+    expect(result.shimPath).toBe(join(binDir, platform === 'win32' ? 'ekko-studio.cmd' : 'ekko-studio'))
+    for (const oldPath of oldPaths) expect(existsSync(oldPath)).toBe(false)
+    if (platform === 'win32' && process.platform === 'win32') {
+      const output = execFileSync('powershell.exe', [
+        '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File',
+        join(binDir, 'ekko-studio.ps1'), '--help',
+      ], { encoding: 'utf-8', timeout: 15_000 })
+      expect(output).toContain('Usage: ekko-studio [command] [options]')
+    } else if (platform !== 'win32' && process.platform !== 'win32') {
+      expect(execFileSync(result.shimPath, ['--help'], { encoding: 'utf-8' }))
+        .toContain('Usage: ekko-studio [command] [options]')
+    }
+
+    expect((await installHermesStudioCliShim(options)).status).toBe('unchanged')
+    for (const oldPath of oldPaths) expect(existsSync(oldPath)).toBe(false)
+
+    // A user-owned legacy command (and any paired sidecar) must survive cleanup.
+    for (const oldPath of oldPaths) writeFileSync(oldPath, '# HERMES_STUDIO_CLI_SHIM\nuser-sidecar\n')
+    writeFileSync(oldPaths[0], 'custom-command\n')
+    await installHermesStudioCliShim(options)
+    expect(readFileSync(oldPaths[0], 'utf-8')).toBe('custom-command\n')
+    for (const oldPath of oldPaths.slice(1)) expect(readFileSync(oldPath, 'utf-8')).toContain('user-sidecar')
+  }, 20_000)
+
+  it('keeps the old managed command when a custom new command prevents installation', async () => {
+    const homeDir = tempHome()
+    const binDir = join(homeDir, 'bin')
+    mkdirSync(binDir)
+    writeFileSync(join(binDir, 'ekko-studio'), 'custom-command\n')
+    const oldContent = '# HERMES_STUDIO_CLI_SHIM\nold-command\n'
+    writeFileSync(join(binDir, 'hermes-studio'), oldContent)
+
+    const result = await installHermesStudioCliShim({ homeDir, platform: 'darwin', env: { PATH: binDir } })
+
+    expect(result.status).toBe('skipped')
+    expect(readFileSync(join(binDir, 'ekko-studio'), 'utf-8')).toBe('custom-command\n')
+    expect(readFileSync(join(binDir, 'hermes-studio'), 'utf-8')).toBe(oldContent)
+  })
+
   it.each(['darwin', 'win32'] as const)('installs the %s Ekko MCP command and refreshes the legacy shim without overwriting custom commands', async (platform) => {
     const homeDir = tempHome()
     const binDir = join(homeDir, 'bin')
@@ -296,7 +354,7 @@ describe('Ekko Studio CLI shim', () => {
     })
 
     const shim = readFileSync(result.shimPath)
-    const powershell = readFileSync(join(homeDir, 'bin', 'hermes-studio.ps1'))
+    const powershell = readFileSync(join(homeDir, 'bin', 'ekko-studio.ps1'))
     const decodedValues = decodedPowerShellValues(powershell.toString('utf-8'))
     expect(result.status).toBe('installed')
     expect(result.pathUpdated).toBe(true)
@@ -315,7 +373,7 @@ describe('Ekko Studio CLI shim', () => {
   it('replaces a managed UTF-8 BOM Windows shim with the ASCII trampoline and sidecar', async () => {
     const homeDir = tempHome()
     const binDir = join(homeDir, 'bin')
-    const shimPath = join(binDir, 'hermes-studio.cmd')
+    const shimPath = join(binDir, 'ekko-studio.cmd')
     const existingPath = `${binDir};C:\\Windows\\System32`
     execFileMock.mockImplementation((command, args, _options, callback) => {
       const script = Array.isArray(args) ? args.join(' ') : ''
@@ -338,7 +396,7 @@ describe('Ekko Studio CLI shim', () => {
     })
 
     const command = readFileSync(shimPath)
-    const powershell = readFileSync(join(binDir, 'hermes-studio.ps1'))
+    const powershell = readFileSync(join(binDir, 'ekko-studio.ps1'))
     expect(result.status).toBe('updated')
     expect(result.pathUpdated).toBe(false)
     expect(command.subarray(0, 9).toString('ascii')).toBe('@echo off')

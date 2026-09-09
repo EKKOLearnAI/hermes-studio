@@ -281,14 +281,17 @@ desktop app, bundled Hermes Agent CLI, and bundled server CLI do not conflict:
 
 | Command | Description |
 | --- | --- |
-| `hermes-studio` | Open the Ekko Studio desktop app |
-| `hermes-studio cli ...` | Run the bundled Hermes Agent CLI |
-| `hermes-studio web ...` | Run the bundled `hermes-web-ui` command |
-| `hermes-studio -h` | Show wrapper help |
+| `ekko-studio` | Open the Ekko Studio desktop app |
+| `ekko-studio cli ...` | Run the bundled Hermes Agent CLI |
+| `ekko-studio web ...` | Run the bundled `hermes-web-ui` command |
+| `ekko-studio -h` | Show wrapper help |
 | `ekko-studio-mcp [api\|browser\|devices\|use]` | Run one managed Studio MCP toolset |
 
-Use `hermes-studio cli -h` for Hermes Agent CLI help and
-`hermes-studio web -h` for server CLI help. `ekko-studio-mcp` defaults to the
+The desktop command is `ekko-studio`; the previous managed `hermes-studio`
+command is removed when the new shim is installed. No compatibility alias is created.
+
+Use `ekko-studio cli -h` for Hermes Agent CLI help and
+`ekko-studio web -h` for server CLI help. `ekko-studio-mcp` defaults to the
 `api` toolset; choose `browser`, `devices`, or `use` to keep the exposed MCP
 surface focused on the current task.
 
