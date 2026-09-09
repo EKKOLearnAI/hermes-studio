@@ -1,7 +1,7 @@
 import { request } from '../client'
 
 export interface ModelContext {
-  id: number
+  id: number | null
   provider: string
   model: string
   context_limit: number

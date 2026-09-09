@@ -74,6 +74,14 @@ describe('getModelContextLength', () => {
     expect(getModelContextLength()).toBe(256_000)
   })
 
+  it('uses a caller-provided fallback only when no model context is configured', async () => {
+    writeConfig(`model:\n  default: grok-4.6\n  provider: custom:grok\n`)
+
+    const { getModelContextLength } = await loadModelContext()
+
+    expect(getModelContextLength({ provider: 'custom:grok', model: 'grok-4.6', fallbackContextLength: 128_000 })).toBe(128_000)
+  })
+
   it('does not scan other providers when the configured provider exists without that model', async () => {
     writeConfig(`model:\n  default: gpt-5.5\n  provider: openai-codex\n`)
     writeModelsCache({
