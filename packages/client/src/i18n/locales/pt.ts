@@ -3076,6 +3076,7 @@ jobTriggered: 'Job acionado',
   },
 
   files: {
+    collapseTree: 'Recolher árvore de arquivos', expandTree: 'Expandir árvore de arquivos',
     attachToChat: 'Adicionar ao chat', attachFailed: 'Falha ao adicionar arquivo ao chat',
     previewMode: 'Prévia', sourceMode: 'Código-fonte', tableMode: 'Tabela', worksheet: 'Planilha',
     htmlPreviewTitle: 'Prévia HTML isolada', previewLoading: 'Carregando prévia...', previewFailed: 'Prévia indisponível',

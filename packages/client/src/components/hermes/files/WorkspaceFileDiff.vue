@@ -7,16 +7,25 @@ import { fetchSessionWorkspaceFileDiff, readSessionWorkspaceFile } from '@/api/s
 import { fetchGroupWorkspaceFileDiff, readGroupWorkspaceFile } from '@/api/studio/group-chat'
 import { getLanguageFromPath, isMarkdownFile, useFilesStore } from '@/stores/hermes/files'
 import { handleCodeBlockCopyClick, renderHighlightedCodeBlock } from '@/components/hermes/chat/highlight'
+import FileTreeToggle from './FileTreeToggle.vue'
 
 const MarkdownRenderer = defineAsyncComponent(async () => (await import('@/components/hermes/chat/MarkdownRenderer.vue')).default)
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   entry: FileEntry
   workspace?: string | null
   workspaceSessionId?: string | null
   workspaceRoomId?: string | null
+  showTreeToggle?: boolean
+  treeCollapsed?: boolean
+}>(), {
+  showTreeToggle: false,
+  treeCollapsed: false,
+})
+const emit = defineEmits<{
+  close: []
+  'toggle-tree': []
 }>()
-const emit = defineEmits<{ close: [] }>()
 const { t } = useI18n()
 const message = useMessage()
 const filesStore = useFilesStore()
@@ -110,6 +119,11 @@ watch(
   <div class="workspace-file-diff">
     <header class="diff-header">
       <div class="diff-file-info">
+        <FileTreeToggle
+          v-if="props.showTreeToggle"
+          :collapsed="props.treeCollapsed"
+          @toggle="emit('toggle-tree')"
+        />
         <strong class="diff-file-name">{{ entry.name }}</strong>
         <span class="diff-file-path" :title="absolutePath">{{ absolutePath }}</span>
         <span v-if="diff?.patch" class="diff-stats">

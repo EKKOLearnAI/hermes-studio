@@ -3076,6 +3076,7 @@ jobTriggered: 'Job declenche',
   },
 
   files: {
+    collapseTree: 'Réduire l’arborescence des fichiers', expandTree: 'Développer l’arborescence des fichiers',
     attachToChat: 'Ajouter au chat', attachFailed: 'Impossible d’ajouter le fichier au chat',
     previewMode: 'Aperçu', sourceMode: 'Source', tableMode: 'Tableau', worksheet: 'Feuille',
     htmlPreviewTitle: 'Aperçu HTML isolé', previewLoading: 'Chargement de l’aperçu...', previewFailed: 'Aperçu indisponible',

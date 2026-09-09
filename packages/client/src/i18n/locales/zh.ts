@@ -3471,6 +3471,8 @@ export default {
   files: {
     title: '文件',
     fileTree: '文件树',
+    collapseTree: '收起文件树',
+    expandTree: '展开文件树',
     tree: '目录树',
     list: '文件列表',
     breadcrumbRoot: '根目录',

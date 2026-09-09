@@ -26,7 +26,7 @@ vi.mock('@/components/hermes/files/FileTree.vue', () => ({
   default: defineComponent({
     name: 'FileTreeStub',
     emits: ['open-entry', 'contextmenu-entry'],
-    template: '<div />',
+    template: '<div class="file-tree-stub" />',
   }),
 }))
 vi.mock('@/components/hermes/files/FileBreadcrumb.vue', () => ({ default: defineComponent({ template: '<div />' }) }))
@@ -35,6 +35,27 @@ vi.mock('@/components/hermes/files/FileList.vue', () => ({ default: defineCompon
 vi.mock('@/components/hermes/files/FileUploadModal.vue', () => ({ default: defineComponent({ template: '<div />' }) }))
 vi.mock('@/components/hermes/files/FileRenameModal.vue', () => ({ default: defineComponent({ template: '<div />' }) }))
 vi.mock('@/components/hermes/files/FileEditor.vue', () => ({ default: defineComponent({ template: '<div />' }) }))
+vi.mock('@/components/hermes/files/WorkspaceFileDiff.vue', () => ({
+  default: defineComponent({
+    name: 'WorkspaceFileDiffStub',
+    props: {
+      showTreeToggle: Boolean,
+      treeCollapsed: Boolean,
+    },
+    emits: ['toggle-tree'],
+    template: `
+      <div class="workspace-file-diff-stub">
+        <button
+          v-if="showTreeToggle"
+          class="file-tree-toggle"
+          :aria-expanded="!treeCollapsed"
+          :aria-label="treeCollapsed ? 'files.expandTree' : 'files.collapseTree'"
+          @click="$emit('toggle-tree')"
+        />
+      </div>
+    `,
+  }),
+}))
 vi.mock('@/components/hermes/files/FileContextMenu.vue', () => ({
   default: defineComponent({
     name: 'FileContextMenuStub',
@@ -121,5 +142,39 @@ describe('FilesPanel workspace attachments', () => {
     await wrapper.get('.sidebar-toggle').trigger('click')
     expect(wrapper.classes()).not.toContain('mobile-file-open')
     expect(wrapper.findComponent({ name: 'FileTreeStub' }).exists()).toBe(true)
+  })
+
+  it('collapses the desktop tree to a rail while keeping the file panel open', async () => {
+    const wrapper = mount(FilesPanel, {
+      props: { workspaceSessionId: 'session-1', workspace: '/tmp/workspace' },
+      global: { plugins: [createTestingPinia({ createSpy: vi.fn })] },
+    })
+    const treePanel = wrapper.get('.files-tree-panel')
+    wrapper.getComponent({ name: 'FileTreeStub' }).vm.$emit('open-entry', {
+      ...entry,
+      name: 'notes.txt',
+      path: 'notes.txt',
+    })
+    await flushPromises()
+    const toggle = wrapper.get('.file-tree-toggle')
+
+    expect(toggle.attributes('aria-expanded')).toBe('true')
+    expect(wrapper.findComponent({ name: 'FileTreeStub' }).exists()).toBe(true)
+
+    await toggle.trigger('click')
+
+    expect(treePanel.classes()).toContain('tree-collapsed')
+    expect(treePanel.attributes('style')).toContain('width: 0px')
+    expect(toggle.attributes('aria-expanded')).toBe('false')
+    expect(toggle.attributes('aria-label')).toBe('files.expandTree')
+    expect(wrapper.find('.files-main-panel').exists()).toBe(true)
+    expect(wrapper.get('.file-tree-stub').attributes('style')).toContain('display: none')
+
+    await toggle.trigger('click')
+
+    expect(treePanel.classes()).not.toContain('tree-collapsed')
+    expect(toggle.attributes('aria-expanded')).toBe('true')
+    expect(toggle.attributes('aria-label')).toBe('files.collapseTree')
+    expect(wrapper.get('.file-tree-stub').attributes('style') || '').not.toContain('display: none')
   })
 })

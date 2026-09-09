@@ -3076,6 +3076,7 @@ jobTriggered: 'Job ausgelost',
   },
 
   files: {
+    collapseTree: 'Dateibaum einklappen', expandTree: 'Dateibaum ausklappen',
     attachToChat: 'Zum Chat hinzufügen', attachFailed: 'Datei konnte nicht zum Chat hinzugefügt werden',
     previewMode: 'Vorschau', sourceMode: 'Quelltext', tableMode: 'Tabelle', worksheet: 'Arbeitsblatt',
     htmlPreviewTitle: 'Isolierte HTML-Vorschau', previewLoading: 'Vorschau wird geladen...', previewFailed: 'Vorschau nicht verfügbar',
