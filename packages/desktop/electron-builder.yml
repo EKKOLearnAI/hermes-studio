@@ -35,6 +35,7 @@ extraResources:
       - "trayMac.png"
       - "trayMac@2x.png"
       - "trayWindows.png"
+      - "trayLinux.png"
       - "runtime-release.json"
   - from: "../.."
     to: "webui"

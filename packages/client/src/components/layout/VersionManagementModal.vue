@@ -345,7 +345,7 @@ async function removeRuntime(version: string) {
           >
             <div class="runtime-update-note">
               <span>{{ t('runtimeVersions.cliUpdateDescription') }}</span>
-              <code>hermes-studio cli update</code>
+              <code>ekko-studio cli update</code>
             </div>
           </NAlert>
           <div class="runtime-directory-control">

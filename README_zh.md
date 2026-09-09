@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://github.com/EKKOLearnAI/hermes-studio/releases/latest">下载 Ekko Studio 桌面版</a>
   ·
-  <a href="https://hermes-studio.ai/#/docs/getting-started">使用文档</a>
+  <a href="https://ekkostudio.xyz/#/docs/getting-started">使用文档</a>
   ·
   <code>npm install -g hermes-web-ui && hermes-web-ui start</code>
 </p>
@@ -286,14 +286,16 @@ hermes-web-ui reset-default-login
 
 | 命令 | 说明 |
 |---|---|
-| `hermes-studio` | 打开 Ekko Studio 桌面应用 |
-| `hermes-studio cli ...` | 运行内置 Hermes Agent CLI |
-| `hermes-studio web ...` | 运行内置 `hermes-web-ui` 命令 |
-| `hermes-studio -h` | 显示 wrapper 帮助 |
+| `ekko-studio` | 打开 Ekko Studio 桌面应用 |
+| `ekko-studio cli ...` | 运行内置 Hermes Agent CLI |
+| `ekko-studio web ...` | 运行内置 `hermes-web-ui` 命令 |
+| `ekko-studio -h` | 显示 wrapper 帮助 |
 | `ekko-studio-mcp [api\|browser\|devices\|use]` | 运行指定的受管 Studio MCP 工具集 |
 
-使用 `hermes-studio cli -h` 查看 Hermes Agent CLI 帮助，使用
-`hermes-studio web -h` 查看服务端 CLI 帮助。`ekko-studio-mcp` 默认暴露
+桌面命令统一为 `ekko-studio`；安装新命令时会移除旧的受管 `hermes-studio` 命令，不保留兼容别名。
+
+使用 `ekko-studio cli -h` 查看 Hermes Agent CLI 帮助，使用
+`ekko-studio web -h` 查看服务端 CLI 帮助。`ekko-studio-mcp` 默认暴露
 `api` 工具集；按任务选择 `browser`、`devices` 或 `use`，可以缩小 MCP 暴露面。
 
 桌面自动更新会优先读取 `https://download.ekkolearnai.com/latest`。
@@ -386,7 +388,7 @@ Studio 启动后端聊天能力时，会优先使用包含 `run_agent.py` 的源
 | `HERMES_BRIDGE_TOOLSETS` | profile/默认值 | bridge 运行时的 toolset 覆盖。 |
 | `HERMES_BRIDGE_MAX_TURNS` | profile/默认值 | bridge 运行时的最大轮数覆盖。 |
 | `HERMES_BRIDGE_SUPPRESS_PLATFORM_HINT` | `cli` | 控制传给 Hermes Agent 的 bridge platform hint suppression。 |
-| `HERMES_OPENROUTER_APP_REFERER` | `https://hermes-studio.ai` | bridge 运行发送给 OpenRouter 的 attribution referer。 |
+| `HERMES_OPENROUTER_APP_REFERER` | `https://ekkostudio.xyz` | bridge 运行发送给 OpenRouter 的 attribution referer。 |
 | `HERMES_OPENROUTER_APP_TITLE` | `Ekko Studio` | Bridge 运行发送给 OpenRouter 的 Attribution Title。 |
 | `HERMES_OPENROUTER_APP_CATEGORIES` | `cli-agent,personal-agent` | bridge 运行发送给 OpenRouter 的 attribution categories。 |
 | `HERMES_WEB_UI_MANAGED_GATEWAY` | 默认开启 | 控制 Studio 托管 Hermes Gateway 进程；设为 `0`、`false`、`no` 或 `off` 时改用 `hermes gateway start`。 |

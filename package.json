@@ -6,7 +6,7 @@
     "type": "git",
     "url": "https://github.com/EKKOLearnAI/hermes-studio.git"
   },
-  "homepage": "https://hermes-studio.ai",
+  "homepage": "https://ekkostudio.xyz",
   "license": "BSL-1.1",
   "engines": {
     "node": ">=23.0.0"

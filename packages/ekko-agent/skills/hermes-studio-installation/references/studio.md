@@ -8,21 +8,21 @@ Install the latest platform and architecture-specific package from the Ekko Stud
 
 Once a managed Runtime is ready, packaged Desktop installs managed command shims:
 
-- `hermes-studio` opens the Desktop app.
-- `hermes-studio web ...` runs the bundled Web UI CLI.
-- `hermes-studio cli ...` runs the managed Hermes CLI after a Runtime is installed.
+- `ekko-studio` opens the Desktop app.
+- `ekko-studio web ...` runs the bundled Web UI CLI.
+- `ekko-studio cli ...` runs the managed Hermes CLI after a Runtime is installed.
 - `ekko-studio-mcp [api|browser|devices|use]` starts one Studio MCP toolset.
 
 First validate the Desktop installation by launching the app, opening the Agents page, and confirming Ekko appears as built in. After a Runtime is ready, validate its installed shims with:
 
 ```bash
-hermes-studio -h
-hermes-studio web version
+ekko-studio -h
+ekko-studio web version
 ```
 
 Refresh the Agents page after each installation change. Hermes shows either a user CLI, a managed Runtime, or not installed.
 
-Upgrade the packaged Desktop from its **Check for Updates** action. The updater checks the Cloudflare feed first and falls back to the GitHub latest-release feed. It downloads only after confirmation, then offers a restart to install. This upgrades the Desktop application; it is distinct from downloading a Hermes Runtime version or running `hermes-studio cli update`.
+Upgrade the packaged Desktop from its **Check for Updates** action. The updater checks the Cloudflare feed first and falls back to the GitHub latest-release feed. It downloads only after confirmation, then offers a restart to install. This upgrades the Desktop application; it is distinct from downloading a Hermes Runtime version or running `ekko-studio cli update`.
 
 ## npm installation
 

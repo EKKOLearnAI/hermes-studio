@@ -526,6 +526,11 @@ export function desktopMacTrayIcon(): string {
   return resolve(desktopAppPath(), 'build', 'trayMac.png')
 }
 
+export function desktopLinuxTrayIcon(): string {
+  if (isPackaged()) return resolve(process.resourcesPath, 'build', 'trayLinux.png')
+  return resolve(desktopAppPath(), 'build', 'trayLinux.png')
+}
+
 export function webUiHome(): string {
   return process.env.HERMES_WEB_UI_HOME?.trim() || resolve(homedir(), '.hermes-web-ui')
 }

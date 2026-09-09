@@ -28,7 +28,7 @@ describe('Studio version manifest client', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     await expect(fetchStudioVersionManifest()).resolves.toEqual(manifest)
-    expect(STUDIO_VERSION_MANIFEST_URL).toBe('https://api.hermes-studio.ai/api/studio/versions')
+    expect(STUDIO_VERSION_MANIFEST_URL).toBe('https://api.ekkostudio.xyz/api/studio/versions')
     expect(fetchMock).toHaveBeenCalledWith(STUDIO_VERSION_MANIFEST_URL, {
       headers: { Accept: 'application/json' },
     })

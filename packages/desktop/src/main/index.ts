@@ -25,7 +25,7 @@ import {
   startWebUiServer,
   stopWebUiServer,
 } from './webui-server'
-import { bundledNode, desktopIcon, desktopMacTrayIcon, desktopRuntimeVersion, desktopWindowsTrayIcon, runtimeStorageRoot, webuiDir, webUiHome } from './paths'
+import { bundledNode, desktopIcon, desktopLinuxTrayIcon, desktopMacTrayIcon, desktopRuntimeVersion, desktopWindowsTrayIcon, runtimeStorageRoot, webuiDir, webUiHome } from './paths'
 import { checkForDesktopUpdates, initAutoUpdater } from './updater'
 import { t } from './desktop-i18n'
 import { resetDesktopDefaultLogin } from './desktop-login-reset'
@@ -466,7 +466,7 @@ function createTray() {
     ? desktopMacTrayIcon()
     : process.platform === 'win32'
       ? desktopWindowsTrayIcon()
-      : desktopIcon()
+      : desktopLinuxTrayIcon()
   const sourceIcon = nativeImage.createFromPath(source)
   const icon = process.platform === 'darwin'
     ? sourceIcon
