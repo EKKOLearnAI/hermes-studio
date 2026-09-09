@@ -36,6 +36,19 @@ Hermes Agent data is stored in `~/.hermes` on Windows, macOS, and Linux.
 The desktop wrapper's own Web UI state is stored separately in
 `~/.hermes-web-ui` unless `HERMES_WEB_UI_HOME` is set.
 
+## Desktop and tray icons
+
+Regenerate the rounded Windows desktop icon and macOS, Windows, and Linux tray
+icons from `build/icon.png` by running this command from the repository root:
+
+```sh
+node packages/desktop/scripts/generate-rounded-icons.mjs
+```
+
+The script preserves the original artwork and applies a transparent rounded-square
+mask at each output size. It writes `iconWindows.png`, the multi-resolution
+`icon.ico`, and the platform tray PNGs. Linux uses a separate `trayLinux.png` asset.
+
 ## China mirror environment
 
 These mirrors are optional and are not required in CI:
