@@ -1359,7 +1359,7 @@ const tools = [
     inputSchema: inputSchema({
       session_id: { type: 'string', description: 'Exact current Ekko Studio direct-chat session id supplied in the run context.' },
       purpose: { type: 'string', description: 'Short user-visible reason for reading the health data.' },
-      metrics: { type: 'array', items: { type: 'string', enum: ['steps', 'sleep', 'heart_rate', 'workouts'] }, minItems: 1, uniqueItems: true, description: 'Health metrics to read.' },
+      metrics: { type: 'array', items: { type: 'string', enum: ['steps', 'sleep', 'heart_rate', 'resting_heart_rate', 'heart_rate_variability', 'oxygen_saturation', 'body_weight', 'active_energy', 'distance_walking_running', 'workouts'] }, minItems: 1, uniqueItems: true, description: 'Health metrics to read.' },
       start_ms: { type: 'number', description: 'Range start as Unix milliseconds.' },
       end_ms: { type: 'number', description: 'Range end as Unix milliseconds, not in the future; maximum range is 31 days.' },
       limit: { type: 'number', minimum: 1, maximum: 100, description: 'Maximum sleep or workout records returned.' },

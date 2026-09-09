@@ -30,7 +30,7 @@ describe('mobile health data', () => {
   it('sanitizes App results to exactly the requested metrics and range', () => {
     const expected = {
       purpose: 'test',
-      metrics: ['steps', 'heart_rate', 'sleep'] as const,
+      metrics: ['steps', 'heart_rate', 'sleep', 'oxygen_saturation', 'active_energy'] as const,
       start_ms: 1_800_000_000_000,
       end_ms: 1_800_000_100_000,
       limit: 1,
@@ -43,10 +43,11 @@ describe('mobile health data', () => {
         metrics: {
           steps: { total: 1234.4, secret: 'drop' },
           heart_rate: { average: 72, minimum: 50, maximum: 130, samples: ['drop'] },
-          sleep: [
-            { startMs: expected.start_ms, endMs: expected.end_ms, stages: [], secret: 'drop' },
-            { startMs: expected.start_ms, endMs: expected.end_ms },
-          ],
+          sleep: { totalSeconds: 3600, stageSeconds: { '3': 1200 }, records: [
+            { startMs: expected.start_ms, endMs: expected.end_ms, secret: 'drop' },
+          ] },
+          oxygen_saturation: { latest: 98, latestAtMs: expected.end_ms, secret: 'drop' },
+          active_energy: { total: 321.5, secret: 'drop' },
           workouts: [{ secret: 'not requested' }],
         },
       },
@@ -59,7 +60,11 @@ describe('mobile health data', () => {
         metrics: {
           steps: { total: 1234 },
           heart_rate: { average: 72, minimum: 50, maximum: 130 },
-          sleep: [{ startMs: expected.start_ms, endMs: expected.end_ms, stages: [] }],
+          sleep: { totalSeconds: 3600, stageSeconds: { '3': 1200 }, records: [
+            { startMs: expected.start_ms, endMs: expected.end_ms },
+          ] },
+          oxygen_saturation: { latest: 98, latestAtMs: expected.end_ms },
+          active_energy: { total: 321.5 },
         },
       },
     })

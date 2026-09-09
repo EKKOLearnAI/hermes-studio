@@ -1,4 +1,7 @@
-export type MobileHealthMetric = 'steps' | 'sleep' | 'heart_rate' | 'workouts'
+export type MobileHealthMetric =
+  | 'steps' | 'sleep' | 'heart_rate' | 'resting_heart_rate'
+  | 'heart_rate_variability' | 'oxygen_saturation' | 'body_weight'
+  | 'active_energy' | 'distance_walking_running' | 'workouts'
 
 export type MobileHealthRequest = {
   purpose: string
@@ -14,8 +17,11 @@ export type MobileHealthResponse = (
   | { status: 'error'; error: { code: string } }
 ) & { device_id?: string }
 
-const METRICS = new Set<MobileHealthMetric>(['steps', 'sleep', 'heart_rate', 'workouts'])
-const ERRORS = new Set(['health_permission_denied', 'health_unavailable', 'health_invalid_request', 'health_timeout', 'health_failed'])
+const METRICS = new Set<MobileHealthMetric>([
+  'steps', 'sleep', 'heart_rate', 'resting_heart_rate', 'heart_rate_variability',
+  'oxygen_saturation', 'body_weight', 'active_energy', 'distance_walking_running', 'workouts',
+])
+const ERRORS = new Set(['health_permission_denied', 'health_unavailable', 'health_data_locked', 'health_invalid_request', 'health_timeout', 'health_failed'])
 const MAX_RANGE_MS = 31 * 24 * 60 * 60_000
 const MIN_TIME_MS = Date.UTC(2001, 0, 1)
 
@@ -32,7 +38,7 @@ export function normalizeMobileHealthRequest(value: Record<string, unknown>): Mo
   if (!purpose) throw new Error('purpose is required')
   const rawMetrics = Array.isArray(value.metrics) ? value.metrics.map(metric => String(metric).trim().toLowerCase()) : []
   if (!rawMetrics.length || rawMetrics.some(metric => !METRICS.has(metric as MobileHealthMetric))) {
-    throw new Error('metrics must contain only steps, sleep, heart_rate, or workouts')
+    throw new Error('metrics contains an unsupported health metric')
   }
   const startMs = finite(value.start_ms)
   const endMs = finite(value.end_ms)
@@ -80,14 +86,33 @@ export function normalizeMobileHealthResponse(value: unknown, expected: MobileHe
       const total = record(raw) ? finite(raw.total) : null
       if (total == null || total < 0) return null
       metrics.steps = { total: Math.round(total) }
-    } else if (metric === 'heart_rate') {
+    } else if (['heart_rate', 'resting_heart_rate', 'heart_rate_variability', 'oxygen_saturation', 'body_weight'].includes(metric)) {
       if (!record(raw)) return null
       const cleaned: Record<string, number> = {}
-      for (const key of ['average', 'minimum', 'maximum']) {
+      for (const key of ['count', 'average', 'minimum', 'maximum', 'latest', 'latestAtMs']) {
         const number = finite(raw[key])
-        if (number != null && number >= 0 && number <= 400) cleaned[key] = number
+        if (number != null && number >= 0) cleaned[key] = number
       }
-      metrics.heart_rate = cleaned
+      metrics[metric] = cleaned
+    } else if (metric === 'active_energy' || metric === 'distance_walking_running') {
+      const total = record(raw) ? finite(raw.total) : null
+      if (total == null || total < 0) return null
+      metrics[metric] = { total }
+    } else if (metric === 'sleep' && record(raw)) {
+      const totalSeconds = finite(raw.totalSeconds)
+      const records = Array.isArray(raw.records) ? raw.records.slice(0, expected.limit).map(interval).filter(Boolean) : []
+      const stageSeconds: Record<string, number> = {}
+      if (record(raw.stageSeconds)) {
+        for (const [stage, duration] of Object.entries(raw.stageSeconds).slice(0, 20)) {
+          const seconds = finite(duration)
+          if (seconds != null && seconds >= 0) stageSeconds[stage] = seconds
+        }
+      }
+      metrics.sleep = {
+        ...(totalSeconds != null && totalSeconds >= 0 ? { totalSeconds } : {}),
+        stageSeconds,
+        records,
+      }
     } else {
       if (!Array.isArray(raw)) return null
       metrics[metric] = raw.slice(0, expected.limit).map(interval).filter(Boolean)

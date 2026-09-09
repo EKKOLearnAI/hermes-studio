@@ -203,7 +203,7 @@ function mobileHealthRunInstruction(sessionId: string | undefined, source: strin
   return [
     `The current Ekko Studio direct-chat session id is ${JSON.stringify(sessionId)}.`,
     'Only when the user explicitly asks to read their phone health data, use ekko_studio_use_toolset to describe and call ekko_studio_use_mobile_health with this exact session_id.',
-    'The App asks the user to share once and requests system permission. This tool is read-only and limited to steps, sleep, heart_rate, and workouts for at most 31 days. Never use it proactively, for diagnosis, advertising, background collection, delegated tasks, workflows, or group chats.',
+    'The App asks the user to share once and requests system permission. This tool is read-only and limited to its allowlisted activity, sleep, heart, oxygen and body metrics for at most 31 days. Never use it proactively, for diagnosis, advertising, background collection, delegated tasks, workflows, or group chats.',
   ].join(' ')
 }
 type ChatRunBridgeReadiness =
