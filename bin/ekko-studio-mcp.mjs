@@ -1355,7 +1355,7 @@ const tools = [
   {
     name: 'ekko_studio_use_mobile_health',
     toolset: 'use',
-    description: 'With the user’s explicit request, ask their mobile App to read selected health data once in the current direct chat. Read-only; no background collection, diagnosis, advertising, delegated tasks, workflows, or group chats.',
+    description: 'With the user’s explicit request, ask their iPhone or iPad App to read selected Apple HealthKit data once in the current direct chat. iOS only; read-only; no background collection, diagnosis, advertising, delegated tasks, workflows, or group chats.',
     inputSchema: inputSchema({
       session_id: { type: 'string', description: 'Exact current Ekko Studio direct-chat session id supplied in the run context.' },
       purpose: { type: 'string', description: 'Short user-visible reason for reading the health data.' },

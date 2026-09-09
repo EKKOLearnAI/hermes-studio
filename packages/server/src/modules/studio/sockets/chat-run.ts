@@ -203,8 +203,8 @@ function mobileHealthRunInstruction(sessionId: string | undefined, source: strin
   if (!sessionId || source === 'workflow' || source === 'group_chat') return ''
   return [
     `The current Ekko Studio direct-chat session id is ${JSON.stringify(sessionId)}.`,
-    'Only when the user explicitly asks to read their phone health data, use ekko_studio_use_toolset to describe and call ekko_studio_use_mobile_health with this exact session_id.',
-    'The App asks the user to share once and requests system permission. This tool is read-only and limited to its allowlisted activity, sleep, heart, oxygen and body metrics for at most 31 days. Never use it proactively, for diagnosis, advertising, background collection, delegated tasks, workflows, or group chats.',
+    'Only when the user explicitly asks to read Apple Health data from their iPhone or iPad, use ekko_studio_use_toolset to describe and call ekko_studio_use_mobile_health with this exact session_id.',
+    'Health data access is available only on iOS through Apple HealthKit. The App asks the user to share once and requests system permission. This tool is read-only and limited to its allowlisted activity, sleep, heart, oxygen and body metrics for at most 31 days. Never use it proactively, for diagnosis, advertising, background collection, delegated tasks, workflows, or group chats.',
   ].join(' ')
 }
 type ChatRunBridgeReadiness =
@@ -568,6 +568,7 @@ export class ChatRunSocket {
     }
     const target = this.mobileRunTargets.get(sessionId)
     if (!target || target.profile !== profile) throw new Error('Mobile target unavailable; send a new message from the intended mobile device')
+    if (target.platform !== 'ios') throw new Error('Mobile health data is available only on iPhone and iPad')
     if (!this.nsp.adapter.rooms.get(mobileDeviceRoom(target))?.size) throw new Error('Target mobile device is offline; reconnect the same device')
     const request = normalizeMobileHealthRequest({
       purpose: options.purpose,
@@ -616,7 +617,14 @@ export class ChatRunSocket {
       if (appToken.status !== 'active' || !appToken.user) return next(new Error('App device authentication failed'))
       const profile = String(socket.handshake.query?.profile || 'default')
       if (!this.canAccessProfile(appToken.user, profile)) return next(new Error('Profile access denied'))
-      socket.data.mobileDeviceTarget = { deviceCode: appToken.deviceCode, userId: String(appToken.user.id), profile }
+      const rawPlatform = String(socket.handshake.query?.platform || '').trim().toLowerCase()
+      const platform = rawPlatform === 'ios' || rawPlatform === 'android' ? rawPlatform : 'unknown'
+      socket.data.mobileDeviceTarget = {
+        deviceCode: appToken.deviceCode,
+        userId: String(appToken.user.id),
+        profile,
+        platform,
+      }
     }
     if (!await isAuthEnabled()) {
       next()

@@ -46,6 +46,7 @@ export function mobileHealthResponseSourceMatches(value: unknown, expectedDevice
   if (status === 'denied' || status === 'error') return true
   if (status !== 'success' || !record(value.result) || !record(value.result.source)) return false
   return String(value.result.source.deviceCode || '') === expectedDeviceCode
+    && String(value.result.source.platform || '') === 'ios'
 }
 
 export function normalizeMobileHealthRequest(value: Record<string, unknown>): MobileHealthRequest {
@@ -141,10 +142,11 @@ export function normalizeMobileHealthResponse(value: unknown, expected: MobileHe
     }
   }
   const rawSource = record(value.result.source) ? value.result.source : null
-  const source = rawSource ? {
-    platform: ['ios', 'android'].includes(String(rawSource.platform)) ? String(rawSource.platform) : 'unknown',
+  if (!rawSource || String(rawSource.platform) !== 'ios') return null
+  const source = {
+    platform: 'ios',
     deviceName: String(rawSource.deviceName || '').trim().slice(0, 80),
-  } : undefined
+  }
   return {
     status: 'success',
     result: {
@@ -152,7 +154,7 @@ export function normalizeMobileHealthResponse(value: unknown, expected: MobileHe
       endMs: expected.end_ms,
       metrics,
       ...(Object.keys(metricErrors).length ? { metricErrors } : {}),
-      ...(source ? { source } : {}),
+      source,
     },
   }
 }

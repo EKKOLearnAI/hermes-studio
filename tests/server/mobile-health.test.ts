@@ -92,7 +92,7 @@ describe('mobile health data', () => {
           steps: 'ignored_when_data_exists',
           workouts: 'not_requested',
         },
-        source: { platform: 'android', deviceCode: 'device-1', deviceName: 'Android' },
+        source: { platform: 'ios', deviceCode: 'device-1', deviceName: 'My iPhone' },
       },
     }, { ...expected, metrics: [...expected.metrics] })).toEqual({
       status: 'success',
@@ -101,7 +101,7 @@ describe('mobile health data', () => {
         endMs: expected.end_ms,
         metrics: { steps: { total: 42 } },
         metricErrors: { heart_rate: 'permission_denied' },
-        source: { platform: 'android', deviceName: 'Android' },
+        source: { platform: 'ios', deviceName: 'My iPhone' },
       },
     })
   })
@@ -114,8 +114,13 @@ describe('mobile health data', () => {
     expect(socket).toContain('sameMobileDevice(pending.target, socket.data.mobileDeviceTarget)')
     expect(socket).toContain('mobileHealthResponseSourceMatches(data, pending.target.deviceCode)')
     expect(socket).toContain('Mobile health data is available only in direct chats')
+    expect(socket).toContain("target.platform !== 'ios'")
+    expect(socket).toContain('Mobile health data is available only on iPhone and iPad')
+    expect(socket).toContain("socket.handshake.query?.platform")
     expect(mcp).toContain("name: 'ekko_studio_use_mobile_health'")
-    expect(mcp).toContain('Read-only; no background collection')
+    expect(mcp).toContain('Apple HealthKit')
+    expect(mcp).toContain('iOS only')
+    expect(mcp).toContain('read-only; no background collection')
     expect(mcp).not.toMatch(/mobile_health[\s\S]{0,500}(write|background access)/i)
     vi.restoreAllMocks()
   })
@@ -123,11 +128,15 @@ describe('mobile health data', () => {
   it('requires provenance for successful data without masking target-device errors', () => {
     expect(mobileHealthResponseSourceMatches({
       status: 'success',
-      result: { source: { deviceCode: 'device-1' } },
+      result: { source: { deviceCode: 'device-1', platform: 'ios' } },
     }, 'device-1')).toBe(true)
     expect(mobileHealthResponseSourceMatches({
       status: 'success',
-      result: { source: { deviceCode: 'device-2' } },
+      result: { source: { deviceCode: 'device-2', platform: 'ios' } },
+    }, 'device-1')).toBe(false)
+    expect(mobileHealthResponseSourceMatches({
+      status: 'success',
+      result: { source: { deviceCode: 'device-1', platform: 'android' } },
     }, 'device-1')).toBe(false)
     expect(mobileHealthResponseSourceMatches({ status: 'success', result: {} }, 'device-1')).toBe(false)
     expect(mobileHealthResponseSourceMatches({
