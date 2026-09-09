@@ -1299,6 +1299,57 @@ function parseCodexExternalMcpBlocks(...contents: Array<string | null | undefine
   return Array.from(blockByServer.values()).filter(Boolean)
 }
 
+interface TomlArrayScanState {
+  quote: '"' | "'" | null
+  multiline: boolean
+}
+
+function scanTomlArrayBrackets(line: string, state: TomlArrayScanState): number {
+  let delta = 0
+  let escaped = false
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index]
+    if (state.quote) {
+      if (state.multiline) {
+        if (state.quote === '"' && char === '\\') {
+          escaped = !escaped
+          continue
+        }
+        if (char === state.quote && !escaped) {
+          let quoteCount = 1
+          while (line[index + quoteCount] === state.quote) quoteCount += 1
+          if (quoteCount >= 3) {
+            state.quote = null
+            state.multiline = false
+            index += quoteCount - 1
+          }
+        }
+        escaped = false
+        continue
+      }
+      if (state.quote === '"' && char === '\\' && !escaped) {
+        escaped = true
+        continue
+      }
+      if (char === state.quote && !escaped) {
+        state.quote = null
+      }
+      escaped = false
+      continue
+    }
+    if (char === '#') break
+    if (char === '"' || char === "'") {
+      state.quote = char
+      state.multiline = line.slice(index, index + 3) === char.repeat(3)
+      if (state.multiline) index += 2
+      continue
+    }
+    if (char === '[') delta += 1
+    else if (char === ']') delta -= 1
+  }
+  return delta
+}
+
 function codexRuntimeUserConfig(...contents: Array<string | null | undefined>): {
   topLevelLines: string[]
   sectionBlocks: string[]
@@ -1348,14 +1399,13 @@ function codexRuntimeUserConfig(...contents: Array<string | null | undefined>): 
       if (!section) {
         if (assignment && !runtimeKeys.has(assignment[1])) {
           let mergedLine = line
-          let bracketDepth = (line.slice(line.indexOf('=') + 1).match(/\[/g) || []).length
-            - (line.slice(line.indexOf('=') + 1).match(/\]/g) || []).length
-          while (bracketDepth > 0 && lineIndex + 1 < lines.length) {
+          const scanState: TomlArrayScanState = { quote: null, multiline: false }
+          let bracketDepth = scanTomlArrayBrackets(line.slice(line.indexOf('=') + 1), scanState)
+          while ((bracketDepth > 0 || scanState.multiline) && lineIndex + 1 < lines.length) {
             lineIndex += 1
             const nextLine = lines[lineIndex]
             mergedLine += `\n${nextLine}`
-            bracketDepth += (nextLine.match(/\[/g) || []).length
-              - (nextLine.match(/\]/g) || []).length
+            bracketDepth += scanTomlArrayBrackets(nextLine, scanState)
           }
           topLevel.set(assignment[1], mergedLine)
         }
@@ -1381,8 +1431,10 @@ function codexRuntimeUserConfig(...contents: Array<string | null | undefined>): 
   }
 
   const sectionBlocks: string[] = []
-  for (const { header, lines } of sections.values()) {
-    if (lines.length) sectionBlocks.push(`${header}\n${lines.join('\n')}`)
+  for (const [key, { header, lines }] of sections) {
+    if (lines.length || key.startsWith('array:')) {
+      sectionBlocks.push(lines.length ? `${header}\n${lines.join('\n')}` : header)
+    }
   }
   return {
     topLevelLines: [...topLevel.values()],
