@@ -50,6 +50,7 @@ describe('mobile health data', () => {
           active_energy: { total: 321.5, secret: 'drop' },
           workouts: [{ secret: 'not requested' }],
         },
+        source: { platform: 'ios', deviceCode: 'device-1', deviceName: 'My iPhone', secret: 'drop' },
       },
     }, { ...expected, metrics: [...expected.metrics] })
     expect(response).toEqual({
@@ -66,6 +67,7 @@ describe('mobile health data', () => {
           oxygen_saturation: { latest: 98, latestAtMs: expected.end_ms },
           active_energy: { total: 321.5 },
         },
+        source: { platform: 'ios', deviceName: 'My iPhone' },
       },
     })
   })
@@ -76,6 +78,7 @@ describe('mobile health data', () => {
     expect(socket).toContain("'health.requested'")
     expect(socket).toContain("socket.on('health.respond'")
     expect(socket).toContain('sameMobileDevice(pending.target, socket.data.mobileDeviceTarget)')
+    expect(socket).toContain('resultSource.deviceCode !== pending.target.deviceCode')
     expect(socket).toContain('Mobile health data is available only in direct chats')
     expect(mcp).toContain("name: 'ekko_studio_use_mobile_health'")
     expect(mcp).toContain('Read-only; no background collection')

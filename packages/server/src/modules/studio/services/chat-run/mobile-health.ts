@@ -12,7 +12,7 @@ export type MobileHealthRequest = {
 }
 
 export type MobileHealthResponse = (
-  | { status: 'success'; result: { startMs: number; endMs: number; metrics: Partial<Record<MobileHealthMetric, unknown>> } }
+  | { status: 'success'; result: { startMs: number; endMs: number; metrics: Partial<Record<MobileHealthMetric, unknown>>; source?: { platform: string; deviceName: string } } }
   | { status: 'denied' }
   | { status: 'error'; error: { code: string } }
 ) & { device_id?: string }
@@ -118,5 +118,10 @@ export function normalizeMobileHealthResponse(value: unknown, expected: MobileHe
       metrics[metric] = raw.slice(0, expected.limit).map(interval).filter(Boolean)
     }
   }
-  return { status: 'success', result: { startMs: expected.start_ms, endMs: expected.end_ms, metrics } }
+  const rawSource = record(value.result.source) ? value.result.source : null
+  const source = rawSource ? {
+    platform: ['ios', 'android'].includes(String(rawSource.platform)) ? String(rawSource.platform) : 'unknown',
+    deviceName: String(rawSource.deviceName || '').trim().slice(0, 80),
+  } : undefined
+  return { status: 'success', result: { startMs: expected.start_ms, endMs: expected.end_ms, metrics, ...(source ? { source } : {}) } }
 }
