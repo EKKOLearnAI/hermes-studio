@@ -4,8 +4,8 @@ import sharp from 'sharp'
 
 const buildDir = new URL('../build/', import.meta.url)
 // Keep the original artwork intact; only the tile's outside corners change.
-function renderRounded(size) {
-  const mask = Buffer.from(`<svg width="${size}" height="${size}"><rect width="${size}" height="${size}" rx="${size * 0.26}" fill="white"/></svg>`)
+function renderRounded(size, radius) {
+  const mask = Buffer.from(`<svg width="${size}" height="${size}"><rect width="${size}" height="${size}" rx="${size * radius}" fill="white"/></svg>`)
   return sharp(fileURLToPath(new URL('icon.png', buildDir)))
     .resize(size, size)
     .ensureAlpha()
@@ -14,19 +14,20 @@ function renderRounded(size) {
     .toBuffer()
 }
 
-await writeFile(new URL('iconWindows.png', buildDir), await renderRounded(1024))
-for (const [name, pixels] of [
-  ['trayMac.png', 22],
-  ['trayMac@2x.png', 44],
-  ['trayWindows.png', 256],
-  ['trayLinux.png', 256],
+const windowsRadius = 0.16
+await writeFile(new URL('iconWindows.png', buildDir), await renderRounded(1024, windowsRadius))
+for (const [name, pixels, radius] of [
+  ['trayMac.png', 22, 0.26],
+  ['trayMac@2x.png', 44, 0.26],
+  ['trayWindows.png', 256, windowsRadius],
+  ['trayLinux.png', 256, 0.26],
 ]) {
-  await writeFile(new URL(name, buildDir), await renderRounded(pixels))
+  await writeFile(new URL(name, buildDir), await renderRounded(pixels, radius))
 }
 
 // PNG-backed ICO entries retain alpha at both standard and high-DPI sizes.
 const iconSizes = [16, 20, 24, 32, 40, 48, 64, 96, 128, 256]
-const entries = await Promise.all(iconSizes.map(renderRounded))
+const entries = await Promise.all(iconSizes.map(size => renderRounded(size, windowsRadius)))
 const header = Buffer.alloc(6 + 16 * entries.length)
 header.writeUInt16LE(1, 2)
 header.writeUInt16LE(entries.length, 4)

@@ -46,7 +46,8 @@ node packages/desktop/scripts/generate-rounded-icons.mjs
 ```
 
 The script preserves the original artwork and applies a transparent rounded-square
-mask at each output size. It writes `iconWindows.png`, the multi-resolution
+mask at each output size (16% corner radius for Windows, 26% for macOS/Linux trays).
+It writes `iconWindows.png`, the multi-resolution
 `icon.ico`, and the platform tray PNGs. Linux uses a separate `trayLinux.png` asset.
 
 ## China mirror environment
