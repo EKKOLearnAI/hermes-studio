@@ -10,10 +10,17 @@ const HERMES_BASE = detectHermesHome()
 const MODELS_DEV_CACHE = resolve(HERMES_BASE, 'models_dev_cache.json')
 const DEFAULT_CONTEXT_LENGTH = 256_000
 
+function fallbackContextLength(options: ModelContextLengthOptions): number {
+  return options.fallbackContextLength && options.fallbackContextLength > 0
+    ? Math.floor(options.fallbackContextLength)
+    : DEFAULT_CONTEXT_LENGTH
+}
+
 export interface ModelContextLengthOptions {
   profile?: string
   model?: string | null
   provider?: string | null
+  fallbackContextLength?: number
 }
 
 interface ModelLimit {
@@ -431,10 +438,10 @@ export function getModelContextLength(input?: string | ModelContextLengthOptions
   const profile = options.profile
   const profileDir = getProfileDir(profile)
   const config = loadConfig(profileDir)
-  if (!config) return DEFAULT_CONTEXT_LENGTH
+  if (!config) return fallbackContextLength(options)
 
   let model = String(options.model || '').trim() || getDefaultModel(config)
-  if (!model) return DEFAULT_CONTEXT_LENGTH
+  if (!model) return fallbackContextLength(options)
 
   let provider = String(options.provider || '').trim() || getDefaultProvider(config)
 
@@ -446,7 +453,7 @@ export function getModelContextLength(input?: string | ModelContextLengthOptions
 
   if (provider?.toLowerCase() === 'moa') {
     const aggregator = resolveMoaAggregator(config, model)
-    if (!aggregator) return DEFAULT_CONTEXT_LENGTH
+    if (!aggregator) return fallbackContextLength(options)
     model = aggregator.model
     provider = aggregator.provider
 
@@ -471,7 +478,7 @@ export function getModelContextLength(input?: string | ModelContextLengthOptions
   if (cached) return cached
 
   // 5. Fallback
-  return DEFAULT_CONTEXT_LENGTH
+  return fallbackContextLength(options)
 }
 
 export function getModelRuntimeCapabilities(input: ModelContextLengthOptions): {

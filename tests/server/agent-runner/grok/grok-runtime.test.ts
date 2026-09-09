@@ -227,4 +227,15 @@ describe('Grok streaming JSON adaptation', () => {
     expect(completed).toEqual([{ id: 'call-1', output: { lines: 42 }, failed: false }])
     expect(sessions).toEqual(['session-1'])
   })
+
+  it('accepts usage fields emitted at the top level of native events', () => {
+    const usage = parseGrokStreamingJsonLine('{"type":"end","sessionId":"session-1","data":{"usage":{"prompt_tokens":81441,"completion_tokens":128}}}')
+
+    expect(usage).toEqual({
+      type: 'end',
+      sessionId: 'session-1',
+      stopReason: '',
+      usage: { prompt_tokens: 81441, completion_tokens: 128 },
+    })
+  })
 })
