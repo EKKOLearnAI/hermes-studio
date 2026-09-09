@@ -164,6 +164,8 @@ function applyServerTtsSettings(response: FetchTtsSettingsResponse) {
   if (response.activeProvider) {
     provider.value = response.activeProvider
   }
+  const doubao = response.providers.find(row => row.provider === 'doubao')
+  doubaoSpeed.value = doubao?.settings.speed?.trim() || DEFAULT.doubaoSpeed
 }
 
 export async function loadServerTtsSettings(force = false): Promise<void> {
