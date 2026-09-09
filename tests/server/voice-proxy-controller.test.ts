@@ -71,7 +71,7 @@ function multipartBody(boundary: string): Buffer {
   ].join('\r\n'))
 }
 
-describe('Hermes Studio voice proxy controllers', () => {
+describe('Ekko Studio voice proxy controllers', () => {
   it('routes Hermes TTS through the active Web UI provider for the URL profile', async () => {
     const synthesize = vi.fn(async () => ({
       audio: Buffer.from('mp3-data'),
@@ -90,7 +90,7 @@ describe('Hermes Studio voice proxy controllers', () => {
     store.saveActiveTtsProvider('default', 'edge')
 
     const ctrl = await import('../../packages/server/src/modules/studio/controllers/tts')
-    const ctx = ttsCtx('default', '你好，Hermes Studio')
+    const ctx = ttsCtx('default', '你好，Ekko Studio')
     await ctrl.synthesizeVoiceProxy(ctx)
 
     expect(ctx.status).toBe(200)
@@ -98,7 +98,7 @@ describe('Hermes Studio voice proxy controllers', () => {
     expect(ctx.headers['Content-Type']).toBe('audio/mpeg')
     expect(ctx.headers['X-TTS-Engine']).toBe('hermes-studio')
     expect(synthesize).toHaveBeenCalledWith(
-      expect.objectContaining({ text: '你好，Hermes Studio' }),
+      expect.objectContaining({ text: '你好，Ekko Studio' }),
       expect.objectContaining({
         voice: 'zh-CN-YunjianNeural',
         rate: '1',

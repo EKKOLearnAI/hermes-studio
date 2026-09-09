@@ -76,7 +76,7 @@ function unquote(raw: string): string {
 
 function readEnvVar(envContent: string, key: string): string {
   if (process.env[key]) return unquote(process.env[key]!)
-  const m = envContent.match(new RegExp(`^${key}\\s*=\\s*(.+)`, 'm'))
+  const m = envContent.match(new RegExp(`^${key}\\s*=[ \\t]*(.+)`, 'm'))
   if (m && m[1].trim() && !m[1].trim().startsWith('#')) return unquote(m[1])
   return ''
 }

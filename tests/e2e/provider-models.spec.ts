@@ -1,5 +1,42 @@
 import { expect, test } from '@playwright/test'
-import { authenticate, mockHermesApi, TEST_ACCESS_KEY } from './fixtures'
+import { authenticate, mockChatSocket, mockHermesApi, TEST_ACCESS_KEY, TEST_MODEL_GROUP } from './fixtures'
+
+test('shows OpenCode Free loading without blocking other providers, then updates in the background', async ({ page }) => {
+  await authenticate(page, TEST_ACCESS_KEY)
+  const freeGroup = { provider: 'opencode-free', label: 'OpenCode Free', base_url: 'https://opencode.ai/zen/v1', api_key: '', builtin: true, models: [] as string[], catalog_status: 'loading' }
+  const api = await mockHermesApi(page, { modelGroups: [TEST_MODEL_GROUP, freeGroup] })
+  await page.goto('/#/hermes/models')
+  const freeCard = page.locator('.provider-card').filter({ has: page.getByRole('heading', { name: 'OpenCode Free', exact: true }) })
+  await expect(freeCard.getByText('Loading free models in the background…')).toBeVisible()
+  await expect(page.locator('.provider-card').filter({ hasText: 'test-provider' }).getByText('test-model', { exact: true }).first()).toBeVisible()
+  await expect(freeCard.getByRole('button', { name: 'Set default provider' })).toBeDisabled()
+  freeGroup.models = ['mimo-v2.5-free']
+  freeGroup.catalog_status = 'ready'
+  await expect(freeCard.getByText('mimo-v2.5-free', { exact: true })).toBeVisible({ timeout: 10_000 })
+  await expect(freeCard.getByText('Loading free models in the background…')).toHaveCount(0)
+  expect(api.requests.filter(request => request.method === 'PUT' && request.pathname === '/api/hermes/config/model')).toHaveLength(0)
+  expect(api.unexpectedRequests).toEqual([])
+})
+
+test('adds OpenCode Free without a key and preserves the native provider ID', async ({ page }) => {
+  await authenticate(page, TEST_ACCESS_KEY)
+  const freeGroup = { provider: 'opencode-free', label: 'OpenCode Free', base_url: 'https://opencode.ai/zen/v1', api_key: '', builtin: true, models: ['mimo-v2.5-free'], catalog_status: 'ready' }
+  await mockHermesApi(page, { modelGroups: [TEST_MODEL_GROUP, freeGroup] })
+  let saved: Record<string, unknown> | undefined
+  await page.route('**/api/hermes/config/providers', async route => {
+    saved = route.request().postDataJSON()
+    await route.fulfill({ json: { success: true } })
+  })
+  await page.goto('/#/hermes/models?addProvider=1')
+  const form = page.getByRole('dialog')
+  await form.locator('.n-base-selection').first().click()
+  await page.locator('.n-base-select-option').filter({ hasText: 'OpenCode Free' }).click()
+  await expect(form.locator('input[type="password"]')).toHaveCount(0)
+  await expect(form.getByText('No account or API key required. Free models may be rate limited.')).toBeVisible()
+  await form.getByRole('button', { name: 'Add', exact: true }).click()
+  await expect(form).toHaveCount(0)
+  expect(saved).toMatchObject({ providerKey: 'opencode-free', api_key: '', model: 'mimo-v2.5-free' })
+})
 
 test('opens the provider form when model settings are entered from setup guidance', async ({ page }) => {
   await authenticate(page, TEST_ACCESS_KEY)
@@ -92,4 +129,42 @@ test('edits a provider without rendering its existing credential', async ({ page
   expect(testRequest?.method).toBe('POST')
   expect(testRequest?.headers['x-hermes-profile']).toBe('research')
   expect(api.unexpectedRequests).toEqual([])
+})
+
+
+for (const agent of ['Hermes', 'Ekko', 'Claude', 'Codex', 'Pi', 'Grok', 'OpenCode']) {
+  test(`creates an OpenCode Free ${agent} chat without asking for a key`, async ({ page }) => {
+    await authenticate(page, TEST_ACCESS_KEY)
+    await mockHermesApi(page, { modelGroups: [{ provider: 'opencode-free', label: 'OpenCode Free', base_url: 'https://opencode.ai/zen/v1', api_key: '', builtin: true, models: ['mimo-v2.5-free'], catalog_status: 'ready' }] })
+    await mockChatSocket(page)
+    await page.route('**/api/coding-agents', route => route.fulfill({ json: {
+      tools: ['claude-code', 'codex', 'pi', 'grok', 'opencode'].map(id => ({ id, name: id, installed: true })),
+    } }))
+    await page.goto('/#/hermes/chat')
+    await page.getByRole('button', { name: 'New Chat' }).click()
+    const form = page.locator('.new-chat-drawer')
+    if (agent !== 'Hermes') {
+      await form.locator('.new-chat-field').filter({ hasText: /^Agent/ }).locator('.n-base-selection').click()
+      await page.locator('.n-base-select-option:visible').filter({ hasText: new RegExp(`^${agent}$`) }).click()
+    }
+    await expect(form.locator('input[type="password"]')).toHaveCount(0)
+    await expect(form.getByText('No account or API key required. Free models may be rate limited.')).toBeVisible()
+    await expect(form.getByRole('button', { name: 'Create', exact: true })).toBeEnabled()
+    await form.getByRole('button', { name: 'Create', exact: true }).click()
+    await expect(page).toHaveURL(/#\/hermes\/session\//)
+  })
+}
+
+test('updates a pending free catalog inside the new chat drawer', async ({ page }) => {
+  await authenticate(page, TEST_ACCESS_KEY)
+  const freeGroup = { provider: 'opencode-free', label: 'OpenCode Free', base_url: 'https://opencode.ai/zen/v1', api_key: '', models: [] as string[], catalog_status: 'loading' }
+  await mockHermesApi(page, { modelGroups: [freeGroup] })
+  await mockChatSocket(page)
+  await page.goto('/#/hermes/chat')
+  await page.getByRole('button', { name: 'New Chat' }).click()
+  const create = page.locator('.new-chat-drawer').getByRole('button', { name: 'Create', exact: true })
+  await expect(create).toBeDisabled()
+  freeGroup.models = ['mimo-v2.5-free']
+  freeGroup.catalog_status = 'ready'
+  await expect(create).toBeEnabled({ timeout: 10_000 })
 })

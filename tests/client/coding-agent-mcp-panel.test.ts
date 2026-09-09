@@ -67,7 +67,7 @@ describe('CodingAgentMcpPanel Agent changes', () => {
   })
 
   it('sends only the enabled field when toggling a Studio-managed server', async () => {
-    api.fetch.mockResolvedValue(response('hermes-studio-api', true))
+    api.fetch.mockResolvedValue(response('ekko-studio-api', true))
     const wrapper = shallowMount(CodingAgentMcpPanel, {
       props: { agentId: 'codex' },
     })
@@ -76,7 +76,7 @@ describe('CodingAgentMcpPanel Agent changes', () => {
     wrapper.getComponent(McpServerCard).vm.$emit('toggle-enabled')
     await flushPromises()
 
-    expect(api.update).toHaveBeenCalledWith('codex', 'hermes-studio-api', { enabled: false })
+    expect(api.update).toHaveBeenCalledWith('codex', 'ekko-studio-api', { enabled: false })
   })
 
   it('keeps the full configuration when toggling a custom server', async () => {

@@ -713,6 +713,32 @@ describe('AppRelayClient', () => {
     expect(local.disconnect).toHaveBeenCalled()
   })
 
+  it('closes a cloud bridge even when the cleanup notification has no acknowledgement', async () => {
+    const { startAppRelayClient } = await import('../../packages/server/src/modules/studio/services/app-relay/client')
+    startAppRelayClient({
+      relayUrl: 'https://relay.example.com',
+      machineId: 'hwui_machine_1234567890',
+      publicKey: 'machine-public-key',
+      localBaseUrl: 'http://127.0.0.1:8648',
+      fetchImpl: vi.fn() as any,
+    })
+    const remote = sockets[0]
+    remote.__handlers.get('app.socket.open')({
+      id: 'abandoned-bridge', namespace: '/chat-run', auth: { token: 'local-user-token' },
+    }, vi.fn())
+    const local = sockets[1]
+
+    remote.__handlers.get('app.socket.close')({ id: 'abandoned-bridge' })
+
+    expect(local.disconnect).toHaveBeenCalledTimes(1)
+    const eventAck = vi.fn()
+    remote.__handlers.get('app.socket.event')({ id: 'abandoned-bridge', event: 'run', payload: {} }, eventAck)
+    await vi.waitFor(() => expect(eventAck).toHaveBeenCalledWith(expect.objectContaining({
+      ok: false, error: expect.objectContaining({ code: 'socket_not_open' }),
+    })))
+    expect(local.emit).not.toHaveBeenCalled()
+  })
+
   it('bridges the /workflow status namespace and whitelisted subscription events', async () => {
     const { startAppRelayClient } = await import('../../packages/server/src/modules/studio/services/app-relay/client')
     startAppRelayClient({
@@ -755,6 +781,51 @@ describe('AppRelayClient', () => {
       ok: true,
       namespace: '/workflow',
       event: 'workflow.status.subscribe',
+    })))
+  })
+
+  it('bridges unified App subscriptions through cloud relay transport', async () => {
+    const { startAppRelayClient } = await import('../../packages/server/src/modules/studio/services/app-relay/client')
+    startAppRelayClient({
+      relayUrl: 'https://relay.example.com',
+      machineId: 'hwui_machine_1234567890',
+      publicKey: 'machine-public-key',
+      localBaseUrl: 'http://127.0.0.1:8648',
+      fetchImpl: vi.fn() as any,
+    })
+    const remote = sockets[0]
+    const openAck = vi.fn()
+    remote.__handlers.get('app.socket.open')({
+      id: 'relay-workflow-1',
+      namespace: '/chat-run',
+      auth: { token: 'local-user-token', appEventVersion: 1 }, query: { profile: 'default' },
+    }, openAck)
+
+    const local = sockets[1]
+    expect(local.__url).toBe('http://127.0.0.1:8648/chat-run')
+    expect(local.__options).toMatchObject({ auth: { token: 'local-user-token', appEventVersion: 1 } })
+    expect(openAck).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'relay-workflow-1',
+      ok: true,
+      namespace: '/chat-run',
+    }))
+
+    local.emit.mockImplementation((event: string, payload: unknown, ack?: (response: unknown) => void) => {
+      if (event === 'app.events.subscribe') {
+        ack?.({ ok: true, data: { statuses: [{ workflowId: 'workflow-a', status: 'idle' }] } })
+      }
+    })
+    const eventAck = vi.fn()
+    remote.__handlers.get('app.socket.event')({
+      id: 'relay-workflow-1',
+      event: 'app.events.subscribe',
+      payload: { schema_version: 1, profile: 'default', types: ['workflow.run.completed'] },
+      ack: true,
+    }, eventAck)
+    await vi.waitFor(() => expect(eventAck).toHaveBeenCalledWith(expect.objectContaining({
+      ok: true,
+      namespace: '/chat-run',
+      event: 'app.events.subscribe',
     })))
   })
 })

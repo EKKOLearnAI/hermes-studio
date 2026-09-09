@@ -44,6 +44,8 @@ const ALLOWED_GROUP_AGENT_CLIENT_EVENTS = new Set([
   'run.accepted', 'run.completed', 'run.failed', 'agent.event', 'agent.events', 'agent.config.update', 'attachment.read', 'connector.revoke',
 ])
 const ALLOWED_CHAT_RUN_CLIENT_EVENTS = new Set([
+  'app.events.subscribe',
+  'app.events.unsubscribe',
   'run',
   'resume',
   'app.resume',
@@ -52,6 +54,8 @@ const ALLOWED_CHAT_RUN_CLIENT_EVENTS = new Set([
   'cancel_queued_run',
   'approval.respond',
   'clarify.respond',
+  'calendar.respond',
+  'reminder.respond',
   'location.respond',
 ])
 const ALLOWED_GROUP_CHAT_CLIENT_EVENTS = new Set([
@@ -353,7 +357,8 @@ export class AppRelayClient {
       void this.emitLocalSocketEvent(request).then(response => ack?.(response))
     })
     this.socket.on('app.socket.close', (request: AppRelaySocketCloseRequest, ack?: (response: AppRelaySocketResponse) => void) => {
-      ack?.(this.closeLocalSocket(request))
+      const response = this.closeLocalSocket(request)
+      ack?.(response)
     })
   }
 

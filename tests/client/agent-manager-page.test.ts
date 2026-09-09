@@ -446,7 +446,7 @@ describe('Agent Manager page', () => {
 
     expect(claudeCard.find('.update-alert').exists()).toBe(false)
     expect(claudeCard.findAll('button').map(button => button.text()))
-      .toContain('agentManager.updateToVersion:2.1.0')
+      .toContain('agentManager.updateToVersion:v2.1.0')
   })
 
   it('only probes installed Agents after the user clicks refresh', async () => {

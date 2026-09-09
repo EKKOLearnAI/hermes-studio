@@ -294,3 +294,18 @@ describe('buildResumeMessages', () => {
     expect(workspaceDiff.content).toBe(completeResult)
   })
 })
+
+// Plan state must survive App conditional resumes even when message bodies are cached.
+it('returns plan snapshots on cache hits and changes the cache id after a plan update', () => {
+  const page = buildResumeMessagePage([message({ id: 1, role: 'user', content: 'Work' })])
+  const taskPlans = [{ session_id: 's', run_id: 'r', plan_id: 'r', revision: 1, execution_state: 'running' as const,
+    created_at: 1, updated_at: 1, plan: [{ id: 'a', step: 'Work', status: 'pending' as const }] }]
+  const initial = buildAppResumeMessagePage({ ...page, taskPlans }, '')
+  const cached = buildAppResumeMessagePage({ ...page, taskPlans }, initial.id)
+  expect(cached.messagesCached).toBe(true)
+  expect(cached.messages).toBeUndefined()
+  expect(cached.taskPlans).toEqual(taskPlans)
+  const updated = buildAppResumeMessagePage({ ...page, taskPlans: [{ ...taskPlans[0], revision: 2 }] }, initial.id)
+  expect(updated.messagesCached).toBe(false)
+  expect(updated.id).not.toBe(initial.id)
+})

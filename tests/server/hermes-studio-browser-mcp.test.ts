@@ -50,7 +50,7 @@ function rpcClient(process: ChildProcessWithoutNullStreams) {
 describe('hermes-studio browser MCP toolset', () => {
   it('stays healthy and returns bounded unavailable results without a Desktop Browser Broker', async () => {
     root = await mkdtemp(join(tmpdir(), 'hermes-browser-mcp-no-broker-'))
-    child = spawn(process.execPath, [join(process.cwd(), 'bin/hermes-studio-mcp.mjs'), 'browser'], {
+    child = spawn(process.execPath, [join(process.cwd(), 'bin/ekko-studio-mcp.mjs'), 'browser'], {
       env: { ...process.env, HERMES_WEB_UI_HOME: root },
       stdio: ['pipe', 'pipe', 'pipe'],
     })
@@ -61,10 +61,10 @@ describe('hermes-studio browser MCP toolset', () => {
     expect((await rpc(2, 'tools/list')).result.tools).toEqual([])
 
     const unavailable = await rpc(3, 'tools/call', {
-      name: 'hermes_studio_browser_toolset',
+      name: 'ekko_studio_browser_toolset',
       arguments: {
         action: 'call',
-        tool: 'hermes_studio_browser_tabs',
+        tool: 'ekko_studio_browser_tabs',
         arguments: { action: 'list' },
       },
     })
@@ -115,7 +115,7 @@ describe('hermes-studio browser MCP toolset', () => {
       schema: 1, desktopPid: process.pid, endpoint: `http://127.0.0.1:${address.port}/v1`, token: 'test-token', instanceId: 'test', createdAt: new Date().toISOString(),
     }), { mode: 0o600 })
 
-    child = spawn(process.execPath, [join(process.cwd(), 'bin/hermes-studio-mcp.mjs'), 'browser'], {
+    child = spawn(process.execPath, [join(process.cwd(), 'bin/ekko-studio-mcp.mjs'), 'browser'], {
       env: { ...process.env, HERMES_WEB_UI_HOME: root },
       stdio: ['pipe', 'pipe', 'pipe'],
     })
@@ -124,11 +124,11 @@ describe('hermes-studio browser MCP toolset', () => {
     const listed = await rpc(2, 'tools/list')
     expect(initialized.result.instructions).toContain('tab list/create/activate/close/release')
     expect(listed.result.tools).toHaveLength(1)
-    expect(listed.result.tools[0].name).toBe('hermes_studio_browser_toolset')
+    expect(listed.result.tools[0].name).toBe('ekko_studio_browser_toolset')
     expect(listed.result.tools[0].description).toContain('screenshots')
 
     const catalog = await rpc(3, 'tools/call', {
-      name: 'hermes_studio_browser_toolset',
+      name: 'ekko_studio_browser_toolset',
       arguments: { action: 'list' },
     })
     expect(JSON.parse(catalog.result.content[0].text)).toMatchObject({
@@ -136,25 +136,25 @@ describe('hermes-studio browser MCP toolset', () => {
       operation_count: 7,
     })
     const described = await rpc(4, 'tools/call', {
-      name: 'hermes_studio_browser_toolset',
-      arguments: { action: 'describe', tool: 'hermes_studio_browser_screenshot' },
+      name: 'ekko_studio_browser_toolset',
+      arguments: { action: 'describe', tool: 'ekko_studio_browser_screenshot' },
     })
     expect(JSON.parse(described.result.content[0].text).inputSchema.required).toContain('tab_id')
 
     await rpc(5, 'tools/call', {
-      name: 'hermes_studio_browser_toolset',
-      arguments: { action: 'call', tool: 'hermes_studio_browser_tabs', arguments: { action: 'list' } },
+      name: 'ekko_studio_browser_toolset',
+      arguments: { action: 'call', tool: 'ekko_studio_browser_tabs', arguments: { action: 'list' } },
     })
     const screenshot = await rpc(6, 'tools/call', {
-      name: 'hermes_studio_browser_toolset',
-      arguments: { action: 'call', tool: 'hermes_studio_browser_screenshot', arguments: { tab_id: 'tab-1' } },
+      name: 'ekko_studio_browser_toolset',
+      arguments: { action: 'call', tool: 'ekko_studio_browser_screenshot', arguments: { tab_id: 'tab-1' } },
     })
     expect(screenshot.result.content[1]).toEqual({ type: 'image', data: 'AA==', mimeType: 'image/png' })
     const readText = await rpc(7, 'tools/call', {
-      name: 'hermes_studio_browser_toolset',
+      name: 'ekko_studio_browser_toolset',
       arguments: {
         action: 'call',
-        tool: 'hermes_studio_browser_read_text',
+        tool: 'ekko_studio_browser_read_text',
         arguments: { tab_id: 'tab-1', snapshot_id: 'snapshot-1', ref: '@e1', offset: 0, limit: 4000 },
       },
     })
@@ -174,8 +174,8 @@ describe('hermes-studio browser MCP toolset', () => {
 
     failScreenshot = true
     const fallback = await rpc(8, 'tools/call', {
-      name: 'hermes_studio_browser_toolset',
-      arguments: { action: 'call', tool: 'hermes_studio_browser_screenshot', arguments: { tab_id: 'tab-1' } },
+      name: 'ekko_studio_browser_toolset',
+      arguments: { action: 'call', tool: 'ekko_studio_browser_screenshot', arguments: { tab_id: 'tab-1' } },
     })
     expect(fallback.result.content[0].text).toContain('Accessibility snapshot')
     expect(fallback.result.content[0].text).toContain('snapshot-1')

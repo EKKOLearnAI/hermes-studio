@@ -1,3 +1,5 @@
+import { saveTaskPlan } from '../../repositories/task-plan-store'
+import type { TaskPlanSnapshot } from '../../contracts/task-plan'
 import type { Server, Socket } from 'socket.io'
 import { createHash, randomUUID } from 'crypto'
 import {
@@ -642,6 +644,17 @@ export async function handleEkkoAgentRun(
     { role: 'user', content: inputText },
   ]).inputTokens
 
+  const toTaskPlanSnapshot = (plan: any): TaskPlanSnapshot => ({
+    session_id: sessionId,
+    run_id: plan.runId,
+    plan_id: plan.planId,
+    revision: plan.revision,
+    execution_state: plan.executionState,
+    explanation: plan.explanation,
+    plan: plan.plan,
+    created_at: plan.createdAt,
+    updated_at: plan.updatedAt,
+  })
   let assistantText = ''
   let assistantReasoning = ''
   let assistantMessageId: string | null = null
@@ -962,6 +975,8 @@ export async function handleEkkoAgentRun(
           delta: event.text,
         })
       }
+    } else if (event.type === 'plan.updated') {
+      emit('plan.updated', { event: 'plan.updated', ...toTaskPlanSnapshot(event.plan) })
     } else if (event.type === 'tool.started') {
       emit('tool.started', {
         event: 'tool.started',
@@ -1395,6 +1410,7 @@ export async function handleEkkoAgentRun(
         sessionId,
         turnId,
       },
+      onPlanUpdate: (plan: any) => saveTaskPlan(toTaskPlanSnapshot(plan)),
       onEvent: handleRuntimeEvent,
       onSkillReviewUsage: (event: any) => {
         recordSessionUsage({

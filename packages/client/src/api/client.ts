@@ -1,4 +1,5 @@
 import router from '@/router'
+import { invalidateAuth } from './auth-invalidation'
 
 const DEFAULT_BASE_URL = ''
 const ACTIVE_PROFILE_STORAGE_KEY = 'hermes_active_profile_name'
@@ -29,15 +30,20 @@ export function getApiKey(): string {
 }
 
 export function setServerUrl(url: string) {
+  const previousBase = getBaseUrl()
   localStorage.setItem('hermes_server_url', url)
+  if (getBaseUrl() !== previousBase) invalidateAuth()
 }
 
 export function setApiKey(key: string) {
+  const changed = getApiKey() !== key
   localStorage.setItem('hermes_api_key', key)
+  if (changed) invalidateAuth()
 }
 
 export function clearApiKey() {
   localStorage.removeItem('hermes_api_key')
+  invalidateAuth()
 }
 
 function clearAuthSessionState() {

@@ -549,6 +549,7 @@ function playSpeech(content: string, autoplay = false, profileOverride = '') {
             model: voiceSettings.doubaoModel.value,
             voice: voiceSettings.doubaoVoice.value,
             stylePrompt: voiceSettings.doubaoStylePrompt.value || undefined,
+            speed: voiceSettings.doubaoSpeed.value || undefined,
         }
         if (autoplay) void speech.openaiPlay(props.message.id, content, options).catch(handleAutoplayTtsError)
         else speech.openaiToggle(props.message.id, content, options)
@@ -1497,6 +1498,20 @@ onBeforeUnmount(() => {
     40% {
         opacity: 1;
         transform: scale(1);
+    }
+}
+@media (max-width: $breakpoint-mobile) {
+    .group-message .msg-body {
+        min-width: 0;
+        max-width: 100%;
+    }
+
+    .group-message.embedded {
+        .msg-content,
+        &.agent .msg-content.agent-content,
+        &.self .msg-content {
+            padding: 10px 14px;
+        }
     }
 }
 </style>

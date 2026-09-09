@@ -37,7 +37,7 @@ import {
   useMessage,
   type DropdownOption,
 } from "naive-ui";
-import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, provide, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { copyToClipboard } from "@/utils/clipboard";
@@ -57,7 +57,7 @@ import PageSidebarNav from "@/components/layout/PageSidebarNav.vue";
 import { isStoredSuperAdmin } from "@/api/client";
 import { useDefaultWorkspace } from "@/composables/useDefaultWorkspace";
 import { useCollapsedProviderGroups } from "@/composables/useCollapsedProviderGroups";
-import { canScopedCodingAgentUseProvider, usesServerManagedProviderAuth } from "@/utils/codingAgentProviders";
+import { canScopedCodingAgentUseProvider, usesServerManagedProviderAuth, isKeylessModelProvider, openCodeFreeApiMode } from "@/utils/codingAgentProviders";
 import { OPEN_SUBAGENT_STREAM_EVENT, type OpenSubagentStreamDetail } from "@/utils/hermes/subagent-stream";
 import { desktopBridge, hasDesktopBrowserBridge } from "@/utils/desktop-bridge";
 import { OPEN_DESKTOP_BROWSER_PANEL_EVENT } from "@/utils/desktop-browser";
@@ -77,6 +77,8 @@ const props = withDefaults(defineProps<{
   initialComposerText: "",
   composerPersistDraft: true,
 });
+
+provide('hermesWorkspaceFilePreview', true);
 
 const FilesPanel = defineAsyncComponent(async () => (await import('./FilesPanel.vue')).default);
 const ConnectionsPanel = defineAsyncComponent(async () => (await import('@/components/hermes/connections/ConnectionsPanel.vue')).default);
@@ -412,7 +414,13 @@ function workspacePreviewPath(filePath: string): string | null {
 }
 
 function handleWorkspaceFilePreviewRequest(event: Event) {
-  const customEvent = event as CustomEvent<{ path?: string; fileName?: string; previewOnly?: boolean }>;
+  const customEvent = event as CustomEvent<{
+    path?: string
+    fileName?: string
+    previewOnly?: boolean
+    startLine?: number
+    endLine?: number
+  }>;
   const sessionId = activePreviewSessionId.value;
   const filePath = typeof customEvent.detail?.path === "string" ? customEvent.detail.path : "";
   const previewPath = workspacePreviewPath(filePath);
@@ -422,13 +430,27 @@ function handleWorkspaceFilePreviewRequest(event: Event) {
   const requestSeq = ++workspacePreviewRequestSeq;
   workspacePreviewRequestPending = true;
   const fileName = customEvent.detail?.fileName || previewPath.split("/").pop() || previewPath;
+  const requestedStartLine = customEvent.detail?.startLine;
+  const startLine = Number.isInteger(requestedStartLine) && requestedStartLine! > 0
+    ? requestedStartLine
+    : undefined;
+  const requestedEndLine = customEvent.detail?.endLine;
+  const endLine = startLine && Number.isInteger(requestedEndLine) && requestedEndLine! >= startLine
+    ? requestedEndLine
+    : startLine;
   filesStore.closePreview();
   toolPanelStore.closeWorkspaceDiff();
   selectedSubagent.value = null;
   const previewOnly = customEvent.detail?.previewOnly === true;
   previewOnlyFileOpen.value = previewOnly;
   if (previewOnly) showToolPanel.value = true;
-  void filesStore.openSessionWorkspacePreview(sessionId, previewPath, fileName)
+  void filesStore.openSessionWorkspacePreview(
+    sessionId,
+    previewPath,
+    fileName,
+    -1,
+    startLine ? { startLine, endLine } : undefined,
+  )
     .then(() => {
       if (requestSeq === workspacePreviewRequestSeq) workspacePreviewRequestPending = false;
     })
@@ -1123,10 +1145,12 @@ const newChatNeedsBaseUrl = computed(() =>
 const newChatUsesServerAuth = computed(() =>
   usesServerManagedProviderAuth(newChatAgent.value as ChatCodingAgentId, selectedNewChatProviderGroup.value?.provider),
 );
+const newChatUsesKeylessProvider = computed(() => isKeylessModelProvider(newChatProvider.value));
 const newChatNeedsApiKey = computed(() =>
   isNewChatCodingAgent.value &&
   effectiveNewChatAgentMode.value === "scoped" &&
   !newChatUsesServerAuth.value &&
+  !newChatUsesKeylessProvider.value &&
   !selectedNewChatProviderGroup.value?.api_key,
 );
 const canConfirmNewChat = computed(() => {
@@ -1142,6 +1166,7 @@ const canConfirmNewChat = computed(() => {
 });
 
 function defaultNewChatApiMode(group?: AvailableModelGroup): CodingAgentApiMode {
+  if (newChatUsesKeylessProvider.value) return openCodeFreeApiMode(newChatModel.value);
   const providerKey = String(group?.provider || newChatProvider.value || "").toLowerCase();
   const baseUrl = String(group?.base_url || newChatBaseUrl.value || "").toLowerCase();
   return normalizeCodingAgentApiMode(
@@ -1153,6 +1178,10 @@ function defaultNewChatApiMode(group?: AvailableModelGroup): CodingAgentApiMode 
 function syncNewChatApiMode() {
   newChatApiMode.value = defaultNewChatApiMode(selectedNewChatProviderGroup.value);
 }
+
+watch(newChatModel, () => {
+  if (newChatUsesKeylessProvider.value) syncNewChatApiMode();
+});
 
 function syncNewChatModelSelection() {
   const defaults = getDefaultModelForProfile(newChatProfile.value);
@@ -1212,6 +1241,33 @@ watch(
     }
   },
 );
+
+let newChatCatalogPoll: ReturnType<typeof setInterval> | undefined;
+let refreshingNewChatCatalog = false;
+watch(showNewChatModal, (visible) => {
+  if (newChatCatalogPoll) clearInterval(newChatCatalogPoll);
+  newChatCatalogPoll = undefined;
+  if (!visible) return;
+  newChatCatalogPoll = setInterval(async () => {
+    const free = newChatModelGroups.value.find(group => group.provider === "opencode-free");
+    if (refreshingNewChatCatalog || !free || !["loading", "error"].includes(free.catalog_status || "")) return;
+    refreshingNewChatCatalog = true;
+    try {
+      await appStore.reloadModels({ preserveSelection: true });
+      if (!showNewChatModal.value) return;
+      const current = selectedNewChatProviderGroup.value;
+      if (current && !newChatModel.value) {
+        newChatModel.value = current.models[0] || "";
+        syncNewChatApiMode();
+      } else if (!newChatProvider.value) {
+        ensureNewChatProviderSelection();
+      }
+    } finally {
+      refreshingNewChatCatalog = false;
+    }
+  }, 3000);
+});
+onUnmounted(() => { if (newChatCatalogPoll) clearInterval(newChatCatalogPoll); });
 
 async function openNewChatModal() {
   isBatchMode.value = false;
@@ -1331,7 +1387,7 @@ async function confirmNewChat() {
     workspace: newChatWorkspace.value || null,
     categoryId: newChatCategoryId.value,
     baseUrl: source === "coding_agent" && !isGlobalCodingAgent ? group?.base_url || newChatBaseUrl.value.trim() || undefined : undefined,
-    apiKey: source === "coding_agent" && !isGlobalCodingAgent ? group?.api_key || newChatApiKey.value.trim() || undefined : undefined,
+    apiKey: source === "coding_agent" && !isGlobalCodingAgent && !newChatUsesKeylessProvider.value ? group?.api_key || newChatApiKey.value.trim() || undefined : undefined,
     apiMode: isNewChatCodingAgent.value && !isGlobalCodingAgent ? newChatApiMode.value : undefined,
   });
   // Record workspace to recent list
@@ -2471,7 +2527,7 @@ async function handleSessionModelCustomSubmit() {
               :active="s.id === chatStore.activeSessionId"
               :pinned="sessionBrowserPrefsStore.isPinned(s.id)"
               :can-delete="s.id !== chatStore.activeSessionId || chatStore.sessions.length > 1"
-              :streaming="chatStore.isSessionLive(s.id)"
+              :streaming="chatStore.isSessionWorking(s.id)"
               :completed-unread="chatStore.isSessionCompletedUnread(s.id)"
               :selectable="isBatchMode"
               :selected="isSessionSelected(s)"
@@ -2518,7 +2574,7 @@ async function handleSessionModelCustomSubmit() {
               s.id !== chatStore.activeSessionId ||
               chatStore.sessions.length > 1
             "
-            :streaming="chatStore.isSessionLive(s.id)"
+            :streaming="chatStore.isSessionWorking(s.id)"
             :completed-unread="chatStore.isSessionCompletedUnread(s.id)"
             :selectable="isBatchMode"
             :selected="isSessionSelected(s)"
@@ -2585,7 +2641,7 @@ async function handleSessionModelCustomSubmit() {
                 s.id !== chatStore.activeSessionId ||
                 chatStore.sessions.length > 1
               "
-              :streaming="chatStore.isSessionLive(s.id)"
+              :streaming="chatStore.isSessionWorking(s.id)"
               :completed-unread="chatStore.isSessionCompletedUnread(s.id)"
               :selectable="isBatchMode"
               :selected="isSessionSelected(s)"
@@ -3006,7 +3062,7 @@ async function handleSessionModelCustomSubmit() {
             <NSelect
               v-model:value="newChatApiMode"
               :options="newChatApiModeOptions"
-              :disabled="newChatLoading"
+              :disabled="newChatLoading || newChatUsesKeylessProvider"
             />
           </label>
           <label v-if="newChatNeedsBaseUrl" class="new-chat-field">
@@ -3016,6 +3072,9 @@ async function handleSessionModelCustomSubmit() {
               :placeholder="t('models.baseUrlPlaceholder')"
             />
           </label>
+          <div v-if="newChatUsesProviderModel && newChatUsesKeylessProvider" class="new-chat-field">
+            {{ t("models.opencodeFreeHint") }}
+          </div>
           <label v-if="newChatNeedsApiKey" class="new-chat-field">
             <span class="new-chat-label">{{ t("models.apiKey") }}</span>
             <NInput

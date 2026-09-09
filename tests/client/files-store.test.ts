@@ -199,13 +199,80 @@ describe('files store', () => {
     expect(store.entries).toEqual([roomEntry])
     expect(mockGroupApi.listGroupWorkspaceFiles).toHaveBeenCalledWith('room-1', '')
 
-    await store.openGroupWorkspacePreview('room-1', '/tmp/generated.ts', 'generated.ts')
+    await store.openGroupWorkspacePreview(
+      'room-1',
+      '/tmp/generated.ts',
+      'generated.ts',
+      -1,
+      { startLine: 40, endLine: 42 },
+    )
     expect(mockGroupApi.fetchGroupWorkspaceFileText).toHaveBeenCalledWith('room-1', '/tmp/generated.ts')
     expect(store.previewFile).toMatchObject({
       path: '/tmp/generated.ts',
       workspaceRoomId: 'room-1',
       type: 'text',
       language: 'typescript',
+      startLine: 40,
+      endLine: 42,
+    })
+  })
+
+  it('does not let an older group preview overwrite a newer file', async () => {
+    const olderPreview = deferred<{ content: string; size: number }>()
+    const newerPreview = deferred<{ content: string; size: number }>()
+    mockGroupApi.fetchGroupWorkspaceFileText.mockImplementation((_roomId: string, path: string) => {
+      return path === 'older.md' ? olderPreview.promise : newerPreview.promise
+    })
+    const store = useFilesStore()
+
+    const olderRequest = store.openGroupWorkspacePreview('room-1', 'older.md')
+    const newerRequest = store.openGroupWorkspacePreview('room-1', 'newer.md')
+    newerPreview.resolve({ content: '# Newer', size: 7 })
+    await newerRequest
+    expect(store.previewFile).toMatchObject({ path: 'newer.md', content: '# Newer' })
+
+    olderPreview.resolve({ content: '# Older', size: 7 })
+    await olderRequest
+    expect(store.previewFile).toMatchObject({ path: 'newer.md', content: '# Newer' })
+  })
+
+  it('does not reopen a pending group preview after it is closed', async () => {
+    const pendingPreview = deferred<{ content: string; size: number }>()
+    mockGroupApi.fetchGroupWorkspaceFileText.mockReturnValue(pendingPreview.promise)
+    const store = useFilesStore()
+
+    const request = store.openGroupWorkspacePreview('room-1', 'pending.md')
+    store.closePreview()
+    pendingPreview.resolve({ content: '# Too late', size: 10 })
+    await request
+
+    expect(store.previewFile).toBeNull()
+  })
+
+  it('keeps requested line ranges on session workspace previews', async () => {
+    mockSessionsApi.fetchSessionWorkspaceFileText.mockResolvedValue({
+      content: Array.from({ length: 600 }, (_, index) => `line ${index + 1}`).join('\n'),
+      size: 5_292,
+    })
+    const store = useFilesStore()
+
+    await store.openSessionWorkspacePreview(
+      'session-1',
+      'server/src/heartbeat.release.ts',
+      'heartbeat.release.ts',
+      -1,
+      { startLine: 550, endLine: 552 },
+    )
+
+    expect(mockSessionsApi.fetchSessionWorkspaceFileText).toHaveBeenCalledWith(
+      'session-1',
+      'server/src/heartbeat.release.ts',
+    )
+    expect(store.previewFile).toMatchObject({
+      path: 'server/src/heartbeat.release.ts',
+      type: 'text',
+      startLine: 550,
+      endLine: 552,
     })
   })
 

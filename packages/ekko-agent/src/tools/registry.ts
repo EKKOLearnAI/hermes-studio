@@ -5,6 +5,7 @@ import type {
   AgentToolProvider,
   AgentToolResult,
 } from './types'
+import { UpdatePlanTool } from './plan'
 import { createBrowserTools } from './browser'
 import { createClarificationToolProvider } from './clarify'
 import { CodeExecTool, type CodeExecToolOptions } from './code-exec'
@@ -115,6 +116,7 @@ export interface DefaultToolRegistryOptions {
 export function createDefaultToolRegistry(options: DefaultToolRegistryOptions = {}): AgentToolRegistry {
   const registry = new AgentToolRegistry(options.authorizer)
   for (const tool of [
+    new UpdatePlanTool(),
     ...createFileTools(),
     ...createImageTools(),
     ...createTerminalTools({ timeoutMs: options.executionTimeoutMs }),

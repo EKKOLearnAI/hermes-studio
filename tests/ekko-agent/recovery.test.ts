@@ -238,7 +238,7 @@ describe('Ekko capability recovery', () => {
 
       await runtime.run({ messages: ['What remains?'] })
       expect(String(requests[1].messages[0].content)).toContain(
-        'Hermes Studio will automatically reload Ekko Setup after all active runs finish',
+        'Ekko Studio will automatically reload Ekko Setup after all active runs finish',
       )
     } finally {
       await chmod(ekkoRoot, 0o700)

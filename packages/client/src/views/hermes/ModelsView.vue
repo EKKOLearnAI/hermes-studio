@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { NButton, NSpin, NTabPane, NTabs, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
@@ -57,6 +57,25 @@ async function loadProvidersForProfile() {
 onMounted(async () => {
   await loadProvidersForProfile()
 })
+
+let catalogPoll: ReturnType<typeof setInterval> | undefined
+let pollingCatalog = false
+onMounted(() => {
+  catalogPoll = setInterval(async () => {
+    const freeProvider = modelsStore.providers.find(group => group.provider === 'opencode-free')
+    if (pollingCatalog || !freeProvider || !['loading', 'error'].includes(freeProvider.catalog_status || '')) return
+    pollingCatalog = true
+    try {
+      await modelsStore.fetchProviders({ background: true })
+      if (modelsStore.providers.find(group => group.provider === 'opencode-free')?.catalog_status === 'ready') {
+        await appStore.reloadModels({ preserveSelection: true })
+      }
+    } finally {
+      pollingCatalog = false
+    }
+  }, 3000)
+})
+onUnmounted(() => { if (catalogPoll) clearInterval(catalogPoll) })
 
 function openCreateModal() {
   showModal.value = true

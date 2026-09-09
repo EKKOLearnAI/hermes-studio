@@ -140,6 +140,7 @@ function mountApp() {
 describe('App web pet mounting', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    localStorage.removeItem('hermes_api_key')
     routeMock.name = 'hermes.chat'
     routeMock.meta = {}
     appStoreMock.sidebarCollapsed = false
@@ -157,13 +158,20 @@ describe('App web pet mounting', () => {
     expect(sources.activeProfileName()).toBe('default')
   })
 
-  it('mounts the global pending-action host in the normal app shell', async () => {
-    const wrapper = mountApp()
-    await flushPromises()
+  it.each(['super_admin', 'admin', null] as const)(
+    'mounts pending actions but restricts the Runtime prompt for role %s', async (role) => {
+      if (role) {
+        const payload = btoa(JSON.stringify({ sub: '1', role }))
+        localStorage.setItem('hermes_api_key', `header.${payload}.signature`)
+      }
+      const wrapper = mountApp()
+      await flushPromises()
 
-    expect(wrapper.findComponent({ name: 'GlobalPendingActions' }).exists()).toBe(true)
-    expect(wrapper.findComponent({ name: 'RuntimeRestartPrompt' }).exists()).toBe(true)
-  })
+      expect(wrapper.findComponent({ name: 'GlobalPendingActions' }).exists()).toBe(true)
+      expect(wrapper.findComponent({ name: 'RuntimeRestartPrompt' }).exists()).toBe(role === 'super_admin')
+    wrapper.unmount()
+    },
+  )
 
   it('mounts the web pet in the browser web app', async () => {
     const wrapper = mountApp()

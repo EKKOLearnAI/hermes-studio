@@ -9,8 +9,13 @@ const MANAGED_MCP_NAMES = new Set([
   'hermes-studio-browser',
   'hermes-studio-devices',
   'hermes-studio-use',
+  'ekko-studio-api',
+  'ekko-studio-browser',
+  'ekko-studio-devices',
+  'ekko-studio-use',
   'hermes-studio',
   'hermes-studio-mcp',
+  'ekko-studio-mcp',
   'hermes-web-ui-mcp',
 ])
 const COPIED_GLOBAL_DIRS = new Set([
@@ -24,8 +29,8 @@ const COPIED_GLOBAL_DIRS = new Set([
   'workflows',
 ])
 const MANAGED_MCP_MARKER = 'HERMES_WEB_UI_MANAGED_MCP'
-const SCOPED_IDENTITY_BEGIN = '<!-- BEGIN HERMES STUDIO GROK SCOPED IDENTITY -->'
-const SCOPED_IDENTITY_END = '<!-- END HERMES STUDIO GROK SCOPED IDENTITY -->'
+const SCOPED_IDENTITY_BEGIN = '<!-- BEGIN EKKO STUDIO GROK SCOPED IDENTITY -->'
+const SCOPED_IDENTITY_END = '<!-- END EKKO STUDIO GROK SCOPED IDENTITY -->'
 
 export interface GrokRuntimeFiles {
   promptFile: string

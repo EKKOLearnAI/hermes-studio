@@ -80,9 +80,9 @@ begins.
 ## First Boot
 
 1. The device tries the saved Wi-Fi credentials first.
-2. If Wi-Fi is missing or connection fails, it starts the open `HStudio-WIFI`
+2. If Wi-Fi is missing or connection fails, it starts the open `Ekko Studio-WIFI`
    setup hotspot.
-3. Join `HStudio-WIFI` and open `http://192.168.4.1/`.
+3. Join `Ekko Studio-WIFI` and open `http://192.168.4.1/`.
 4. Select the target Wi-Fi SSID from the scanned list, or enter it manually,
    then enter the password and save.
 5. The setup page connects once, shows the router-assigned IP, opens that IP,

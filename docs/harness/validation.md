@@ -47,6 +47,18 @@ and migration aware of the flag so previously injected entries are repaired;
 do not overwrite user-owned MCP definitions or globally enable Node mode for
 the desktop app. Validate changes with the MCP injection and launch tests.
 
+Long-running external Gateways may keep older MCP definitions in memory. The
+packaged entrypoint must route the exact bundled MCP script invocation before
+loading GUI or updater code, even when Node mode is absent. Test the real package:
+
+```bash
+node scripts/verify-desktop-mcp.mjs '<packaged executable>' '<resources directory>'
+```
+
+This checks all four toolsets with Node mode deliberately removed, validates the
+JSON-RPC initialize response, and checks clean exit on stdin EOF. It uses temporary
+state and does not require a running Gateway.
+
 ## CI Mapping
 
 - Build workflow: installs dependencies, runs coverage, and builds production

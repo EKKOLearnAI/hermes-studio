@@ -85,6 +85,35 @@ No Hermes gateway ports are exposed by this compose setup.
 - Profile-specific chat runs are handled through the Hermes agent bridge. The selected/requested profile is authorized per account and passed with runtime requests; switching the frontend Hermes Profile does not restart the bridge or clear other running tasks.
 - Docker is a managed gateway runtime: Web UI checks profile gateways on startup, but it does not run a periodic gateway recovery loop.
 
+### Optional Hermes startup patches
+
+The image starts through `/app/bin/start-studio-all.sh`. It does not apply
+Hermes Agent source patches by default. If a deployment has a compatible,
+optional patch script, enable it explicitly with
+`HERMES_PATCH_SCRIPT=/path/to/patch.sh`. A missing or failing optional patch is logged and the Web UI still
+starts, so a patch written for an older Hermes Agent layout cannot put the
+container into a restart loop.
+
+For Compose, mount the deployment-owned script and set `HERMES_PATCH_SCRIPT`
+in `.env`; the Compose file passes that variable through without enabling a
+patch by default.
+
+For example, keep the script outside the image and add an override file:
+
+```yaml
+services:
+  hermes-webui:
+    volumes:
+      - ./hermes_patches:/opt/data:ro
+    environment:
+      HERMES_PATCH_SCRIPT: /opt/data/apply-hermes-patches.sh
+```
+
+Patch scripts are deployment-owned and must be kept compatible with the
+installed Hermes Agent version. An entrypoint override that calls a custom
+patch script directly is outside the image's startup contract; use the image
+entrypoint and `HERMES_PATCH_SCRIPT` when the patch is optional.
+
 ## Common Operations
 
 Recreate:

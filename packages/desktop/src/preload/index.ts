@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
   restartApp: (): Promise<boolean> => ipcRenderer.invoke('hermes-desktop:restart-app'),
   selectRuntimeDirectory: (defaultPath?: string): Promise<string | null> => ipcRenderer.invoke('hermes-desktop:select-runtime-directory', defaultPath),
   notifyCompletion: (payload: { title: string; body?: string; icon?: string; tag?: string; clickUrl?: string }): Promise<boolean> => ipcRenderer.invoke('hermes-desktop:notify-completion', payload),
+  openExternalUrl: (url: string): Promise<boolean> => ipcRenderer.invoke('hermes-desktop:open-external-url', url),
   openChatWindow: (sessionId: string, profile?: string): Promise<void> => ipcRenderer.invoke('hermes-desktop:open-chat-window', sessionId, profile),
   ensureAuth: async (): Promise<boolean> => {
     const token = await ipcRenderer.invoke('hermes-desktop:get-token')
@@ -62,6 +63,7 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
     updateAnnotationNote: (tabId: string, marker: number, note: string): Promise<boolean> => ipcRenderer.invoke('hermes-desktop:browser-update-annotation-note', tabId, marker, note),
     captureAnnotations: (tabId: string): Promise<BrowserSelection['screenshot']> => ipcRenderer.invoke('hermes-desktop:browser-capture-annotations', tabId),
     clearAnnotations: (tabId: string): Promise<boolean> => ipcRenderer.invoke('hermes-desktop:browser-clear-annotations', tabId),
+    removeAnnotation: (tabId: string, marker: number): Promise<boolean> => ipcRenderer.invoke('hermes-desktop:browser-remove-annotation', tabId, marker),
     onAnnotationRequest: (callback: (request: { tabId: string; mode: 'element' | 'region' }) => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent, request: { tabId: string; mode: 'element' | 'region' }) => callback(request)
       ipcRenderer.on('hermes-desktop:browser-annotation-request', listener)

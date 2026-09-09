@@ -28,6 +28,7 @@ import { HermesSkillInjector } from '../modules/hermes/services/skills/injector'
 import { injectBundledMcpServer } from '../modules/hermes/services/mcp/studio-autoinject'
 import { ensureProfileGatewaysRunning } from '../modules/hermes/services/gateway/autostart'
 import { refreshConfiguredProviderModelCatalogsInBackground } from '../modules/hermes/services/providers/model-catalog-cache'
+import { initializeOpenCodeFreeInBackground } from '../modules/hermes/services/providers/opencode-free'
 import {
   scanLanDevices,
   selectLanIPv4Address,
@@ -487,6 +488,8 @@ export async function bootstrap() {
   // Initialize all web-ui SQLite tables
   const { initAllStores } = await import('../modules/studio/infrastructure/database/init')
   initAllStores()
+  const { interruptOrphanedTaskPlans } = await import('../modules/studio/repositories/task-plan-store')
+  interruptOrphanedTaskPlans()
   startChatWebhookDispatcher()
   console.log('[bootstrap] all stores initialized')
 
@@ -663,6 +666,7 @@ export async function bootstrap() {
     close: stopLanDiscoveryResponder,
   })
   refreshConfiguredProviderModelCatalogsInBackground('bootstrap')
+  initializeOpenCodeFreeInBackground()
 
   if (isDesktopRuntime()) {
     await startRuntimeServicesAfterListen(hermesAgentAvailable)

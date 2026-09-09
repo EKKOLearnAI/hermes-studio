@@ -1,9 +1,9 @@
 {
   "openapi": "3.0.3",
   "info": {
-    "title": "Hermes Studio API",
-    "description": "Hermes Studio API — chat sessions, scheduled jobs, platform channels, model management, skills, memory, logs, file browser, group chat, and terminal.",
-    "version": "0.7.17"
+    "title": "Ekko Studio API",
+    "description": "Ekko Studio API — chat sessions, scheduled jobs, platform channels, model management, skills, memory, logs, file browser, group chat, and terminal.",
+    "version": "0.7.18"
   },
   "servers": [
     {
@@ -1353,6 +1353,32 @@
         }
       }
     },
+    "/api/coding-agents/update-policies": {
+      "get": {
+        "tags": [
+          "Coding Agents"
+        ],
+        "summary": "Get update-policies",
+        "description": "GET /api/coding-agents/update-policies",
+        "operationId": "updatePolicies",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
     "/api/coding-agents/{id}": {
       "delete": {
         "tags": [
@@ -1987,6 +2013,57 @@
                     "type": "string"
                   },
                   "sessionId": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/coding-agents/{id}/update-policy": {
+      "put": {
+        "tags": [
+          "Coding Agents"
+        ],
+        "summary": "Update update-policy",
+        "description": "PUT /api/coding-agents/:id/update-policy",
+        "operationId": "setUpdatePolicy",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "autoUpdate": {
                     "type": "string"
                   }
                 }
@@ -10956,7 +11033,7 @@
           "Chat Run"
         ],
         "summary": "Run chat and wait for completion",
-        "description": "Starts a Hermes Studio chat run through the chat-run transport and waits for a terminal result. Use this from HTTP/MCP callers that cannot consume Socket.IO streams.",
+        "description": "Starts a Ekko Studio chat run through the chat-run transport and waits for a terminal result. Use this from HTTP/MCP callers that cannot consume Socket.IO streams.",
         "operationId": "runChatOnce",
         "security": [
           {
@@ -10994,7 +11071,7 @@
                   },
                   "profile": {
                     "type": "string",
-                    "description": "Hermes Studio profile name. Defaults to the authenticated request profile or default."
+                    "description": "Ekko Studio profile name. Defaults to the authenticated request profile or default."
                   },
                   "provider": {
                     "type": "string",
@@ -14867,6 +14944,104 @@
         }
       }
     },
+    "/api/studio/mobile-calendar/request": {
+      "post": {
+        "tags": [
+          "Chat Run"
+        ],
+        "summary": "Request one-time mobile calendar or reminder access",
+        "description": "Requests a user-confirmed calendar/reminder operation from the App for the exact authenticated direct-chat session. Single-item delete requires exact id, title and occurrence time with fresh App confirmation. Background, workflow, group-chat, and delegated use are not supported.",
+        "operationId": "requestMobileCalendar",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "session_id",
+                  "capability",
+                  "action",
+                  "purpose"
+                ],
+                "properties": {
+                  "session_id": {
+                    "type": "string"
+                  },
+                  "capability": {
+                    "type": "string",
+                    "enum": [
+                      "calendar",
+                      "reminder"
+                    ]
+                  },
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "list",
+                      "create",
+                      "update",
+                      "complete",
+                      "delete"
+                    ]
+                  },
+                  "purpose": {
+                    "type": "string",
+                    "maxLength": 240
+                  },
+                  "start_ms": {
+                    "type": "number"
+                  },
+                  "end_ms": {
+                    "type": "number"
+                  },
+                  "include_completed": {
+                    "type": "boolean"
+                  },
+                  "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100
+                  },
+                  "item": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "timeout_ms": {
+                    "type": "integer",
+                    "minimum": 3000,
+                    "maximum": 300000,
+                    "default": 300000
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Confirmed App result, denial, or sanitized device error"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "description": "Chat run service unavailable"
+          }
+        }
+      }
+    },
     "/api/studio/mobile-location/request": {
       "post": {
         "tags": [
@@ -15363,7 +15538,63 @@
         },
         "parameters": [
           {
+            "name": "category",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "string",
+                  "enum": [
+                    "none"
+                  ]
+                }
+              ]
+            },
+            "description": "Filter by category ID; none selects uncategorized sessions."
+          },
+          {
+            "name": "exclude",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "style": "form",
+            "explode": true,
+            "description": "Repeat this parameter for each session ID."
+          },
+          {
+            "name": "include",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "style": "form",
+            "explode": true,
+            "description": "Repeat this parameter for each session ID."
+          },
+          {
             "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "offset",
             "in": "query",
             "required": false,
             "schema": {

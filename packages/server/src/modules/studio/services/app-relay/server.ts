@@ -47,6 +47,8 @@ const ALLOWED_REQUEST_HEADERS = new Set([
   'x-request-id',
 ])
 const ALLOWED_CHAT_RUN_CLIENT_EVENTS = new Set([
+  'app.events.subscribe',
+  'app.events.unsubscribe',
   'run',
   'resume',
   'app.resume',
@@ -55,6 +57,8 @@ const ALLOWED_CHAT_RUN_CLIENT_EVENTS = new Set([
   'cancel_queued_run',
   'approval.respond',
   'clarify.respond',
+  'calendar.respond',
+  'reminder.respond',
   'location.respond',
 ])
 const ALLOWED_GROUP_CHAT_CLIENT_EVENTS = new Set([
@@ -128,7 +132,7 @@ type NormalizedBody = {
 }
 
 /**
- * Serves the App-facing relay protocol directly from Hermes Studio.
+ * Serves the App-facing relay protocol directly from Ekko Studio.
  *
  * The cloud relay uses the same App events but forwards them through the
  * outbound AppRelayClient. On a LAN connection this server terminates those
@@ -364,7 +368,7 @@ export class LocalAppRelayServer {
     }
     const authenticated = Boolean(socket.data.localUserToken) && await this.authorized(socket)
     if (!authenticated && !loginRequest) {
-      return httpError(request.id, 'app_relay_unauthorized', 'Log in to Hermes Studio before using the App relay', 401)
+      return httpError(request.id, 'app_relay_unauthorized', 'Log in to Ekko Studio before using the App relay', 401)
     }
 
     const headers = normalizeHeaders(request.headers)

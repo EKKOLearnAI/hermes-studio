@@ -25,7 +25,7 @@ export interface EkkoModelProviderPreset {
 }
 
 /**
- * Curated defaults mirrored from Hermes Studio's provider registry.
+ * Curated defaults mirrored from Ekko Studio's provider registry.
  *
  * This intentionally contains the common first-party and authorized providers
  * instead of copying Studio's entire marketplace-sized catalog. Every entry

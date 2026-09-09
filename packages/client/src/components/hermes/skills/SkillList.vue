@@ -11,7 +11,7 @@ const { t } = useI18n()
 const message = useMessage()
 const dialog = useDialog()
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
     categories: SkillCategory[]
     archived: SkillInfo[]
     selectedSkill: string | null
@@ -21,7 +21,9 @@ const props = defineProps<{
     toggleable?: boolean
     toggleHandler?: (category: string, skill: string, enabled: boolean) => Promise<void>
     deleteHandler?: (category: string, skill: string) => Promise<void>
-}>()
+}>(), {
+    toggleable: true,
+})
 
 const emit = defineEmits<{
     select: [category: string, skill: string]

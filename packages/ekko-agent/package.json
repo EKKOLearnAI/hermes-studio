@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "commonjs",
-  "description": "Standalone Ekko Agent runtime embedded in Hermes Studio.",
+  "description": "Standalone Ekko Agent runtime embedded in Ekko Studio.",
   "repository": {
     "type": "git",
     "url": "https://github.com/EKKOLearnAI/hermes-studio.git",

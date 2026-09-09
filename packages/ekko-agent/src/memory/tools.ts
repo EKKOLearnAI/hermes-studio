@@ -193,7 +193,7 @@ class MemoryWriteTool implements AgentTool {
       'Apply durable memory changes in the current run. Prefer one operations array containing every create, update, supersede, expire, or exact delete required by the user; ' +
       'the entire array is committed atomically, and any invalid operation rolls the whole batch back. A successful batch returns done=true, so do not repeat it. ' +
       'The legacy top-level operation fields remain available for one lone write. For create, provide a controlled kind. itemKey is REQUIRED for every itemized kind ' +
-      `(${ITEMIZED_MEMORY_KIND_LIST}) and must be a short stable identifier; for example, project_context for Hermes Studio requires itemKey="hermes_studio". ` +
+      `(${ITEMIZED_MEMORY_KIND_LIST}) and must be a short stable identifier; for example, project_context for Ekko Studio requires itemKey="hermes_studio". ` +
       'Single-slot kinds do not require itemKey. ' +
       'the server generates the canonical key and automatically noops or replaces the active value in that slot. ' +
       'For update/supersede, first search/get, then provide targetId and expectedRevision; the server preserves the key. ' +
@@ -430,7 +430,7 @@ function parseMemoryMutation(
   if (operation === 'create' && kind && memorySlotForKind(kind).itemized && !itemKey) {
     return {
       error: `itemKey is required when operation=create and kind=${kind}. Retry with a short stable identifier; ` +
-        'for example, project_context for Hermes Studio uses itemKey="hermes_studio".',
+        'for example, project_context for Ekko Studio uses itemKey="hermes_studio".',
     }
   }
   const rawNode = input.node && typeof input.node === 'object' && !Array.isArray(input.node)

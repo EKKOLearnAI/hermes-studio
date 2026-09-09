@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, provide, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { useMessage, NInput, NButton, NSpace, NSelect, NPopconfirm, NInputNumber, NDropdown, NModal, NPopover, NDrawer, NDrawerContent, NSwitch, type DropdownOption } from 'naive-ui'
@@ -91,6 +91,7 @@ const props = withDefaults(defineProps<{
 }>(), {
     standalone: false,
 })
+
 const emit = defineEmits<{
     requestAgentLink: []
     requestAgentEdit: [agent: RoomAgent]
@@ -606,6 +607,7 @@ function canManageRoom(room: Pick<RoomInfo, 'canManage'> | null | undefined): bo
     return room?.canManage === true
 }
 const currentRoomCanManage = computed(() => !props.standalone && canManageRoom(currentRoom.value))
+provide('hermesWorkspaceFilePreview', currentRoomCanManage)
 const currentRoomCanMentionAll = computed(() => !props.standalone && currentRoom.value?.canMentionAll === true)
 const currentRoomNeedsSummaryConfiguration = computed(() => {
     if (props.standalone) return false
@@ -882,15 +884,34 @@ function groupWorkspacePreviewPath(filePath: string): string | null {
 }
 
 function handleWorkspaceFilePreviewRequest(event: Event): void {
-    const customEvent = event as CustomEvent<{ path?: string; fileName?: string }>
+    const customEvent = event as CustomEvent<{
+        path?: string
+        fileName?: string
+        startLine?: number
+        endLine?: number
+    }>
     const roomId = store.currentRoomId
     const path = groupWorkspacePreviewPath(typeof customEvent.detail?.path === 'string' ? customEvent.detail.path : '')
     if (!roomId || !path || !currentRoomCanManage.value) return
     customEvent.preventDefault()
     const fileName = customEvent.detail?.fileName || path.split('/').pop() || path
+    const requestedStartLine = customEvent.detail?.startLine
+    const startLine = Number.isInteger(requestedStartLine) && requestedStartLine! > 0
+        ? requestedStartLine
+        : undefined
+    const requestedEndLine = customEvent.detail?.endLine
+    const endLine = startLine && Number.isInteger(requestedEndLine) && requestedEndLine! >= startLine
+        ? requestedEndLine
+        : startLine
     toolPanelStore.closeWorkspaceDiff()
     filesStore.closePreview()
-    void filesStore.openGroupWorkspacePreview(roomId, path, fileName).catch(error => {
+    void filesStore.openGroupWorkspacePreview(
+        roomId,
+        path,
+        fileName,
+        -1,
+        startLine ? { startLine, endLine } : undefined,
+    ).catch(error => {
         message.error(error instanceof Error ? error.message : t('files.previewFailed'))
     })
 }
@@ -2203,8 +2224,11 @@ function handleClarifyKeydown(event: KeyboardEvent) {
             <div class="chat-header">
                 <div class="header-left">
                     <button v-if="!props.standalone" class="icon-btn header-sidebar-toggle" @click="toggleSidebar">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                            <rect x="3" y="3" width="18" height="18" rx="2" ry="2" /><line x1="9" y1="3" x2="9" y2="21" />
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <rect x="3" y="3" width="7" height="7" />
+                            <rect x="14" y="3" width="7" height="7" />
+                            <rect x="3" y="14" width="7" height="7" />
+                            <rect x="14" y="14" width="7" height="7" />
                         </svg>
                     </button>
                     <span class="room-title-text">{{ store.roomName || (store.currentRoomId || t('groupChat.title')) }}</span>

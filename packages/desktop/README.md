@@ -1,6 +1,6 @@
-# Hermes Studio
+# Ekko Studio
 
-Electron desktop distribution for Hermes Studio.
+Electron desktop distribution for Ekko Studio.
 
 ## Install
 
@@ -17,11 +17,11 @@ After the packaged desktop app starts, it installs managed command shims:
 
 | Command | Description |
 | --- | --- |
-| `hermes-studio` | Open the Hermes Studio desktop app |
+| `hermes-studio` | Open the Ekko Studio desktop app |
 | `hermes-studio cli ...` | Run the bundled Hermes Agent CLI |
 | `hermes-studio web ...` | Run the bundled `hermes-web-ui` command |
 | `hermes-studio -h` | Show wrapper help |
-| `hermes-studio-mcp` | Run the managed Web UI MCP bridge |
+| `ekko-studio-mcp` | Run the managed Web UI MCP bridge |
 
 Use `hermes-studio cli -h` for Hermes Agent CLI help and
 `hermes-studio web -h` for Web UI CLI help.

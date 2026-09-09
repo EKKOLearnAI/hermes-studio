@@ -5,6 +5,7 @@ export interface PendingRuntimeRestart {
   jobId?: string
 }
 
+const runtimeDownloadCheckRevision = ref(0)
 const pendingRuntimeRestart = ref<PendingRuntimeRestart | null>(null)
 
 export function useRuntimeRestartPrompt() {
@@ -17,7 +18,13 @@ export function useRuntimeRestartPrompt() {
     pendingRuntimeRestart.value = null
   }
 
+  function checkRuntimeDownloads() {
+    runtimeDownloadCheckRevision.value += 1
+  }
+
   return {
+    runtimeDownloadCheckRevision: readonly(runtimeDownloadCheckRevision),
+    checkRuntimeDownloads,
     pendingRuntimeRestart: readonly(pendingRuntimeRestart),
     requestRuntimeRestart,
     clearRuntimeRestart,

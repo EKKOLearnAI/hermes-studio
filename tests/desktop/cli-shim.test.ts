@@ -9,6 +9,7 @@ import {
   createPowerShellShimContent,
   createShimContent,
   installHermesStudioCliShim,
+  installHermesStudioMcpShim,
   pathContainsDir,
   shimPathForPlatform,
 } from '../../packages/desktop/src/main/cli-shim'
@@ -47,10 +48,10 @@ function decodedPowerShellValues(content: string): string[] {
     .map(match => Buffer.from(match[1], 'base64').toString('utf-8'))
 }
 
-describe('Hermes Studio CLI shim', () => {
+describe('Ekko Studio CLI shim', () => {
   it('quotes Unix app paths and routes app, cli, web, and help commands', () => {
     const content = createShimContent(
-      "/Applications/Hermes Studio's.app/Contents/MacOS/Hermes Studio",
+      "/Applications/Ekko Studio's.app/Contents/MacOS/Ekko Studio",
       'darwin',
       'arm64',
       '0.15.2',
@@ -59,7 +60,7 @@ describe('Hermes Studio CLI shim', () => {
     )
 
     expect(content).toContain("--hermes-cli")
-    expect(content).toContain("APP='/Applications/Hermes Studio'\\''s.app/Contents/MacOS/Hermes Studio'")
+    expect(content).toContain("APP='/Applications/Ekko Studio'\\''s.app/Contents/MacOS/Ekko Studio'")
     expect(content).toContain("NODE='/runtime/node/bin/node'")
     expect(content).toContain("WEBUI_SCRIPT='/resources/webui/bin/hermes-web-ui.mjs'")
     expect(content).toContain('unset ELECTRON_RUN_AS_NODE')
@@ -73,7 +74,7 @@ describe('Hermes Studio CLI shim', () => {
 
   it('routes Windows cli and web subcommands through bundled runtime paths', () => {
     const command = createShimContent(
-      'C:\\Users\\Example\\AppData\\Local\\Programs\\Hermes Studio\\Hermes Studio.exe',
+      'C:\\Users\\Example\\AppData\\Local\\Programs\\Ekko Studio\\Ekko Studio.exe',
       'win32',
       'x64',
       undefined,
@@ -81,7 +82,7 @@ describe('Hermes Studio CLI shim', () => {
       'C:\\resources\\webui\\bin\\hermes-web-ui.mjs',
     )
     const powershell = createPowerShellShimContent(
-      'C:\\Users\\Example\\AppData\\Local\\Programs\\Hermes Studio\\Hermes Studio.exe',
+      'C:\\Users\\Example\\AppData\\Local\\Programs\\Ekko Studio\\Ekko Studio.exe',
       'x64',
       undefined,
       'C:\\runtime\\node\\node.exe',
@@ -94,7 +95,7 @@ describe('Hermes Studio CLI shim', () => {
     expect(command).toContain('-File "%~dp0hermes-studio.ps1" %*')
     expect(command).not.toContain('C:\\runtime')
     expect([...Buffer.from(command)].every(byte => byte < 0x80)).toBe(true)
-    expect(appPath).toBe('C:\\Users\\Example\\AppData\\Local\\Programs\\Hermes Studio\\Hermes Studio.exe')
+    expect(appPath).toBe('C:\\Users\\Example\\AppData\\Local\\Programs\\Ekko Studio\\Ekko Studio.exe')
     expect(nodePath).toBe('C:\\runtime\\node\\node.exe')
     expect(webUiScriptPath).toBe('C:\\resources\\webui\\bin\\hermes-web-ui.mjs')
     expect(forwarder).toContain("path.join(webUiHome,'desktop-runtime','hermes','0.20.0','win-x64')")
@@ -123,11 +124,11 @@ describe('Hermes Studio CLI shim', () => {
       '',
     ].join('\r\n'), 'ascii')
     writeFileSync(shimPath, createPowerShellShimContent(
-      'C:\\Program Files\\Hermes Studio\\Hermes Studio.exe',
+      'C:\\Program Files\\Ekko Studio\\Ekko Studio.exe',
       'x64',
       '0.19.1',
       fakeNodePath,
-      'C:\\Program Files\\Hermes Studio\\resources\\webui\\bin\\hermes-web-ui.mjs',
+      'C:\\Program Files\\Ekko Studio\\resources\\webui\\bin\\hermes-web-ui.mjs',
     ), 'ascii')
 
     const encodedArgs = execFileSync('powershell.exe', [
@@ -148,31 +149,31 @@ describe('Hermes Studio CLI shim', () => {
   }, 20_000)
 
   it('sets the desktop MCP URL from HERMES_DESKTOP_PORT when present', () => {
-    const content = createMcpShimContent('/runtime/node', '/resources/webui/bin/hermes-studio-mcp.mjs', 'http://127.0.0.1:8748', 'darwin')
+    const content = createMcpShimContent('/runtime/node', '/resources/webui/bin/ekko-studio-mcp.mjs', 'http://127.0.0.1:8748', 'darwin')
 
     expect(content).toContain('if [ -n "${HERMES_DESKTOP_PORT:-}" ]; then')
     expect(content).toContain('HERMES_WEB_UI_URL="http://127.0.0.1:${HERMES_DESKTOP_PORT}"')
     expect(content).toContain("HERMES_WEB_UI_URL='http://127.0.0.1:8748'")
     expect(content).toContain('if [ -z "${HERMES_MCP_SERVER_NAME:-}" ]; then')
-    expect(content).toContain('HERMES_MCP_SERVER_NAME=hermes-studio-mcp')
+    expect(content).toContain('HERMES_MCP_SERVER_NAME=ekko-studio-mcp')
     expect(content).toContain('export HERMES_MCP_SERVER_NAME')
   })
 
   it('sets the desktop MCP URL from HERMES_DESKTOP_PORT in Windows shims', () => {
-    const command = createMcpShimContent('C:\\runtime\\node.exe', 'C:\\resources\\webui\\bin\\hermes-studio-mcp.mjs', 'http://127.0.0.1:8748', 'win32')
+    const command = createMcpShimContent('C:\\runtime\\node.exe', 'C:\\resources\\webui\\bin\\ekko-studio-mcp.mjs', 'http://127.0.0.1:8748', 'win32')
     const powershell = createMcpPowerShellShimContent(
       'C:\\runtime\\node.exe',
-      'C:\\resources\\webui\\bin\\hermes-studio-mcp.mjs',
+      'C:\\resources\\webui\\bin\\ekko-studio-mcp.mjs',
       'http://127.0.0.1:8748',
     )
 
-    expect(command).toContain('-File "%~dp0hermes-studio-mcp.ps1" %*')
+    expect(command).toContain('-File "%~dp0ekko-studio-mcp.ps1" %*')
     expect(powershell).toContain('$env:HERMES_DESKTOP_PORT')
     expect(powershell).toContain("$env:HERMES_WEB_UI_URL = 'http://127.0.0.1:' + $env:HERMES_DESKTOP_PORT")
-    expect(powershell).toContain("$env:HERMES_MCP_SERVER_NAME = 'hermes-studio-mcp'")
+    expect(powershell).toContain("$env:HERMES_MCP_SERVER_NAME = 'ekko-studio-mcp'")
     expect(decodedPowerShellValues(powershell)).toEqual([
       'C:\\runtime\\node.exe',
-      'C:\\resources\\webui\\bin\\hermes-studio-mcp.mjs',
+      'C:\\resources\\webui\\bin\\ekko-studio-mcp.mjs',
       'http://127.0.0.1:8748',
     ])
   })
@@ -206,7 +207,7 @@ describe('Hermes Studio CLI shim', () => {
     const result = await installHermesStudioCliShim({
       homeDir,
       platform: 'darwin',
-      executablePath: '/Applications/Hermes Studio.app/Contents/MacOS/Hermes Studio',
+      executablePath: '/Applications/Ekko Studio.app/Contents/MacOS/Ekko Studio',
       nodePath: '/runtime/node/bin/node',
       webUiScriptPath: '/resources/webui/bin/hermes-web-ui.mjs',
       env: { PATH: '/usr/bin', SHELL: '/bin/zsh' },
@@ -218,6 +219,26 @@ describe('Hermes Studio CLI shim', () => {
     expect(readFileSync(result.shimPath, 'utf-8')).toContain("NODE='/runtime/node/bin/node'")
     expect(readFileSync(result.shimPath, 'utf-8')).toContain("WEBUI_SCRIPT='/resources/webui/bin/hermes-web-ui.mjs'")
     expect(readFileSync(join(homeDir, '.zprofile'), 'utf-8')).toContain('export PATH="$HOME/bin:$PATH"')
+  })
+
+  it('installs the Ekko MCP command and refreshes the legacy shim without overwriting custom commands', async () => {
+    const homeDir = tempHome()
+    mkdirSync(join(homeDir, 'bin'))
+    const legacy = join(homeDir, 'bin', 'hermes-studio-mcp')
+    writeFileSync(legacy, '#!/bin/sh\n# HERMES_STUDIO_MCP_SHIM\nold-command\n')
+    const options = {
+      homeDir, platform: 'darwin' as const, nodePath: process.execPath,
+      scriptPath: join(process.cwd(), 'bin/ekko-studio-mcp.mjs'),
+      env: { PATH: '/usr/bin', SHELL: '/bin/zsh' },
+    }
+    const result = await installHermesStudioMcpShim(options)
+    expect(result.shimPath).toBe(join(homeDir, 'bin', 'ekko-studio-mcp'))
+    for (const command of [result.shimPath, legacy]) {
+      expect(execFileSync(command, ['--version'], { encoding: 'utf-8' })).toMatch(/^ekko-studio-mcp v/)
+    }
+    writeFileSync(legacy, '#!/bin/sh\ncustom-command\n')
+    await installHermesStudioMcpShim(options)
+    expect(readFileSync(legacy, 'utf-8')).toContain('custom-command')
   })
 
   it('updates Windows user PATH through PowerShell without corrupting Unicode entries', async () => {
@@ -245,7 +266,7 @@ describe('Hermes Studio CLI shim', () => {
     const result = await installHermesStudioCliShim({
       homeDir,
       platform: 'win32',
-      executablePath: 'C:\\Program Files\\Hermes Studio\\Hermes Studio.exe',
+      executablePath: 'C:\\Program Files\\Ekko Studio\\Ekko Studio.exe',
       nodePath: 'D:\\新建文件夹\\hermes\\0.19.1\\win-x64\\node\\node.exe',
       webUiScriptPath: 'D:\\新建文件夹\\webui\\bin\\hermes-web-ui.mjs',
       env: { Path: existingPath },
@@ -287,9 +308,9 @@ describe('Hermes Studio CLI shim', () => {
     const result = await installHermesStudioCliShim({
       homeDir,
       platform: 'win32',
-      executablePath: 'C:\\Program Files\\Hermes Studio\\Hermes Studio.exe',
+      executablePath: 'C:\\Program Files\\Ekko Studio\\Ekko Studio.exe',
       nodePath: 'D:\\新建文件夹\\hermes\\0.19.1\\win-x64\\node\\node.exe',
-      webUiScriptPath: 'C:\\Program Files\\Hermes Studio\\resources\\webui\\bin\\hermes-web-ui.mjs',
+      webUiScriptPath: 'C:\\Program Files\\Ekko Studio\\resources\\webui\\bin\\hermes-web-ui.mjs',
       env: { Path: existingPath },
     })
 
@@ -320,9 +341,9 @@ describe('Hermes Studio CLI shim', () => {
     const result = await installHermesStudioCliShim({
       homeDir,
       platform: 'win32',
-      executablePath: 'C:\\Program Files\\Hermes Studio\\Hermes Studio.exe',
-      nodePath: 'C:\\Program Files\\Hermes Studio\\node.exe',
-      webUiScriptPath: 'C:\\Program Files\\Hermes Studio\\resources\\webui\\bin\\hermes-web-ui.mjs',
+      executablePath: 'C:\\Program Files\\Ekko Studio\\Ekko Studio.exe',
+      nodePath: 'C:\\Program Files\\Ekko Studio\\node.exe',
+      webUiScriptPath: 'C:\\Program Files\\Ekko Studio\\resources\\webui\\bin\\hermes-web-ui.mjs',
       env: { Path: existingPath },
     })
 

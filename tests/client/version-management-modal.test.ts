@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { flushPromises, mount } from '@vue/test-utils'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const api = vi.hoisted(() => ({
   activateRuntimeVersion: vi.fn(),
@@ -75,6 +75,7 @@ function runtimeStatus() {
 }
 
 describe('VersionManagementModal Runtime storage selector', () => {
+  afterEach(() => vi.useRealTimers())
   beforeEach(() => {
     useRuntimeRestartPrompt().clearRuntimeRestart()
     for (const mock of Object.values(api)) mock.mockReset()
@@ -280,4 +281,30 @@ describe('VersionManagementModal Runtime storage selector', () => {
     expect(useRuntimeRestartPrompt().pendingRuntimeRestart.value?.version).toBe('0.20.4')
     wrapper.unmount()
   })
+
+  it('notifies the global monitor when starting a Runtime download before the drawer closes', async () => {
+    vi.useFakeTimers()
+    const status = {
+      ...runtimeStatus(),
+      hermes: { ...runtimeStatus().hermes, remoteVersions: ['0.20.6'] },
+    }
+    api.fetchRuntimeVersionStatus.mockResolvedValue(status)
+    api.downloadRuntimeVersion.mockResolvedValue({ success: true, job: {
+      id: 'new-runtime-job', kind: 'runtime', version: '0.20.6', status: 'queued',
+      source: 'github', stage: 'queued', message: '', error: '', createdAt: '', updatedAt: '',
+    } })
+    const monitor = useRuntimeRestartPrompt()
+    const wrapper = mount(VersionManagementModal, { props: { show: false } })
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+    const beforeDownload = monitor.runtimeDownloadCheckRevision.value
+    const download = wrapper.findAll('button').find(button => button.text() === 'runtimeVersions.downloadGithub')!
+    await download.trigger('click')
+    await flushPromises()
+    expect(api.downloadRuntimeVersion).toHaveBeenCalledWith('0.20.6', 'github')
+    expect(monitor.runtimeDownloadCheckRevision.value).toBeGreaterThan(beforeDownload)
+    await wrapper.setProps({ show: false })
+    wrapper.unmount()
+  })
+
 })

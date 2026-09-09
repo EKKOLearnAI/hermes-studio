@@ -63,7 +63,7 @@ namespace {
 #define HERMES_MAX_OUTPUT_VOLUME_PERCENT 100
 #endif
 
-constexpr char kApName[] = "HStudio-WIFI";
+constexpr char kApName[] = "Ekko Studio-WIFI";
 constexpr char kMcuFirmwareVersion[] = HERMES_MCU_FIRMWARE_VERSION;
 constexpr char kMcuFirmwareManifestPath[] = HERMES_MCU_FIRMWARE_MANIFEST_PATH;
 constexpr uint32_t kConnectTimeoutMs = 18000;
@@ -2802,7 +2802,7 @@ void sendWifiPage() {
   }
 
   String html = pageStart(F("连接 Wi-Fi"));
-  html += F("<section class='panel'><p class='meta'>HStudio ESP32-C3</p><h1>连接局域网 Wi-Fi</h1>");
+  html += F("<section class='panel'><p class='meta'>Ekko Studio ESP32-C3</p><h1>连接局域网 Wi-Fi</h1>");
   if (wifiReady) {
     html += F("<p class='lead ok'>当前已联网：");
     html += escapeHtml(WiFi.SSID());
@@ -2859,7 +2859,7 @@ void sendWifiPage() {
 
 void sendStatusPage() {
   String html = pageStart(F("设备已联网"));
-  html += F("<section class='panel'><p class='meta'>HStudio ESP32-C3</p><h1>设备</h1><p class='lead'>");
+  html += F("<section class='panel'><p class='meta'>Ekko Studio ESP32-C3</p><h1>设备</h1><p class='lead'>");
   html += escapeHtml(WiFi.SSID());
   html += F(" · IP ");
   html += WiFi.localIP().toString();
@@ -3034,7 +3034,7 @@ String otaNextCheckText() {
 
 void sendOtaPage(const String &notice = "") {
   String html = pageStart(F("OTA"));
-  html += F("<section class='panel'><p class='meta'>HStudio ESP32-C3</p><h1>OTA</h1><p class='lead'>固件在线升级</p>");
+  html += F("<section class='panel'><p class='meta'>Ekko Studio ESP32-C3</p><h1>OTA</h1><p class='lead'>固件在线升级</p>");
   html += F("<nav class='tabs'><a class='tab' href='/device'>设备</a><a class='tab active' href='/ota'>OTA</a></nav>");
   if (notice.length() > 0) {
     html += F("<p class='hint'>");
@@ -3060,7 +3060,7 @@ void sendOtaPage(const String &notice = "") {
 
 void sendOtaUpdatingPage() {
   String html = pageStart(F("OTA"));
-  html += F("<section class='panel'><p class='meta'>HStudio ESP32-C3</p><h1>OTA</h1><p class='lead'>固件正在更新</p>");
+  html += F("<section class='panel'><p class='meta'>Ekko Studio ESP32-C3</p><h1>OTA</h1><p class='lead'>固件正在更新</p>");
   html += F("<p class='hint'>固件正在下载并写入，请勿关闭单片机或断开电源。设备会自动重启，页面检测到恢复后会弹窗提示完成。</p>");
   html += F("<div class='info-grid'>");
   appendInfoRow(html, F("固件版本"), String(kMcuFirmwareVersion));
@@ -3236,7 +3236,7 @@ bool runMcuLogin(LanDevice &device, const String &account, const String &passwor
 
   http.addHeader(F("Content-Type"), F("application/json"));
   http.addHeader(F("X-Hermes-Device-Id"), deviceId());
-  http.addHeader(F("X-Hermes-Device-Name"), F("HStudio ESP32-C3"));
+  http.addHeader(F("X-Hermes-Device-Name"), F("Ekko Studio ESP32-C3"));
   int code = http.POST(mcuLoginPayload(account, password, useRemoteLogin ? device.id : String(""), useRemoteLogin));
   String response = http.getString();
   http.end();
@@ -6248,7 +6248,7 @@ void connectMcuSocketClient() {
   request += port;
   request += F("\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: ");
   request += key;
-  request += F("\r\nUser-Agent: HStudio-ESP32C3\r\n\r\n");
+  request += F("\r\nUser-Agent: Ekko Studio-ESP32C3\r\n\r\n");
   mcuWsClient->print(request);
 
   String statusLine = mcuWsClient->readStringUntil('\n');
@@ -6279,7 +6279,7 @@ void connectMcuSocketClient() {
 void sendConnectSuccessPage(const String &ssid, const IPAddress &ip) {
   String target = deviceUrl(ip);
   String html = pageStart(F("Wi-Fi 已连接"));
-  html += F("<section class='panel'><p class='meta'>HStudio ESP32-C3</p><h1>Wi-Fi 已连接</h1>");
+  html += F("<section class='panel'><p class='meta'>Ekko Studio ESP32-C3</p><h1>Wi-Fi 已连接</h1>");
   html += F("<p class='lead ok'>");
   html += escapeHtml(ssid);
   html += F(" · IP ");
@@ -6299,7 +6299,7 @@ void sendConnectSuccessPage(const String &ssid, const IPAddress &ip) {
 
 void sendConnectFailedPage(const String &ssid) {
   String html = pageStart(F("Wi-Fi 连接失败"));
-  html += F("<section class='panel'><p class='meta'>HStudio ESP32-C3</p><h1>Wi-Fi 连接失败</h1>");
+  html += F("<section class='panel'><p class='meta'>Ekko Studio ESP32-C3</p><h1>Wi-Fi 连接失败</h1>");
   html += F("<p class='lead bad'>没有连上 ");
   html += escapeHtml(ssid);
   html += F("。请检查 SSID 和密码后重试。</p>");
@@ -6371,7 +6371,7 @@ void startSetupAp(bool refreshScan);
 void clearWifi() {
   setOledStatus(OledMode::Think, F("WIFI"), F("SETUP"), 40);
   server.send(200, F("text/html; charset=utf-8"),
-              F("<!doctype html><meta charset='utf-8'><p>设备正在进入配网模式，请连接 HStudio-WIFI 热点。</p>"));
+              F("<!doctype html><meta charset='utf-8'><p>设备正在进入配网模式，请连接 Ekko Studio-WIFI 热点。</p>"));
   delay(300);
   startSetupAp(true);
 }
@@ -6585,12 +6585,12 @@ void setup() {
   Serial.begin(115200);
   delay(300);
   Serial.println();
-  Serial.println(F("HStudio WiFi setup firmware boot"));
+  Serial.println(F("Ekko Studio WiFi setup firmware boot"));
   Serial.printf("Reset reason=%d free_heap=%lu min_free_heap=%lu\n",
                 static_cast<int>(esp_reset_reason()),
                 static_cast<unsigned long>(ESP.getFreeHeap()),
                 static_cast<unsigned long>(ESP.getMinFreeHeap()));
-  esp_rom_printf("HStudio WiFi setup firmware boot\n");
+  esp_rom_printf("Ekko Studio WiFi setup firmware boot\n");
   pinMode(kPinBatteryAdc, INPUT);
   analogSetPinAttenuation(kPinBatteryAdc, ADC_11db);
   updateBatteryReading(true);

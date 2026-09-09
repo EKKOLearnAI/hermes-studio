@@ -1,3 +1,4 @@
+import { OPENCODE_FREE_PROVIDER, openCodeFreeRuntime } from '../../studio/contracts/opencode-free'
 import { join } from 'path'
 import { getCompatibleCustomProviders } from '../../studio/contracts/provider-compat'
 import { PROVIDER_PRESETS } from '../../studio/contracts/providers'
@@ -31,6 +32,10 @@ export async function resolveEkkoProviderRuntimeConfig(input: {
 }): Promise<EkkoProviderRuntimeConfig> {
   const provider = String(input.provider || '').trim()
   if (!provider) throw new Error('Ekko model provider is required')
+
+  if (provider === OPENCODE_FREE_PROVIDER) {
+    return { provider, ...openCodeFreeRuntime(String(input.model || '').trim()) }
+  }
 
   const profile = String(input.profile || '').trim() || 'default'
   const providerKey = providerKeyWithoutCustomPrefix(provider.toLowerCase())

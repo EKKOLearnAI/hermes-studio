@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { defineAsyncComponent, ref, onBeforeUnmount, onMounted, watch } from 'vue'
+import { computed, defineAsyncComponent, ref, onBeforeUnmount, onMounted, watch } from 'vue'
 import { isPreviewableFile, isTextFile, useFilesStore } from '@/stores/hermes/files'
 import { useI18n } from 'vue-i18n'
 import { NButton, useMessage } from 'naive-ui'
 import FileTree from '@/components/hermes/files/FileTree.vue'
 import FileToolbar from '@/components/hermes/files/FileToolbar.vue'
+import FileTreeToggle from '@/components/hermes/files/FileTreeToggle.vue'
 import FileContextMenu from '@/components/hermes/files/FileContextMenu.vue'
 import FileUploadModal from '@/components/hermes/files/FileUploadModal.vue'
 import FileRenameModal from '@/components/hermes/files/FileRenameModal.vue'
@@ -39,14 +40,18 @@ const renameTargetPath = ref<string | null>(null)
 const lastStandardPath = ref('')
 const filesPanelRef = ref<HTMLElement | null>(null)
 const sidebarWidth = ref(260)
+const treeCollapsed = ref(false)
 const selectedDiffEntry = ref<FileEntry | null>(null)
 const mobileMediaQuery = window.matchMedia(`(max-width: 768px)`)
 const isMobileLayout = ref(mobileMediaQuery.matches)
 const mobileFileOpen = ref(false)
 let stopSidebarResize: (() => void) | null = null
+const hasOpenFile = computed(() => Boolean(
+  selectedDiffEntry.value || filesStore.editingFile || filesStore.previewFile,
+))
 
 function startSidebarResize(event: PointerEvent) {
-  if (isMobileLayout.value) return
+  if (isMobileLayout.value || treeCollapsed.value) return
   event.preventDefault()
   const startX = event.clientX
   const startWidth = sidebarWidth.value
@@ -76,9 +81,15 @@ function startSidebarResize(event: PointerEvent) {
   window.addEventListener('pointercancel', handleUp)
 }
 
+function toggleTreeCollapsed(): void {
+  if (isMobileLayout.value) return
+  treeCollapsed.value = !treeCollapsed.value
+}
+
 function handleMobileLayoutChange(event: MediaQueryListEvent): void {
   isMobileLayout.value = event.matches
   if (event.matches) {
+    treeCollapsed.value = false
     mobileFileOpen.value = Boolean(selectedDiffEntry.value || filesStore.editingFile || filesStore.previewFile)
   }
 }
@@ -228,9 +239,10 @@ onBeforeUnmount(() => {
   >
     <div
       class="files-tree-panel"
-      :style="{ width: `${sidebarWidth}px` }"
+      :class="{ 'tree-collapsed': treeCollapsed }"
+      :style="{ width: isMobileLayout ? '100%' : treeCollapsed ? '0px' : `${sidebarWidth}px` }"
     >
-      <div class="explorer-header">
+      <div v-show="!treeCollapsed" class="explorer-header">
         <span class="explorer-title">{{ t('files.fileTree') }}</span>
         <FileToolbar
           :allow-upload="false"
@@ -239,12 +251,20 @@ onBeforeUnmount(() => {
         />
       </div>
       <FileTree
+        v-show="!treeCollapsed"
         :workspace-key="workspace"
         @contextmenu-entry="handleContextMenu"
         @open-entry="handleOpenEntry"
       />
     </div>
-    <div class="explorer-resize-handle" @pointerdown="startSidebarResize" />
+    <div v-if="treeCollapsed && !hasOpenFile" class="collapsed-tree-fallback">
+      <FileTreeToggle :collapsed="true" @toggle="toggleTreeCollapsed" />
+    </div>
+    <div
+      class="explorer-resize-handle"
+      :class="{ 'tree-collapsed': treeCollapsed }"
+      @pointerdown="startSidebarResize"
+    />
     <div class="files-main-panel">
       <div class="main-toolbar">
         <NButton
@@ -264,6 +284,9 @@ onBeforeUnmount(() => {
         <FileEditor
           v-if="filesStore.editingFile"
           :custom-close="isMobileLayout ? handleMobileBack : undefined"
+          :show-tree-toggle="!isMobileLayout"
+          :tree-collapsed="treeCollapsed"
+          @toggle-tree="toggleTreeCollapsed"
         />
         <WorkspaceFileDiff
           v-else-if="selectedDiffEntry"
@@ -271,11 +294,17 @@ onBeforeUnmount(() => {
           :workspace="workspace"
           :workspace-session-id="workspaceSessionId"
           :workspace-room-id="workspaceRoomId"
+          :show-tree-toggle="!isMobileLayout"
+          :tree-collapsed="treeCollapsed"
+          @toggle-tree="toggleTreeCollapsed"
           @close="handleDiffClose"
         />
         <FilePreview
           v-else-if="filesStore.previewFile"
           :custom-close="isMobileLayout ? handleMobileBack : undefined"
+          :show-tree-toggle="!isMobileLayout"
+          :tree-collapsed="treeCollapsed"
+          @toggle-tree="toggleTreeCollapsed"
         />
         <div v-else class="workspace-empty-editor" />
       </div>
@@ -319,6 +348,17 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   background: inherit;
+  transition: width $transition-fast;
+
+  &.tree-collapsed {
+    min-width: 0;
+    border-inline-end: 0;
+    overflow: hidden;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    transition: none;
+  }
 
   @media (max-width: $breakpoint-mobile) {
     width: 100% !important;
@@ -326,6 +366,10 @@ onBeforeUnmount(() => {
     max-width: none;
     height: 100%;
     border-inline-end: 0;
+
+    &.tree-collapsed {
+      min-width: 0;
+    }
   }
 }
 
@@ -348,6 +392,10 @@ onBeforeUnmount(() => {
   cursor: col-resize;
   flex: 0 0 5px;
   touch-action: none;
+
+  &.tree-collapsed {
+    display: none;
+  }
 
   &::after {
     content: '';
@@ -373,6 +421,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-shrink: 0;
   min-height: 34px;
   padding: 0 8px 0 12px;
   border-bottom: 1px solid $border-color;
@@ -384,6 +433,18 @@ onBeforeUnmount(() => {
   :deep(.n-button) {
     width: 26px;
     height: 26px;
+  }
+}
+
+.collapsed-tree-fallback {
+  position: absolute;
+  inset-block-start: 8px;
+  inset-inline-start: 0;
+  z-index: 4;
+  pointer-events: none;
+
+  :deep(.file-tree-toggle) {
+    pointer-events: auto;
   }
 }
 

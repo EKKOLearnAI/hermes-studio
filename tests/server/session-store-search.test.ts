@@ -23,6 +23,16 @@ describe('session store filtering', () => {
     vi.resetModules()
   })
 
+  it('resolves notification title for untitled sessions and bounds assistant preview', async () => {
+    const { createSession, addMessage, getSessionNotificationPreview } = await import('../../packages/server/src/modules/studio/repositories/session-store')
+    createSession({ id: 'untitled-notice', profile: 'default', source: 'coding_agent' })
+    addMessage({ session_id: 'untitled-notice', role: 'user', content: 'First user question', timestamp: 1 })
+    addMessage({ session_id: 'untitled-notice', role: 'assistant', content: 'a'.repeat(1000), timestamp: 2 })
+    addMessage({ session_id: 'untitled-notice', role: 'tool', content: 'private tool output', timestamp: 3 })
+    expect(getSessionNotificationPreview('untitled-notice')).toEqual({ title: 'First user question', preview: 'a'.repeat(240) })
+    expect(getSessionNotificationPreview('missing')).toBeNull()
+  })
+
   it('finds rendered text when Markdown markers split the stored phrase', async () => {
     const { addMessage, createSession, searchSessions } = await import(
       '../../packages/server/src/modules/studio/repositories/session-store'
@@ -95,6 +105,50 @@ describe('session store filtering', () => {
 
     expect(results).toHaveLength(1)
     expect(results[0]).toEqual(expect.objectContaining({ id: 'visible-chat', source: 'cli' }))
+  })
+
+  it('paginates after visibility filters with stable ordering for equal activity times', async () => {
+    const { createSession, listSessions } = await import(
+      '../../packages/server/src/modules/studio/repositories/session-store'
+    )
+    for (const id of ['chat-a', 'chat-b', 'chat-c', 'archived', 'deleted']) {
+      createSession({ id, profile: 'default', source: 'cli' })
+    }
+    createSession({ id: 'other-profile', profile: 'travel', source: 'cli' })
+    createSession({ id: 'workflow', profile: 'default', source: 'workflow' })
+    db.prepare('UPDATE sessions SET last_active = 100').run()
+    db.prepare("UPDATE sessions SET is_archived = 1 WHERE id = 'archived'").run()
+    const options = {
+      profiles: ['default'], sources: ['cli'], includeArchived: false, excludeSessionIds: ['deleted'],
+    }
+    const first = listSessions(undefined, undefined, 2, options)
+    const second = listSessions(undefined, undefined, 2, { ...options, offset: 2 })
+    expect(first.map(session => session.id)).toEqual(['chat-c', 'chat-b'])
+    expect(second.map(session => session.id)).toEqual(['chat-a'])
+    expect(listSessions(undefined, undefined, 2, { ...options, offset: 3 })).toEqual([])
+  })
+
+  it('pages each category and pinned selection independently before applying the limit', async () => {
+    const { createSession, listSessions } = await import('../../packages/server/src/modules/studio/repositories/session-store')
+    const { createSessionCategory, setSessionCategory } = await import('../../packages/server/src/modules/studio/repositories/session-category-store')
+    const category = createSessionCategory('Work')
+    for (let index = 0; index < 25; index++) {
+      const id = `work-${String(index).padStart(2, '0')}`
+      createSession({ id, profile: 'default', source: 'cli' })
+      setSessionCategory(id, category.id)
+      createSession({ id: `none-${index}`, profile: 'default', source: 'cli' })
+    }
+    db.prepare('UPDATE sessions SET last_active = 100').run()
+    const options = { categoryId: category.id, excludeSessionIds: ['work-24'], includeArchived: false }
+    const first = listSessions(undefined, undefined, 10, options)
+    const next = listSessions(undefined, undefined, 10, { ...options, offset: 10 })
+    expect(first.map(row => row.id)).toEqual(Array.from({ length: 10 }, (_, i) => `work-${23 - i}`))
+    expect(next.map(row => row.id)).toEqual(Array.from({ length: 10 }, (_, i) => `work-${String(13 - i).padStart(2, '0')}`))
+    const none = listSessions(undefined, undefined, 10, { categoryId: null })
+    expect(none).toHaveLength(10)
+    expect(none.every(row => row.id.startsWith('none-'))).toBe(true)
+    expect(listSessions(undefined, undefined, 10, { includeSessionIds: ['work-24'] }).map(row => row.id)).toEqual(['work-24'])
+    expect(listSessions(undefined, undefined, 10, { includeSessionIds: [] })).toEqual([])
   })
 
   it('updates display-only message content without changing model context content', async () => {

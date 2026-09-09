@@ -32,6 +32,21 @@ describe('agent run gateway', () => {
     }))
   })
 
+  it.each([false, true])('omits upstream authorization for keyless requests (stream=%s)', async (stream) => {
+    const fetchMock = vi.fn(async () => new Response(stream ? 'data: [DONE]\n\n' : '{}', {
+      headers: { 'Content-Type': stream ? 'text/event-stream' : 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const gateway = new AgentRunGateway()
+    const request = { url: 'https://opencode.ai/zen/v1/chat/completions', apiKey: '', body: { stream } }
+    if (stream) {
+      for await (const _chunk of await gateway.streamBytes(request)) { /* drain */ }
+    } else await gateway.completeJson(request)
+    const headers = new Headers((fetchMock.mock.calls[0] as any)[1].headers)
+    expect(headers.has('authorization')).toBe(false)
+    expect(headers.has('x-api-key')).toBe(false)
+  })
+
   it('throws structured provider errors', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
       error: { message: 'bad key' },

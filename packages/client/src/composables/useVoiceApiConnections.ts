@@ -132,6 +132,7 @@ export function useVoiceApiConnections() {
       vs.setDoubaoModel(connection.model || stringSetting(settings, 'model') || vs.doubaoModel.value)
       vs.setDoubaoVoice(connection.voice || stringSetting(settings, 'voice') || vs.doubaoVoice.value)
       vs.setDoubaoStylePrompt(stringSetting(settings, 'stylePrompt'))
+      vs.setDoubaoSpeed(stringSetting(settings, 'speed').trim() || '1')
     }
   }
 

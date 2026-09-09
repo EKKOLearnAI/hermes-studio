@@ -41,6 +41,7 @@ const listInstanceKey = computed(() => activeSessionScrollKey.value || "history-
 const displayMessages = computed(() =>
   groupCompletedToolsByRun((activeSession.value?.messages || []).filter((m) => {
     // Tool messages without a name are internal use only and remain hidden.
+    if (m.taskPlan) return true
     if (m.role === 'tool') return toolTraceVisible.value && !!m.toolName
     // Filter out messages with empty content.
     if (!m.content?.trim()) return false

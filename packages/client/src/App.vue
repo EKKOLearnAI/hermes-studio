@@ -23,6 +23,7 @@ import { useSessionSearch } from "@/composables/useSessionSearch";
 import { watchServerTtsSettingsHydration } from "@/composables/useTtsSettingsHydration";
 import { useAppStore } from "@/stores/hermes/app";
 import { useProfilesStore } from "@/stores/hermes/profiles";
+import { isStoredSuperAdmin } from "@/api/client";
 import AuthEventListener from "@/components/auth/AuthEventListener.vue";
 import { desktopBridge } from "@/utils/desktop-bridge";
 import { naiveLocaleFor } from "@/constants/naiveLocale";
@@ -341,7 +342,7 @@ useKeyboard();
             v-if="!isLoginPage && !isDesktopPetRoute && !isStandaloneChatPage"
           />
           <RuntimeRestartPrompt
-            v-if="!isLoginPage && !isDesktopPetRoute && !isStandaloneChatPage"
+            v-if="!isLoginPage && !isDesktopPetRoute && !isStandaloneChatPage && isStoredSuperAdmin()"
           />
         </NNotificationProvider>
       </NDialogProvider>

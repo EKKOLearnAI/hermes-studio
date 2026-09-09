@@ -45,19 +45,19 @@ describe('session push notifications', () => {
       platform: 'feishu',
       recipient: 'feishu-chat',
       recipientType: 'chat_id',
-      content: 'Codex 有一条已完成消息，请到 Hermes Studio 查看',
+      content: 'Codex 有一条已完成消息，请到 Ekko Studio 查看',
     })
   })
 
   it('formats privacy-safe status messages for the interacting agent', () => {
     expect(formatSessionPushContent('bridge', 'run.completed', 'zh')).toBe(
-      'Hermes 有一条已完成消息，请到 Hermes Studio 查看',
+      'Hermes 有一条已完成消息，请到 Ekko Studio 查看',
     )
     expect(formatSessionPushContent('ekko', 'approval.requested', 'zh')).toBe(
-      'Ekko 有一条待授权消息，请到 Hermes Studio 授权',
+      'Ekko 有一条待授权消息，请到 Ekko Studio 授权',
     )
     expect(formatSessionPushContent('claude-code', 'clarify.requested', 'zh')).toBe(
-      'Claude 有一条待回答消息，请到 Hermes Studio 回答',
+      'Claude 有一条待回答消息，请到 Ekko Studio 回答',
     )
   })
 

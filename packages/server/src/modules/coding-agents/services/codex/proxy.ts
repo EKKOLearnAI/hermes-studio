@@ -171,7 +171,7 @@ async function callAnthropicMessages(target: CodexProxyTarget, body: any): Promi
     url: anthropicMessagesUrl(target),
     apiKey: target.apiKey,
     headers: {
-      'x-api-key': target.apiKey,
+      ...(target.apiKey ? { 'x-api-key': target.apiKey } : {}),
       'anthropic-version': '2023-06-01',
     },
     body: anthropicBody,
@@ -286,7 +286,7 @@ async function anthropicMessagesToResponsesSseStream(target: CodexProxyTarget, b
     url: anthropicMessagesUrl(target),
     apiKey: target.apiKey,
     headers: {
-      'x-api-key': target.apiKey,
+      ...(target.apiKey ? { 'x-api-key': target.apiKey } : {}),
       'anthropic-version': '2023-06-01',
     },
     body: anthropicBody,

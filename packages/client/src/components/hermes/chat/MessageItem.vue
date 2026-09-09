@@ -16,6 +16,7 @@ import { useFilesStore } from "@/stores/hermes/files";
 import { useToolPanelStore } from "@/stores/hermes/tool-panel";
 import { useSettingsStore } from "@/stores/hermes/settings";
 import { chatSessionAgentAvatar, type ChatAgentAvatar } from "@/utils/chat-agent-avatar";
+import TaskPlanCard from './TaskPlanCard.vue';
 import ToolChangeCard from "./ToolChangeCard.vue";
 import {
   copyTextToClipboard,
@@ -820,6 +821,7 @@ function handleSpeechToggle() {
       model: voiceSettings.doubaoModel.value,
       voice: voiceSettings.doubaoVoice.value,
       stylePrompt: voiceSettings.doubaoStylePrompt.value || undefined,
+      speed: voiceSettings.doubaoSpeed.value || undefined,
     })
     return
   }
@@ -901,6 +903,7 @@ onMounted(() => {
           model: voiceSettings.doubaoModel.value,
           voice: voiceSettings.doubaoVoice.value,
           stylePrompt: voiceSettings.doubaoStylePrompt.value || undefined,
+          speed: voiceSettings.doubaoSpeed.value || undefined,
         }).catch(handleAutoplayTtsError)
       } else if (isServerTtsProvider(voiceSettings.provider.value)) {
         void speech.openaiPlay(props.message.id, content, {
@@ -939,7 +942,8 @@ onBeforeUnmount(() => {
     :class="[message.role, { highlight }]"
     :id="`message-${message.id}`"
   >
-    <template v-if="message.role === 'tool'">
+    <TaskPlanCard v-if="message.taskPlan" :plan="message.taskPlan" />
+    <template v-else-if="message.role === 'tool'">
       <div
         class="tool-line"
         :class="{ expandable: hasInlineToolDetails || isSubagentTool, 'subagent-entry': isSubagentTool }"

@@ -3,7 +3,7 @@
  * Uses the same ensureTable/getDb pattern as usage-store.ts.
  */
 import { isSqliteAvailable, getDb } from '../infrastructure/database'
-import { COMPRESSION_SNAPSHOT_TABLE, SESSIONS_TABLE, MESSAGES_TABLE } from '../infrastructure/database/schemas'
+import { TASK_PLANS_TABLE, COMPRESSION_SNAPSHOT_TABLE, SESSIONS_TABLE, MESSAGES_TABLE, SESSION_CATEGORIES_TABLE } from '../infrastructure/database/schemas'
 import { normalizeMessageContentForStorageRole } from './message-content'
 import { copyCompressionSnapshot } from './compression-snapshot'
 import { recordSkillUsageMessage } from './skill-usage-store'
@@ -77,6 +77,9 @@ export interface HermesSessionSearchRow extends HermesSessionRow {
 }
 
 export interface SessionListOptions {
+  offset?: number
+  categoryId?: number | null
+  includeSessionIds?: string[]
   sources?: string[]
   profiles?: string[]
   includeArchived?: boolean
@@ -374,6 +377,22 @@ export function getSession(id: string): HermesSessionRow | null {
   return row ? mapSessionRow(row) : null
 }
 
+/** Bounded notification text; never materialize full chat history or tool output. */
+export function getSessionNotificationPreview(id: string): { title: string; preview: string } | null {
+  if (!isSqliteAvailable()) return null
+  const row = getDb()!.prepare(`
+    SELECT SUBSTR(COALESCE(NULLIF(s.title, ''), NULLIF(s.preview, ''),
+      (SELECT SUBSTR(m.content, 1, 63) FROM ${MESSAGES_TABLE} m
+       WHERE m.session_id = s.id AND m.role = 'user' AND m.content != ''
+       ORDER BY m.timestamp, m.id LIMIT 1), ''), 1, 120) AS title,
+      COALESCE((SELECT SUBSTR(COALESCE(NULLIF(m.display_content, ''), m.content), 1, 240)
+       FROM ${MESSAGES_TABLE} m WHERE m.session_id = s.id AND m.role = 'assistant' AND m.content != ''
+       ORDER BY m.timestamp DESC, m.id DESC LIMIT 1), '') AS preview
+    FROM ${SESSIONS_TABLE} s WHERE s.id = ?
+  `).get(id) as { title: string; preview: string } | undefined
+  return row || null
+}
+
 /** Session and branch metadata without loading this session's message bodies. */
 export function getSessionMetadata(id: string): HermesSessionRow | null {
   if (!isSqliteAvailable()) return null
@@ -440,6 +459,7 @@ export function deleteSession(id: string): boolean {
   const db = getDb()!
   db.exec('BEGIN')
   try {
+    db.prepare(`DELETE FROM ${TASK_PLANS_TABLE} WHERE session_id = ?`).run(id)
     db.prepare(`DELETE FROM ${COMPRESSION_SNAPSHOT_TABLE} WHERE session_id = ?`).run(id)
     db.prepare(`DELETE FROM ${MESSAGES_TABLE} WHERE session_id = ?`).run(id)
     const result = db.prepare(`DELETE FROM ${SESSIONS_TABLE} WHERE id = ?`).run(id)
@@ -457,6 +477,7 @@ export function clearSessionMessages(id: string): number {
   db.exec('BEGIN')
   try {
     const result = db.prepare(`DELETE FROM ${MESSAGES_TABLE} WHERE session_id = ?`).run(id)
+    db.prepare(`DELETE FROM ${TASK_PLANS_TABLE} WHERE session_id = ?`).run(id)
     db.prepare(`DELETE FROM ${COMPRESSION_SNAPSHOT_TABLE} WHERE session_id = ?`).run(id)
     db.prepare(
       `UPDATE ${SESSIONS_TABLE}
@@ -544,11 +565,12 @@ export function listSessions(
     FROM ${SESSIONS_TABLE} s
     LEFT JOIN ${SESSIONS_TABLE} p ON p.id = s.parent_session_id
     WHERE ${filters.sql}
-    ORDER BY s.last_active DESC
-    LIMIT ?
+    ORDER BY s.last_active DESC, s.id DESC
+    LIMIT ? OFFSET ?
   `
 
-  const rows = db.prepare(sql).all(...filters.params, limit) as Record<string, unknown>[]
+  const offset = Number.isSafeInteger(options.offset) && options.offset! > 0 ? options.offset! : 0
+  const rows = db.prepare(sql).all(...filters.params, limit, offset) as Record<string, unknown>[]
   return rows.map(mapSessionRow)
 }
 
@@ -605,6 +627,18 @@ function sessionFilterSql(
   }
   if (options.includeArchived === false) {
     clauses.push('COALESCE(s.is_archived, 0) = 0')
+  }
+  if (options.categoryId === null) {
+    clauses.push(`(s.category_id IS NULL OR NOT EXISTS (SELECT 1 FROM ${SESSION_CATEGORIES_TABLE} c WHERE c.id = s.category_id))`)
+  } else if (options.categoryId !== undefined) {
+    clauses.push('s.category_id = ?')
+    params.push(String(options.categoryId))
+  }
+  if (options.includeSessionIds !== undefined) {
+    const includedIds = [...new Set(options.includeSessionIds.map(value => value.trim()).filter(Boolean))]
+    if (!includedIds.length) return null
+    clauses.push(`s.id IN (${includedIds.map(() => '?').join(', ')})`)
+    params.push(...includedIds)
   }
 
   const excludedIds = [...new Set((options.excludeSessionIds || []).map(value => value.trim()).filter(Boolean))]

@@ -1,6 +1,6 @@
 {
   "name": "hermes-web-ui",
-  "version": "0.7.17",
+  "version": "0.7.18",
   "description": "Self-hosted AI chat dashboard for Hermes Agent — multi-model web UI with multi-platform integration",
   "repository": {
     "type": "git",
@@ -31,8 +31,9 @@
   ],
   "bin": {
     "hermes-web-ui": "./bin/hermes-web-ui.mjs",
-    "hermes-web-ui-mcp": "./bin/hermes-studio-mcp.mjs",
-    "hermes-studio-mcp": "./bin/hermes-studio-mcp.mjs"
+    "hermes-web-ui-mcp": "./bin/hermes-web-ui-mcp.mjs",
+    "hermes-studio-mcp": "./bin/hermes-studio-mcp.mjs",
+    "ekko-studio-mcp": "./bin/ekko-studio-mcp.mjs"
   },
   "scripts": {
     "start": "vite --host --port 8648",

@@ -3,6 +3,8 @@
  * Synced from hermes-agent hermes_cli/models.py _PROVIDER_MODELS.
  */
 
+import { OPENCODE_FREE_PROVIDER, OPENCODE_FREE_BASE_URL } from './opencode-free'
+
 export interface ProviderPreset {
   label: string
   value: string
@@ -409,6 +411,13 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
       'gemini-3.1-pro-preview',
       'gemini-2.5-pro',
     ],
+  },
+  {
+    label: 'OpenCode Free',
+    value: OPENCODE_FREE_PROVIDER,
+    builtin: true,
+    base_url: OPENCODE_FREE_BASE_URL,
+    models: [],
   },
   {
     label: 'OpenCode Zen',

@@ -1,5 +1,6 @@
 export {
   authenticateUserToken,
+  inspectAppUserToken,
   getUserJwtExpiresSeconds,
   isAuthEnabled,
   issueAppJwt,

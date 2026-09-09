@@ -34,12 +34,13 @@ export const useModelsStore = defineStore('models', () => {
     ),
   )
 
-  async function fetchProviders() {
+  async function fetchProviders(options: { background?: boolean } = {}) {
     if (!hasApiKey()) return
-    loading.value = true
+    if (!options.background) loading.value = true
     try {
       const profile = useProfilesStore().activeProfileName || 'default'
       const res = await systemApi.fetchAvailableModelsForProfile(profile)
+      if (profile !== (useProfilesStore().activeProfileName || 'default')) return
       // MoA is a virtual Hermes runtime provider used by chat model pickers,
       // not a credential-backed provider that belongs in model settings or
       // auxiliary-model configuration.
@@ -50,7 +51,7 @@ export const useModelsStore = defineStore('models', () => {
     } catch (err) {
       console.error('Failed to fetch providers:', err)
     } finally {
-      loading.value = false
+      if (!options.background) loading.value = false
     }
   }
 

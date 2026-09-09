@@ -1,3 +1,4 @@
+import { agentUpdateLocked, noteAgentActivity } from '../update-lock'
 import { dirname, join } from 'path'
 import { existsSync, accessSync, chmodSync, constants as fsConstants, readFileSync, writeFileSync } from 'fs'
 import { homedir } from 'os'
@@ -332,7 +333,7 @@ function hasManagedHermesMcpConfig(run: ManagedCodingAgentRun): boolean {
     if (!piHome) return false
     try {
       const config = readFileSync(join(piHome, 'mcp.json'), 'utf-8')
-      return config.includes('"hermes-studio-api"') && config.includes('"hermes-studio-use"')
+      return config.includes('"ekko-studio-api"') && config.includes('"ekko-studio-use"')
     } catch {
       return false
     }
@@ -342,7 +343,7 @@ function hasManagedHermesMcpConfig(run: ManagedCodingAgentRun): boolean {
     if (!grokHome) return false
     try {
       const config = readFileSync(join(grokHome, 'config.toml'), 'utf-8')
-      return config.includes('[mcp_servers.hermes-studio-api]') && config.includes('[mcp_servers.hermes-studio-use]')
+      return config.includes('[mcp_servers.ekko-studio-api]') && config.includes('[mcp_servers.ekko-studio-use]')
     } catch {
       return false
     }
@@ -352,7 +353,7 @@ function hasManagedHermesMcpConfig(run: ManagedCodingAgentRun): boolean {
     if (!configDir) return false
     try {
       const config = readFileSync(join(configDir, 'opencode.json'), 'utf-8')
-      return config.includes('"hermes-studio-api"') && config.includes('"hermes-studio-use"')
+      return config.includes('"ekko-studio-api"') && config.includes('"ekko-studio-use"')
     } catch {
       return false
     }
@@ -600,6 +601,20 @@ export class CodingAgentRunManager {
 
   constructor(private readonly idleMs = DEFAULT_IDLE_MS) {}
 
+  hasLiveAgent(id: string): boolean {
+    return [...this.runs.values()].some(run => run.launch.agentId === id && !run.exited)
+  }
+
+  isAgentBusyForUpdate(id: string): boolean {
+    if (this.memoryExportChildren.size > 0) return true
+    return [...this.runs.values()].some(run => run.launch.agentId === id && !run.exited && (
+      childIsRunning(run.currentChild) || Boolean(run.pty) || run.turnActive === true
+      || run.state.isWorking || run.state.queue.length > 0 || Boolean(run.pendingChatCompletionEvent)
+      || Boolean(run.piUiRequests?.size) || Boolean(run.piRpcRequests?.size)
+      || run.state.events.some(entry => /^(approval|clarify|calendar|reminder)\.requested$/.test(entry.event))
+    ))
+  }
+
   isAvailable(): boolean {
     return !!pty
   }
@@ -649,6 +664,7 @@ export class CodingAgentRunManager {
   }
 
   start(launch: CodingAgentRunLaunch): { runId: string; pid: number } {
+    if (agentUpdateLocked(launch.agentId)) throw new Error('Agent is updating; retry after completion')
     const existingRunId = this.sessionIndex.get(launch.sessionId)
     if (existingRunId) {
       const existing = this.runs.get(existingRunId)
@@ -772,6 +788,7 @@ export class CodingAgentRunManager {
   send(sessionId: string, input: string, options: CodingAgentRunSendOptions = {}): { runId: string; messageId?: number } {
     const run = this.getBySession(sessionId)
     if (!run) throw new Error('Coding agent session not found')
+    if (agentUpdateLocked(run.launch.agentId)) throw new Error('Agent is updating; retry after completion')
     const text = String(input || '').trim()
     const images = Array.isArray(options.images) ? options.images : []
     if (!text && images.length === 0) throw new Error('Input is required')
@@ -839,6 +856,7 @@ export class CodingAgentRunManager {
   }> {
     const run = this.getBySession(sessionId)
     if (!run) throw new Error('Coding agent session not found')
+    if (agentUpdateLocked(run.launch.agentId)) throw new Error('Agent is updating; retry after completion')
     if (run.launch.agentId === 'pi') {
       if (run.turnActive) throw new Error('Pi is still processing the previous input')
       if (!childIsRunning(run.currentChild)) throw new Error('Pi RPC process is not available')
@@ -1306,6 +1324,7 @@ export class CodingAgentRunManager {
   }
 
   private touch(run: ManagedCodingAgentRun) {
+    noteAgentActivity(run.launch.agentId)
     run.lastActiveAt = Date.now()
     if (run.idleTimer) clearTimeout(run.idleTimer)
     run.idleTimer = setTimeout(() => {
@@ -3237,6 +3256,7 @@ export class CodingAgentRunManager {
     const workspaceRunChange = this.completeWorkspaceRunDiff(run)
     this.emitToChat(run.launch.sessionId, event, {
       ...(payload || { event }),
+      run_id: typeof payload?.run_id === 'string' && payload.run_id ? payload.run_id : run.id,
       ...(run.assistantMessageId ? { message_id: run.assistantMessageId } : {}),
       ...(queueRemaining > 0 ? { queue_remaining: queueRemaining } : {}),
       workspace_run_change: workspaceRunChange,

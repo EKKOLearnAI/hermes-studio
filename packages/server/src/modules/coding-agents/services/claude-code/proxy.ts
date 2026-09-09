@@ -299,7 +299,7 @@ async function callAnthropicMessages(target: ClaudeCodeProxyTarget, body: any): 
     url: anthropicMessagesUrl(target),
     apiKey: target.apiKey,
     headers: {
-      'x-api-key': target.apiKey,
+      ...(target.apiKey ? { 'x-api-key': target.apiKey } : {}),
       'anthropic-version': '2023-06-01',
     },
     body: anthropicRequestBody(nextBody, target),
@@ -387,7 +387,7 @@ async function anthropicMessagesSseStream(target: ClaudeCodeProxyTarget, body: a
     url: anthropicMessagesUrl(target),
     apiKey: target.apiKey,
     headers: {
-      'x-api-key': target.apiKey,
+      ...(target.apiKey ? { 'x-api-key': target.apiKey } : {}),
       'anthropic-version': '2023-06-01',
     },
     body: anthropicRequestBody(nextBody, target),

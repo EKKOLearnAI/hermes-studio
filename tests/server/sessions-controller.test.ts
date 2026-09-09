@@ -994,6 +994,61 @@ describe('session conversations controller', () => {
     })
   })
 
+  it('returns a single-chat page with a lookahead row without changing legacy list responses', async () => {
+    localListSessionsMock.mockReturnValue([
+      { id: 'chat-3', profile: 'travel', source: 'cli' },
+      { id: 'chat-2', profile: 'travel', source: 'cli' },
+      { id: 'chat-1', profile: 'travel', source: 'cli' },
+    ])
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
+    const ctx: any = { query: { profile: 'travel', offset: '2', limit: '2' }, state: {}, body: null }
+    await mod.list(ctx)
+    expect(localListSessionsMock).toHaveBeenCalledWith('travel', undefined, 3, expect.objectContaining({ offset: 2 }))
+    expect(ctx.body).toEqual({
+      sessions: [
+        expect.objectContaining({ id: 'chat-3' }),
+        expect.objectContaining({ id: 'chat-2' }),
+      ],
+      hasMore: true, offset: 2, limit: 2,
+    })
+    localListSessionsMock.mockReturnValue([{ id: 'chat-1', profile: 'travel', source: 'cli' }])
+    ctx.query.offset = '4'
+    await mod.list(ctx)
+    expect(ctx.body).toMatchObject({ hasMore: false, offset: 4, limit: 2 })
+    delete ctx.query.offset
+    await mod.list(ctx)
+    expect(ctx.body).not.toHaveProperty('hasMore')
+  })
+
+  it.each(['-1', 'NaN', '1.5'])('normalizes invalid single-chat offsets (%s)', async (offset) => {
+    localListSessionsMock.mockReturnValue([])
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
+    const ctx: any = { query: { offset, limit: '10' }, state: {}, body: null }
+    await mod.list(ctx)
+    expect(ctx.body).toEqual({ sessions: [], hasMore: false, offset: 0, limit: 10 })
+  })
+
+  it.each([['7', 7], ['none', null]])('passes category %s and pin filters into the paginated query', async (category, categoryId) => {
+    localListSessionsMock.mockReturnValue([])
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
+    const ctx: any = { query: { category, offset: '10', limit: '10', exclude: ['pin-a', 'pin-b'] }, state: {}, body: null }
+    await mod.list(ctx)
+    expect(localListSessionsMock).toHaveBeenLastCalledWith(undefined, undefined, 11, expect.objectContaining({
+      categoryId, offset: 10, excludeSessionIds: ['pin-a', 'pin-b'],
+    }))
+    ctx.query = { include: 'pin-a', offset: '0', limit: '10' }
+    await mod.list(ctx)
+    expect(localListSessionsMock).toHaveBeenLastCalledWith(undefined, undefined, 11, expect.objectContaining({ includeSessionIds: ['pin-a'] }))
+  })
+
+  it.each(['invalid', '-1', '1.5'])('rejects invalid session category %s', async category => {
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
+    const ctx: any = { query: { category, offset: '0' }, state: {}, body: null }
+    await mod.list(ctx)
+    expect(ctx.status).toBe(400)
+    expect(localListSessionsMock).not.toHaveBeenCalled()
+  })
+
   it('lists only global-agent sessions when requested by source', async () => {
     localListSessionsMock.mockReturnValue([
       { id: 'global-1', profile: 'default', source: 'global_agent' },

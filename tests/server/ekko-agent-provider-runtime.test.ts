@@ -33,6 +33,16 @@ describe('resolveEkkoProviderRuntimeConfig', () => {
     mocks.resolveAuthorized.mockResolvedValue({})
   })
 
+  it('resolves OpenCode Free anonymously without reading or borrowing profile credentials', async () => {
+    const { resolveEkkoProviderRuntimeConfig } = await import('../../packages/server/src/modules/ekko/services/provider-runtime')
+    await expect(resolveEkkoProviderRuntimeConfig({
+      profile: 'default', provider: 'opencode-free', model: 'muse-spark-free',
+      apiKey: 'stale-key', baseUrl: 'https://stale.example/v1', apiMode: 'chat_completions',
+    })).resolves.toEqual({ provider: 'opencode-free', apiKey: '', baseUrl: 'https://opencode.ai/zen/v1', apiMode: 'codex_responses' })
+    expect(mocks.readConfigYamlForProfile).not.toHaveBeenCalled()
+    expect(mocks.resolveAuthorized).not.toHaveBeenCalled()
+  })
+
   it('resolves a built-in provider from the profile env and preset', async () => {
     mocks.safeReadFile.mockResolvedValue([
       'OPENAI_API_KEY="profile-openai-key"',
