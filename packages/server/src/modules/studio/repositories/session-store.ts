@@ -3,7 +3,7 @@
  * Uses the same ensureTable/getDb pattern as usage-store.ts.
  */
 import { isSqliteAvailable, getDb } from '../infrastructure/database'
-import { TASK_PLANS_TABLE, COMPRESSION_SNAPSHOT_TABLE, SESSIONS_TABLE, MESSAGES_TABLE } from '../infrastructure/database/schemas'
+import { TASK_PLANS_TABLE, COMPRESSION_SNAPSHOT_TABLE, SESSIONS_TABLE, MESSAGES_TABLE, SESSION_CATEGORIES_TABLE } from '../infrastructure/database/schemas'
 import { normalizeMessageContentForStorageRole } from './message-content'
 import { copyCompressionSnapshot } from './compression-snapshot'
 import { recordSkillUsageMessage } from './skill-usage-store'
@@ -77,6 +77,9 @@ export interface HermesSessionSearchRow extends HermesSessionRow {
 }
 
 export interface SessionListOptions {
+  offset?: number
+  categoryId?: number | null
+  includeSessionIds?: string[]
   sources?: string[]
   profiles?: string[]
   includeArchived?: boolean
@@ -562,11 +565,12 @@ export function listSessions(
     FROM ${SESSIONS_TABLE} s
     LEFT JOIN ${SESSIONS_TABLE} p ON p.id = s.parent_session_id
     WHERE ${filters.sql}
-    ORDER BY s.last_active DESC
-    LIMIT ?
+    ORDER BY s.last_active DESC, s.id DESC
+    LIMIT ? OFFSET ?
   `
 
-  const rows = db.prepare(sql).all(...filters.params, limit) as Record<string, unknown>[]
+  const offset = Number.isSafeInteger(options.offset) && options.offset! > 0 ? options.offset! : 0
+  const rows = db.prepare(sql).all(...filters.params, limit, offset) as Record<string, unknown>[]
   return rows.map(mapSessionRow)
 }
 
@@ -623,6 +627,18 @@ function sessionFilterSql(
   }
   if (options.includeArchived === false) {
     clauses.push('COALESCE(s.is_archived, 0) = 0')
+  }
+  if (options.categoryId === null) {
+    clauses.push(`(s.category_id IS NULL OR NOT EXISTS (SELECT 1 FROM ${SESSION_CATEGORIES_TABLE} c WHERE c.id = s.category_id))`)
+  } else if (options.categoryId !== undefined) {
+    clauses.push('s.category_id = ?')
+    params.push(String(options.categoryId))
+  }
+  if (options.includeSessionIds !== undefined) {
+    const includedIds = [...new Set(options.includeSessionIds.map(value => value.trim()).filter(Boolean))]
+    if (!includedIds.length) return null
+    clauses.push(`s.id IN (${includedIds.map(() => '?').join(', ')})`)
+    params.push(...includedIds)
   }
 
   const excludedIds = [...new Set((options.excludeSessionIds || []).map(value => value.trim()).filter(Boolean))]

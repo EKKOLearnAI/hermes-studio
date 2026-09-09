@@ -15538,7 +15538,63 @@
         },
         "parameters": [
           {
+            "name": "category",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "string",
+                  "enum": [
+                    "none"
+                  ]
+                }
+              ]
+            },
+            "description": "Filter by category ID; none selects uncategorized sessions."
+          },
+          {
+            "name": "exclude",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "style": "form",
+            "explode": true,
+            "description": "Repeat this parameter for each session ID."
+          },
+          {
+            "name": "include",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "style": "form",
+            "explode": true,
+            "description": "Repeat this parameter for each session ID."
+          },
+          {
             "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "offset",
             "in": "query",
             "required": false,
             "schema": {

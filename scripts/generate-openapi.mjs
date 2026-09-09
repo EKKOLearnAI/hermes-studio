@@ -318,6 +318,19 @@ function addEndpoint(paths, method, path, controllerMethod, tagInfo, content, ma
   }
 
   const parameters = generateParameters(openapiPath, controllerSource)
+  if (openapiPath === '/api/studio/sessions' && method === 'get') {
+    for (const parameter of parameters) {
+      if (parameter.name === 'category') {
+        parameter.schema = { oneOf: [{ type: 'integer', minimum: 1 }, { type: 'string', enum: ['none'] }] }
+        parameter.description = 'Filter by category ID; none selects uncategorized sessions.'
+      } else if (parameter.name === 'include' || parameter.name === 'exclude') {
+        parameter.schema = { type: 'array', items: { type: 'string' } }
+        parameter.style = 'form'
+        parameter.explode = true
+        parameter.description = 'Repeat this parameter for each session ID.'
+      }
+    }
+  }
   if (parameters.length) operation.parameters = parameters
 
   const requestBody = generateRequestBody(method, controllerSource)
