@@ -4,8 +4,8 @@ App Relay lets the mobile App reach a Ekko Studio instance without exposing
 the Studio HTTP server to the Internet. It is independent from the MCU
 `/global-agent` connection.
 
-Studio can use the official `https://api.hermes-studio.ai` route or the
-Cloudflare `https://cn.hermes-studio.ai` route. The selected route is persisted
+Studio can use the official `https://api.ekkostudio.xyz` route or the
+Cloudflare `https://cn.ekkostudio.xyz` route. The selected route is persisted
 locally and included in cloud QR codes as informational metadata. The App keeps
 an independent route setting; scanning a cloud QR never changes it.
 

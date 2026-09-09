@@ -83,10 +83,10 @@ export function isAppEntitlementRequired(env: Record<string, string | undefined>
 
 const appHome = getWebUiHome()
 const remoteRelay = {
-  url: process.env.HERMES_REMOTE_RELAY_URL?.trim() || 'https://api.hermes-studio.ai',
+  url: process.env.HERMES_REMOTE_RELAY_URL?.trim() || 'https://api.ekkostudio.xyz',
 }
 const appRelay = {
-  url: process.env.HERMES_APP_RELAY_URL?.trim() || 'https://api.hermes-studio.ai',
+  url: process.env.HERMES_APP_RELAY_URL?.trim() || 'https://api.ekkostudio.xyz',
   entitlementRequired: isAppEntitlementRequired(),
 }
 

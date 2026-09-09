@@ -12,7 +12,7 @@ import { detectHermesHome } from './path'
 import { cleanupRuntimePath, removeRuntimePath, renameRuntimePath } from './runtime-filesystem'
 
 const ACTIVE_VERSION_FILE = 'active-version.json'
-const DEFAULT_REMOTE_MANIFEST_URL = 'https://api.hermes-studio.ai/api/studio/versions'
+const DEFAULT_REMOTE_MANIFEST_URL = 'https://api.ekkostudio.xyz/api/studio/versions'
 const FALLBACK_REMOTE_MANIFEST_URL = 'https://hermes-studio.ai/versions.json'
 const DEFAULT_DOWNLOAD_BASE_URL = 'https://download.ekkolearnai.com'
 const DEFAULT_GITHUB_REPO = 'EKKOLearnAI/hermes-studio'
