@@ -1667,8 +1667,11 @@ async function handleBatchDelete() {
     const result = await batchDeleteSessions(targets);
     if (result.deleted > 0) {
       // Remove from pinned sessions
+      const failedIds = new Set(result.errors.map((item) => item.id));
       for (const target of targets) {
-        sessionBrowserPrefsStore.removePinned(target.id, target.profile);
+        if (!failedIds.has(target.id)) {
+          sessionBrowserPrefsStore.removePinned(target.id, target.profile);
+        }
       }
 
       // Remove deleted sessions from local store (without calling API again)
