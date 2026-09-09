@@ -393,7 +393,7 @@ function handleUpdateClick() {
           </a>
           <a
             class="sidebar-footer-link"
-            href="https://hermes-studio.ai/"
+            href="https://ekkostudio.xyz/"
             target="_blank"
             rel="noopener noreferrer"
             title="Website"

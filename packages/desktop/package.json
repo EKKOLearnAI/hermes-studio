@@ -2,7 +2,7 @@
   "name": "hermes-studio",
   "version": "0.7.18",
   "description": "Ekko Studio desktop distribution with bundled Python runtime and hermes-agent",
-  "homepage": "https://hermes-studio.ai",
+  "homepage": "https://ekkostudio.xyz",
   "author": {
     "name": "Ekko Studio Contributors",
     "email": "noreply@hermes-studio.local"

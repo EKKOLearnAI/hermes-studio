@@ -115,7 +115,7 @@ describe('App connections scan modal', () => {
     expect(source).toContain("t('connections.app.accessFailures.paidAccountRequired')")
     expect(source).toContain("t('connections.app.accessFailures.cloudSubscriptionRequired')")
     expect(source).toContain("t('connections.app.accessFailures.appAccessExpired')")
-    expect(source).toContain("const APP_ACCESS_PURCHASE_URL = 'https://hermes-studio.ai/pricing/'")
+    expect(source).toContain("const APP_ACCESS_PURCHASE_URL = 'https://ekkostudio.xyz/pricing/'")
     expect(source).toContain("'cloud_subscription_required'")
     expect(source).toContain("'paid_account_required'")
     expect(source).toContain("'app_access_expired'")

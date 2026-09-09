@@ -31,7 +31,7 @@ function normalizePanelView(value: unknown): AppPanelView {
 }
 
 const DISMISSED_ACCESS_FAILURE_KEY = 'hermes:app-access-failure-dismissed-at'
-const APP_ACCESS_PURCHASE_URL = 'https://hermes-studio.ai/pricing/'
+const APP_ACCESS_PURCHASE_URL = 'https://ekkostudio.xyz/pricing/'
 const PURCHASE_REQUIRED_FAILURE_CODES = new Set([
   'cloud_subscription_required',
   'paid_account_required',
