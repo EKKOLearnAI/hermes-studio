@@ -33,6 +33,14 @@ function finite(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
 
+export function mobileHealthResponseSourceMatches(value: unknown, expectedDeviceCode: string): boolean {
+  if (!record(value)) return false
+  const status = String(value.status || '')
+  if (status === 'denied' || status === 'error') return true
+  if (status !== 'success' || !record(value.result) || !record(value.result.source)) return false
+  return String(value.result.source.deviceCode || '') === expectedDeviceCode
+}
+
 export function normalizeMobileHealthRequest(value: Record<string, unknown>): MobileHealthRequest {
   const purpose = String(value.purpose || '').trim().slice(0, 240)
   if (!purpose) throw new Error('purpose is required')

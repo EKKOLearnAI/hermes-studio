@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
 import {
+  mobileHealthResponseSourceMatches,
   normalizeMobileHealthRequest,
   normalizeMobileHealthResponse,
 } from '../../packages/server/src/modules/studio/services/chat-run/mobile-health'
@@ -78,11 +79,28 @@ describe('mobile health data', () => {
     expect(socket).toContain("'health.requested'")
     expect(socket).toContain("socket.on('health.respond'")
     expect(socket).toContain('sameMobileDevice(pending.target, socket.data.mobileDeviceTarget)')
-    expect(socket).toContain('resultSource.deviceCode !== pending.target.deviceCode')
+    expect(socket).toContain('mobileHealthResponseSourceMatches(data, pending.target.deviceCode)')
     expect(socket).toContain('Mobile health data is available only in direct chats')
     expect(mcp).toContain("name: 'ekko_studio_use_mobile_health'")
     expect(mcp).toContain('Read-only; no background collection')
     expect(mcp).not.toMatch(/mobile_health[\s\S]{0,500}(write|background access)/i)
     vi.restoreAllMocks()
+  })
+
+  it('requires provenance for successful data without masking target-device errors', () => {
+    expect(mobileHealthResponseSourceMatches({
+      status: 'success',
+      result: { source: { deviceCode: 'device-1' } },
+    }, 'device-1')).toBe(true)
+    expect(mobileHealthResponseSourceMatches({
+      status: 'success',
+      result: { source: { deviceCode: 'device-2' } },
+    }, 'device-1')).toBe(false)
+    expect(mobileHealthResponseSourceMatches({ status: 'success', result: {} }, 'device-1')).toBe(false)
+    expect(mobileHealthResponseSourceMatches({
+      status: 'error',
+      error: { code: 'health_permission_denied' },
+    }, 'device-1')).toBe(true)
+    expect(mobileHealthResponseSourceMatches({ status: 'denied' }, 'device-1')).toBe(true)
   })
 })

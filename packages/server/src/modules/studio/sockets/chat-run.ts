@@ -67,6 +67,7 @@ import {
   type MobileCalendarRequest,
 } from '../services/chat-run/mobile-calendar'
 import {
+  mobileHealthResponseSourceMatches,
   normalizeMobileHealthRequest,
   normalizeMobileHealthResponse,
   type MobileHealthResponse,
@@ -1264,10 +1265,7 @@ export class ChatRunSocket {
         socket.emit('health.resolved', { event: 'health.resolved', session_id: data.session_id, health_request_id: data.health_request_id, resolved: false, error: 'Response is not from the target device' })
         return
       }
-      const resultSource = data.result && typeof data.result === 'object' && !Array.isArray(data.result)
-        ? (data.result as any).source
-        : null
-      if (!resultSource || resultSource.deviceCode !== pending.target.deviceCode) {
+      if (!mobileHealthResponseSourceMatches(data, pending.target.deviceCode)) {
         this.finishMobileHealthRequest(data.health_request_id, { status: 'error', error: { code: 'health_invalid_request' } })
         return
       }
