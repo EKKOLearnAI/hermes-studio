@@ -574,6 +574,19 @@ export function listSessions(
   return rows.map(mapSessionRow)
 }
 
+export function countSessions(
+  profile?: string,
+  source?: string,
+  options: SessionListOptions = {},
+): number {
+  if (!isSqliteAvailable()) return 0
+  const filters = sessionFilterSql(profile, source ? { ...options, sources: [source] } : options)
+  if (!filters) return 0
+  const row = getDb()!.prepare(`SELECT COUNT(*) AS total FROM ${SESSIONS_TABLE} s WHERE ${filters.sql}`)
+    .get(...filters.params) as { total: number }
+  return Number(row.total)
+}
+
 function escapeSessionSearchLike(value: string): string {
   return value.replace(/[\\%_]/g, '\\$&')
 }
