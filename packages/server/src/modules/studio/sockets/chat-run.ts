@@ -59,6 +59,7 @@ import { userCanAccessProfile } from '../repositories/users-store'
 import { observeRunChatPetEvent } from '../public/pet-events'
 import { observeChatRunWebhookEvent, type ChatRunWebhookAgent } from '../services/webhooks'
 import { getAgentStatusSnapshot } from '../public/agent-status-registry'
+import { reconcileHermesSessionHistory } from '../services/history/reconcile-hermes-history'
 import {
   normalizeMobileCalendarRequest,
   normalizeMobileCalendarResponse,
@@ -405,6 +406,28 @@ export class ChatRunSocket {
     })
   }
 
+  isSessionRunActive(sessionId: string): boolean {
+    return this.sessionMap.get(sessionId)?.isWorking === true
+  }
+
+  invalidateSessionHistory(sessionId: string): boolean {
+    const state = this.sessionMap.get(sessionId)
+    if (!state || state.isWorking) return false
+    return this.sessionMap.delete(sessionId)
+  }
+
+  private refreshSessionHistory(state: SessionState, refreshed: SessionState): void {
+    state.messages = refreshed.messages
+    state.messageTotal = refreshed.messageTotal
+    state.messageLoadedCount = refreshed.messageLoadedCount
+    state.messagePageLimit = refreshed.messagePageLimit
+    state.messageStateBaselineCount = refreshed.messageStateBaselineCount
+    state.hasMoreBefore = refreshed.hasMoreBefore
+    state.inputTokens = refreshed.inputTokens
+    state.outputTokens = refreshed.outputTokens
+    state.contextTokens = refreshed.contextTokens
+  }
+
   requestMobileLocation(options: {
     sessionId: string
     profile: string
@@ -673,6 +696,7 @@ export class ChatRunSocket {
       push_enabled?: boolean
     }) => {
       let runProfile: string
+      let historyRefreshReservation: string | undefined
       try {
         runProfile = resolveRunProfile(data.session_id, data.profile)
       } catch (err) {
@@ -787,14 +811,16 @@ export class ChatRunSocket {
           logger.info('[chat-run-socket] queued run for session %s (queue: %d)', data.session_id, state.queue.length)
           return
         }
+        historyRefreshReservation = source === 'cli' ? randomUUID() : undefined
         state.events = []
         state.isWorking = !isCodingAgentExecution(source, data)
         state.runStartedAt = Date.now()
         state.profile = runProfile
         state.source = source
+        state.historyRefreshReservation = historyRefreshReservation
       }
       try {
-        await this.handleRun(socket, data, runProfile)
+        await this.handleRun(socket, data, runProfile, false, undefined, historyRefreshReservation)
       } catch (err) {
         const payload = {
           event: 'run.failed',
@@ -1233,8 +1259,43 @@ export class ChatRunSocket {
     profile: string,
     skipUserMessage = false,
     backgroundContinuationContext?: BackgroundContinuationContext,
+    historyRefreshReservation?: string,
   ) {
     const source = resolveRunSource(data.source, data.session_id)
+    if (data.session_id && isBridgeRunSource(source) && isSessionCommand(data.input) && data.allow_command_passthrough !== true) {
+      const state = this.sessionMap.get(data.session_id)
+      if (state && state.historyRefreshReservation === historyRefreshReservation) state.historyRefreshReservation = undefined
+      return
+    }
+    if (data.session_id && source === 'cli' && !backgroundContinuationContext) {
+      const sessionId = data.session_id
+      const reservation = historyRefreshReservation
+      const hasCompetingExecution = () => {
+        const current = this.sessionMap.get(sessionId)
+        return Boolean(
+          current?.activeRunMarker
+          || current?.runId
+          || current?.abortController
+          || (current?.isWorking && (!reservation || current.historyRefreshReservation !== reservation)),
+        )
+      }
+      try {
+        const reconciliation = await reconcileHermesSessionHistory(sessionId, {
+          profile,
+          isSessionActive: hasCompetingExecution,
+        })
+        if (reconciliation.changed && !hasCompetingExecution()) {
+          const refreshed = await loadSessionStateFromDb(sessionId, this.sessionMap)
+          const current = this.sessionMap.get(sessionId)
+          if (current && current.historyRefreshReservation === reservation && !hasCompetingExecution()) {
+            this.refreshSessionHistory(current, refreshed)
+          }
+        }
+      } finally {
+        const current = this.sessionMap.get(sessionId)
+        if (current && current.historyRefreshReservation === reservation) current.historyRefreshReservation = undefined
+      }
+    }
     if (data.session_id) {
       const target = socket.data?.mobileDeviceTarget as MobileDeviceTarget | undefined
       if (target && target.profile === profile && source !== 'workflow' && source !== 'group_chat' && !backgroundContinuationContext) {
@@ -1260,8 +1321,6 @@ export class ChatRunSocket {
       state.webhookWorkflowId = data.workflow_id
       state.webhookWorkflowNodeId = data.workflow_node_id
     }
-    if (data.session_id && isBridgeRunSource(source) && isSessionCommand(data.input) && data.allow_command_passthrough !== true) return
-
     if (!isCodingAgentExecution(source, data)) {
       const bridgeReady = await ensureBridgeReadyForChatRun()
       if (!bridgeReady.ok) {
@@ -1680,10 +1739,34 @@ export class ChatRunSocket {
   ) {
     let state = this.sessionMap.get(sid)
     if (!state) {
-      state = await loadSessionStateFromDb(sid, this.sessionMap)
-      this.sessionMap.set(sid, state)
+      const loaded = await loadSessionStateFromDb(sid, this.sessionMap)
+      state = this.sessionMap.get(sid)
+      if (!state) {
+        state = loaded
+        this.sessionMap.set(sid, state)
+      }
     }
     await this.reattachBridgeRun(socket, sid, state)
+    state = this.sessionMap.get(sid) || state
+    if (!state.isWorking) {
+      const profile = getSession(sid)?.profile || currentProfileFromSocket(socket)
+      const reconciliation = await reconcileHermesSessionHistory(sid, {
+        profile,
+        isSessionActive: () => this.sessionMap.get(sid)?.isWorking === true,
+      })
+      if (reconciliation.changed) {
+        const refreshed = await loadSessionStateFromDb(sid, this.sessionMap)
+        const current = this.sessionMap.get(sid)
+        if (current?.isWorking) state = current
+        else if (current) {
+          this.refreshSessionHistory(current, refreshed)
+          state = current
+        } else {
+          state = refreshed
+          this.sessionMap.set(sid, state)
+        }
+      }
+    }
     const resumeEvents = state.isWorking
       ? state.events
       : (state.events || []).filter(evt => evt?.event === 'run.reattach_failed')
