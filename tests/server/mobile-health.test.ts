@@ -73,6 +73,39 @@ describe('mobile health data', () => {
     })
   })
 
+  it('preserves bounded per-metric failures without rejecting partial results', () => {
+    const expected = {
+      purpose: 'test',
+      metrics: ['steps', 'heart_rate'] as const,
+      start_ms: 1_800_000_000_000,
+      end_ms: 1_800_000_100_000,
+      limit: 10,
+    }
+    expect(normalizeMobileHealthResponse({
+      status: 'success',
+      result: {
+        startMs: expected.start_ms,
+        endMs: expected.end_ms,
+        metrics: { steps: { total: 42 } },
+        metricErrors: {
+          heart_rate: 'permission_denied',
+          steps: 'ignored_when_data_exists',
+          workouts: 'not_requested',
+        },
+        source: { platform: 'android', deviceCode: 'device-1', deviceName: 'Android' },
+      },
+    }, { ...expected, metrics: [...expected.metrics] })).toEqual({
+      status: 'success',
+      result: {
+        startMs: expected.start_ms,
+        endMs: expected.end_ms,
+        metrics: { steps: { total: 42 } },
+        metricErrors: { heart_rate: 'permission_denied' },
+        source: { platform: 'android', deviceName: 'Android' },
+      },
+    })
+  })
+
   it('registers targeted request/response events and an explicit MCP tool', () => {
     const socket = readFileSync(new URL('../../packages/server/src/modules/studio/sockets/chat-run.ts', import.meta.url), 'utf8')
     const mcp = readFileSync(new URL('../../bin/ekko-studio-mcp.mjs', import.meta.url), 'utf8')

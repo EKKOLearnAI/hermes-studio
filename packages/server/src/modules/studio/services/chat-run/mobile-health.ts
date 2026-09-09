@@ -12,7 +12,13 @@ export type MobileHealthRequest = {
 }
 
 export type MobileHealthResponse = (
-  | { status: 'success'; result: { startMs: number; endMs: number; metrics: Partial<Record<MobileHealthMetric, unknown>>; source?: { platform: string; deviceName: string } } }
+  | { status: 'success'; result: {
+      startMs: number
+      endMs: number
+      metrics: Partial<Record<MobileHealthMetric, unknown>>
+      metricErrors?: Partial<Record<MobileHealthMetric, string>>
+      source?: { platform: string; deviceName: string }
+    } }
   | { status: 'denied' }
   | { status: 'error'; error: { code: string } }
 ) & { device_id?: string }
@@ -22,6 +28,7 @@ const METRICS = new Set<MobileHealthMetric>([
   'oxygen_saturation', 'body_weight', 'active_energy', 'distance_walking_running', 'workouts',
 ])
 const ERRORS = new Set(['health_permission_denied', 'health_unavailable', 'health_data_locked', 'health_invalid_request', 'health_timeout', 'health_failed'])
+const METRIC_ERRORS = new Set(['permission_denied', 'health_unavailable', 'health_data_locked', 'no_data', 'operation_failed'])
 const MAX_RANGE_MS = 31 * 24 * 60 * 60_000
 const MIN_TIME_MS = Date.UTC(2001, 0, 1)
 
@@ -88,8 +95,15 @@ export function normalizeMobileHealthResponse(value: unknown, expected: MobileHe
   if (status !== 'success' || !record(value.result) || !record(value.result.metrics)) return null
   if (value.result.startMs !== expected.start_ms || value.result.endMs !== expected.end_ms) return null
   const metrics: Partial<Record<MobileHealthMetric, unknown>> = {}
+  const metricErrors: Partial<Record<MobileHealthMetric, string>> = {}
+  const rawMetricErrors = record(value.result.metricErrors) ? value.result.metricErrors : {}
   for (const metric of expected.metrics) {
     const raw = value.result.metrics[metric]
+    const metricError = String(rawMetricErrors[metric] || '')
+    if (raw == null && METRIC_ERRORS.has(metricError)) {
+      metricErrors[metric] = metricError
+      continue
+    }
     if (metric === 'steps') {
       const total = record(raw) ? finite(raw.total) : null
       if (total == null || total < 0) return null
@@ -131,5 +145,14 @@ export function normalizeMobileHealthResponse(value: unknown, expected: MobileHe
     platform: ['ios', 'android'].includes(String(rawSource.platform)) ? String(rawSource.platform) : 'unknown',
     deviceName: String(rawSource.deviceName || '').trim().slice(0, 80),
   } : undefined
-  return { status: 'success', result: { startMs: expected.start_ms, endMs: expected.end_ms, metrics, ...(source ? { source } : {}) } }
+  return {
+    status: 'success',
+    result: {
+      startMs: expected.start_ms,
+      endMs: expected.end_ms,
+      metrics,
+      ...(Object.keys(metricErrors).length ? { metricErrors } : {}),
+      ...(source ? { source } : {}),
+    },
+  }
 }
