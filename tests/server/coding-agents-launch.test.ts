@@ -262,6 +262,47 @@ describe('coding agent launch preparation', () => {
     expect(config.slice(0, config.indexOf('\n['))).toContain('model = "codex-model"')
   })
 
+  it('keeps Codex array-of-table hooks out of the features table', async () => {
+    const home = makeHome()
+    const globalConfigPath = join(home, 'global-home', '.codex', 'config.toml')
+    mkdirSync(dirname(globalConfigPath), { recursive: true })
+    writeFileSync(globalConfigPath, [
+      '[features]',
+      'goals = true',
+      'hooks = true',
+      'js_repl = false',
+      '',
+      '[[hooks.SessionStart]]',
+      'matcher = "startup|resume|clear|compact"',
+      '',
+      '[[hooks.SessionStart.hooks]]',
+      'command = \'node "C:/Users/Lenovo/.agent-extensions/token-saver/agent-token-saver-hook.mjs"\'',
+      'timeout = 5',
+      'type = "command"',
+      '',
+    ].join('\n'))
+
+    const launch = await prepareCodingAgentLaunch('codex', {
+      profile: 'default',
+      provider: 'custom:test',
+      model: 'codex-model',
+      baseUrl: 'https://api.example.com/v1',
+      apiKey: 'test-key',
+      apiMode: 'codex_responses',
+      sessionId: 'codex-array-table-session',
+      agentSessionId: 'codex-array-table-agent-session',
+    })
+    const config = readFileSync(join(launch.rootDir, 'config.toml'), 'utf-8')
+    const featureIndex = config.indexOf('[features]')
+    const featureBlock = config.slice(featureIndex)
+
+    expect(config).toContain('[[hooks.SessionStart]]')
+    expect(config).toContain('[[hooks.SessionStart.hooks]]')
+    expect(featureBlock).toContain('goals = true')
+    expect(featureBlock).not.toContain('matcher = "startup|resume|clear|compact"')
+    expect(featureBlock).not.toContain('type = "command"')
+  })
+
   it('invalidates all scoped runtimes when a shared Coding Agent config changes', async () => {
     makeHome()
     const matched: string[] = []

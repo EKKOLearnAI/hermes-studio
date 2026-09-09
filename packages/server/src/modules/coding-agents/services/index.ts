@@ -1305,7 +1305,7 @@ function codexRuntimeUserConfig(...contents: Array<string | null | undefined>): 
   featureLines: string[]
 } {
   const topLevel = new Map<string, string>()
-  const sections = new Map<string, string[]>()
+  const sections = new Map<string, { header: string; lines: string[] }>()
   const featureLines = new Map<string, string>()
   const runtimeKeys = new Set([
     'model',
@@ -1322,15 +1322,26 @@ function codexRuntimeUserConfig(...contents: Array<string | null | undefined>): 
   ])
   const runtimeFeatures = new Set(['tool_search', 'tool_search_always_defer_mcp_tools'])
 
+  let arraySectionIndex = 0
   for (const content of contents) {
     if (!content?.trim()) continue
     let section = ''
+    let sectionKey = ''
     const lines = content.split(/\r?\n/)
     for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
       const line = lines[lineIndex]
-      const header = line.match(/^\s*\[([^\]]+)\]\s*$/)
-      if (header) {
-        section = header[1].trim()
+      const arrayHeader = line.match(/^\s*\[\[([^\]]+)\]\]\s*$/)
+      if (arrayHeader) {
+        section = arrayHeader[1].trim()
+        sectionKey = `array:${arraySectionIndex++}`
+        sections.set(sectionKey, { header: line.trim(), lines: [] })
+        continue
+      }
+      const tableHeader = line.match(/^\s*\[([^\]]+)\]\s*$/)
+      if (tableHeader) {
+        section = tableHeader[1].trim()
+        sectionKey = `table:${section}`
+        if (!sections.has(sectionKey)) sections.set(sectionKey, { header: line.trim(), lines: [] })
         continue
       }
       const assignment = line.match(/^\s*([A-Za-z0-9_.-]+)\s*=/)
@@ -1364,15 +1375,14 @@ function codexRuntimeUserConfig(...contents: Array<string | null | undefined>): 
         || section === 'account'
         || section.startsWith('account.')
       ) continue
-      const sectionLines = sections.get(section) || []
-      if (line.trim()) sectionLines.push(line)
-      sections.set(section, sectionLines)
+      const sectionBlock = sections.get(sectionKey)
+      if (sectionBlock && line.trim()) sectionBlock.lines.push(line)
     }
   }
 
   const sectionBlocks: string[] = []
-  for (const [section, lines] of sections) {
-    if (lines.length) sectionBlocks.push(`[${section}]\n${lines.join('\n')}`)
+  for (const { header, lines } of sections.values()) {
+    if (lines.length) sectionBlocks.push(`${header}\n${lines.join('\n')}`)
   }
   return {
     topLevelLines: [...topLevel.values()],
