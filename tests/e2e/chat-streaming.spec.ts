@@ -203,7 +203,7 @@ test('freezes the current reasoning between the thinking animation and its tool 
   expect(api.unexpectedRequests).toEqual([])
 })
 
-test('shows one real subagent card and opens its live chat stream in the resizable preview panel', async ({ page }) => {
+test('shows one real subagent card and opens its live chat stream in the resizable preview panel', async ({ page }, testInfo) => {
   await authenticate(page, TEST_ACCESS_KEY, 'research')
   const api = await mockHermesApi(page)
   await mockChatSocket(page)
@@ -213,7 +213,7 @@ test('shows one real subagent card and opens its live chat stream in the resizab
   const { run } = await waitForRun(page)
 
   await page.evaluate((sid) => {
-    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    const socket = { __trigger: (window as any).__PW_CHAT_SOCKET__.broadcast }
     socket.__trigger('run.started', { event: 'run.started', session_id: sid, run_id: 'run-delegate' })
     socket.__trigger('reasoning.delta', {
       event: 'reasoning.delta',
@@ -253,9 +253,10 @@ test('shows one real subagent card and opens its live chat stream in the resizab
   const singleChatLiveReasoning = page.locator('.streaming-indicator > .live-reasoning-status')
   await expect(singleChatLiveReasoning).toBeVisible()
   const singleChatThinkingStyles = await singleChatLiveReasoning.evaluate(readLiveReasoningStyles)
+  await page.screenshot({ animations: 'disabled', path: testInfo.outputPath('01-mocked-foreground-working.png') })
 
   await page.evaluate((sid) => {
-    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    const socket = { __trigger: (window as any).__PW_CHAT_SOCKET__.broadcast }
     socket.__trigger('run.completed', {
       event: 'run.completed',
       session_id: sid,
@@ -266,9 +267,13 @@ test('shows one real subagent card and opens its live chat stream in the resizab
   }, run.session_id)
 
   await expect(page.locator('.subagent-entry')).toHaveCount(0)
+  // Parent has finished, but the existing sidebar working glow must stay on.
+  const workingLogos = page.locator('.session-item.active .session-item-agent-logo-wrap')
+  await expect(workingLogos).toHaveCount(2)
+  await expect(workingLogos).toHaveClass([/streaming/, /streaming/])
 
   await page.evaluate((sid) => {
-    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    const socket = { __trigger: (window as any).__PW_CHAT_SOCKET__.broadcast }
     socket.__trigger('subagent.start', {
       event: 'subagent.start',
       session_id: sid,
@@ -310,6 +315,9 @@ test('shows one real subagent card and opens its live chat stream in the resizab
   await expect(panel.locator('.subagent-run-indicator .live-reasoning-detail')).toContainText('Inspecting sources before searching.')
   await expect(panel.locator('.subagent-live-tool')).toContainText('search_web')
   await expect(panel.getByText('Waiting for live output...')).toHaveCount(0)
+  await expect(workingLogos).toHaveClass([/streaming/, /streaming/])
+  await expect(singleChatLiveReasoning).toHaveCount(0)
+  await page.screenshot({ animations: 'disabled', path: testInfo.outputPath('02-mocked-background-working.png') })
   await expect(panel.locator('.message-bubble.system')).toHaveCount(0)
   const subagentThinkingStyles = await panel
     .locator('.live-reasoning-status')
@@ -364,7 +372,7 @@ test('shows one real subagent card and opens its live chat stream in the resizab
   expect(backgrounds.transcript).toBe(backgrounds.chat)
 
   await page.evaluate((sid) => {
-    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    const socket = { __trigger: (window as any).__PW_CHAT_SOCKET__.broadcast }
     socket.__trigger('subagent.thinking', {
       event: 'subagent.thinking',
       session_id: sid,
@@ -387,7 +395,7 @@ test('shows one real subagent card and opens its live chat stream in the resizab
   await expect(panel.locator('.message.assistant .thinking-block')).toHaveCount(0)
 
   await page.evaluate((sid) => {
-    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    const socket = { __trigger: (window as any).__PW_CHAT_SOCKET__.broadcast }
     socket.__trigger('subagent.thinking', {
       event: 'subagent.thinking',
       session_id: sid,
@@ -401,7 +409,7 @@ test('shows one real subagent card and opens its live chat stream in the resizab
   await expect(panel.locator('.message.assistant .thinking-block')).toHaveCount(0)
 
   await page.evaluate((sid) => {
-    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    const socket = { __trigger: (window as any).__PW_CHAT_SOCKET__.broadcast }
     socket.__trigger('subagent.complete', {
       event: 'subagent.complete',
       session_id: sid,
@@ -418,6 +426,22 @@ test('shows one real subagent card and opens its live chat stream in the resizab
   await expect(panel.locator('.subagent-run-indicator')).toHaveCount(0)
   await expect(panel).toContainText('Research finished.')
   await expect(panel.locator('.message-bubble.system')).toHaveCount(0)
+
+  // A child completion is not the aggregate lifecycle: delivery can still be pending.
+  await page.setViewportSize({ width: 1280, height: 720 })
+  // Entering mobile closes the sessions pane; resizing does not reopen it.
+  await page.locator('.header-sidebar-toggle').click()
+  await expect(workingLogos).toHaveClass([/streaming/, /streaming/])
+  await page.evaluate((sid) => {
+    const socket = { __trigger: (window as any).__PW_CHAT_SOCKET__.broadcast }
+    socket.__trigger('delegation.updated', {
+      event: 'delegation.updated', session_id: sid, delegation_id: 'delegation-1',
+      status: 'completed', background_pending: 0,
+    })
+  }, run.session_id)
+  await expect(page.locator('.session-item.active .session-item-agent-logo-wrap.streaming')).toHaveCount(0)
+  await page.setViewportSize({ width: 1280, height: 720 })
+  await page.screenshot({ animations: 'disabled', path: testInfo.outputPath('03-mocked-all-terminal.png') })
 
   const completedTool = panel.locator('.message.tool').filter({ hasText: 'search_web' })
   await completedTool.locator('.tool-line').click()

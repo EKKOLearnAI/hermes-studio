@@ -2,11 +2,13 @@ import { mergeTaskPlanMessages, type TaskPlanSnapshot } from '@/utils/task-plan'
 import { startRunViaSocket, resumeSession, registerSessionHandlers, unregisterSessionHandlers, getChatRunSocket, respondToolApproval, onPeerUserMessage, onSessionCommand, onSessionTitleUpdated, onSessionWorkspaceUpdated, onSessionSettingsUpdated, respondClarify, type ChatRunTransport, type RunEvent, type ResumeSessionPayload, type StartRunRequest, type ContentBlock as ContentBlockImport } from '@/api/studio/chat'
 import { archiveSession as archiveSessionApi, deleteSession as deleteSessionApi, fetchSessionMessagesPage, fetchSessions, fetchWorkspaceRunChangeFile, setSessionModel, setSessionPushEnabled as persistSessionPushEnabled, setSessionReasoningEffort as persistSessionReasoningEffort, type HermesMessage, type SessionSummary, type WorkspaceRunChangeFileDetail, type WorkspaceRunChangeSummary } from '@/api/studio/sessions'
 import { getActiveProfileName } from '@/api/client'
+import { onAuthInvalidated } from '@/api/auth-invalidation'
 import { inferCodingAgentApiMode, normalizeCodingAgentApiMode, type ChatCodingAgentId } from '@/api/coding-agents'
 import { getDownloadUrl } from '@/api/studio/download'
 import type { ProviderApiMode } from '@/api/studio/provider-api-mode'
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, onScopeDispose } from 'vue'
+import { observeBackgroundStatus } from '@/api/studio/background-status'
 import { useAppStore } from './app'
 import { useProfilesStore } from './profiles'
 import { useSettingsStore } from './settings'
@@ -1307,6 +1309,57 @@ export const useChatStore = defineStore('chat', () => {
   const streamStates = ref<Map<string, { abort: () => void }>>(new Map())
   /** sessionId → server-reported isWorking status */
   const serverWorking = ref<Set<string>>(new Set())
+  /** Authoritative live delegation counts, never inferred from transcript history. */
+  const backgroundPendingBySession = ref<Map<string, number>>(new Map())
+  let runtimeGeneration = 0
+  const backgroundObservers = new Map<string, () => void>()
+
+  function clearBackgroundObservers() {
+    for (const dispose of backgroundObservers.values()) dispose()
+    backgroundObservers.clear()
+    backgroundPendingBySession.value.clear()
+  }
+
+  const unsubscribeAuthInvalidation = onAuthInvalidated(() => {
+    runtimeGeneration += 1
+    clearBackgroundObservers()
+    streamStates.value.clear()
+    serverWorking.value.clear()
+  })
+
+  onScopeDispose(() => {
+    unsubscribeAuthInvalidation()
+    runtimeGeneration += 1
+    clearBackgroundObservers()
+  })
+
+  function setBackgroundPending(sessionId: string, pending: unknown) {
+    const count = Number(pending)
+    if (Number.isFinite(count) && count > 0) {
+      const session = sessions.value.find(s => s.id === sessionId)
+      if (!session) return
+      backgroundPendingBySession.value.set(sessionId, count)
+      if (!backgroundObservers.has(sessionId)) {
+        const generation = runtimeGeneration
+        backgroundObservers.set(sessionId, observeBackgroundStatus(
+          sessionId, session.profile || 'default', runtimeTransport(),
+          pending => {
+            if (generation === runtimeGeneration) setBackgroundPending(sessionId, pending)
+          },
+        ))
+      }
+    } else {
+      backgroundPendingBySession.value.delete(sessionId)
+      backgroundObservers.get(sessionId)?.()
+      backgroundObservers.delete(sessionId)
+    }
+  }
+
+  function applyBackgroundPendingEvent(sessionId: string, evt: RunEvent) {
+    if (evt.background_pending != null || evt.event === 'run.completed' || evt.event === 'run.failed' || evt.event === 'abort.completed') {
+      setBackgroundPending(sessionId, evt.background_pending)
+    }
+  }
   /** sessionIds with a terminal /fork command submitted but not settled yet */
   const pendingForkCommands = ref<Set<string>>(new Set())
   /** Sessions that completed while the user was viewing another session. */
@@ -1345,7 +1398,8 @@ export const useChatStore = defineStore('chat', () => {
    * has to forget it — otherwise the next run in the same session inherits the
    * previous run's start and reports a far larger elapsed time.
    */
-  function applyResumedRunStartedAt(sessionId: string, data: { isWorking?: boolean; runStartedAt?: number }) {
+  function applyResumedRunActivity(sessionId: string, data: { isWorking?: boolean; runStartedAt?: number; backgroundPending?: number }) {
+    setBackgroundPending(sessionId, data.backgroundPending)
     const startedAt = Number(data?.runStartedAt) || 0
     if (data?.isWorking && startedAt > 0) setRunStartedAt(sessionId, startedAt)
     else clearRunStartedAt(sessionId)
@@ -1462,6 +1516,8 @@ export const useChatStore = defineStore('chat', () => {
     if (runtimeMode.value === mode) return
     activeRuntimeMode = mode
     runtimeMode.value = mode
+    runtimeGeneration += 1
+    clearBackgroundObservers()
     sessions.value = []
     completedUnreadSessions.value = new Set()
     queueLengths.value = new Map()
@@ -1523,6 +1579,11 @@ export const useChatStore = defineStore('chat', () => {
 
   function isSessionLive(sessionId: string): boolean {
     return streamStates.value.has(sessionId) || serverWorking.value.has(sessionId)
+  }
+
+  // Display activity is broader than foreground execution (send/queue/voice).
+  function isSessionWorking(sessionId: string): boolean {
+    return isSessionLive(sessionId) || (backgroundPendingBySession.value.get(sessionId) || 0) > 0
   }
 
   function isSessionCompletedUnread(sessionId: string): boolean {
@@ -1938,6 +1999,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   async function switchSession(sessionId: string, focusId?: string | null) {
+    const generation = runtimeGeneration
     activeSelectionSequence++
     const requestSequence = ++switchSessionRequestSequence
     clearThinkingObservationFor(sessionId)
@@ -1962,6 +2024,7 @@ export const useChatStore = defineStore('chat', () => {
           clearTimeout(timeout)
           if (
             data.session_id !== sessionId
+            || generation !== runtimeGeneration
             || activeSessionId.value !== sessionId
             || requestSequence !== switchSessionRequestSequence
           ) {
@@ -1990,7 +2053,7 @@ export const useChatStore = defineStore('chat', () => {
             replaceQueuedUserMessages(sessionId, [])
           }
           replaceQueueInsertionState(sessionId, data.queueInsertion)
-          applyResumedRunStartedAt(sessionId, data as any)
+          applyResumedRunActivity(sessionId, data as any)
           if ((data as any).isAborting) {
             setAbortState(sessionId, { aborting: true, synced: null })
           } else if (!data.isWorking) {
@@ -2115,7 +2178,7 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     // Resume in-flight run event listeners if needed
-    if (activeSessionId.value === sessionId && requestSequence === switchSessionRequestSequence) {
+    if (generation === runtimeGeneration && activeSessionId.value === sessionId && requestSequence === switchSessionRequestSequence) {
       resumeServerWorkingRun(sessionId, backgroundPendingOnResume > 0, !serverWorking.value.has(sessionId))
     }
   }
@@ -2232,6 +2295,7 @@ export const useChatStore = defineStore('chat', () => {
     const target = sessions.value.find(s => s.id === sessionId)
     const ok = await deleteSessionApi(sessionId, target?.profile)
     if (!ok) return false
+    setBackgroundPending(sessionId, 0)
     sessions.value = sessions.value.filter(s => s.id !== sessionId)
     clearMessageReference(sessionId)
     setAbortState(sessionId, null)
@@ -2250,6 +2314,7 @@ export const useChatStore = defineStore('chat', () => {
     const target = sessions.value.find(s => s.id === sessionId)
     const ok = await archiveSessionApi(sessionId)
     if (!ok) return false
+    setBackgroundPending(sessionId, 0)
     sessions.value = sessions.value.filter(s => s.id !== sessionId)
     clearMessageReference(sessionId)
     setAbortState(sessionId, null)
@@ -3473,6 +3538,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   async function sendMessage(content: string, attachments?: Attachment[]) {
+    const generation = runtimeGeneration
     if ((!content.trim() && !(attachments && attachments.length > 0))) return
 
     primeNotificationSoundIfEnabled()
@@ -3551,6 +3617,7 @@ export const useChatStore = defineStore('chat', () => {
       if (attachments && attachments.length > 0) {
         // Has attachments: upload first, then build content blocks
         const uploaded = await uploadFiles(attachments)
+        if (generation !== runtimeGeneration) return
 
         // Update attachment URLs on the user message for display
         const urlMap = new Map(uploaded.map(f => {
@@ -3575,8 +3642,10 @@ export const useChatStore = defineStore('chat', () => {
 
         // Build content blocks with uploaded file paths
         input = await buildContentBlocks(submittedContent, attachments, uploaded)
+        if (generation !== runtimeGeneration) return
         if (attachments.some(attachment => attachment.context?.trim())) {
           displayInput = await buildContentBlocks(submittedContent, attachments, uploaded, false)
+          if (generation !== runtimeGeneration) return
         }
       } else {
         // No attachments: use plain text format
@@ -3585,6 +3654,7 @@ export const useChatStore = defineStore('chat', () => {
 
       const appStore = useAppStore()
       await appStore.waitForModelsForRun()
+      if (generation !== runtimeGeneration) return
       const sessionModel = activeSession.value?.model || appStore.selectedModel
       const sessionProvider = activeSession.value?.provider || appStore.selectedProvider
       const sessionProfile = activeSession.value?.profile || useProfilesStore().activeProfileName || undefined
@@ -3695,13 +3765,13 @@ export const useChatStore = defineStore('chat', () => {
       }
 
       const applyReconnectResume = (data: ResumeSessionPayload) => {
-        if (data.session_id !== sid) return
+        if (generation !== runtimeGeneration || data.session_id !== sid) return
         const target = sessions.value.find(s => s.id === sid)
         if (!target) return
 
         if (data.isWorking) serverWorking.value.add(sid)
         else serverWorking.value.delete(sid)
-        applyResumedRunStartedAt(sid, data as any)
+        applyResumedRunActivity(sid, data as any)
 
         if (data.queueLength && data.queueLength > 0) {
           queueLengths.value.set(sid, data.queueLength)
@@ -3846,6 +3916,8 @@ export const useChatStore = defineStore('chat', () => {
         runPayload,
         // onEvent
         (evt: RunEvent) => {
+          if (generation !== runtimeGeneration || (evt.session_id && evt.session_id !== sid)) return
+          applyBackgroundPendingEvent(sid, evt)
           const eventRunMarker = readRunMarker(evt)
           if (eventRunMarker) activeRunMarker = eventRunMarker
           switch (evt.event) {
@@ -4415,6 +4487,7 @@ export const useChatStore = defineStore('chat', () => {
         streamStates.value.set(sid, ctrl)
       }
     } catch (err: any) {
+      if (generation !== runtimeGeneration) return
       if (isBridgeForkCommand) {
         const nextPendingForkCommands = new Set(pendingForkCommands.value)
         nextPendingForkCommands.delete(sid)
@@ -4441,6 +4514,7 @@ export const useChatStore = defineStore('chat', () => {
    * then sets up event listeners to receive ongoing events.
    */
   function resumeServerWorkingRun(sid: string, force = false, passive = false) {
+    const generation = runtimeGeneration
     // Don't register duplicate listeners if already streaming
     if (streamStates.value.has(sid)) return
     // Only set up listeners if the server reported an active run during resume.
@@ -4511,9 +4585,10 @@ export const useChatStore = defineStore('chat', () => {
 
     // Shared event handler — filters by session_id tag
     function handleEvent(evt: RunEvent) {
-      if (closed) return
+      if (closed || generation !== runtimeGeneration) return
       // Filter events for this session (server tags all events with session_id)
       if (evt.session_id && evt.session_id !== sid) return
+      applyBackgroundPendingEvent(sid, evt)
       const eventRunMarker = readRunMarker(evt)
       if (eventRunMarker) activeRunMarker = eventRunMarker
       switch (evt.event) {
@@ -5197,13 +5272,15 @@ export const useChatStore = defineStore('chat', () => {
         const sid = activeSessionId.value
         if (sid && !streamStates.value.has(sid)) {
           // Re-load messages via resume (server loads from DB)
+          const generation = runtimeGeneration
           resumeSession(sid, (data) => {
+            if (generation !== runtimeGeneration || data.session_id !== sid || activeSessionId.value !== sid) return
             if (data.isWorking) {
               serverWorking.value.add(sid)
             } else {
               serverWorking.value.delete(sid)
             }
-            applyResumedRunStartedAt(sid, data as any)
+            applyResumedRunActivity(sid, data as any)
             if (data.isAborting) {
               setAbortState(sid, { aborting: true, synced: null })
             } else if (!data.isWorking) {
@@ -5224,7 +5301,7 @@ export const useChatStore = defineStore('chat', () => {
               activeSession.value.messageCount = activeSession.value.messageTotal
               activeSession.value.hasMoreBefore = data.hasMoreBefore ?? activeSession.value.loadedMessageCount < activeSession.value.messageTotal
             }
-            resumeServerWorkingRun(sid)
+            resumeServerWorkingRun(sid, (data.backgroundPending || 0) > 0, !data.isWorking)
           }, activeSession.value?.profile, runtimeTransport())
         }
       }
@@ -5398,6 +5475,7 @@ export const useChatStore = defineStore('chat', () => {
     isForkPending,
     isRunActive,
     isSessionLive,
+    isSessionWorking,
     runStartedAt,
     isSessionCompletedUnread,
     clearSessionCompletedUnread,
