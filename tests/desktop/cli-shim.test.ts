@@ -221,25 +221,48 @@ describe('Ekko Studio CLI shim', () => {
     expect(readFileSync(join(homeDir, '.zprofile'), 'utf-8')).toContain('export PATH="$HOME/bin:$PATH"')
   })
 
-  it('installs the Ekko MCP command and refreshes the legacy shim without overwriting custom commands', async () => {
+  it.each(['darwin', 'win32'] as const)('installs the %s Ekko MCP command and refreshes the legacy shim without overwriting custom commands', async (platform) => {
     const homeDir = tempHome()
-    mkdirSync(join(homeDir, 'bin'))
-    const legacy = join(homeDir, 'bin', 'hermes-studio-mcp')
-    writeFileSync(legacy, '#!/bin/sh\n# HERMES_STUDIO_MCP_SHIM\nold-command\n')
+    const binDir = join(homeDir, 'bin')
+    const suffix = platform === 'win32' ? '.cmd' : ''
+    mkdirSync(binDir)
+    const legacy = join(binDir, `hermes-studio-mcp${suffix}`)
+    writeFileSync(legacy, platform === 'win32'
+      ? '@echo off\r\nrem HERMES_STUDIO_MCP_SHIM\r\nold-command\r\n'
+      : '#!/bin/sh\n# HERMES_STUDIO_MCP_SHIM\nold-command\n')
+    execFileMock.mockImplementation((_command, _args, _options, callback) => {
+      callback(null, { stdout: Buffer.from(binDir, 'utf-8').toString('base64'), stderr: '' })
+    })
     const options = {
-      homeDir, platform: 'darwin' as const, nodePath: process.execPath,
+      homeDir, platform, nodePath: process.execPath,
       scriptPath: join(process.cwd(), 'bin/ekko-studio-mcp.mjs'),
       env: { PATH: '/usr/bin', SHELL: '/bin/zsh' },
     }
     const result = await installHermesStudioMcpShim(options)
-    expect(result.shimPath).toBe(join(homeDir, 'bin', 'ekko-studio-mcp'))
+    expect(result.status).toBe('installed')
+    expect(result.shimPath).toBe(join(binDir, `ekko-studio-mcp${suffix}`))
     for (const command of [result.shimPath, legacy]) {
-      expect(execFileSync(command, ['--version'], { encoding: 'utf-8' })).toMatch(/^ekko-studio-mcp v/)
+      expect(readFileSync(command, 'utf-8')).not.toContain('old-command')
+      if (platform === 'win32') {
+        const sidecar = command.replace(/\.cmd$/, '.ps1')
+        expect(readFileSync(command, 'utf-8')).toContain(`-File "%~dp0${sidecar.slice(binDir.length + 1)}" %*`)
+        expect(decodedPowerShellValues(readFileSync(sidecar, 'utf-8'))).toEqual([
+          options.nodePath, options.scriptPath, 'http://127.0.0.1:8748',
+        ])
+        if (process.platform === 'win32') {
+          expect(execFileSync('powershell.exe', [
+            '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', sidecar, '--version',
+          ], { encoding: 'utf-8', timeout: 15_000 })).toMatch(/^ekko-studio-mcp v/)
+        }
+      } else if (process.platform !== 'win32') {
+        expect(execFileSync(command, ['--version'], { encoding: 'utf-8', timeout: 15_000 })).toMatch(/^ekko-studio-mcp v/)
+      }
     }
-    writeFileSync(legacy, '#!/bin/sh\ncustom-command\n')
+    const customCommand = platform === 'win32' ? '@echo off\r\ncustom-command\r\n' : '#!/bin/sh\ncustom-command\n'
+    writeFileSync(legacy, customCommand)
     await installHermesStudioMcpShim(options)
-    expect(readFileSync(legacy, 'utf-8')).toContain('custom-command')
-  })
+    expect(readFileSync(legacy, 'utf-8')).toBe(customCommand)
+  }, 40_000)
 
   it('updates Windows user PATH through PowerShell without corrupting Unicode entries', async () => {
     const existingPath = 'C:\\Users\\张三\\工具;C:\\Windows\\System32'
