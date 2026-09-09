@@ -46,6 +46,32 @@ describe('desktop browser open helpers', () => {
     window.removeEventListener(OPEN_DESKTOP_BROWSER_PANEL_EVENT, listener)
   })
 
+  it('reveals the browser panel before a slow tab finishes loading', async () => {
+    const browser = browserBridge()
+    let resolveTab!: (tab: { id: string }) => void
+    const pendingTab = new Promise<{ id: string }>(resolve => {
+      resolveTab = resolve
+    })
+    browser.createTab.mockReturnValue(pendingTab)
+    ;(window as typeof window & { hermesDesktop?: unknown }).hermesDesktop = {
+      isDesktop: true,
+      browser,
+    }
+    const listener = vi.fn()
+    const { OPEN_DESKTOP_BROWSER_PANEL_EVENT, openUrlInDesktopBrowser } = await import(
+      '../../packages/client/src/utils/desktop-browser'
+    )
+    window.addEventListener(OPEN_DESKTOP_BROWSER_PANEL_EVENT, listener)
+
+    const opening = openUrlInDesktopBrowser('https://example.com/slow')
+    await Promise.resolve()
+
+    expect(listener).toHaveBeenCalledTimes(1)
+    resolveTab({ id: 'web-tab' })
+    await expect(opening).resolves.toBe(true)
+    window.removeEventListener(OPEN_DESKTOP_BROWSER_PANEL_EVENT, listener)
+  })
+
   it('leaves a message URL for the system browser when that target is stored', async () => {
     const browser = browserBridge()
     ;(window as typeof window & { hermesDesktop?: unknown }).hermesDesktop = {

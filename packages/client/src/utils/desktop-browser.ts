@@ -41,8 +41,9 @@ export async function openUrlInDesktopBrowser(url: string): Promise<boolean> {
   if (!hasDesktopBrowserBridge()) return false
   const browser = bridge?.browser
   if (!browser) return false
-  await browser.createTab(url, true)
+  const tabCreation = browser.createTab(url, true)
   revealDesktopBrowserPanel()
+  await tabCreation
   return true
 }
 
