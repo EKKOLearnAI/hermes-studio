@@ -1,7 +1,7 @@
 {
   "name": "hermes-studio",
   "version": "0.7.18",
-  "description": "Ekko Studio desktop distribution with bundled Python runtime and hermes-agent",
+  "description": "Ekko Studio desktop app for multi-agent chat, coding, and visual workflows, with bundled local runtimes.",
   "homepage": "https://ekkostudio.xyz",
   "author": {
     "name": "Ekko Studio Contributors",

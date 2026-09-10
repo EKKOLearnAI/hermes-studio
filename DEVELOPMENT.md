@@ -1,6 +1,6 @@
 # Development Guidelines
 
-This document defines project-level development rules for Hermes Web UI. It is tool-agnostic and applies to all contributors and coding agents.
+This document defines project-level development rules for Ekko Studio. It is tool-agnostic and applies to all contributors and coding agents.
 
 ## Commands
 
