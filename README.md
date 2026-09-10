@@ -19,7 +19,7 @@
 </p>
 
 <p align="center">
-  <img src="https://github.com/EKKOLearnAI/hermes-studio/blob/main/packages/client/src/assets/image.gif" alt="Ekko Studio Demo" width="680"/>
+  <img src="./docs/screenshots/overview/workspace.png" alt="Ekko Studio workspace with an example conversation" width="960"/>
 </p>
 
 <p align="center">
@@ -31,6 +31,24 @@
 Ekko Studio was previously named Hermes Studio / Hermes Web UI. The GitHub
 repository remains `EKKOLearnAI/hermes-studio`, and the npm package and server CLI
 remain `hermes-web-ui`; use these names in clone and installation commands.
+
+## Screenshots
+
+Captured in Ekko Studio **v0.7.18** on 2026-09-10. Chat and workflow screens use demo data.
+
+| Visual workflows | Agent Manager |
+| --- | --- |
+| [![Visual workflow connecting research, coding, and review](./docs/screenshots/overview/workflow.png)](./docs/screenshots/overview/workflow.png) | [![Seven agent runtimes in Agent Manager](./docs/screenshots/overview/agent-manager.png)](./docs/screenshots/overview/agent-manager.png) |
+| Connect agent steps and add a human approval gate. | Manage agent installations, settings, and updates in one place. |
+
+<details>
+<summary>Explore the Skills interface</summary>
+
+Browse installed skills, read their instructions, and enable them as needed.
+
+![Ekko Agent Skills browser showing the GitHub skill](./docs/screenshots/overview/skills.png)
+
+</details>
 
 ## Core Capabilities
 

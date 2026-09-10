@@ -19,15 +19,7 @@
 </p>
 
 <p align="center">
-  <img src="https://github.com/EKKOLearnAI/hermes-studio/blob/main/packages/client/src/assets/image.gif" alt="Ekko Studio 演示" width="680"/>
-</p>
-
-<p align="center">
-  <strong>移动端</strong>
-</p>
-
-<p align="center">
-  <video src="https://github.com/EKKOLearnAI/hermes-studio/blob/main/packages/client/src/assets/video.mp4?raw=true" width="360" controls></video>
+  <img src="./docs/screenshots/overview/workspace.png" alt="Ekko Studio 工作区与示例对话" width="960"/>
 </p>
 
 <p align="center">
@@ -39,6 +31,24 @@
 Ekko Studio 原名 Hermes Studio / Hermes Web UI。GitHub 仓库仍为
 `EKKOLearnAI/hermes-studio`，npm 包名和服务端 CLI 仍为 `hermes-web-ui`；
 克隆和安装时请继续使用这些名称。
+
+## 界面预览
+
+以下为 Ekko Studio **v0.7.18** 的界面截图（2026-09-10）。聊天和工作流使用演示数据。
+
+| 可视化工作流 | Agent 管理 |
+| --- | --- |
+| [![可视化工作流：研究、编码与审核](./docs/screenshots/overview/workflow.png)](./docs/screenshots/overview/workflow.png) | [![统一管理七种 Agent 运行时](./docs/screenshots/overview/agent-manager.png)](./docs/screenshots/overview/agent-manager.png) |
+| 连接多个 Agent 节点，并设置人工审批。 | 在同一界面管理 Agent 安装、设置和更新。 |
+
+<details>
+<summary>查看技能管理界面</summary>
+
+浏览已安装的技能、阅读使用说明，并按需启用。
+
+![Ekko Agent 技能管理与 GitHub 技能说明](./docs/screenshots/overview/skills.png)
+
+</details>
 
 ## 核心能力
 
