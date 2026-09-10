@@ -786,7 +786,7 @@ describe('hermes-web-ui MCP server', () => {
     expect(list.result.tools[0].description).toContain('internal delegation')
 
     const catalog = JSON.parse((await waitForRpc(responses, 32)).result.content[0].text)
-    expect(catalog).toMatchObject({ toolset: 'use', operation_count: 28 })
+    expect(catalog).toMatchObject({ toolset: 'use', operation_count: 29 })
     expect(catalog.operations.map((tool: any) => tool.name)).toEqual(expect.arrayContaining([
       'ekko_studio_use_chat_run',
       'ekko_studio_use_sessions_count',
@@ -797,6 +797,7 @@ describe('hermes-web-ui MCP server', () => {
       'ekko_studio_use_mobile_location',
       'ekko_studio_use_mobile_calendar',
       'ekko_studio_use_mobile_reminders',
+      'ekko_studio_use_mobile_health',
       'ekko_studio_use_workflows_list',
       'ekko_studio_use_workflow_rerun_node',
     ]))

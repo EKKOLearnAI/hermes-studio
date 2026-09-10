@@ -1,6 +1,11 @@
 import { createHash } from 'node:crypto'
 
-export type MobileDeviceTarget = { deviceCode: string; userId: string; profile: string }
+export type MobileDeviceTarget = {
+  deviceCode: string
+  userId: string
+  profile: string
+  platform?: 'ios' | 'android' | 'unknown'
+}
 export function mobileDeviceId(target: MobileDeviceTarget): string {
   return createHash('sha256').update(JSON.stringify([target.userId, target.deviceCode])).digest('hex').slice(0, 24)
 }

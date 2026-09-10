@@ -66,6 +66,13 @@ import {
   type MobileCalendarResponse,
   type MobileCalendarRequest,
 } from '../services/chat-run/mobile-calendar'
+import {
+  mobileHealthResponseSourceMatches,
+  normalizeMobileHealthRequest,
+  normalizeMobileHealthResponse,
+  type MobileHealthResponse,
+  type MobileHealthRequest,
+} from '../services/chat-run/mobile-health'
 
 type AgentBridgeBackgroundNotification = any
 type AgentBridgeBackgroundSession = any
@@ -189,6 +196,15 @@ function mobileCalendarRunInstruction(sessionId: string | undefined, source: str
     'Only when the user explicitly asks to read or change calendar events, use ekko_studio_use_toolset to describe and call ekko_studio_use_mobile_calendar with this exact session_id.',
     'Only when the user explicitly asks to read or change reminders, use ekko_studio_use_toolset to describe and call ekko_studio_use_mobile_reminders with this exact session_id.',
     'The App always asks the user to share once or confirm the write. Never use these tools proactively, in delegated/workflow/group tasks, or for background access. Delete only the exact listed item after fresh App confirmation; never delete a whole recurring series.',
+  ].join(' ')
+}
+
+function mobileHealthRunInstruction(sessionId: string | undefined, source: string | undefined): string {
+  if (!sessionId || source === 'workflow' || source === 'group_chat') return ''
+  return [
+    `The current Ekko Studio direct-chat session id is ${JSON.stringify(sessionId)}.`,
+    'Only when the user explicitly asks to read Apple Health data from their iPhone or iPad, use ekko_studio_use_toolset to describe and call ekko_studio_use_mobile_health with this exact session_id.',
+    'Health data access is available only on iOS through Apple HealthKit. The App asks the user to share once and requests system permission. This tool is read-only and limited to its allowlisted activity, sleep, heart, oxygen and body metrics for at most 31 days. Never use it proactively, for diagnosis, advertising, background collection, delegated tasks, workflows, or group chats.',
   ].join(' ')
 }
 type ChatRunBridgeReadiness =
@@ -360,6 +376,14 @@ type PendingMobileCalendarRequest = {
   resolve: (response: MobileCalendarResponse) => void
   timer: NodeJS.Timeout
 }
+type PendingMobileHealthRequest = {
+  target: MobileDeviceTarget
+  sessionId: string
+  profile: string
+  request: MobileHealthRequest
+  resolve: (response: MobileHealthResponse) => void
+  timer: NodeJS.Timeout
+}
 const MOBILE_CALENDAR_MIN_TIMEOUT_MS = 3_000
 const MOBILE_CALENDAR_MAX_TIMEOUT_MS = 300_000
 const MOBILE_CALENDAR_DEFAULT_TIMEOUT_MS = 300_000
@@ -379,6 +403,7 @@ export class ChatRunSocket {
   private readonly pendingMobileLocations = new Map<string, PendingMobileLocationRequest>()
   private readonly mobileRunTargets = new Map<string, MobileDeviceTarget>()
   private readonly pendingMobileCalendar = new Map<string, PendingMobileCalendarRequest>()
+  private readonly pendingMobileHealth = new Map<string, PendingMobileHealthRequest>()
   private backgroundPollTimer?: NodeJS.Timeout
   private backgroundPollInFlight = false
   private backgroundRecoveryNeeded = true
@@ -521,6 +546,58 @@ export class ChatRunSocket {
       })
     })
   }
+
+  requestMobileHealth(options: {
+    sessionId: string
+    profile: string
+    purpose?: unknown
+    metrics?: unknown
+    startMs?: unknown
+    endMs?: unknown
+    limit?: unknown
+    timeoutMs?: unknown
+  }): Promise<MobileHealthResponse> {
+    const sessionId = String(options.sessionId || '').trim()
+    const profile = String(options.profile || '').trim() || 'default'
+    const session = getSession(sessionId)
+    if (!session) throw new Error('Session not found')
+    if ((String(session.profile || '').trim() || 'default') !== profile) throw new Error('Session is not available for this profile')
+    if (session.source === 'group_chat' || session.source === 'workflow') throw new Error('Mobile health data is available only in direct chats')
+    for (const pending of this.pendingMobileHealth.values()) {
+      if (pending.sessionId === sessionId) throw new Error('A mobile health request is already pending')
+    }
+    const target = this.mobileRunTargets.get(sessionId)
+    if (!target || target.profile !== profile) throw new Error('Mobile target unavailable; send a new message from the intended mobile device')
+    if (target.platform !== 'ios') throw new Error('Mobile health data is available only on iPhone and iPad')
+    if (!this.nsp.adapter.rooms.get(mobileDeviceRoom(target))?.size) throw new Error('Target mobile device is offline; reconnect the same device')
+    const request = normalizeMobileHealthRequest({
+      purpose: options.purpose,
+      metrics: options.metrics,
+      start_ms: options.startMs,
+      end_ms: options.endMs,
+      limit: options.limit,
+    })
+    const requestId = randomUUID()
+    const timeoutMs = boundedMobileCalendarTimeout(options.timeoutMs)
+    return new Promise<MobileHealthResponse>((resolve) => {
+      const timer = setTimeout(() => this.finishMobileHealthRequest(requestId, {
+        status: 'error',
+        error: { code: 'health_timeout' },
+      }), timeoutMs)
+      timer.unref?.()
+      this.pendingMobileHealth.set(requestId, { sessionId, profile, target, request, resolve, timer })
+      this.emitMobileHealthEvent(sessionId, 'health.requested', {
+        event: 'health.requested',
+        health_request_id: requestId,
+        ...request,
+        target_device_id: target.deviceCode,
+        target_user_id: target.userId,
+        target_profile: target.profile,
+        timeout_ms: timeoutMs,
+        expires_at_ms: Date.now() + timeoutMs,
+      })
+    })
+  }
   init() {
     this.closing = false
     this.nsp.use(this.authMiddleware.bind(this))
@@ -540,7 +617,14 @@ export class ChatRunSocket {
       if (appToken.status !== 'active' || !appToken.user) return next(new Error('App device authentication failed'))
       const profile = String(socket.handshake.query?.profile || 'default')
       if (!this.canAccessProfile(appToken.user, profile)) return next(new Error('Profile access denied'))
-      socket.data.mobileDeviceTarget = { deviceCode: appToken.deviceCode, userId: String(appToken.user.id), profile }
+      const rawPlatform = String(socket.handshake.query?.platform || '').trim().toLowerCase()
+      const platform = rawPlatform === 'ios' || rawPlatform === 'android' ? rawPlatform : 'unknown'
+      socket.data.mobileDeviceTarget = {
+        deviceCode: appToken.deviceCode,
+        userId: String(appToken.user.id),
+        profile,
+        platform,
+      }
     }
     if (!await isAuthEnabled()) {
       next()
@@ -1166,6 +1250,40 @@ export class ChatRunSocket {
     }
     socket.on('calendar.respond', data => respondMobileCalendar('calendar', data))
     socket.on('reminder.respond', data => respondMobileCalendar('reminder', data))
+    socket.on('health.respond', (data: {
+      session_id?: string
+      health_request_id?: string
+      status?: string
+      result?: unknown
+      error?: unknown
+    }) => {
+      if (!data.session_id || !data.health_request_id) return
+      try {
+        requireSocketSessionAccess(data.session_id)
+      } catch (err) {
+        socket.emit('health.resolved', { event: 'health.resolved', session_id: data.session_id, health_request_id: data.health_request_id, resolved: false, error: err instanceof Error ? err.message : String(err) })
+        return
+      }
+      const pending = this.pendingMobileHealth.get(data.health_request_id)
+      if (!pending || pending.sessionId !== data.session_id) {
+        this.emitToSession(socket, data.session_id, 'health.resolved', { event: 'health.resolved', health_request_id: data.health_request_id, resolved: false, stale: true, error: 'Health request is no longer pending.' })
+        return
+      }
+      if (!sameMobileDevice(pending.target, socket.data.mobileDeviceTarget)) {
+        socket.emit('health.resolved', { event: 'health.resolved', session_id: data.session_id, health_request_id: data.health_request_id, resolved: false, error: 'Response is not from the target device' })
+        return
+      }
+      if (!mobileHealthResponseSourceMatches(data, pending.target.deviceCode)) {
+        this.finishMobileHealthRequest(data.health_request_id, { status: 'error', error: { code: 'health_invalid_request' } })
+        return
+      }
+      const response = normalizeMobileHealthResponse(data, pending.request)
+      if (!response) {
+        this.finishMobileHealthRequest(data.health_request_id, { status: 'error', error: { code: 'health_invalid_request' } })
+        return
+      }
+      this.finishMobileHealthRequest(data.health_request_id, response)
+    })
   }
 
   respondCodingAgentApproval(sessionId: string, approvalId: string, choice: string): boolean {
@@ -1252,6 +1370,10 @@ export class ChatRunSocket {
       data.instructions = [String(data.instructions || '').trim(), calendarInstruction]
         .filter(Boolean)
         .join('\n\n')
+    }
+    const healthInstruction = mobileHealthRunInstruction(data.session_id, source)
+    if (healthInstruction) {
+      data.instructions = [String(data.instructions || '').trim(), healthInstruction].filter(Boolean).join('\n\n')
     }
     if (data.session_id) {
       const state = getOrCreateSession(this.sessionMap, data.session_id)
@@ -1724,7 +1846,7 @@ export class ChatRunSocket {
       runStartedAt: state.runStartedAt,
       isAborting: state.isAborting || false,
       events: buildResumeEvents(resumeEvents.filter(entry =>
-        !['calendar.requested', 'reminder.requested', 'calendar.resolved', 'reminder.resolved'].includes(entry.event)
+        !['calendar.requested', 'reminder.requested', 'calendar.resolved', 'reminder.resolved', 'health.requested', 'health.resolved'].includes(entry.event)
         || mobileEventAllowed(entry.data, socket.data.mobileDeviceTarget))),
       inputTokens: state.inputTokens,
       outputTokens: state.outputTokens,
@@ -2359,6 +2481,10 @@ export class ChatRunSocket {
         error: { code: 'calendar_failed' },
       })
     }
+    for (const [requestId, pending] of this.pendingMobileHealth.entries()) {
+      if (pending.sessionId !== sid) continue
+      this.finishMobileHealthRequest(requestId, { status: 'error', error: { code: 'health_failed' } })
+    }
     codingAgentRunManager.stop(sid, { reportClosed: false })
     const state = this.sessionMap.get(sid)
     state?.abortController?.abort()
@@ -2585,6 +2711,41 @@ export class ChatRunSocket {
     pending.resolve({ ...response, device_id: mobileDeviceId(pending.target) })
     return true
   }
+  private finishMobileHealthRequest(requestId: string, response: MobileHealthResponse): boolean {
+    const pending = this.pendingMobileHealth.get(requestId)
+    if (!pending) return false
+    this.pendingMobileHealth.delete(requestId)
+    clearTimeout(pending.timer)
+    this.clearMobileHealthEventState(pending.sessionId, requestId)
+    this.emitMobileHealthEvent(pending.sessionId, 'health.resolved', {
+      event: 'health.resolved',
+      health_request_id: requestId,
+      target_device_id: pending.target.deviceCode,
+      target_user_id: pending.target.userId,
+      target_profile: pending.target.profile,
+      status: response.status,
+      resolved: true,
+      ...(response.status === 'error' ? { error: response.error } : {}),
+    })
+    pending.resolve({ ...response, device_id: mobileDeviceId(pending.target) })
+    return true
+  }
+  private clearMobileHealthEventState(sessionId: string, requestId: string): void {
+    const state = this.sessionMap.get(sessionId)
+    if (!state?.events.length) return
+    state.events = state.events.filter(({ event, data }) =>
+      !['health.requested', 'health.resolved'].includes(event) || data?.health_request_id !== requestId)
+  }
+  private emitMobileHealthEvent(sessionId: string, event: 'health.requested' | 'health.resolved', payload: any): void {
+    const tagged = { ...payload, session_id: sessionId }
+    if (event === 'health.requested') {
+      const state = getOrCreateSession(this.sessionMap, sessionId)
+      state.events = state.events.filter(({ event: current }) => !['health.requested', 'health.resolved'].includes(current))
+      state.events.push({ event, data: tagged })
+    }
+    const target: MobileDeviceTarget = { deviceCode: payload.target_device_id, userId: payload.target_user_id, profile: payload.target_profile }
+    this.nsp.to(mobileDeviceRoom(target)).emit(event, tagged)
+  }
   private clearMobileCalendarEventState(sessionId: string, requestId: string): void {
     const state = this.sessionMap.get(sessionId)
     if (!state?.events.length) return
@@ -2635,7 +2796,8 @@ export class ChatRunSocket {
       && event !== 'clarify.requested' && event !== 'clarify.resolved'
       && event !== 'location.requested' && event !== 'location.resolved'
       && event !== 'calendar.requested' && event !== 'calendar.resolved'
-      && event !== 'reminder.requested' && event !== 'reminder.resolved') return
+      && event !== 'reminder.requested' && event !== 'reminder.resolved'
+      && event !== 'health.requested' && event !== 'health.resolved') return
     const sessionId = typeof payload?.session_id === 'string' ? payload.session_id : ''
     const source = sessionId
       ? this.sessionMap.get(sessionId)?.source || getSession(sessionId)?.source
@@ -2703,6 +2865,9 @@ export class ChatRunSocket {
         status: 'error',
         error: { code: 'calendar_failed' },
       })
+    }
+    for (const requestId of [...this.pendingMobileHealth.keys()]) {
+      this.finishMobileHealthRequest(requestId, { status: 'error', error: { code: 'health_failed' } })
     }
     const releaseClaims: Array<Promise<unknown>> = []
     for (const [sessionId, state] of this.sessionMap.entries()) {
