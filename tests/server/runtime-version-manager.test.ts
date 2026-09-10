@@ -258,7 +258,7 @@ describe('runtime version manager storage migration', () => {
     )
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
-      'https://hermes-studio.ai/versions.json',
+      'https://ekkostudio.xyz/versions.json',
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     )
     expect(status.hermes.remoteVersions).toEqual(['0.19.1', '0.20.0'])

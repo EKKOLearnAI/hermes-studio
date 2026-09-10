@@ -31,6 +31,12 @@ Use `ekko-studio cli -h` for Hermes Agent CLI help and
 
 ## Data directories
 
+On Windows, the first packaged launch after the rename updates the existing
+Studio startup entry from `Hermes Studio.exe` to `Ekko Studio.exe` in the same
+installation directory. Its Task Manager enabled/disabled state is preserved.
+No entry is created if startup was never enabled; custom entries and machine-wide
+entries are left alone. The migration is safe to retry on later launches.
+
 Hermes Agent data is stored in `~/.hermes` on Windows, macOS, and Linux.
 
 The desktop wrapper's own Web UI state is stored separately in
