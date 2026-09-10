@@ -1,4 +1,5 @@
 import { socialMessagesRu } from '../social-messages-locales'
+import { incomingWebhooksEn } from '../incoming-webhooks'
 
 export default {
   announcements: {"later": "Позже", "details": "Подробнее", "gotIt": "Понятно"},
@@ -134,6 +135,7 @@ export default {
     "missingCommand": "Требуется непустой command"
   },
   socialMessages: socialMessagesRu,
+  incomingWebhooks: incomingWebhooksEn,
   browser: {
     title: 'Браузер', settings: 'Настройки браузера', desktopOnly: 'Встроенный браузер доступен только в Ekko Studio Desktop.', newTab: 'Новая вкладка',
     back: 'Назад', forward: 'Вперёд', reload: 'Обновить', stop: 'Остановить', addressPlaceholder: 'Поиск или адрес',

@@ -1,4 +1,5 @@
 import { socialMessagesJa } from '../social-messages-locales'
+import { incomingWebhooksEn } from '../incoming-webhooks'
 
 export default {
   announcements: {"later": "後で", "details": "詳細を見る", "gotIt": "確認しました"},
@@ -134,6 +135,7 @@ export default {
     "missingCommand": "空でない command が必要です"
   },
   socialMessages: socialMessagesJa,
+  incomingWebhooks: incomingWebhooksEn,
   browser: {
     title: 'ブラウザー', settings: 'ブラウザー設定', desktopOnly: '内蔵ブラウザーは Ekko Studio Desktop でのみ利用できます。', newTab: '新しいタブ',
     back: '戻る', forward: '進む', reload: '再読み込み', stop: '停止', addressPlaceholder: '検索またはアドレスを入力',
