@@ -51,6 +51,7 @@ const agentStatusMocks = vi.hoisted(() => ({ hermesAvailable: true }))
 const codingAgentRunManagerMock = vi.hoisted(() => ({
   stop: vi.fn(),
 }))
+const invalidateCodingAgentSessionRuntimeMock = vi.hoisted(() => vi.fn())
 
 vi.mock('../../packages/server/src/modules/hermes/services/history/conversations-db', () => ({
   listConversationSummariesFromDb: listConversationSummariesFromDbMock,
@@ -237,6 +238,7 @@ vi.mock('../../packages/server/src/modules/studio/public/session-agent-runtime',
     )
   },
   stopCodingAgentSessionRun: codingAgentRunManagerMock.stop,
+  invalidateCodingAgentSessionRuntime: invalidateCodingAgentSessionRuntimeMock,
 }))
 
 vi.mock('../../packages/server/src/modules/studio/public/agent-status-registry', () => ({
@@ -316,6 +318,7 @@ describe('session conversations controller', () => {
     bridgeGetRuntimeStateMock.mockReset()
     bridgeGetRuntimeStateMock.mockReturnValue({ ready: false, running: false, endpoint: 'ipc:///tmp/hermes-agent-bridge.sock' })
     codingAgentRunManagerMock.stop.mockReset()
+    invalidateCodingAgentSessionRuntimeMock.mockReset()
   })
 
   it('lists conversations from the local session store', async () => {
@@ -2112,6 +2115,19 @@ describe('session conversations controller', () => {
       reasoning_effort: 'high',
     })
     expect(ctx.body).toEqual({ ok: true, reasoning_effort: 'high' })
+  })
+
+  it('restarts a Grok runtime after changing session reasoning effort', async () => {
+    getSessionMock.mockReturnValue({ id: 'grok-session', profile: 'default', agent: 'grok' })
+
+    const mod = await import('../../packages/server/src/modules/studio/controllers/sessions')
+    await mod.setReasoningEffort({
+      params: { id: 'grok-session' },
+      request: { body: { reasoningEffort: 'max' } },
+      body: null,
+    } as any)
+
+    expect(invalidateCodingAgentSessionRuntimeMock).toHaveBeenCalledWith('grok-session')
   })
 
   it('deletes a current-profile Hermes history session even when no local Web UI session exists', async () => {

@@ -50,20 +50,19 @@ export function parseGrokStreamingJsonLine(line: string): GrokStreamEvent | null
   }
   if (type === 'plan') return { type, entries: event.entries }
   if (type === 'usage') {
-    return { type, usage: event.usage, stopReason: String(event.stopReason || '') }
+    return { type, usage: event.usage ?? event.data?.usage, stopReason: String(event.stopReason || event.data?.stopReason || '') }
   }
   if (type === 'end') {
     return {
       type,
       sessionId: String(event.sessionId || ''),
       stopReason: String(event.stopReason || ''),
-      usage: event.usage,
+      usage: event.usage ?? event.data?.usage,
     }
   }
   if (type === 'error') {
-    return { type, message: String(event.message || 'Grok run failed'), usage: event.usage }
+    return { type, message: String(event.message || event.data?.message || 'Grok run failed'), usage: event.usage ?? event.data?.usage }
   }
   const message = statusMessage(event)
   return message ? { type: 'status', message } : null
 }
-
