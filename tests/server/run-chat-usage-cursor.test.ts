@@ -81,7 +81,6 @@ describe('cursor-aware chat usage', () => {
 
   it('uses native Coding Agent usage without consulting messages or compression snapshots', async () => {
     getRecordedUsageTotalsMock.mockReturnValue({ inputTokens: 100, outputTokens: 40 })
-    getUsageMock.mockReturnValue({ input_tokens: 70, output_tokens: 10 })
     const { calcAndUpdateUsage } = await import('../../packages/server/src/modules/studio/services/chat-run/usage')
     const state: any = { messages: [], events: [], queue: [], isWorking: false }
 
@@ -92,9 +91,8 @@ describe('cursor-aware chat usage', () => {
     expect(usage).toEqual({
       inputTokens: 100,
       outputTokens: 40,
-      contextInputTokens: 70,
-      contextOutputTokens: 10,
     })
+    expect(getUsageMock).not.toHaveBeenCalled()
     expect(getCompressionSnapshotMock).not.toHaveBeenCalled()
     expect(getSessionDetailMock).not.toHaveBeenCalled()
     expect(getSessionContextMessagesMock).not.toHaveBeenCalled()

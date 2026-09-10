@@ -7,7 +7,7 @@ import {
   getSessionDetail,
 } from '../../repositories/session-store'
 import { deleteCompressionSnapshot, getCompressionSnapshot } from '../../repositories/compression-snapshot'
-import { getRecordedUsageTotals, getUsage } from '../../repositories/usage-store'
+import { getRecordedUsageTotals } from '../../repositories/usage-store'
 import { countTokens, SUMMARY_PREFIX } from '../context-compressor'
 import { truncateToolResultForContext } from './tool-result-context'
 import { logger } from '../../public/logging'
@@ -84,6 +84,7 @@ export async function calcAndUpdateUsage(
   options: {
     truncateToolResultsForContext?: boolean
     nativeSource?: 'coding_agent'
+    emit?: boolean
   } = {},
 ): Promise<{
   inputTokens: number
@@ -94,27 +95,20 @@ export async function calcAndUpdateUsage(
   try {
     if (options.nativeSource) {
       const totals = getRecordedUsageTotals(sid, options.nativeSource)
-      const latest = getUsage(sid)
       const usage = {
         inputTokens: totals.inputTokens,
         outputTokens: totals.outputTokens,
       }
       state.inputTokens = usage.inputTokens
       state.outputTokens = usage.outputTokens
-      emit('usage.updated', {
-        event: 'usage.updated',
-        session_id: sid,
-        ...usage,
-      })
-      return {
-        ...usage,
-        ...(latest
-          ? {
-              contextInputTokens: Number(latest.input_tokens || 0),
-              contextOutputTokens: Number(latest.output_tokens || 0),
-            }
-          : {}),
+      if (options.emit !== false) {
+        emit('usage.updated', {
+          event: 'usage.updated',
+          session_id: sid,
+          ...usage,
+        })
       }
+      return usage
     }
 
     const snapshot = getCompressionSnapshot(sid)
@@ -204,6 +198,52 @@ export async function calcAndUpdateUsage(
   } catch (err: any) {
     logger.warn(err, '[chat-run-socket] failed to calculate usage for session %s', sid)
     return { inputTokens: 0, outputTokens: 0 }
+  }
+}
+
+/**
+ * Estimate the complete Studio-visible context without using the most recent
+ * model-call usage row. Coding-agent model-call usage is a single request
+ * snapshot, while this meter represents the persisted conversation context.
+ */
+export async function estimateSessionContextTokens(sid: string): Promise<number | undefined> {
+  try {
+    const snapshot = getCompressionSnapshot(sid)
+    if (snapshot?.compressedThroughMessageId != null) {
+      const cursorRead = readCursorSnapshotParts(sid, snapshot, {
+        truncateToolResults: false,
+      })
+      if (cursorRead.status === 'usable') {
+        const usage = estimateUsageTokensFromMessages(
+          assembleCursorSnapshotHistory(snapshot, cursorRead.parts, SUMMARY_PREFIX),
+        )
+        const contextTokens = usage.inputTokens + usage.outputTokens
+        return contextTokens > 0 ? contextTokens : undefined
+      }
+    }
+
+    const detail = getSessionDetail(sid)
+    const storedMessages = detail?.messages
+      ?.filter(m => m.role === 'user' || m.role === 'assistant' || m.role === 'tool') || []
+    if (
+      snapshot
+      && storedMessages.length
+      && snapshot.lastMessageIndex >= 0
+      && snapshot.lastMessageIndex < storedMessages.length
+    ) {
+      const newUsage = estimateUsageTokensFromMessages(storedMessages.slice(snapshot.lastMessageIndex + 1))
+      const contextTokens = countTokens(SUMMARY_PREFIX + snapshot.summary)
+        + newUsage.inputTokens
+        + newUsage.outputTokens
+      return contextTokens > 0 ? contextTokens : undefined
+    }
+
+    const usage = estimateUsageTokensFromMessages(storedMessages)
+    const contextTokens = usage.inputTokens + usage.outputTokens
+    return contextTokens > 0 ? contextTokens : undefined
+  } catch (err: any) {
+    logger.warn(err, '[chat-run-socket] failed to estimate context for session %s', sid)
+    return undefined
   }
 }
 
