@@ -4,9 +4,10 @@
 </p>
 
 <p align="center">
-  A multi-agent desktop app, local runtime, and web console for<br/>
-  <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a>, Ekko, Claude Code, Codex, and Pi.<br/>
-  Run chats, groups, workflows, coding tasks, voice, files, and devices from one local-first workspace.
+  A local-first AI workspace for multi-agent chat, coding, and visual workflows.<br/>
+  Available as a desktop app and self-hosted web console, with support for<br/>
+  <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a>, Ekko Agent, Claude Code, Codex, Pi, Grok, and OpenCode.<br/>
+  Bring conversations, group collaboration, voice, files, and devices together in one place.
 </p>
 
 <p align="center">
@@ -27,27 +28,31 @@
   <a href="https://github.com/EKKOLearnAI/hermes-studio/stargazers"><img src="https://img.shields.io/github/stars/EKKOLearnAI/hermes-studio?style=flat-square" alt="stars"/></a>
 </p>
 
+Ekko Studio was previously named Hermes Studio / Hermes Web UI. The GitHub
+repository remains `EKKOLearnAI/hermes-studio`, and the npm package and server CLI
+remain `hermes-web-ui`; use these names in clone and installation commands.
+
 ## Core Capabilities
 
 | Area | What Ekko Studio does |
 | --- | --- |
-| Multi-agent runtime | Runs Hermes, Ekko, Claude Code, Codex, and Pi with streaming responses, tool traces, generated-file previews, persistent sessions, and standalone desktop chat windows. |
+| Multi-agent runtime | Runs Hermes, Ekko, Claude Code, Codex, Pi, Grok, and OpenCode with streaming responses, tool traces, generated-file previews, persistent sessions, and standalone desktop chat windows. |
 | Studio workspace | Provides shared chats, group chat, global-agent runs, workflows, files, voice, media, devices, themes, logs, usage, and App connectivity across agent runtimes. |
 | Agent control planes | Keeps Hermes profiles, providers, models, memory, skills, plugins, jobs, Kanban, channels, and runtime management in their owning agent module. |
-| Automation | Builds executable visual workflows and connects the five runtimes through schedules, approval gates, group-chat rooms, platform channels, and MCP servers. |
+| Automation | Builds executable visual workflows and connects the supported runtimes through schedules, approval gates, group-chat rooms, platform channels, and MCP servers. |
 | Workspace tools | Provides a file browser, web terminal, Desktop Agent Browser, voice input/output, coding-agent runners, device discovery, Journey graph, and performance views. |
 | Distribution | Ships as a desktop app for Windows/macOS/Linux, an npm CLI package, and a Docker image. |
 
 ## Agent and Platform Boundaries
 
-Ekko Studio is the shared product platform, not a sixth agent. It coordinates
-five concrete runtimes grouped into three agent families:
+Ekko Studio provides a shared workspace for its supported agent runtimes,
+grouped into three agent families:
 
 | Agent family | Runtime | Owned behavior |
 | --- | --- | --- |
 | Hermes | Hermes | Profiles, providers, models, skills, plugins, memory, jobs, Kanban, channels, MCP, terminal, and Hermes runtime integration. |
 | Ekko | Ekko | Ekko execution, approvals, clarifications, memory, MCP, and provider runtime behavior. |
-| Coding | Claude Code, Codex, Pi | Coding-agent installation, configuration, proxies, sessions, and process execution. |
+| Coding | Claude Code, Codex, Pi, Grok, OpenCode | Coding-agent installation, configuration, proxies, sessions, and process execution. |
 
 Studio owns capabilities shared by those families: single chat, group chat,
 global-agent orchestration, workflows, webhooks, sessions, files and uploads,
@@ -61,7 +66,7 @@ controllers.
 
 ### AI Chat
 
-- Real-time chat streaming over Socket.IO `/chat-run`; Studio dispatches each run to Hermes, Ekko, Claude Code, Codex, or Pi through runtime adapters
+- Real-time chat streaming over Socket.IO `/chat-run`; Studio dispatches each run to Hermes, Ekko, Claude Code, Codex, Pi, Grok, or OpenCode through runtime adapters
 - Multi-session management — create, rename, delete, switch between sessions
 - **Self-built session database** — local SQLite storage for Studio sessions; Hermes state.db remains a read-only source for Hermes history APIs
 - Session grouping by source (Telegram, Discord, Slack, etc.) with collapsible accordion
@@ -120,7 +125,7 @@ Unified configuration for **10 platforms** in one page:
 
 ### Visual Workflows
 
-- Vue Flow canvas for Hermes, Ekko, Claude Code, Codex, and Pi nodes with file/image attachments
+- Vue Flow canvas for Hermes, Ekko, Claude Code, Codex, Pi, Grok, and OpenCode nodes with file/image attachments
 - Directed edges, structured conditions, success/failure routes, loops, and approval gates
 - Import/export for portable workflow definitions and profile-aware workspaces
 - Run budgets, deadlines, stop/rerun controls, and persisted execution history
@@ -165,7 +170,7 @@ Unified configuration for **10 platforms** in one page:
 
 ### Coding Agents
 
-- Install, configure, launch, and monitor Claude Code, Codex, and Pi from the dashboard
+- Install, configure, launch, and monitor Claude Code, Codex, Pi, Grok, and OpenCode from the dashboard
 - Built-in coding-agent terminal, session history, workspace selection, images, and file diffs
 - Dedicated proxy routes and API modes for provider/model compatibility
 - Standalone desktop chat windows and persisted output/reasoning metadata
