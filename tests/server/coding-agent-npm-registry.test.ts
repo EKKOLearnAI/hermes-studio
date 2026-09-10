@@ -1,7 +1,23 @@
 import { describe, expect, it } from 'vitest'
-import { withCodingAgentRegistry } from '../../packages/server/src/modules/coding-agents/services'
+import {
+  getCodingAgentDefinitions,
+  piMcpAdapterInstallArgs,
+  withCodingAgentRegistry,
+} from '../../packages/server/src/modules/coding-agents/services'
 
 describe('coding Agent npm registry policy', () => {
+  it('does not pin coding Agent or Pi MCP Adapter package versions', () => {
+    for (const agent of getCodingAgentDefinitions()) {
+      expect(agent.packageName).not.toMatch(/@\d+\.\d+\.\d+(?:$|[-+])/)
+    }
+    expect(piMcpAdapterInstallArgs('/tmp/pi-adapter')).toEqual([
+      'install',
+      '--prefix',
+      '/tmp/pi-adapter',
+      'pi-mcp-adapter',
+    ])
+  })
+
   it.each([
     ['codex', '@openai/codex'],
     ['grok', '@xai-official/grok'],
@@ -27,6 +43,11 @@ describe('coding Agent npm registry policy', () => {
         'install',
         '-g',
         'package',
+      ])
+      expect(withCodingAgentRegistry(agentId, ['view', 'package', 'version'])).toEqual([
+        'view',
+        'package',
+        'version',
       ])
     },
   )
