@@ -25,6 +25,7 @@ export interface SkillReviewScheduleInput {
   requestLogger?: EkkoRuntimeLogger
   requestLogContext?: EkkoRuntimeLogContext
   requestRunId?: string
+  sessionId?: string
   onUsage?: (event: SkillReviewUsageEvent) => void
   onStarted?: (reviewId: string) => void
   onCompleted?: (reviewId: string, mutations: number) => void
@@ -89,7 +90,7 @@ export class SkillReviewService {
         tools: tools.definitions(),
         toolChoice: 'auto',
         stream: false,
-        metadata: { purpose: 'ekko-skill-review', review_id: reviewId },
+        metadata: { purpose: 'ekko-skill-review', review_id: reviewId, session_id: input.sessionId || reviewId },
       }, input.modelClient, input, reviewId, step + 1)
       callIndex += 1
       if (response.usage) {

@@ -1,3 +1,4 @@
+import { openCodeSessionHeaders } from '../../../studio/public/opencode-session'
 import { readFile, chmod } from 'fs/promises'
 import { readdir, stat } from 'fs/promises'
 import { existsSync, readFileSync } from 'fs'
@@ -227,7 +228,7 @@ export async function fetchProviderModels(baseUrl: string, apiKey: string, freeO
   const modelsUrl = /\/v\d+\/?$/.test(base) ? `${base}/models` : `${base}/v1/models`
   try {
     const res = await fetch(modelsUrl, {
-      headers: { Authorization: `Bearer ${apiKey}` },
+      headers: { ...openCodeSessionHeaders(modelsUrl), Authorization: `Bearer ${apiKey}` },
       signal: AbortSignal.timeout(8000),
     })
     if (!res.ok) {

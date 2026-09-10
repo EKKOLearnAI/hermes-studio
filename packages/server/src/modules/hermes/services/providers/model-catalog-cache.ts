@@ -1,3 +1,4 @@
+import { openCodeSessionHeaders } from '../../../studio/public/opencode-session'
 import { readFile } from 'fs/promises'
 import { join } from 'path'
 import { getCompatibleCustomProviders } from '../../../studio/contracts/provider-compat'
@@ -384,6 +385,7 @@ async function fetchClaudeOAuthModels(baseUrl: string, accessToken: string): Pro
   try {
     const res = await fetch(modelsUrl, {
       headers: {
+        ...openCodeSessionHeaders(modelsUrl),
         Authorization: `Bearer ${accessToken}`,
         'anthropic-version': '2023-06-01',
         'anthropic-beta': 'oauth-2025-04-20',

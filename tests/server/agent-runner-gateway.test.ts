@@ -6,6 +6,33 @@ afterEach(() => {
 })
 
 describe('agent run gateway', () => {
+  it('shares OpenCode affinity across protocols and retries for one conversation', async () => {
+    const fetchMock = vi.fn(async (_url: string | URL, init?: RequestInit) => {
+      const stream = JSON.parse(String(init?.body)).stream
+      return new Response(stream ? 'data: [DONE]\n\n' : '{}', {
+        headers: { 'Content-Type': stream ? 'text/event-stream' : 'application/json' },
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const gateway = new AgentRunGateway()
+    for (const [sessionId, endpoint, stream] of [
+      ['session-a', 'chat/completions', false],
+      ['session-a', 'responses', true],
+      ['session-b', 'messages', false],
+      ['session-a', 'chat/completions', false],
+    ] as const) {
+      const request = { url: `https://opencode.ai/zen/go/v1/${endpoint}`, apiKey: 'test-key', sessionId, body: { stream } }
+      if (stream) {
+        for await (const _chunk of await gateway.streamBytes(request)) { /* drain */ }
+      } else await gateway.completeJson(request)
+    }
+    const ids = fetchMock.mock.calls.map(([, init]) => new Headers(init?.headers).get('x-opencode-session'))
+    expect(ids[0]).toMatch(/^[a-f0-9]{64}$/)
+    expect(ids[1]).toBe(ids[0])
+    expect(ids[2]).not.toBe(ids[0])
+    expect(ids[3]).toBe(ids[0])
+  })
+
   it('posts JSON requests with bearer auth and custom headers', async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true }), {
       status: 200,

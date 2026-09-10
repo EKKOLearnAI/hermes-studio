@@ -13,7 +13,7 @@ import type {
   ModelUsage,
 } from '../types'
 import { ModelProviderError } from '../errors'
-import { isPlainRecord, parseJson, postJson, postStream, providerUrl, readServerSentEvents, requestHeaders } from '../http'
+import { isPlainRecord, parseJson, postJson, postStream, providerUrl, readServerSentEvents, modelRequestHeaders } from '../http'
 import { agentReasoningText, normalizeAgentReasoning } from '../messages'
 
 interface AnthropicPayload {
@@ -92,7 +92,7 @@ export class AnthropicMessagesModelClient implements ModelClient {
       this.fetchImpl,
       anthropicUrl(this.config),
       toAnthropicMessagesPayload(this.config, { ...request, stream: false }),
-      anthropicHeaders(this.config),
+      anthropicHeaders(this.config, request),
       request.signal,
     )
     assertAnthropicSuccess(this.config, response)
@@ -105,7 +105,7 @@ export class AnthropicMessagesModelClient implements ModelClient {
       this.fetchImpl,
       anthropicUrl(this.config),
       toAnthropicMessagesPayload(this.config, { ...request, stream: true }),
-      anthropicHeaders(this.config),
+      anthropicHeaders(this.config, request),
       request.signal,
     )
 
@@ -390,8 +390,8 @@ function anthropicUrl(config: ModelProviderConfig): string {
   return providerUrl(config, 'https://api.anthropic.com/v1', config.endpointPath ?? defaultAnthropicEndpointPath(config))
 }
 
-function anthropicHeaders(config: ModelProviderConfig): HeadersInit {
-  const headers = requestHeaders(config, { 'anthropic-version': '2023-06-01' }) as Record<string, string>
+function anthropicHeaders(config: ModelProviderConfig, request: ModelRequest): HeadersInit {
+  const headers = modelRequestHeaders(config, request, { 'anthropic-version': '2023-06-01' }) as Record<string, string>
   const usesBearerAuth = ['claude-oauth', 'minimax-oauth'].includes(config.id)
   if (isOfficialAnthropicBaseUrl(config.baseUrl) && !usesBearerAuth) delete headers.authorization
   if (config.apiKey && !usesBearerAuth) headers['x-api-key'] = config.apiKey

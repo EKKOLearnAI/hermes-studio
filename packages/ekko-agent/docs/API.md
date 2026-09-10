@@ -2054,6 +2054,8 @@ export function isRetryableStatus(statusCode: number): boolean
 ### `src/model/http.ts`
 
 ```ts
+export function modelRequestHeaders( config: ModelProviderConfig, request: ModelRequest, defaults: Record<string, string> = {}, ): HeadersInit
+
 export function requestHeaders(config: ModelProviderConfig, defaults: Record<string, string> = {}): HeadersInit
 
 export function abortSignal(timeoutMs?: number, signal?: AbortSignal): AbortSignal | undefined
@@ -2155,6 +2157,11 @@ export function agentReasoningText(reasoning: AgentReasoning | string | null | u
 export function agentReasoningEstimatedTokens(reasoning: AgentReasoning | undefined): number | undefined
 
 export function serializeAgentReasoningDetails(reasoning: AgentReasoning | undefined): string | null
+```
+### `src/model/opencode-session.ts`
+
+```ts
+export function openCodeSessionHeaders( baseUrl: string, sessionId?: string, provider?: string, ): Record<string, string>
 ```
 ### `src/model/provider-config.ts`
 
@@ -2883,6 +2890,7 @@ export interface SkillReviewScheduleInput {
   requestLogger?: EkkoRuntimeLogger
   requestLogContext?: EkkoRuntimeLogContext
   requestRunId?: string
+  sessionId?: string
   onUsage?: (event: SkillReviewUsageEvent) => void
   onStarted?: (reviewId: string) => void
   onCompleted?: (reviewId: string, mutations: number) => void
