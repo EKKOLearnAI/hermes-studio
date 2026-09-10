@@ -71,6 +71,9 @@ const RuntimeRestartPrompt = defineAsyncComponent(
   async () =>
     (await import("@/components/layout/RuntimeRestartPrompt.vue")).default,
 );
+const StudioAnnouncementPrompt = defineAsyncComponent(
+  async () => (await import('@/components/layout/StudioAnnouncementPrompt.vue')).default,
+);
 
 const {
   isDark,
@@ -343,6 +346,9 @@ useKeyboard();
           />
           <RuntimeRestartPrompt
             v-if="!isLoginPage && !isDesktopPetRoute && !isStandaloneChatPage && isStoredSuperAdmin()"
+          />
+          <StudioAnnouncementPrompt
+            v-if="!isLoginPage && !isInviteOnlyPage && !isDesktopPetRoute && !isStandaloneChatPage"
           />
         </NNotificationProvider>
       </NDialogProvider>

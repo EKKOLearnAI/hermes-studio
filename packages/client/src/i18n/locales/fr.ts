@@ -1,6 +1,7 @@
 import { socialMessagesFr } from '../social-messages-locales'
 
 export default {
+  announcements: {"later": "Plus tard", "details": "Voir les détails", "gotIt": "Compris"},
   taskPlan: {"title": "Plan des tâches", "progress": "{completed}/{total} terminées", "pending": "Non terminé", "in_progress": "En cours", "completed": "Terminé", "running": "Exécution en cours", "ended": "Exécution terminée ; des étapes restent à faire", "interrupted": "Interrompu ; des étapes restent à faire", "failed": "Échec ; des étapes restent à faire"},
   agentAutoUpdate: { label: 'Mises à jour automatiques' },
   ekkoConfig: {

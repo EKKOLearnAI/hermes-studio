@@ -1,6 +1,7 @@
 import { socialMessagesKo } from '../social-messages-locales'
 
 export default {
+  announcements: {"later": "나중에", "details": "자세히 보기", "gotIt": "확인"},
   taskPlan: {"title": "작업 계획", "progress": "{completed}/{total} 완료", "pending": "미완료", "in_progress": "진행 중", "completed": "완료", "running": "실행 중", "ended": "실행 종료 · 미완료 단계가 있습니다", "interrupted": "중단됨 · 미완료 단계가 있습니다", "failed": "실행 실패 · 미완료 단계가 있습니다"},
   agentAutoUpdate: { label: '자동 업데이트' },
   ekkoConfig: {

@@ -209,6 +209,10 @@
       "description": "Per-user appearance settings and background image"
     },
     {
+      "name": "Announcements",
+      "description": "Published Studio desktop announcements, newest first"
+    },
+    {
       "name": "API Docs",
       "description": "OpenAPI route catalog"
     },
@@ -10865,6 +10869,42 @@
             "description": "Not found"
           }
         }
+      }
+    },
+    "/api/studio/announcements": {
+      "get": {
+        "tags": [
+          "Announcements"
+        ],
+        "summary": "Get announcements",
+        "description": "GET /api/studio/announcements",
+        "operationId": "getAnnouncements",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "parameters": [
+          {
+            "name": "locale",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
       }
     },
     "/api/studio/app-uploads": {

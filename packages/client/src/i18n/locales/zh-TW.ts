@@ -1,6 +1,7 @@
 import { socialMessagesZhTw } from '../social-messages'
 
 export default {
+  announcements: {"later": "稍後", "details": "查看詳情", "gotIt": "知道了"},
   taskPlan: {"title": "任務計畫", "progress": "{completed}/{total} 已完成", "pending": "未完成", "in_progress": "進行中", "completed": "已完成", "running": "執行中", "ended": "本次執行已結束，其餘步驟未完成", "interrupted": "已中斷，其餘步驟未完成", "failed": "執行失敗，其餘步驟未完成"},
   agentAutoUpdate: { label: '自動更新' },
   ekkoConfig: {
