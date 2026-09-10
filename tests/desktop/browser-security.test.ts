@@ -121,6 +121,17 @@ describe('desktop browser security primitives', () => {
     if (process.platform !== 'win32') expect((await stat(join(stateRoot, 'profiles.json'))).mode & 0o077).toBe(0)
   })
 
+  it('uses the system proxy for a newly initialized default profile', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'hermes-browser-system-proxy-'))
+    roots.push(root)
+    const store = new BrowserProfileStore(join(root, 'state'))
+
+    await store.initialize()
+
+    expect(store.active().proxyMode).toBe('system')
+    expect(store.active().proxyRules).toBe('')
+  })
+
   it('persists an empty tab list after the final browser tab is closed', async () => {
     const root = await mkdtemp(join(tmpdir(), 'hermes-browser-empty-tabs-'))
     roots.push(root)
