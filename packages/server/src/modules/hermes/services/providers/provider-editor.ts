@@ -1,3 +1,4 @@
+import { openCodeSessionHeaders } from '../../../studio/public/opencode-session'
 import { createHash, randomBytes } from 'crypto'
 import { chmod } from 'fs/promises'
 import { join, resolve } from 'path'
@@ -433,7 +434,7 @@ async function readLimitedResponse(response: Response): Promise<string> {
 export async function fetchProviderCatalogForTest(baseUrl: string, apiKey: string, apiMode?: ProviderApiMode): Promise<string[]> {
   const endpoint = providerModelsEndpoint(baseUrl, apiMode)
   let current = endpoint.url
-  const headers: Record<string, string> = { Accept: 'application/json' }
+  const headers: Record<string, string> = { ...openCodeSessionHeaders(current.toString()), Accept: 'application/json' }
   if (apiKey) {
     if (endpoint.protocol === 'anthropic') {
       headers['x-api-key'] = apiKey

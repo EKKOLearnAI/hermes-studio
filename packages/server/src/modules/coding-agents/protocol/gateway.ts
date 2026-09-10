@@ -1,7 +1,11 @@
+import { openCodeSessionHeaders } from '../../studio/public/opencode-session'
+
 /** A provider request issued by a Coding Agent proxy. */
 export interface AgentGatewayRequest {
   url: string
   apiKey: string
+  sessionId?: string
+  provider?: string
   body: unknown
   headers?: Record<string, string>
   signal?: AbortSignal
@@ -46,6 +50,7 @@ export class AgentRunGateway {
     return fetch(request.url, {
       method: 'POST',
       headers: {
+        ...openCodeSessionHeaders(request.url, request.sessionId, request.provider),
         ...(request.apiKey ? { Authorization: `Bearer ${request.apiKey}` } : {}),
         'Content-Type': 'application/json',
         ...request.headers,

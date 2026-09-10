@@ -1,3 +1,4 @@
+import { openCodeSessionHeaders } from './opencode-session'
 import { logger } from './logging'
 import { OPENCODE_FREE_BASE_URL, isOpenCodeFreeModel } from '../contracts/opencode-free'
 
@@ -10,7 +11,7 @@ export async function fetchProviderModels(baseUrl: string, apiKey: string, freeO
   const modelsUrl = /\/v\d+\/?$/.test(base) ? `${base}/models` : `${base}/v1/models`
   try {
     const response = await fetch(modelsUrl, {
-      headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
+      headers: { ...openCodeSessionHeaders(modelsUrl), ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) },
       signal: AbortSignal.timeout(8000),
     })
     if (!response.ok) {
