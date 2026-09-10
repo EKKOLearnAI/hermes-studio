@@ -5,7 +5,7 @@ export function parseBundledMcpArgs(argv: string[], resourcesPath: string): stri
   const script = argv[1]
   if (!script) return null
   const bin = join(resourcesPath, 'webui', 'bin')
-  if (!['hermes-studio-mcp.mjs', 'hermes-web-ui-mcp.mjs'].some(name => resolve(script) === join(bin, name))) {
+  if (!['ekko-studio-mcp.mjs', 'hermes-studio-mcp.mjs', 'hermes-web-ui-mcp.mjs'].some(name => resolve(script) === join(bin, name))) {
     return null
   }
   return argv.slice(1)

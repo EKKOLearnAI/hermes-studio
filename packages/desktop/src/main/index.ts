@@ -49,6 +49,7 @@ import type { BrowserBounds } from './browser/browser-types'
 import { migratePendingLegacyWindowsData } from './legacy-windows-data-migration'
 import { createDesktopAppLifecycle } from './app-lifecycle'
 import { configureDesktopIdentity } from './desktop-identity'
+import { migrateWindowsLoginItem } from './login-item-migration'
 
 configureDesktopIdentity(app)
 
@@ -1317,6 +1318,11 @@ function runDesktopApp() {
     // visual clutter. macOS keeps a menu (system requirement) but Electron's
     // default is fine there.
     if (process.platform !== 'darwin') Menu.setApplicationMenu(null)
+    try {
+      migrateWindowsLoginItem(app, APP_USER_MODEL_ID)
+    } catch (error) {
+      console.warn('[desktop] failed to migrate the Windows login item:', error)
+    }
     installMicrophonePermissionHandler()
     createTray()
     await createWindow()
