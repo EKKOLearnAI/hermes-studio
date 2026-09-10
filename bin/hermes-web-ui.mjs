@@ -101,7 +101,7 @@ function getCurrentNodeEnv() {
 }
 
 function getGlobalPrefix() {
-  return execFileSync(getNpmBin(), ['prefix', '-g'], {
+  return execCliSync(getNpmBin(), ['prefix', '-g'], {
     encoding: 'utf-8',
     stdio: ['pipe', 'pipe', 'pipe'],
     env: getCurrentNodeEnv(),
@@ -133,6 +133,15 @@ function quoteForWindowsCommand(value) {
   return `"${value.replace(/"/g, '""')}"`
 }
 
+function buildWindowsCommandLine(command, args) {
+  const commandArg = quoteForWindowsCommand(command)
+  const argsString = args.map(arg => (/\s/.test(String(arg)) ? quoteForWindowsCommand(String(arg)) : String(arg))).join(' ')
+  // cmd.exe's /C parsing strips one leading/trailing quote pair before running the
+  // command; without this extra wrap it mis-splits quoted paths that contain spaces
+  // (e.g. "C:\Program Files\nodejs\npm.cmd") at the first space.
+  return `"${commandArg} ${argsString}"`
+}
+
 function spawnCli(command, args, options) {
   if (process.platform === 'win32') {
     const lowerCommand = String(command).toLowerCase()
@@ -140,11 +149,27 @@ function spawnCli(command, args, options) {
       return spawn(command, args, options)
     }
 
-    const commandLine = `${quoteForWindowsCommand(command)} ${args.map(arg => String(arg)).join(' ')}`
-    return spawn(getWindowsShell(), ['/d', '/s', '/c', commandLine], options)
+    const commandLine = buildWindowsCommandLine(command, args)
+    return spawn(getWindowsShell(), ['/d', '/s', '/c', commandLine], { ...options, windowsVerbatimArguments: true })
   }
 
   return spawn(command, args, options)
+}
+
+// .cmd/.bat files cannot be spawned directly on Windows without a shell —
+// execFileSync throws EINVAL. Route through cmd.exe like spawnCli does.
+function execCliSync(command, args, options) {
+  if (process.platform === 'win32') {
+    const lowerCommand = String(command).toLowerCase()
+    if (!lowerCommand.endsWith('.cmd') && !lowerCommand.endsWith('.bat')) {
+      return execFileSync(command, args, options)
+    }
+
+    const commandLine = buildWindowsCommandLine(command, args)
+    return execFileSync(getWindowsShell(), ['/d', '/s', '/c', commandLine], { ...options, windowsVerbatimArguments: true })
+  }
+
+  return execFileSync(command, args, options)
 }
 
 function getPortFromArgs() {
@@ -752,7 +777,7 @@ function doUpdate() {
   const npm = getNpmBin()
   try {
     console.log('  🧹 Cleaning npm cache...')
-    execFileSync(npm, ['cache', 'clean', '--force'], {
+    execCliSync(npm, ['cache', 'clean', '--force'], {
       stdio: 'inherit',
       env: getCurrentNodeEnv(),
     })
@@ -811,7 +836,9 @@ if (process.argv[1] && realpathSync(resolve(process.argv[1])) === __filename) {
 export {
   clearLoginLocks,
   commandExists,
+  execCliSync,
   getDaemonStopGraceMs,
+  getGlobalPrefix,
   getListeningPids,
   getRestartArgs,
   parseUnixNetstatListeningPids,

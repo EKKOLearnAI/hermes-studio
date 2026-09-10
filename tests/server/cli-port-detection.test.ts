@@ -223,4 +223,31 @@ describe('CLI port detection', () => {
       rmSync(home, { recursive: true, force: true })
     }
   })
+
+  it('routes .cmd binaries through cmd.exe instead of spawning them directly (Windows EINVAL)', async () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' })
+
+    const execFileSync = vi.fn(() => '11.13.0')
+    const { execCliSync, mocks } = await loadCli({ execFileSync })
+
+    execCliSync('C:\\Program Files\\nodejs\\npm.cmd', ['prefix', '-g'], { encoding: 'utf-8' })
+
+    expect(mocks.execFileSync).toHaveBeenCalledTimes(1)
+    const [command, args, options] = mocks.execFileSync.mock.calls[0]
+    expect(command).not.toBe('C:\\Program Files\\nodejs\\npm.cmd')
+    expect(command.toLowerCase()).toContain('cmd.exe')
+    expect(args.at(-1)).toContain('"C:\\Program Files\\nodejs\\npm.cmd" prefix -g')
+    expect(options).toMatchObject({ windowsVerbatimArguments: true })
+  })
+
+  it('spawns non-.cmd binaries directly on Windows without a shell wrapper', async () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' })
+
+    const execFileSync = vi.fn(() => 'ok')
+    const { execCliSync, mocks } = await loadCli({ execFileSync })
+
+    execCliSync('node.exe', ['--version'], { encoding: 'utf-8' })
+
+    expect(mocks.execFileSync).toHaveBeenCalledWith('node.exe', ['--version'], { encoding: 'utf-8' })
+  })
 })
