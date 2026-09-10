@@ -649,6 +649,54 @@ describe('coding agent launch preparation', () => {
     })
   })
 
+  it('skips the bundled Pi MCP adapter when the user installs their own pi-mcp-adapter', async () => {
+    const home = makeHome()
+    const liveSettingsPath = join(home, 'global-home', '.pi', 'agent', 'settings.json')
+    mkdirSync(dirname(liveSettingsPath), { recursive: true })
+    writeFileSync(liveSettingsPath, `${JSON.stringify({
+      packages: ['pi-mcp-adapter@2.32.1'],
+    }, null, 2)}\n`)
+
+    const result = await prepareCodingAgentLaunch('pi', {
+      profile: 'default',
+      provider: 'custom:test',
+      model: 'test-model',
+      baseUrl: 'https://api.example.com/v1',
+      apiKey: 'sk-runtime-secret',
+      apiMode: 'codex_responses',
+      sessionId: 'session-user-adapter',
+      agentSessionId: 'agent-session-user-adapter',
+    })
+
+    const runtimeSettings = JSON.parse(readFileSync(join(result.rootDir, 'settings.json'), 'utf-8'))
+    const bundledEntry = join(home, 'coding-agent', 'pi-mcp-adapter', 'node_modules', 'pi-mcp-adapter', 'index.ts')
+    expect(runtimeSettings.extensions).not.toContain(bundledEntry)
+    expect(runtimeSettings.extensions).toContain(join(result.rootDir, 'hermes-studio-runtime.ts'))
+    // The user's own package selection is preserved so Pi loads their adapter.
+    expect(runtimeSettings.packages).toEqual(['pi-mcp-adapter@2.32.1'])
+  })
+
+  it('injects the bundled Pi MCP adapter when the user has no pi-mcp-adapter installed', async () => {
+    const home = makeHome()
+    const adapterEntry = join(home, 'coding-agent', 'pi-mcp-adapter', 'node_modules', 'pi-mcp-adapter', 'index.ts')
+    mkdirSync(dirname(adapterEntry), { recursive: true })
+    writeFileSync(adapterEntry, 'export default {}')
+
+    const result = await prepareCodingAgentLaunch('pi', {
+      profile: 'default',
+      provider: 'custom:test',
+      model: 'test-model',
+      baseUrl: 'https://api.example.com/v1',
+      apiKey: 'sk-runtime-secret',
+      apiMode: 'codex_responses',
+      sessionId: 'session-bundled-adapter',
+      agentSessionId: 'agent-session-bundled-adapter',
+    })
+
+    const runtimeSettings = JSON.parse(readFileSync(join(result.rootDir, 'settings.json'), 'utf-8'))
+    expect(runtimeSettings.extensions).toContain(adapterEntry)
+  })
+
   it('migrates legacy plaintext Pi proxy targets to encrypted storage during restore', async () => {
     const home = makeHome()
     const targetPath = join(
