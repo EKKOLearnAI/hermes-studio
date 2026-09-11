@@ -649,6 +649,106 @@ describe('coding agent launch preparation', () => {
     })
   })
 
+  it.each([
+    'pi-mcp-adapter@2.32.1',
+    'npm:pi-mcp-adapter',
+    'npm:pi-mcp-adapter@2.32.1',
+    { source: 'npm:pi-mcp-adapter@2.32.1' },
+  ])('reuses a user Pi MCP adapter package %j without the bundle', async (adapterPackage) => {
+    const home = makeHome()
+    const liveSettingsPath = join(home, 'global-home', '.pi', 'agent', 'settings.json')
+    mkdirSync(dirname(liveSettingsPath), { recursive: true })
+    writeFileSync(liveSettingsPath, `${JSON.stringify({
+      packages: [adapterPackage],
+    }, null, 2)}\n`)
+
+    const result = await prepareCodingAgentLaunch('pi', {
+      profile: 'default',
+      provider: 'custom:test',
+      model: 'test-model',
+      baseUrl: 'https://api.example.com/v1',
+      apiKey: 'sk-runtime-secret',
+      apiMode: 'codex_responses',
+      sessionId: 'session-user-adapter',
+      agentSessionId: 'agent-session-user-adapter',
+    })
+
+    const runtimeSettings = JSON.parse(readFileSync(join(result.rootDir, 'settings.json'), 'utf-8'))
+    const bundledEntry = join(home, 'coding-agent', 'pi-mcp-adapter', 'node_modules', 'pi-mcp-adapter', 'index.ts')
+    expect(runtimeSettings.extensions).not.toContain(bundledEntry)
+    expect(runtimeSettings.extensions).toContain(join(result.rootDir, 'hermes-studio-runtime.ts'))
+    // The user's own package selection is preserved so Pi loads their adapter.
+    expect(runtimeSettings.packages).toEqual([
+      typeof adapterPackage === 'string' && !adapterPackage.startsWith('npm:') ? `npm:${adapterPackage}` : adapterPackage,
+    ])
+  })
+
+  it('preserves a relative user adapter extension alongside an inherited bundled entry', async () => {
+    const home = makeHome()
+    const liveDir = join(home, 'global-home', '.pi', 'agent')
+    const userAdapter = join(liveDir, 'node_modules', 'pi-mcp-adapter', 'index.ts')
+    mkdirSync(dirname(userAdapter), { recursive: true })
+    writeFileSync(userAdapter, 'export default function () {}')
+    const liveSettings = JSON.stringify({ extensions: ['./node_modules/pi-mcp-adapter/index.ts'] })
+    writeFileSync(join(liveDir, 'settings.json'), liveSettings)
+    const bundle = join(home, 'coding-agent', 'pi-mcp-adapter', 'node_modules', 'pi-mcp-adapter', 'index.ts')
+    const scopedDir = join(home, 'coding-agent', 'model', 'default', 'custom_test', 'pi')
+    mkdirSync(scopedDir, { recursive: true })
+    writeFileSync(join(scopedDir, 'settings.json'), JSON.stringify({ extensions: [bundle, './custom.ts'] }))
+    const result = await prepareCodingAgentLaunch('pi', {
+      profile: 'default', provider: 'custom:test', model: 'test-model',
+      baseUrl: 'https://api.example.com/v1', apiKey: 'test-key', apiMode: 'codex_responses',
+    })
+    const settings = JSON.parse(readFileSync(join(result.rootDir, 'settings.json'), 'utf-8'))
+    expect(settings.extensions).toContain(userAdapter)
+    expect(settings.extensions).toContain(join(scopedDir, 'custom.ts'))
+    expect(settings.extensions).not.toContain(bundle)
+    expect(settings.extensions).toContain(join(result.rootDir, 'hermes-studio-runtime.ts'))
+    expect(readFileSync(join(liveDir, 'settings.json'), 'utf-8')).toBe(liveSettings)
+  })
+
+  it('falls back to the bundle when scoped settings disable the live adapter package', async () => {
+    const home = makeHome()
+    const liveDir = join(home, 'global-home', '.pi', 'agent')
+    mkdirSync(liveDir, { recursive: true })
+    writeFileSync(join(liveDir, 'settings.json'), JSON.stringify({ packages: ['npm:pi-mcp-adapter'] }))
+    const bundle = join(home, 'coding-agent', 'pi-mcp-adapter', 'node_modules', 'pi-mcp-adapter', 'index.ts')
+    mkdirSync(dirname(bundle), { recursive: true })
+    writeFileSync(bundle, 'export default function () {}')
+    const scopedDir = join(home, 'coding-agent', 'model', 'default', 'custom_test', 'pi')
+    mkdirSync(scopedDir, { recursive: true })
+    const packages = [{ source: 'npm:pi-mcp-adapter', extensions: [] }]
+    writeFileSync(join(scopedDir, 'settings.json'), JSON.stringify({ packages }))
+    const result = await prepareCodingAgentLaunch('pi', {
+      profile: 'default', provider: 'custom:test', model: 'test-model',
+      baseUrl: 'https://api.example.com/v1', apiKey: 'test-key', apiMode: 'codex_responses',
+    })
+    const settings = JSON.parse(readFileSync(join(result.rootDir, 'settings.json'), 'utf-8'))
+    expect(settings.extensions).toContain(bundle)
+    expect(settings.packages).toEqual(packages)
+  })
+
+  it('injects the bundled Pi MCP adapter when the user has no pi-mcp-adapter installed', async () => {
+    const home = makeHome()
+    const adapterEntry = join(home, 'coding-agent', 'pi-mcp-adapter', 'node_modules', 'pi-mcp-adapter', 'index.ts')
+    mkdirSync(dirname(adapterEntry), { recursive: true })
+    writeFileSync(adapterEntry, 'export default {}')
+
+    const result = await prepareCodingAgentLaunch('pi', {
+      profile: 'default',
+      provider: 'custom:test',
+      model: 'test-model',
+      baseUrl: 'https://api.example.com/v1',
+      apiKey: 'sk-runtime-secret',
+      apiMode: 'codex_responses',
+      sessionId: 'session-bundled-adapter',
+      agentSessionId: 'agent-session-bundled-adapter',
+    })
+
+    const runtimeSettings = JSON.parse(readFileSync(join(result.rootDir, 'settings.json'), 'utf-8'))
+    expect(runtimeSettings.extensions).toContain(adapterEntry)
+  })
+
   it('migrates legacy plaintext Pi proxy targets to encrypted storage during restore', async () => {
     const home = makeHome()
     const targetPath = join(
