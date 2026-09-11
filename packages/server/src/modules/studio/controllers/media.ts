@@ -105,7 +105,16 @@ function readJsonFile(path: string): any {
 function buildApiUrl(baseUrl: string, pathWithV1: string): string {
   const base = (baseUrl || 'https://api.apikey.fun/v1').replace(/\/+$/, '')
   const apiPath = pathWithV1.startsWith('/') ? pathWithV1 : `/${pathWithV1}`
-  if (base.endsWith('/v1') && apiPath.startsWith('/v1/')) return `${base}${apiPath.slice(3)}`
+  if (!apiPath.startsWith('/v1/')) return `${base}${apiPath}`
+
+  const providerPath = apiPath.slice(3)
+  if (base.endsWith('/v1')) return `${base}${providerPath}`
+  try {
+    const pathname = new URL(base).pathname.replace(/\/+$/, '')
+    if (pathname) return `${base}${providerPath}`
+  } catch {
+    // Keep the legacy /v1 default for non-standard base URL strings.
+  }
   return `${base}${apiPath}`
 }
 

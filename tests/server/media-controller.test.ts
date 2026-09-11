@@ -42,7 +42,7 @@ describe('media controller', () => {
       readConfigYamlForProfile: vi.fn(async () => ({
         custom_providers: [{
           name: 'agnes',
-          base_url: 'https://agnes.example/v1',
+          base_url: 'https://agnes.example',
           api_key_env: 'AGNES_API_KEY',
           model: 'agnes-image-2.1-flash',
         }],
@@ -79,7 +79,7 @@ describe('media controller', () => {
         ok: true,
         mode: 'text',
         provider: 'agnes',
-        base_url: 'https://agnes.example/v1',
+        base_url: 'https://agnes.example',
         profile: 'default',
       })
       expect(fetchMock).toHaveBeenCalledWith(
@@ -113,7 +113,7 @@ describe('media controller', () => {
       readConfigYamlForProfile: vi.fn(async () => ({
         custom_providers: [{
           name: 'Studio Images',
-          base_url: 'https://images.example/v1',
+          base_url: 'https://images.example/api/v3',
           api_key_env: 'STUDIO_IMG_KEY',
         }],
         auxiliary: {
@@ -145,7 +145,7 @@ describe('media controller', () => {
 
       expect(ctx.status).toBe(200)
       expect(ctx.body).toMatchObject({ ok: true, provider: 'Studio Images' })
-      expect(String(fetchMock.mock.calls[0][0])).toBe('https://images.example/v1/images/generations')
+      expect(String(fetchMock.mock.calls[0][0])).toBe('https://images.example/api/v3/images/generations')
       expect(JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body)))
         .toMatchObject({ model: 'seedream-4' })
       expect(timeoutSpy).toHaveBeenCalledWith(42_000)
@@ -168,12 +168,12 @@ describe('media controller', () => {
         custom_providers: [
           {
             name: 'Generation Images',
-            base_url: 'https://generation.example/v1',
+            base_url: 'https://generation.example/api/v3',
             api_key_env: 'GENERATION_IMG_KEY',
           },
           {
             name: 'Edit Images',
-            base_url: 'https://edit.example/v1',
+            base_url: 'https://edit.example/api/paas/v4',
             api_key_env: 'EDIT_IMG_KEY',
           },
         ],
@@ -221,7 +221,7 @@ describe('media controller', () => {
 
       expect(ctx.status).toBe(200)
       expect(ctx.body).toMatchObject({ ok: true, provider: 'Edit Images', mode: 'image' })
-      expect(String(fetchMock.mock.calls[0][0])).toBe('https://edit.example/v1/responses')
+      expect(String(fetchMock.mock.calls[0][0])).toBe('https://edit.example/api/paas/v4/responses')
       expect(fetchMock.mock.calls[0][1]).toMatchObject({
         headers: expect.objectContaining({ Authorization: 'Bearer edit-secret' }),
       })
@@ -252,7 +252,7 @@ describe('media controller', () => {
 
       expect(editCtx.status).toBe(200)
       expect(editCtx.body).toMatchObject({ ok: true, provider: 'Generation Images', mode: 'edit' })
-      expect(String(fetchMock.mock.calls[1][0])).toBe('https://generation.example/v1/images/edits')
+      expect(String(fetchMock.mock.calls[1][0])).toBe('https://generation.example/api/v3/images/edits')
       expect(fetchMock.mock.calls[1][1]).toMatchObject({
         headers: expect.objectContaining({ Authorization: 'Bearer generation-secret' }),
       })
