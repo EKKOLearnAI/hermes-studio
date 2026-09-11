@@ -8,7 +8,7 @@ import SkillImportModal from '@/components/hermes/skills/SkillImportModal.vue'
 import SkillExternalDirsModal from '@/components/hermes/skills/SkillExternalDirsModal.vue'
 import SkillSourceLegend from '@/components/hermes/skills/SkillSourceLegend.vue'
 import PendingWriteApprovals from '@/components/hermes/skills/PendingWriteApprovals.vue'
-import { fetchSkills, type SkillCategory, type SkillSource, type SkillInfo, type SkillTarget } from '@/api/hermes/skills'
+import { deleteSkillApi, importSkill, fetchSkills, type SkillCategory, type SkillSource, type SkillInfo, type SkillTarget } from '@/api/hermes/skills'
 import { fetchPendingWrites } from '@/api/hermes/write-gate'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 
@@ -96,6 +96,7 @@ async function loadSkills() {
 }
 
 async function loadPendingWriteCount() {
+  if (!isHermesTarget.value) return
   try {
     const data = await fetchPendingWrites()
     writeApprovalSupported.value = data.supported !== false
@@ -193,7 +194,7 @@ function handleSkillSaved() {
           </span>
         </NButton>
         <NButton
-          v-if="isHermesTarget"
+          v-if="isHermesTarget || skillTarget === 'dsh'"
           class="header-action-btn"
           size="small"
           :title="t('skills.import')"
@@ -234,7 +235,13 @@ function handleSkillSaved() {
       </div>
     </header>
 
-    <SkillImportModal v-if="showImportModal" @close="showImportModal = false" @saved="handleImported" />
+    <SkillImportModal
+      v-if="showImportModal"
+      :allow-category="skillTarget !== 'dsh'"
+      :import-handler="skillTarget === 'dsh' ? (files) => importSkill(files, undefined, 'dsh') : undefined"
+      @close="showImportModal = false"
+      @saved="handleImported"
+    />
     <SkillExternalDirsModal v-if="showExternalDirsModal"
       @close="showExternalDirsModal = false" @saved="handleExternalDirsSaved" />
     <NDrawer
@@ -262,7 +269,9 @@ function handleSkillSaved() {
               :selected-skill="selectedCategory && selectedSkill ? `${selectedCategory}/${selectedSkill}` : null"
               :search-query="searchQuery"
               :source-filter="sourceFilter"
-              :readonly="!isHermesTarget"
+              :readonly="!isHermesTarget && skillTarget !== 'dsh'"
+              :toggleable="isHermesTarget"
+              :delete-handler="skillTarget === 'dsh' ? (category, name) => deleteSkillApi(category, name, 'dsh') : undefined"
               @select="handleSelect"
               @deleted="handleSkillDeleted"
             />

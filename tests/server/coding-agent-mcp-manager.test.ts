@@ -76,6 +76,22 @@ afterEach(() => {
 })
 
 describe('coding Agent MCP manager', () => {
+  it('manages DSH native patches without persisting Studio-managed entries', async () => {
+    const home = makeHome()
+    await upsertCodingAgentMcpServer('dsh', 'docs', { command: 'node', args: ['docs.mjs'] })
+    const listed = await listCodingAgentMcpServers('dsh')
+    expect(listed.servers.find(server => server.name === 'docs')).toMatchObject({ raw_config: { enabled: true }, managed: false })
+    const managed = listed.servers.filter(server => server.managed)
+    expect(managed).toHaveLength(4)
+    for (const server of managed) expect(server.raw_config.env.ELECTRON_RUN_AS_NODE).toBe('1')
+    const path = join(home, '.dsh', 'cordis.patch.yml')
+    expect(readFileSync(path, 'utf8')).not.toContain('ekko-studio-api')
+    await upsertCodingAgentMcpServer('dsh', 'ekko-studio-api', { enabled: false })
+    expect((await listCodingAgentMcpServers('dsh')).servers.find(server => server.name === 'ekko-studio-api')?.raw_config.enabled).toBe(false)
+    await removeCodingAgentMcpServer('dsh', 'docs')
+    expect((await listCodingAgentMcpServers('dsh')).servers.some(server => server.name === 'docs')).toBe(false)
+  })
+
   it('manages Claude JSON while preserving unrelated root configuration', async () => {
     const home = makeHome()
     const path = join(home, '.claude', 'mcp.json')

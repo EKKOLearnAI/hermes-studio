@@ -21,6 +21,7 @@ describe('coding Agent npm registry policy', () => {
   it.each([
     ['codex', '@openai/codex'],
     ['grok', '@xai-official/grok'],
+    ['dsh', '@deepseek-ai/dsh'],
   ] as const)('uses the official npm Registry for %s package operations', (agentId, packageName) => {
     expect(withCodingAgentRegistry(agentId, ['install', '-g', packageName])).toEqual([
       'install',

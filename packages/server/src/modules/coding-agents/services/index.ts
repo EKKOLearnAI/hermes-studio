@@ -1,3 +1,4 @@
+import { readDshMcpServers, validateDshSettings } from './dsh/config'
 import { OPENCODE_FREE_PROVIDER, openCodeFreeRuntime } from '../../studio/contracts/opencode-free'
 import { beginAgentPreparation } from './update-lock'
 import { execFile } from 'child_process'
@@ -241,7 +242,7 @@ interface CommandExecution {
   windowsVerbatimArguments?: WindowsCommandExecution['windowsVerbatimArguments']
 }
 
-export type CodingAgentId = CodingAgentRuntime
+export type CodingAgentId = CodingAgentRuntime | 'dsh'
 
 export interface CodingAgentDefinition {
   id: CodingAgentId
@@ -374,6 +375,13 @@ const TOOL_DEFINITIONS: CodingAgentDefinition[] = [
     command: 'opencode',
     packageName: 'opencode-ai',
   },
+  {
+    id: 'dsh',
+    name: 'DeepSeek Harness',
+    provider: 'DeepSeek',
+    command: 'dsh',
+    packageName: '@deepseek-ai/dsh',
+  },
 ]
 
 const CONFIG_FILE_DEFINITIONS: Record<CodingAgentId, Array<Omit<CodingAgentConfigFileDefinition, 'absolutePath'> & { scopedPath: string }>> = {
@@ -400,6 +408,11 @@ const CONFIG_FILE_DEFINITIONS: Record<CodingAgentId, Array<Omit<CodingAgentConfi
     { key: 'mcp', path: '~/.grok/config.toml', scopedPath: 'config.toml', language: 'ini' },
     { key: 'settings', path: '~/.grok/config.toml', scopedPath: 'config.toml', language: 'ini' },
     { key: 'agents', path: '~/.grok/AGENTS.md', scopedPath: 'AGENTS.md', language: 'markdown' },
+  ],
+  dsh: [
+    { key: 'settings', path: '~/.dsh/settings.yaml', scopedPath: 'settings.yaml', language: 'yaml' },
+    { key: 'memory', path: '~/.dsh/AGENTS.md', scopedPath: 'AGENTS.md', language: 'markdown' },
+    { key: 'mcp', path: '~/.dsh/cordis.patch.yml', scopedPath: 'cordis.patch.yml', language: 'yaml' },
   ],
   opencode: [
     { key: 'settings', path: '~/.config/opencode/opencode.json', scopedPath: OPENCODE_CONFIG_FILE, language: 'json' },
@@ -1816,7 +1829,7 @@ export function getCodingAgentManagedMcpServerConfigs(
   id: CodingAgentId,
   profile = 'default',
 ): Record<string, Record<string, unknown>> {
-  if (!['claude-code', 'codex', 'pi', 'grok', 'opencode'].includes(id)) return {}
+  if (!['claude-code', 'codex', 'pi', 'grok', 'opencode', 'dsh'].includes(id)) return {}
   const disabledManaged = getDisabledManagedMcpServers(id, profile)
   return Object.fromEntries(HERMES_MCP_SERVERS.map((item) => {
     const server = managedHermesMcpServerConfig(id, profile || 'default', item.name, item.toolset)
@@ -2703,7 +2716,7 @@ export function getCodingAgentDefinition(id: string): CodingAgentDefinition | nu
 }
 
 export function withCodingAgentRegistry(id: CodingAgentId, args: string[]): string[] {
-  return id === 'codex' || id === 'grok' || id === 'opencode'
+  return id === 'codex' || id === 'grok' || id === 'opencode' || id === 'dsh'
     ? [...args, `--registry=${OFFICIAL_NPM_REGISTRY}`]
     : [...args]
 }
@@ -2807,7 +2820,7 @@ export interface CodingAgentUpdateResult {
   message?: string
 }
 
-function versionGte(a: string, b: string): boolean {
+export function versionGte(a: string, b: string, includePrerelease = false): boolean {
   const x = String(a).match(/\d+(?:\.\d+){0,2}/)
   const y = String(b).match(/\d+(?:\.\d+){0,2}/)
   if (!x || !y) return String(a) === String(b)
@@ -2817,6 +2830,20 @@ function versionGte(a: string, b: string): boolean {
     const u = p[i] || 0
     const v = q[i] || 0
     if (u !== v) return u > v
+  }
+  if (includePrerelease) {
+    const prerelease = (version: string) => version.match(/\d+(?:\.\d+){0,2}-([0-9A-Za-z.-]+)/)?.[1].split('.')
+    const left = prerelease(a)
+    const right = prerelease(b)
+    if (!left || !right) return !left
+    for (let i = 0; i < Math.max(left.length, right.length); i += 1) {
+      if (left[i] === right[i]) continue
+      if (left[i] === undefined || right[i] === undefined) return right[i] === undefined
+      const ln = /^\d+$/.test(left[i])
+      const rn = /^\d+$/.test(right[i])
+      if (ln !== rn) return !ln
+      return ln ? Number(left[i]) > Number(right[i]) : left[i] > right[i]
+    }
   }
   return true
 }
@@ -2860,7 +2887,7 @@ export async function checkUpdateAgent(id: string): Promise<CodingAgentUpdateRes
     )
     const latestVersion = stdout.trim()
     const status = await getCodingAgentStatus(tool)
-    const updateAvailable = !!latestVersion && status.installed && !versionGte(status.version, latestVersion)
+    const updateAvailable = !!latestVersion && status.installed && !versionGte(status.version, latestVersion, id === 'dsh')
     return { success: true, tool: status, latestVersion, updateAvailable }
   } catch (err: any) {
     const status = await getCodingAgentStatus(tool)
@@ -3030,6 +3057,8 @@ export async function readCodingAgentConfigFile(id: string, key: string, scope: 
         ? piLiveConfigDefault(key, normalizedScope.profile) || ''
         : id === 'opencode' && key === 'settings'
           ? '{}\n'
+          : id === 'dsh' && key === 'settings' ? '{}\n'
+            : id === 'dsh' && key === 'mcp' ? '[]\n'
         : ''
     return {
       ...definition,
@@ -3053,6 +3082,8 @@ export async function writeCodingAgentConfigFile(id: string, key: string, conten
     ;(err as any).status = 404
     throw err
   }
+  if (id === 'dsh' && key === 'settings') validateDshSettings(content)
+  if (id === 'dsh' && key === 'mcp') readDshMcpServers(content)
   let persistedContent = content || ''
   if (id === 'grok' && (key === 'mcp' || key === 'settings')) {
     const existingContent = await safeReadFile(definition.absolutePath) || ''
@@ -3113,6 +3144,7 @@ export function invalidateCodingAgentConfigRuntime(
 }
 
 export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLaunchInput): Promise<CodingAgentLaunchResult> {
+  if (id === 'dsh') throw Object.assign(new Error('DSH ACP chat integration is not available yet'), { status: 400 })
   const tool = getCodingAgentDefinition(id)
   if (!tool) {
     const err = new Error('Unknown coding agent')

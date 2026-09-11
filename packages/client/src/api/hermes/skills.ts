@@ -1,7 +1,7 @@
 import { request, getBaseUrlValue, getApiKey, getActiveProfileName } from '../client'
 
 export type SkillSource = 'builtin' | 'hub' | 'local' | 'external'
-export type SkillTarget = 'hermes' | 'claude' | 'codex' | 'pi' | 'grok' | 'opencode'
+export type SkillTarget = 'hermes' | 'claude' | 'codex' | 'pi' | 'grok' | 'opencode' | 'dsh'
 
 export interface SkillInfo {
   name: string
@@ -188,10 +188,10 @@ export async function saveExternalDirs(dirs: string[]): Promise<void> {
   })
 }
 
-export async function deleteSkillApi(category: string, name: string): Promise<void> {
+export async function deleteSkillApi(category: string, name: string, target: SkillTarget = 'hermes'): Promise<void> {
   const c = encodeURIComponent(category)
   const n = encodeURIComponent(name)
-  await request(`/api/hermes/skills/${c}/${n}`, { method: 'DELETE' })
+  await request(`/api/hermes/skills/${c}/${n}${targetQuery(target)}`, { method: 'DELETE' })
 }
 
 /**
@@ -200,7 +200,7 @@ export async function deleteSkillApi(category: string, name: string): Promise<vo
  * starts with the skill folder name; we forward those paths verbatim as the
  * `filename` parameter so the server can reconstruct the directory tree.
  */
-export async function importSkill(files: File[], category?: string): Promise<{ name: string }> {
+export async function importSkill(files: File[], category?: string, target: SkillTarget = 'hermes'): Promise<{ name: string }> {
   const baseUrl = getBaseUrlValue()
   const token = getApiKey()
   const headers: Record<string, string> = {}
@@ -215,7 +215,7 @@ export async function importSkill(files: File[], category?: string): Promise<{ n
   }
   if (category) formData.append('category', category)
 
-  const res = await fetch(`${baseUrl}/api/hermes/skills/import`, {
+  const res = await fetch(`${baseUrl}/api/hermes/skills/import${targetQuery(target)}`, {
     method: 'POST',
     headers,
     body: formData,

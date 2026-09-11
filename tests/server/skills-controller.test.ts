@@ -108,6 +108,83 @@ describe('skills controller', () => {
     mockListSkillUsageEventsAfterMessageId.mockResolvedValue({ events: [], cursor: 12, reset: false })
   })
 
+  it('lists, reads, edits and deletes DSH native flat and bundled skills', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'studio-dsh-skills-'))
+    const previous = process.env.HERMES_CODING_AGENT_GLOBAL_HOME
+    process.env.HERMES_CODING_AGENT_GLOBAL_HOME = root
+    const skill = (name: string, description = 'Example') => `---\nname: ${name}\ndescription: ${description}\n---\nInstructions\n`
+    try {
+      await mkdir(join(root, '.dsh/skills/bundle'), { recursive: true })
+      await mkdir(join(root, '.agents/skills/shared'), { recursive: true })
+      await mkdir(join(root, '.agents/skills/duplicate'), { recursive: true })
+      await mkdir(join(root, '.dsh/skills/category/nested'), { recursive: true })
+      await writeFile(join(root, '.dsh/skills/flat.md'), skill('flat'))
+      await writeFile(join(root, '.dsh/skills/bundle/SKILL.md'), skill('bundle'))
+      await writeFile(join(root, '.agents/skills/shared/SKILL.md'), skill('shared'))
+      await writeFile(join(root, '.agents/skills/duplicate/SKILL.md'), skill('bundle'))
+      await writeFile(join(root, '.dsh/skills/category/nested/SKILL.md'), skill('nested'))
+      const controller = await loadController()
+      const ctx: any = { query: { target: 'dsh' }, params: {}, state: {}, body: null }
+      await controller.list(ctx)
+      expect(ctx.body.categories[0].skills.map((s: any) => s.name)).toEqual(['bundle', 'flat', 'shared'])
+      ctx.params = { path: 'misc/flat/SKILL.md' }
+      await controller.readFile_(ctx)
+      expect(ctx.body.content).toBe(skill('flat'))
+      ctx.params = { category: 'misc', skill: 'flat' }
+      ctx.request = { body: { content: skill('flat', 'Updated') } }
+      await controller.updateSkill(ctx)
+      expect(ctx.body).toEqual({ success: true })
+      expect(await readFile(join(root, '.dsh/skills/flat.md'), 'utf8')).toContain('Updated')
+      ctx.request.body.content = '# Missing frontmatter'
+      await controller.updateSkill(ctx)
+      expect(ctx.status).toBe(400)
+      expect(await readFile(join(root, '.dsh/skills/flat.md'), 'utf8')).toContain('Updated')
+      await controller.deleteSkill(ctx)
+      await expect(readFile(join(root, '.dsh/skills/flat.md'))).rejects.toThrow()
+      expect(await readFile(join(root, '.dsh/skills/bundle/SKILL.md'), 'utf8')).toBe(skill('bundle'))
+    } finally {
+      if (previous === undefined) delete process.env.HERMES_CODING_AGENT_GLOBAL_HOME
+      else process.env.HERMES_CODING_AGENT_GLOBAL_HOME = previous
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('imports DSH skills into the global DSH home and rejects categories and invalid definitions', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'studio-dsh-import-'))
+    const previous = process.env.HERMES_CODING_AGENT_GLOBAL_HOME
+    process.env.HERMES_CODING_AGENT_GLOBAL_HOME = root
+    const boundary = '----dsh-skill-test'
+    const definition = '---\nname: demo\ndescription: Example\n---\nDo work\n'
+    const context = (content: string, category?: string): any => ({
+      query: { target: 'dsh' }, state: {},
+      get: () => `multipart/form-data; boundary=${boundary}`,
+      req: Readable.from([multipartBody(boundary, [
+        { name: 'file', filename: 'demo/SKILL.md', value: content },
+        ...(category ? [{ name: 'category', value: category }] : []),
+      ])]),
+    })
+    try {
+      const { importSkill } = await loadController()
+      const bad = context('# No frontmatter')
+      await importSkill(bad)
+      expect(bad.status).toBe(400)
+      const categorized = context(definition, 'tools')
+      await importSkill(categorized)
+      expect(categorized.status).toBe(400)
+      const valid = context(definition)
+      await importSkill(valid)
+      expect(valid.body).toEqual({ success: true, name: 'demo' })
+      expect(await readFile(join(root, '.dsh/skills/demo/SKILL.md'), 'utf8')).toBe(definition)
+      const duplicate = context(definition)
+      await importSkill(duplicate)
+      expect(duplicate.status).toBe(409)
+    } finally {
+      if (previous === undefined) delete process.env.HERMES_CODING_AGENT_GLOBAL_HOME
+      else process.env.HERMES_CODING_AGENT_GLOBAL_HOME = previous
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('loads skill usage from the request-scoped profile state database', async () => {
     const { usageStats } = await loadController()
     const ctx: any = { query: { days: '30' }, state: { profile: { name: 'research' } }, body: null }

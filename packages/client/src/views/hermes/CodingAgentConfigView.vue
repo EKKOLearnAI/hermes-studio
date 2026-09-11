@@ -35,6 +35,7 @@ const settingsKeys: Record<CodingAgentId, Record<SettingsEditor, string>> = {
   pi: { preference: 'agents', configuration: 'settings' },
   grok: { preference: 'agents', configuration: 'settings' },
   opencode: { preference: 'memory', configuration: 'settings' },
+  dsh: { preference: 'memory', configuration: 'settings' },
 }
 
 const skillTargets: Record<CodingAgentId, SkillTarget> = {
@@ -43,6 +44,7 @@ const skillTargets: Record<CodingAgentId, SkillTarget> = {
   pi: 'pi',
   grok: 'grok',
   opencode: 'opencode',
+  dsh: 'dsh',
 }
 
 const editorKinds: SettingsEditor[] = ['preference', 'configuration']

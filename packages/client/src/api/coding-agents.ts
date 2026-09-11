@@ -1,8 +1,8 @@
 import { request } from './client'
 import type { ProviderApiMode } from './studio/provider-api-mode'
 
-export type CodingAgentId = 'claude-code' | 'codex' | 'pi' | 'grok' | 'opencode'
-export type ChatCodingAgentId = CodingAgentId | 'ekko-agent'
+export type CodingAgentId = 'claude-code' | 'codex' | 'pi' | 'grok' | 'opencode' | 'dsh'
+export type ChatCodingAgentId = Exclude<CodingAgentId, 'dsh'> | 'ekko-agent'
 export const CODING_AGENT_API_MODES = [
   'chat_completions',
   'codex_responses',
