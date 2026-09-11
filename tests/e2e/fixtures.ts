@@ -225,6 +225,7 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
           { id: 'codex', name: 'Codex', provider: 'OpenAI', kind: 'coding-agent', installed: true, version: '1.0.0', source: 'user-cli', path: '/usr/local/bin/codex', error: '', installations: [] },
           { id: 'pi', name: 'Pi', provider: 'Pi', kind: 'coding-agent', installed: true, version: '1.0.0', source: 'user-cli', path: '/usr/local/bin/pi', error: '', installations: [] },
           { id: 'grok', name: 'Grok', provider: 'xAI', kind: 'coding-agent', installed: true, version: '1.0.0', source: 'user-cli', path: '/usr/local/bin/grok', error: '', installations: [] },
+          { id: 'dsh', name: 'DeepSeek Harness', provider: 'DeepSeek', kind: 'coding-agent', installed: true, version: '0.1.5-rc.1', source: 'user-cli', path: '/usr/local/bin/dsh', error: '', installations: [] },
         ],
       }))
       return
@@ -241,6 +242,7 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
           { id: 'codex', installed: true, source: 'user-cli' },
           { id: 'pi', installed: true, source: 'user-cli' },
           { id: 'grok', installed: true, source: 'user-cli' },
+          { id: 'dsh', installed: true, source: 'user-cli' },
         ],
       }))
       return

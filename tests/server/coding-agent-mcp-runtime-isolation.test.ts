@@ -2,6 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { readDshMcpServers, updateDshMcpServer } from '../../packages/server/src/modules/coding-agents/services/dsh/config'
 import {
   disableTomlMcpServers,
   isolateUnhealthyRuntimeMcpServers,
@@ -23,6 +24,19 @@ afterEach(() => {
 })
 
 describe('coding Agent MCP runtime isolation', () => {
+  it('disables unhealthy DSH MCP rows while preserving native expressions and managed servers', async () => {
+    let content = '- insert:\n    - id: dynamic\n      name: "@deepseek-ai/dsh-mcp-client"\n      config:\n        serverName: dynamic\n        command: !!js process.env.MCP_COMMAND\n'
+    content = updateDshMcpServer(content, 'broken', { command: 'missing' })
+    content = updateDshMcpServer(content, 'ekko-studio-api', { command: 'node' })
+    const path = temporaryFile('cordis.patch.yml', content)
+    const probe = vi.fn(async () => ({ ok: false, error: 'missing command' }))
+    await expect(isolateUnhealthyRuntimeMcpServers('dsh', path, { probe })).resolves.toEqual(['broken'])
+    const updated = readFileSync(path, 'utf8')
+    expect(updated).toContain('!!js process.env.MCP_COMMAND')
+    expect(readDshMcpServers(updated).get('broken')?.enabled).toBe(false)
+    expect(readDshMcpServers(updated).get('ekko-studio-api')?.enabled).toBe(true)
+    expect(probe).toHaveBeenCalledTimes(1)
+  })
   it('removes only unhealthy custom servers from a JSON runtime copy', async () => {
     const path = temporaryFile('mcp.json', `${JSON.stringify({
       mcpServers: {

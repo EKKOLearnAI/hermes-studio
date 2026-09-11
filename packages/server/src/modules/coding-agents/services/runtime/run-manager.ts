@@ -1,3 +1,5 @@
+import { DshAcpTurn } from '../dsh/acp-turn'
+import { DSH_MODEL_PROVIDER } from '../dsh/runtime-config'
 import { agentUpdateLocked, noteAgentActivity } from '../update-lock'
 import { dirname, join } from 'path'
 import { existsSync, accessSync, chmodSync, constants as fsConstants, readFileSync, writeFileSync } from 'fs'
@@ -170,6 +172,7 @@ interface ManagedCodingAgentRun {
   apiKeyPromptAnswered?: boolean
   startedAt: number
   exited: boolean
+  dshTurn?: DshAcpTurn
   currentChild?: ChildProcess
   currentChildKillTimer?: ReturnType<typeof setTimeout>
   currentChildStderr?: string
@@ -313,21 +316,23 @@ function truncateCodingAgentToolOutputEvent(event: CanonicalResponsesEvent): Can
 }
 
 function isPrintAgent(agentId: string): boolean {
-  return agentId === 'claude-code' || agentId === 'codex' || agentId === 'pi' || agentId === 'grok' || agentId === 'opencode'
+  return agentId === 'claude-code' || agentId === 'codex' || agentId === 'pi' || agentId === 'grok' || (agentId === 'opencode' || agentId === 'dsh')
 }
 
-function persistedCodingAgent(agentId: string): 'claude' | 'codex' | 'pi' | 'grok' | 'opencode' {
+function persistedCodingAgent(agentId: string): 'claude' | 'codex' | 'pi' | 'grok' | 'opencode' | 'dsh' {
   if (agentId === 'codex') return 'codex'
   if (agentId === 'pi') return 'pi'
   if (agentId === 'grok') return 'grok'
+  if (agentId === 'dsh') return 'dsh'
   if (agentId === 'opencode') return 'opencode'
   return 'claude'
 }
 
-function usageCodingAgent(agentId: string): 'claude_code' | 'codex' | 'pi' | 'grok' | 'opencode' {
+function usageCodingAgent(agentId: string): 'claude_code' | 'codex' | 'pi' | 'grok' | 'opencode' | 'dsh' {
   if (agentId === 'codex') return 'codex'
   if (agentId === 'pi') return 'pi'
   if (agentId === 'grok') return 'grok'
+  if (agentId === 'dsh') return 'dsh'
   if (agentId === 'opencode') return 'opencode'
   return 'claude_code'
 }
@@ -718,6 +723,8 @@ export class CodingAgentRunManager {
             ? 'Grok'
             : launch.agentId === 'opencode'
               ? 'OpenCode'
+            : launch.agentId === 'dsh'
+              ? 'DeepSeek Harness'
             : 'Claude Code'
       this.emitTerminalStatus(run, `${agentName} chat runner ready.`)
       logger.info({
@@ -822,6 +829,10 @@ export class CodingAgentRunManager {
     }
     if (run.launch.agentId === 'grok') {
       this.startGrokPrintTurn(run, text, systemPrompt, images)
+      return { runId: run.id, messageId }
+    }
+    if (run.launch.agentId === 'dsh') {
+      this.startDshTurn(run, text, systemPrompt, images)
       return { runId: run.id, messageId }
     }
     if (run.launch.agentId === 'opencode') {
@@ -1103,9 +1114,9 @@ export class CodingAgentRunManager {
       // for transport and usage accounting only.
       return
     }
-    if (run.launch.agentId === 'opencode' && !run.acceptingPrintEvent) {
-      // OpenCode's JSON stdout is the authoritative turn stream. A single
-      // OpenCode turn can contain several provider requests, so treating each
+    if ((run.launch.agentId === 'opencode' || run.launch.agentId === 'dsh') && !run.acceptingPrintEvent) {
+      // Native JSON/ACP stdout is the authoritative turn stream. A single
+      // turn can contain several provider requests, so treating each
       // proxy response.completed event as the turn boundary duplicates output
       // and can repeatedly persist partial assistant responses.
       return
@@ -1359,6 +1370,8 @@ export class CodingAgentRunManager {
     const shouldReportClosed = options.reportClosed !== false && (run.state.isWorking || Boolean(run.currentChild && !run.currentChild.killed))
     if (run.idleTimer) clearTimeout(run.idleTimer)
     if (run.currentChildKillTimer) clearTimeout(run.currentChildKillTimer)
+    run.dshTurn?.cancel()
+    run.dshTurn?.dispose()
     run.piDetachJsonl?.()
     run.piDetachJsonl = undefined
     for (const request of run.piRpcRequests?.values() || []) {
@@ -1444,7 +1457,9 @@ export class CodingAgentRunManager {
     child.on('close', (code) => {
       if (run.currentChildKillTimer) clearTimeout(run.currentChildKillTimer)
       run.currentChildKillTimer = undefined
-      run.piDetachJsonl?.()
+      run.dshTurn?.cancel()
+    run.dshTurn?.dispose()
+    run.piDetachJsonl?.()
       run.piDetachJsonl = undefined
       run.currentChild = undefined
       if (run.exited || run.stoppedByUser) return
@@ -2381,6 +2396,93 @@ export class CodingAgentRunManager {
     })
   }
 
+  private startDshTurn(run: ManagedCodingAgentRun, input: string, systemPrompt: string, images: CodingAgentImageInput[]) {
+    if (childIsRunning(run.currentChild)) throw new Error('DSH is still processing the previous input')
+    const responseId = `resp_${Date.now()}`
+    Object.assign(run, {
+      printResponseId: responseId, printMessageId: `msg_${responseId}`, printTextStarted: false,
+      printText: '', printCompleted: false, responseStartEmitted: false, terminalEventHandled: false,
+      codexToolBlocks: new Map(), currentChildStderr: '', runMarker: undefined, memoryExportStarted: false,
+      pendingChatCompletionEvent: undefined, pendingChatCompletionPayload: undefined,
+    })
+    if (run.launch.promptFile) updateManagedPromptFileSync(run.launch.promptFile, systemPrompt)
+    this.handleClaudePrintResponseEvent(run, { type: 'response.created', data: {
+      type: 'response.created', response: { id: responseId, object: 'response', status: 'in_progress', model: run.launch.model, output: [] },
+    } })
+    const child = spawnCodingAgentChild(run.launch.command, run.launch.args, {
+      cwd: run.launch.workspaceDir, pipeStdin: true,
+      env: run.launch.mode === 'global' ? { ...process.env, ...run.launch.env } : isolatedCodingAgentChildEnv(run.launch.env),
+    })
+    run.currentChild = child
+    const turn = new DshAcpTurn(child, {
+      permissionRequired: run.launch.approvalRequired,
+      session: id => {
+        run.launch.agentNativeSessionId = id
+        run.nativeResumeReady = true
+        updateSession(run.launch.sessionId, { agent_native_session_id: id })
+      },
+      config: options => {
+        if (run.launch.mode !== 'global') return
+        const model = options.find(option => option.id === 'model')?.currentValue
+        try {
+          const [, name] = JSON.parse(model)
+          if (typeof name === 'string') {
+            run.launch.model = name
+            updateSession(run.launch.sessionId, { model: name })
+          }
+        } catch { /* Older ACP implementations may use opaque model values. */ }
+      },
+      update: update => {
+        if (run.exited || run.stoppedByUser || run.printCompleted) return
+        this.touch(run)
+        if (update.sessionUpdate === 'agent_message_chunk' && update.content?.type === 'text') this.appendCodexText(run, update.content.text)
+        else if (update.sessionUpdate === 'agent_thought_chunk' && update.content?.type === 'text') this.appendCodexReasoning(run, update.content.text)
+        else if (update.sessionUpdate === 'tool_call') this.handleCodexItemStarted(run, {
+          type: 'mcp_tool_call', id: update.toolCallId, tool: update.title || 'DSH tool', arguments: update.rawInput,
+        })
+        else if (update.sessionUpdate === 'tool_call_update' && ['completed', 'failed'].includes(update.status)) {
+          const output = update.rawOutput ?? (update.content || []).map((entry: any) => entry.content?.text || '').join('\n')
+          this.handleCodexItemCompleted(run, { type: 'mcp_tool_call', id: update.toolCallId, output,
+            ...(update.status === 'failed' ? { error: { message: String(output) } } : {}),
+          })
+        }
+        else if (update.sessionUpdate === 'usage_update' && Number.isFinite(update.used)) {
+          updateContextTokenUsage(run.launch.sessionId, run.state, (event: string, payload: any) => this.emitToChat(run.launch.sessionId, event, payload), update.used)
+        }
+      },
+    })
+    run.dshTurn = turn
+    child.stderr?.on('data', (chunk: Buffer) => { appendChildStderr(run, chunk); this.touch(run) })
+    child.on('close', code => {
+      if (run.currentChild !== child) return
+      run.currentChild = undefined
+      if (run.currentChildKillTimer) clearTimeout(run.currentChildKillTimer)
+      if (run.exited || run.stoppedByUser) return
+      if (run.pendingChatCompletionEvent) {
+        void this.emitAndMarkPrintChatRunCompletedAfterUsage(run, run.pendingChatCompletionEvent, run.pendingChatCompletionPayload)
+      } else if (!run.printCompleted) this.failClaudePrintTurn(run, exitErrorMessage('DSH', code, run.currentChildStderr))
+    })
+    void turn.prompt({
+      cwd: run.launch.workspaceDir, text: input, images,
+      nativeSessionId: run.nativeResumeReady ? run.launch.agentNativeSessionId : undefined,
+      modelValue: run.launch.mode === 'scoped' ? JSON.stringify([DSH_MODEL_PROVIDER, run.launch.model]) : undefined,
+      reasoningEffort: run.launch.mode === 'scoped' ? run.launch.reasoningEffort : undefined,
+    }).then(reason => {
+      if (run.exited || run.stoppedByUser) return
+      if (reason === 'end_turn' || reason === 'max_tokens') this.completeClaudePrintTurn(run)
+      else this.failClaudePrintTurn(run, `DSH stopped: ${reason}`)
+    }).catch(error => {
+      if (!run.exited && !run.stoppedByUser) this.failClaudePrintTurn(run, childProcessErrorMessage(error))
+      terminateChildProcess(child)
+    }).finally(() => {
+      turn.dispose()
+      if (run.dshTurn === turn) run.dshTurn = undefined
+      if (childIsRunning(child)) {
+        run.currentChildKillTimer = setTimeout(() => forceKillChildProcess(child), 1500)
+      }
+    })
+  }
+
   private startGrokPrintTurn(
     run: ManagedCodingAgentRun,
     input: string,
@@ -3083,6 +3185,7 @@ export class CodingAgentRunManager {
           id: toolBlock.id,
           call_id: toolBlock.id,
           output: this.codexToolOutput(item),
+          ...(item.error ? { status: 'failed' } : {}),
         },
       },
     })

@@ -8,6 +8,7 @@ describe('workflow skill helpers', () => {
     expect(workflowAgentToSkillTarget('claude-code')).toBe('claude')
     expect(workflowAgentToSkillTarget('codex')).toBe('codex')
     expect(workflowAgentToSkillTarget('pi')).toBe('pi')
+    expect(workflowAgentToSkillTarget('dsh')).toBe('dsh')
     expect(workflowAgentToSkillTarget('unknown-agent')).toBe('hermes')
   })
 

@@ -50,7 +50,7 @@ test('workflow Run sends the selected total time budget', async ({ page }) => {
   expect(api.unexpectedRequests).toEqual([])
 })
 
-test('workflow Coding Agent nodes hide auth providers and reset auth selections', async ({ page }) => {
+for (const agent of ['Codex', 'DeepSeek Harness']) test(`workflow ${agent} nodes hide auth providers and reset auth selections`, async ({ page }) => {
   await authenticate(page, TEST_ACCESS_KEY, 'research')
   const authGroup = {
     provider: 'openai-codex',
@@ -83,13 +83,20 @@ test('workflow Coding Agent nodes hide auth providers and reset auth selections'
   await expect(node.locator('.model-trigger')).toContainText('gpt-5-codex')
 
   await node.locator('.n-select').first().click()
-  await page.getByText('Codex', { exact: true }).last().click()
+  await page.getByText(agent, { exact: true }).last().click()
   await expect(node.locator('.model-trigger')).toContainText('test-model')
 
   await node.locator('.model-trigger').click()
   const modelDialog = page.getByRole('dialog')
   await expect(modelDialog.getByText('Test Provider', { exact: true })).toBeVisible()
   await expect(modelDialog.getByText('OpenAI Codex Subscription', { exact: true })).toHaveCount(0)
+  if (agent === 'DeepSeek Harness') {
+    await page.keyboard.press('Escape')
+    await page.locator('.header-actions').getByRole('button', { name: 'Save', exact: true }).click()
+    await expect.poll(() => api.requests.filter(request => request.method === 'PATCH' && request.pathname === '/api/studio/workflows/wf-auth-provider').length).toBeGreaterThan(0)
+    const saved = api.requests.findLast(request => request.method === 'PATCH' && request.pathname === '/api/studio/workflows/wf-auth-provider')!
+    expect(JSON.parse(saved.postData || '{}').nodes[0].data).toMatchObject({ agent: 'dsh', provider: 'test-provider', model: 'test-model' })
+  }
   expect(api.unexpectedRequests).toEqual([])
 })
 

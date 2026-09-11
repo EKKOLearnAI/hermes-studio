@@ -188,6 +188,7 @@ describe('group chat agent workspace bridge runs', () => {
   it.each([
     ['codex', 'codex'],
     ['claude', 'claude-code'],
+    ['dsh', 'dsh'],
     ['ekko', 'ekko-agent'],
   ] as const)('keeps %s tool output mention text non-routable', async (agent, codingAgentId) => {
     const { AgentClients } = await import('../../packages/server/src/modules/studio/services/group-chat/agent-clients')
@@ -732,6 +733,7 @@ describe('group chat agent workspace bridge runs', () => {
   it.each([
     ['ekko', 'ekko-agent'],
     ['claude', 'claude-code'],
+    ['dsh', 'dsh'],
     ['pi', 'pi'],
   ] as const)('passes the dynamic group system prompt to the %s runtime', async (agent, codingAgentId) => {
     const { AgentClients } = await import('../../packages/server/src/modules/studio/services/group-chat/agent-clients')

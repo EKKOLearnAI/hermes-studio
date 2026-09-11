@@ -7,6 +7,10 @@ test('installs DSH from Agent Manager and saves its native settings', async ({ p
   const api = await mockHermesApi(page)
   let installed = false
   const tool = () => ({ id: 'dsh', name: 'DeepSeek Harness', provider: 'DeepSeek', command: 'dsh', packageName: '@deepseek-ai/dsh', installed, version: installed ? '0.1.5-rc.1' : '', path: installed ? '/usr/local/bin/dsh' : '', error: '' })
+  await page.route('**/api/agents/status', route => route.fulfill({ json: {
+    revision: 1, updatedAt: '2026-01-01T00:00:00.000Z',
+    agents: [{ ...tool(), kind: 'coding-agent', source: installed ? 'user-cli' : 'not-installed', installations: [] }],
+  } }))
   await page.route('**/api/coding-agents', route => route.fulfill({ json: { tools: [tool()] } }))
   await page.route('**/api/coding-agents/dsh/install', async route => {
     expect(route.request().method()).toBe('POST')

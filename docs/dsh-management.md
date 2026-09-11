@@ -1,4 +1,4 @@
-# DeepSeek Harness management
+# DeepSeek Harness integration
 
 Open **Agent Manager → DeepSeek Harness** to install `@deepseek-ai/dsh`, detect an existing `dsh` CLI, check for updates, or uninstall the CLI. Installation uses the official npm registry and the same global package management path as other Coding Agents. Update checks include prerelease ordering, such as `rc.1` to `rc.2`.
 
@@ -17,6 +17,14 @@ Settings require a YAML mapping. MCP changes use Cordis plugin patches with `@de
 
 Skills support direct `<name>/SKILL.md` bundles and flat `<name>.md` files. Files must have YAML frontmatter containing a kebab-case `name` and a `description`. Imports accept a skill folder or ZIP and go directly into `.dsh/skills`, without Hermes category directories. The editor can read, edit and delete native skills, including flat files. Nested category directories are not scanned. Invocation flags can be edited in frontmatter; the Hermes enable switch is hidden for DSH.
 
-This phase adds management only. DSH is not yet a Studio chat agent: ACP session creation, model injection, runtime home isolation and shutdown ownership are follow-up work. The management pages do not start a long-running DSH service or stop an independently running DSH instance.
+Select **DeepSeek Harness** when creating a single chat, adding a group-chat agent, or configuring a workflow agent node. **Provider and model** mode uses the provider, protocol and model selected in Studio through its local Responses proxy. **Global config** uses the native DSH model configuration. The same settings, Skills and MCP pages serve all three entry points. Workflow-selected DSH skills resolve direct bundles and flat files from the native and shared skill roots.
+
+Studio starts `dsh --profile acp --patch <runtime-overlay>` over stdio. Each conversation (or group member) has a private `DSH_HOME` under Studio state. Native settings, preferences and MCP patches are copied into that home; managed MCP definitions and the current Studio system prompt are applied there. Scoped model credentials remain in the local proxy, with only its scoped token passed to DSH in the environment. Native/global files are not modified by chat execution.
+
+Each turn initializes ACP, creates or resumes the stored native session, applies the selected model, and sends text/image content. ACP text, thought and tool updates feed the existing chat event pipeline. DSH currently emits committed message chunks rather than raw model token deltas. Scoped billing uses the proxy usage ledger; ACP context occupancy is not counted as billed tokens. Global usage may be estimated. Native `/compact` is not exposed through this integration.
+
+On normal completion Studio closes the ACP session to flush persistence, then closes stdin. The next turn starts a fresh process and resumes the same persisted session. Resume errors are reported without silently creating a replacement conversation. Cancelling a run or exiting Studio cancels ACP and terminates only Studio-owned processes, with forced cleanup if needed. This does not bind the DSH Web port or stop a separately started DSH instance.
+
+Validate the installed CLI without a paid model call with `NODE_ENV=test DSH_REAL_ACP_E2E=1 npx vitest run tests/server/dsh-acp-real.test.ts`. This opt-in check uses an isolated temporary home and a local Responses fixture to verify model injection, text output, shutdown and cross-process resume.
 
 Native format reference: [DeepSeek Harness source, dsh-v0.1.5-rc.1](https://github.com/deepseek-ai/deepseek-harness/tree/dsh-v0.1.5-rc.1).

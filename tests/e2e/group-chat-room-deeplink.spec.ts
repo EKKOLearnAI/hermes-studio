@@ -180,6 +180,7 @@ async function mockGroupChatApi(page: Page, offlinePresence = false) {
           { id: 'codex', name: 'Codex', provider: 'OpenAI', kind: 'coding-agent', installed: true, version: '1.0.0', source: 'user-cli', path: '/usr/local/bin/codex', error: '', installations: [] },
           { id: 'pi', name: 'Pi', provider: 'Pi', kind: 'coding-agent', installed: true, version: '1.0.0', source: 'user-cli', path: '/usr/local/bin/pi', error: '', installations: [] },
           { id: 'grok', name: 'Grok', provider: 'xAI', kind: 'coding-agent', installed: true, version: '1.0.0', source: 'user-cli', path: '/usr/local/bin/grok', error: '', installations: [] },
+          { id: 'dsh', name: 'DeepSeek Harness', provider: 'DeepSeek', kind: 'coding-agent', installed: true, version: '0.1.5-rc.1', source: 'user-cli', path: '/usr/local/bin/dsh', error: '', installations: [] },
         ],
       })
     }
@@ -1211,6 +1212,21 @@ test.describe('group chat room deep links', () => {
         model: 'test-model',
       }),
     }])
+  })
+
+  test('adds DSH to a room with the selected model and DeepSeek avatar', async ({ page }) => {
+    const api = await setup(page, '/#/hermes/group-chat/room/room-alpha')
+    await page.locator('.agent-avatar-rail-add').click()
+    const modal = page.locator('.modal').filter({ hasText: 'Add Agent' })
+    await modal.locator('.n-select').first().click()
+    await page.getByText('DeepSeek Harness', { exact: true }).last().click()
+    await expect(modal.locator('img[src="/coding-agents/deepseek.svg"]')).toBeVisible()
+    await modal.getByPlaceholder('Custom name (leave empty to use profile name)').fill('DSH Worker')
+    await modal.getByRole('button', { name: 'Add', exact: true }).click()
+    await expect.poll(() => api.addedAgents.length).toBe(1)
+    expect(api.addedAgents[0]).toMatchObject({ roomId: 'room-alpha', body: {
+      agent: 'dsh', agentMode: 'scoped', provider: 'test-provider', model: 'test-model', name: 'DSH Worker',
+    } })
   })
 
   test('cancels preset selection without changing the Agent form', async ({ page }) => {

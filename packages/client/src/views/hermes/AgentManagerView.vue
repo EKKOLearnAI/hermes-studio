@@ -85,7 +85,7 @@ const codingAgents: CodingAgentCard[] = [
     command: 'opencode',
     packageName: 'opencode-ai',
   },
-  { id: 'dsh', name: 'DeepSeek Harness', provider: 'DeepSeek', logo: '/coding-agents/dsh.svg', command: 'dsh', packageName: '@deepseek-ai/dsh' },
+  { id: 'dsh', name: 'DeepSeek Harness', provider: 'DeepSeek', logo: '/coding-agents/deepseek.svg', command: 'dsh', packageName: '@deepseek-ai/dsh' },
 ]
 
 const updatePolicies = ref<Record<string, AgentUpdatePolicyState>>({})
