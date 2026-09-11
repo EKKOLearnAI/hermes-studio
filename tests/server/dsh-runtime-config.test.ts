@@ -10,6 +10,25 @@ const roots: string[] = []
 afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }) })
 
 describe('DSH runtime home', () => {
+  it.each([
+    '{}\n',
+    'theme: dark\n',
+    'llm-pi-ai: {}\n',
+    'llm-pi-ai:\n  providers: {}\n',
+    'llm-pi-ai: null\n',
+    'llm-pi-ai:\n  providers: null\n',
+  ])('accepts settings without a Studio provider override: %s', async settings => {
+    const root = await mkdtemp(join(tmpdir(), 'studio-dsh-empty-config-'))
+    roots.push(root)
+    const sourceHome = join(root, 'native'), rootDir = join(root, 'runtime')
+    await mkdir(sourceHome)
+    await writeFile(join(sourceHome, 'settings.yaml'), settings)
+    await prepareDshRuntime({ sourceHome, rootDir, sharedSkills: join(root, 'shared'),
+      systemPrompt: '', managedMcp: {}, model: 'test-model', baseUrl: 'http://127.0.0.1:1234/v1' })
+    expect(parse(await readFile(join(rootDir, 'settings.yaml'), 'utf8'))).toEqual(parse(settings))
+    expect(await readFile(join(sourceHome, 'settings.yaml'), 'utf8')).toBe(settings)
+  })
+
   it('keeps native settings intact while isolating models, prompts, persistence and managed MCP', async () => {
     const root = await mkdtemp(join(tmpdir(), 'studio-dsh-config-'))
     roots.push(root)

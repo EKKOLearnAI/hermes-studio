@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createServer } from 'node:http'
 import { once } from 'node:events'
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -40,6 +40,8 @@ describe.skipIf(process.env.DSH_REAL_ACP_E2E !== '1')('installed DSH ACP', () =>
       const home = join(root, 'runtime')
       const workspace = join(root, 'workspace')
       await mkdir(workspace)
+      await mkdir(join(root, 'empty-home'))
+      await writeFile(join(root, 'empty-home', 'settings.yaml'), '{}\n')
       const prepared = await prepareDshRuntime({ sourceHome: join(root, 'empty-home'), sharedSkills: join(root, 'shared-skills'),
         rootDir: home, systemPrompt: 'Answer briefly.', managedMcp: {}, model: 'studio-test', reasoningEffort: 'high', baseUrl: `http://127.0.0.1:${port}/v1` })
       let nativeSessionId = ''

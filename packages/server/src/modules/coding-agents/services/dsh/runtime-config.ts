@@ -37,7 +37,8 @@ export async function prepareDshRuntime(input: {
       if (doc.errors.length) throw new Error(`Invalid DSH settings: ${doc.errors[0].message}`)
       // The settings layer overrides composition config. Pin only Studio's route;
       // other native provider settings remain available to user-installed plugins.
-      doc.deleteIn(['llm-pi-ai', 'providers', DSH_MODEL_PROVIDER])
+      const providerPath = ['llm-pi-ai', 'providers', DSH_MODEL_PROVIDER]
+      if (doc.hasIn(providerPath)) doc.deleteIn(providerPath)
       content = String(doc)
     }
     await writeFile(join(input.rootDir, name), content || (name.endsWith('.yaml') ? '{}\n' : ''), { mode: 0o600 })
