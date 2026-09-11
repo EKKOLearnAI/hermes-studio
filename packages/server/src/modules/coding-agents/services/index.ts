@@ -19,6 +19,7 @@ import { PROVIDER_PRESETS } from '../../studio/contracts/providers'
 import { getModelContextLength, getModelRuntimeCapabilities } from '../../studio/public/provider-runtime'
 import { getSystemPrompt } from '../../studio/public/runs/prompt'
 import { codingAgentRunManager } from './runtime/run-manager'
+import { mergePiSettings, userSettingsProvidesPiMcpAdapter } from './pi/settings'
 import { PI_EXTENDED_THINKING_LEVEL_MAP, piModelSupportsThinking } from './pi/thinking'
 import { GROK_API_KEY_ENV, GROK_CODING_AGENT_DEFINITION, GROK_PROVIDER_ID } from './grok/definition'
 import { getDisabledManagedMcpServers, getManagedMcpServerOverride } from './mcp-overrides'
@@ -1491,56 +1492,44 @@ function getPiMcpAdapterEntry(): string {
   return join(getPiMcpAdapterRoot(), 'node_modules', 'pi-mcp-adapter', 'index.ts')
 }
 
-function piPackageNames(existing: Record<string, unknown>): Set<string> {
-  const names = new Set<string>()
-  const packages = Array.isArray(existing.packages) ? existing.packages : []
-  for (const entry of packages) {
-    if (typeof entry !== 'string') continue
-    const trimmed = entry.trim()
-    if (!trimmed) continue
-    // Accept plain `name`, `name@version`, and scoped `@scope/name@version` entries.
-    const unscoped = trimmed.startsWith('@') ? trimmed.split('/').slice(1).join('/') : trimmed
-    const name = unscoped.split('@', 1)[0].trim()
-    if (name) names.add(name)
+const piAdapterInstalls = new Map<string, Promise<void>>()
+
+async function installBundledPiMcpAdapter(): Promise<void> {
+  const root = getPiMcpAdapterRoot()
+  const pending = piAdapterInstalls.get(root)
+  if (pending) return pending
+  const installation = (async () => {
+    const env = await commandEnv()
+    await mkdir(root, { recursive: true })
+    await runNpm(piMcpAdapterInstallArgs(root), { timeout: 10 * 60 * 1000, env })
+  })()
+  piAdapterInstalls.set(root, installation)
+  try {
+    await installation
+  } finally {
+    piAdapterInstalls.delete(root)
   }
-  return names
 }
 
-function userSettingsProvidesPiMcpAdapter(contents: string[]): boolean {
-  for (const content of contents) {
-    if (!content?.trim()) continue
-    let parsed: Record<string, unknown> | null = null
-    try {
-      const value = JSON.parse(content)
-      if (value && typeof value === 'object' && !Array.isArray(value)) parsed = value as Record<string, unknown>
-    } catch {}
-    if (!parsed) continue
-    if (piPackageNames(parsed).has('pi-mcp-adapter')) return true
-    const extensions = Array.isArray(parsed.extensions) ? parsed.extensions : []
-    if (extensions.some(entry => typeof entry === 'string' && entry.includes('pi-mcp-adapter'))) return true
-  }
-  return false
+async function readPiSettings(scope?: Required<CodingAgentConfigScope>): Promise<Record<string, unknown>> {
+  const definitions = [
+    getLiveConfigFileDefinition('pi', 'settings'),
+    ...(scope ? [getScopedConfigFileDefinition('pi', 'settings', scope)] : []),
+  ].filter((definition): definition is NonNullable<typeof definition> => Boolean(definition))
+  const sources = await Promise.all(definitions.map(async definition => ({
+    content: (await safeReadFile(definition.absolutePath)) || '',
+    baseDir: dirname(definition.absolutePath),
+  })))
+  return mergePiSettings(sources, getPiMcpAdapterEntry())
 }
 
-function piSettingsConfig(existingContents: string[] = [], runtimeExtensionPath = '', skipBundledAdapter = false): string {
-  let existing: Record<string, unknown> = {}
-  for (const content of existingContents) {
-    try {
-      const parsed = JSON.parse(content)
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) existing = { ...existing, ...parsed }
-    } catch {}
-  }
+function piSettingsConfig(existing: Record<string, unknown> = {}, runtimeExtensionPath = ''): string {
   const bundledAdapterEntry = getPiMcpAdapterEntry()
-  // A user-installed pi-mcp-adapter registers the same `mcp` tool and
-  // `--mcp-config` flag as the bundled copy; loading both makes Pi refuse to
-  // start. Always drop inherited bundled entries so skipBundledAdapter wins.
   const configuredExtensions = Array.isArray(existing.extensions)
-    ? existing.extensions
-      .filter(value => typeof value === 'string' && value.trim())
-      .filter(value => value !== bundledAdapterEntry)
+    ? existing.extensions.filter(value => typeof value === 'string' && value.trim() && value !== bundledAdapterEntry)
     : []
   const extensions = new Set<string>(configuredExtensions)
-  if (!skipBundledAdapter) extensions.add(bundledAdapterEntry)
+  if (!userSettingsProvidesPiMcpAdapter({ ...existing, extensions: configuredExtensions })) extensions.add(bundledAdapterEntry)
   if (runtimeExtensionPath) extensions.add(runtimeExtensionPath)
   return `${JSON.stringify({
     ...existing,
@@ -2749,8 +2738,7 @@ export async function getCodingAgentStatus(definition: CodingAgentDefinition): P
     })
     const rawVersion = `${stdout || ''}${stderr || ''}`.trim()
     if (definition.id === 'pi' && !existsSync(getPiMcpAdapterEntry())) {
-      const liveSettings = await safeReadFile(getLiveConfigFileDefinition(definition.id, 'settings')?.absolutePath || '')
-      const userProvidesAdapter = liveSettings ? userSettingsProvidesPiMcpAdapter([liveSettings]) : false
+      const userProvidesAdapter = userSettingsProvidesPiMcpAdapter(await readPiSettings())
       if (!userProvidesAdapter) {
         const status: CodingAgentToolStatus = {
           ...definition,
@@ -2903,13 +2891,8 @@ export async function installCodingAgent(id: string): Promise<CodingAgentMutatio
       timeout: 10 * 60 * 1000,
       env,
     })
-    if (tool.id === 'pi') {
-      const adapterRoot = getPiMcpAdapterRoot()
-      await mkdir(adapterRoot, { recursive: true })
-      await runNpm(piMcpAdapterInstallArgs(adapterRoot), {
-        timeout: 10 * 60 * 1000,
-        env,
-      })
+    if (tool.id === 'pi' && !userSettingsProvidesPiMcpAdapter(await readPiSettings())) {
+      await installBundledPiMcpAdapter()
     }
     cachedGlobalNpmBin = undefined
     const status = await getCodingAgentStatus(tool)
@@ -3483,12 +3466,10 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       ...(reasoningEffort ? ['-c', `model_reasoning_effort=${JSON.stringify(reasoningEffort)}`] : []),
     ]
   } else if (tool.id === 'pi') {
-    const liveSettingsContent = await safeReadFile(getLiveConfigFileDefinition(tool.id, 'settings')?.absolutePath || '') || ''
-    const skipBundledAdapter = userSettingsProvidesPiMcpAdapter([liveSettingsContent])
+    const settings = await readPiSettings(scope)
+    const skipBundledAdapter = userSettingsProvidesPiMcpAdapter(settings)
     if (!skipBundledAdapter && !existsSync(getPiMcpAdapterEntry())) {
-      const err = new Error('Pi MCP Adapter is not installed. Reinstall Pi from Coding Agents.')
-      ;(err as any).status = 400
-      throw err
+      await installBundledPiMcpAdapter()
     }
     // Keep a stable, credential-free Pi config set at the same level as the
     // Claude Code and Codex homes. Each conversation still gets an isolated
@@ -3516,10 +3497,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     await mkdir(sessionsDir, { recursive: true })
     await writeRuntimeFile('studio_extension', PI_STUDIO_EXTENSION_FILE, piStudioRuntimeExtension())
     await writeRuntimeFile('dynamic_prompt', PI_DYNAMIC_PROMPT_FILE, '')
-    await writeRuntimeFile('settings', 'settings.json', piSettingsConfig([
-      liveSettingsContent,
-      (await safeReadFile(getScopedConfigFileDefinition(tool.id, 'settings', scope)?.absolutePath || '')) || '',
-    ], studioExtensionPath, skipBundledAdapter))
+    await writeRuntimeFile('settings', 'settings.json', piSettingsConfig(settings, studioExtensionPath))
     await writeRuntimeFile('models', 'models.json', piModelsConfig({
       baseUrl: piBaseUrl,
       apiKey: piApiKey,
