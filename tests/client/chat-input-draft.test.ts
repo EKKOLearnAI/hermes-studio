@@ -392,6 +392,18 @@ describe('ChatInput draft persistence', () => {
     expect(wrapper.get('.n-slider-stub').classes()).not.toContain('reasoning-effort-slider--max')
   })
 
+  it.each(['opencode', 'codex', 'claude', 'pi', 'grok'] as const)('shows the supported commands for %s', async agent => {
+    const wrapper = mountForSession(`session-commands-${agent}`, { source: 'coding_agent', agent })
+    await wrapper.get('textarea').setValue('/')
+    await nextTick()
+    const commands = wrapper.findAll('.slash-command-item').map(item => item.text())
+    for (const name of ['context', 'usage', 'status']) {
+      expect(commands.some(text => text.includes(`/${name}`))).toBe(true)
+    }
+    expect(commands.some(text => text.includes('/compact'))).toBe(agent !== 'opencode')
+    wrapper.unmount()
+  })
+
   it('opens the skill picker from /skill and inserts the selected skill command', async () => {
     fetchSkillsMock.mockResolvedValue({
       categories: [
