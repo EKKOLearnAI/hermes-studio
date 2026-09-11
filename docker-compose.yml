@@ -23,7 +23,8 @@ services:
       - HERMES_LAN_ADVERTISE_URL=${HERMES_LAN_ADVERTISE_URL:-}
       - HERMES_APP_ENTITLEMENT_REQUIRED=${HERMES_APP_ENTITLEMENT_REQUIRED:-true}
       - HERMES_APP_ENTITLEMENT_PUBLIC_KEY=${HERMES_APP_ENTITLEMENT_PUBLIC_KEY:-}
-      - PATH=/opt/hermes/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      - NPM_CONFIG_PREFIX=/home/agent/.hermes-web-ui/coding-agent/npm
+      - PATH=/home/agent/.hermes-web-ui/coding-agent/npm/bin:/opt/hermes/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       - HERMES_ALLOW_ROOT_GATEWAY=1
     restart: unless-stopped
     stdin_open: true

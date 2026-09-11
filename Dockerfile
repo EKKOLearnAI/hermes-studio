@@ -41,7 +41,9 @@ ENV NODE_ENV=production
 ENV HOME=/home/agent
 ENV HERMES_HOME=/home/agent/.hermes
 ENV HERMES_WEB_UI_MANAGED_GATEWAY=1
-ENV PATH=/opt/hermes/.venv/bin:$PATH
+# Keep runtime-installed coding agent CLIs in the existing Studio data volume.
+ENV NPM_CONFIG_PREFIX=/home/agent/.hermes-web-ui/coding-agent/npm
+ENV PATH=/home/agent/.hermes-web-ui/coding-agent/npm/bin:/opt/hermes/.venv/bin:$PATH
 
 EXPOSE 6060
 
