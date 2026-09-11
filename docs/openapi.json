@@ -7983,7 +7983,10 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "enum": [
+                "custom"
+              ]
             }
           }
         ]
@@ -8109,7 +8112,10 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "enum": [
+                "custom"
+              ]
             }
           }
         ]
@@ -14897,6 +14903,32 @@
                 ]
               }
             }
+          }
+        }
+      }
+    },
+    "/api/studio/media/image-providers": {
+      "get": {
+        "tags": [
+          "Media"
+        ],
+        "summary": "Get image-providers",
+        "description": "GET /api/studio/media/image-providers",
+        "operationId": "getImageProviders",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not found"
           }
         }
       }
