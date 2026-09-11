@@ -163,6 +163,23 @@ describe('coding agent session commands', () => {
     expect(command.message).toContain('After: 200 tokens')
   })
 
+  it.each([false, true])('does not launch manual OpenCode compaction when running=%s', async running => {
+    getSessionMock.mockReturnValue({ id: 'session-1', agent: 'opencode' })
+    getRunInfoMock.mockReturnValue(running ? { agentId: 'opencode', running: true } : null)
+    const { handleCodingAgentSessionCommand } = await import('../../packages/server/src/modules/coding-agents/services/session-command')
+    const { socket, nsp, emitted } = makeSocket()
+    await handleCodingAgentSessionCommand(nsp, socket as any, { session_id: 'session-1' },
+      { name: 'compact', rawName: 'compact', args: '' }, 'default', new Map())
+    expect(compactMock).not.toHaveBeenCalled()
+    expect(startCodingAgentRunMock).not.toHaveBeenCalled()
+    expect(compactStoredCodingAgentSessionMock).not.toHaveBeenCalled()
+    const commands = emitted.filter(item => item.event === 'session.command')
+    expect(commands).toHaveLength(1)
+    expect(commands[0].payload).toMatchObject({ ok: false, terminal: !running, compacted: false,
+      message: expect.stringContaining('managed by OpenCode internally') })
+    expect(commands[0].payload.started).toBeUndefined()
+  })
+
   it('reports native compact failure without compressing Studio transcript', async () => {
     compactMock.mockRejectedValue(new Error('native compact unsupported'))
     getSessionMock.mockReturnValue({ id: 'session-1', agent: 'codex' })
