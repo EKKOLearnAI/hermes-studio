@@ -2435,7 +2435,7 @@ export class CodingAgentRunManager {
       update: update => {
         if (run.exited || run.stoppedByUser || run.printCompleted) return
         this.touch(run)
-        if (update.sessionUpdate === 'agent_message_chunk' && update.content?.type === 'text') this.appendCodexText(run, update.content.text)
+        if (update.sessionUpdate === 'agent_message_chunk' && update.content?.type === 'text') this.appendCodexText(run, update.content.text, true)
         else if (update.sessionUpdate === 'agent_thought_chunk' && update.content?.type === 'text') this.appendCodexReasoning(run, update.content.text)
         else if (update.sessionUpdate === 'tool_call') this.handleCodexItemStarted(run, {
           type: 'mcp_tool_call', id: update.toolCallId, tool: update.title || 'DSH tool', arguments: update.rawInput,
@@ -3325,10 +3325,10 @@ export class CodingAgentRunManager {
     return false
   }
 
-  private appendCodexText(run: ManagedCodingAgentRun, text: string) {
+  private appendCodexText(run: ManagedCodingAgentRun, text: string, exactDelta = false) {
     if (!text) return
     const existing = run.printText || ''
-    const delta = text.length >= 16 ? appendedTextDelta(existing, text) : text
+    const delta = !exactDelta && text.length >= 16 ? appendedTextDelta(existing, text) : text
     if (!delta) return
     this.ensureClaudePrintText(run)
     run.printText = `${existing}${delta}`

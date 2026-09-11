@@ -10,6 +10,7 @@ import { CodingAgentRunManager } from '../../packages/server/src/modules/coding-
 import { initAllHermesTables } from '../../packages/server/src/modules/studio/infrastructure/database/schemas'
 import { getSession } from '../../packages/server/src/modules/studio/repositories/session-store'
 import { getRecordedUsageTotals } from '../../packages/server/src/modules/studio/repositories/usage-store'
+import { DSH_STREAM_METHOD } from '../../packages/server/src/modules/coding-agents/services/dsh/stream-plugin'
 
 vi.mock('child_process', async original => ({ ...await original<typeof import('child_process')>(), spawn: vi.fn() }))
 
@@ -97,6 +98,30 @@ describe('DSH chat runner', () => {
     child.emit('close', 1)
     await vi.waitFor(() => expect(emitted).toHaveBeenCalledWith(sessionId, 'run.failed', expect.anything()))
     expect(emitted.mock.calls.filter(call => call[1] === 'run.completed')).toHaveLength(0)
+  })
+  it('publishes native live deltas before ACP completion without dropping repeated long text', async () => {
+    const child = await prompt('work')
+    const text = 'A repeated chunk longer than sixteen characters. '
+    const live = (frame: object) => child.stdout.write(`${JSON.stringify({
+      method: DSH_STREAM_METHOD, params: { sessionId: 'dsh-native', frame },
+    })}\n`)
+    for (const attemptId of ['before-tool', 'after-tool']) {
+      live({ type: 'start', attemptId })
+      live({ type: 'text-delta', attemptId, text })
+      live({ type: 'text-delta', attemptId, text })
+      // The UI event must already exist while both model and ACP are unfinished.
+      expect(JSON.stringify(emitted.mock.calls)).toContain(text)
+      expect(emitted.mock.calls.some(call => call[1] === 'run.completed')).toBe(false)
+      live({ type: 'commit', attemptId, messageId: attemptId })
+      live({ type: 'end', attemptId })
+      update(child, { sessionUpdate: 'agent_message_chunk', messageId: attemptId, content: { type: 'text', text: text.repeat(2) } })
+      if (attemptId === 'before-tool') {
+        update(child, { sessionUpdate: 'tool_call', toolCallId: 'tool', title: 'read_file', rawInput: {} })
+        update(child, { sessionUpdate: 'tool_call_update', toolCallId: 'tool', status: 'completed', rawOutput: 'done' })
+      }
+    }
+    finish(child)
+    await vi.waitFor(() => expect(emitted).toHaveBeenCalledWith(sessionId, 'run.completed', expect.objectContaining({ output: text.repeat(4) })))
   })
   it('cancels its ACP session and terminates its owned child on shutdown', async () => {
     const child = await prompt('work')

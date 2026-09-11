@@ -169,7 +169,7 @@ test('updates a pending free catalog inside the new chat drawer', async ({ page 
   await expect(create).toBeEnabled({ timeout: 10_000 })
 })
 
-for (const mode of ['scoped', 'global']) test(`DSH ${mode} chat sends its runtime identity and model selection`, async ({ page }) => {
+for (const mode of ['scoped', 'global']) test(`DSH ${mode} chat selects its model and displays deltas before completion`, async ({ page }) => {
   await authenticate(page, TEST_ACCESS_KEY)
   const api = await mockHermesApi(page)
   await mockChatSocket(page)
@@ -190,5 +190,23 @@ for (const mode of ['scoped', 'global']) test(`DSH ${mode} chat sends its runtim
   expect(payload).toMatchObject({ coding_agent_id: 'dsh', mode })
   if (mode === 'scoped') expect(payload).toMatchObject({ provider: 'test-provider', model: 'test-model' })
   await expect(page.locator('img[src="/coding-agents/deepseek.svg"]').first()).toBeVisible()
+  await page.evaluate(sid => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('run.started', { event: 'run.started', session_id: sid, run_id: 'dsh-stream' })
+    socket.__trigger('message.delta', { event: 'message.delta', session_id: sid, run_id: 'dsh-stream', delta: 'DSH first chunk' })
+  }, payload.session_id)
+  await expect(page.getByText('DSH first chunk', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible()
+  await page.evaluate(sid => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('message.delta', { event: 'message.delta', session_id: sid, run_id: 'dsh-stream', delta: ' and second chunk' })
+  }, payload.session_id)
+  await expect(page.getByText('DSH first chunk and second chunk', { exact: true })).toBeVisible()
+  await page.evaluate(sid => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('run.completed', { event: 'run.completed', session_id: sid, run_id: 'dsh-stream', output: 'DSH first chunk and second chunk' })
+  }, payload.session_id)
+  await expect(page.getByText('DSH first chunk and second chunk', { exact: true })).toHaveCount(1)
+  await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0)
   expect(api.unexpectedRequests).toEqual([])
 })

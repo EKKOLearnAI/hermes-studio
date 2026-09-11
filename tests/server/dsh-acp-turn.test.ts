@@ -3,6 +3,7 @@ import { PassThrough } from 'node:stream'
 import type { ChildProcess } from 'node:child_process'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DshAcpTurn } from '../../packages/server/src/modules/coding-agents/services/dsh/acp-turn'
+import { DSH_STREAM_METHOD } from '../../packages/server/src/modules/coding-agents/services/dsh/stream-plugin'
 
 const turns: DshAcpTurn[] = []
 afterEach(() => { for (const turn of turns.splice(0)) turn.dispose(); vi.useRealTimers() })
@@ -75,6 +76,66 @@ describe('DSH ACP connection', () => {
     const pending = expect(turn.prompt({ cwd: '/workspace', text: 'go', images: [] })).rejects.toThrow('connection closed')
     await vi.waitFor(() => expect(sent.at(-1).method).toBe('session/prompt'))
     child.emit('close', 0)
+    await pending
+  })
+
+  it('streams only the owned session and deduplicates final blocks by message and attempt', async () => {
+    const { turn, sent, receive, update } = connection({ holdPrompt: true })
+    const pending = turn.prompt({ cwd: '/workspace', text: 'go', images: [] })
+    await vi.waitFor(() => expect(sent.at(-1).method).toBe('session/prompt'))
+    const frame = (frame: object, sessionId = 'native-1') => receive({ method: DSH_STREAM_METHOD, params: { sessionId, frame } })
+    const final = (messageId: string, text: string, sessionUpdate = 'agent_message_chunk') => receive({
+      method: 'session/update', params: { sessionId: 'native-1', update: { messageId, sessionUpdate, content: { type: 'text', text } } },
+    })
+    frame({ type: 'start', attemptId: 'child' }, 'subagent')
+    frame({ type: 'text-delta', attemptId: 'child', text: 'private subagent output' }, 'subagent')
+    frame({ type: 'text-delta', attemptId: 'unknown', text: 'late output' })
+    expect(update).not.toHaveBeenCalled()
+    frame({ type: 'start', attemptId: 'first' })
+    frame({ type: 'reasoning-delta', attemptId: 'first', text: '想一想' })
+    frame({ type: 'text-delta', attemptId: 'first', text: '你好' })
+    frame({ type: 'text-delta', attemptId: 'first', text: '世界' })
+    expect(update.mock.calls.map(([value]) => value.content.text)).toEqual(['想一想', '你好', '世界'])
+    frame({ type: 'commit', attemptId: 'first', messageId: 'message-1' })
+    frame({ type: 'end', attemptId: 'first' })
+    // A later model call can start before the first call's queued ACP updates.
+    frame({ type: 'start', attemptId: 'second' })
+    frame({ type: 'text-delta', attemptId: 'second', text: '你好世界' })
+    frame({ type: 'commit', attemptId: 'second', messageId: 'message-2' })
+    frame({ type: 'end', attemptId: 'second' })
+    final('message-1', '想一想', 'agent_thought_chunk')
+    final('message-1', '你好')
+    final('message-1', '世界！') // Preserve a final-only suffix.
+    final('message-2', '你好世界')
+    final('no-stream', 'Final-only adapter')
+    expect(update.mock.calls.map(([value]) => value.content.text)).toEqual(['想一想', '你好', '世界', '你好世界', '！', 'Final-only adapter'])
+    receive({ id: sent.find(message => message.method === 'session/prompt').id, result: { stopReason: 'end_turn' } })
+    await pending
+    turn.dispose()
+    frame({ type: 'start', attemptId: 'late' })
+    frame({ type: 'text-delta', attemptId: 'late', text: 'after disposal' })
+    expect(update).toHaveBeenCalledTimes(6)
+  })
+
+  it('does not let an abandoned attempt consume a retry or a final-only message', async () => {
+    const { turn, sent, receive, update } = connection({ holdPrompt: true })
+    const pending = turn.prompt({ cwd: '/workspace', text: 'go', images: [] })
+    await vi.waitFor(() => expect(sent.at(-1).method).toBe('session/prompt'))
+    for (const frame of [
+      { type: 'start', attemptId: 'failed' },
+      { type: 'text-delta', attemptId: 'failed', text: 'Trying ' },
+      { type: 'end', attemptId: 'failed' },
+      { type: 'text-delta', attemptId: 'failed', text: 'late failed chunk' },
+      { type: 'start', attemptId: 'retry' },
+      { type: 'text-delta', attemptId: 'retry', text: 'Trying again' },
+      { type: 'commit', attemptId: 'retry', messageId: 'retried-message' },
+      { type: 'end', attemptId: 'retry' },
+    ]) receive({ method: DSH_STREAM_METHOD, params: { sessionId: 'native-1', frame } })
+    for (const messageId of ['retried-message', 'unstreamed-message']) receive({ method: 'session/update', params: {
+      sessionId: 'native-1', update: { sessionUpdate: 'agent_message_chunk', messageId, content: { type: 'text', text: 'Trying again' } },
+    } })
+    expect(update.mock.calls.map(([value]) => value.content.text)).toEqual(['Trying ', 'Trying again', 'Trying again'])
+    receive({ id: sent.find(message => message.method === 'session/prompt').id, result: { stopReason: 'end_turn' } })
     await pending
   })
 

@@ -1,8 +1,10 @@
 import { cp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { parseDocument, stringify } from 'yaml'
 import { writeManagedPromptFile } from '../prompt-file'
 import { updateDshMcpServer } from './config'
+import { DSH_STREAM_PLUGIN } from './stream-plugin'
 
 export const DSH_MODEL_PROVIDER = 'ekko-studio'
 export const DSH_API_KEY_ENV = 'HERMES_DSH_API_KEY'
@@ -52,7 +54,10 @@ export async function prepareDshRuntime(input: {
   await writeFile(join(input.rootDir, 'cordis.patch.yml'), patch || '[]\n', { mode: 0o600 })
   const promptFile = join(input.rootDir, 'AGENTS.md')
   await writeManagedPromptFile(promptFile, input.systemPrompt, await read('AGENTS.md'))
+  const streamPluginPath = join(input.rootDir, 'studio-stream.mjs')
+  await writeFile(streamPluginPath, DSH_STREAM_PLUGIN, { mode: 0o600 })
   const overlay: unknown[] = [
+    { insert: [{ id: 'ekko-studio-assistant-stream', name: pathToFileURL(streamPluginPath).href }] },
     { id: 'session-persistence-jsonl', config: { root: join(input.rootDir, 'sessions'), compression: 'none' } },
     { id: 'skill-filesystem', config: { customSkillDirs: [join(input.sourceHome, 'skills'), input.sharedSkills] } },
   ]

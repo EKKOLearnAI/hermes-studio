@@ -3,6 +3,9 @@ import { readFileSync } from 'node:fs'
 import { StringDecoder } from 'node:string_decoder'
 import type { CodingAgentImageInput } from '../../protocol/types'
 import { dshReasoningEffort } from './runtime-config'
+import { DSH_STREAM_METHOD } from './stream-plugin'
+
+interface StreamedText { agent_message_chunk: string; agent_thought_chunk: string }
 
 interface Pending {
   resolve(value: any): void
@@ -18,6 +21,8 @@ export class DshAcpTurn {
   private decoder = new StringDecoder('utf8')
   private closed = false
   private sessionId = ''
+  private attempts = new Map<string, StreamedText>()
+  private committed = new Map<string, StreamedText>()
 
   constructor(private child: ChildProcess, private callbacks: {
     update(update: any): void
@@ -65,9 +70,12 @@ export class DshAcpTurn {
   }
 
   private receive(message: any) {
+    if (this.closed) return
     if (message.method) {
       if (message.method === 'session/update' && message.params?.sessionId === this.sessionId) {
-        this.callbacks.update(message.params.update)
+        this.receiveUpdate(message.params.update)
+      } else if (message.method === DSH_STREAM_METHOD && message.params?.sessionId === this.sessionId) {
+        this.receiveStream(message.params.frame)
       } else if (message.id !== undefined) {
         if (message.method === 'session/request_permission' && message.params?.sessionId === this.sessionId) {
           const kind = this.callbacks.permissionRequired ? 'reject_once' : 'allow_once'
@@ -85,6 +93,42 @@ export class DshAcpTurn {
     if (pending.timer) clearTimeout(pending.timer)
     if (message.error) pending.reject(new Error(`DSH ACP: ${message.error.message || 'request failed'}`))
     else pending.resolve(message.result)
+  }
+
+  private receiveStream(frame: any) {
+    if (!frame || typeof frame.attemptId !== 'string') return
+    if (frame.type === 'start') {
+      this.attempts.set(frame.attemptId, { agent_message_chunk: '', agent_thought_chunk: '' })
+      return
+    }
+    const attempt = this.attempts.get(frame.attemptId)
+    if (!attempt) return
+    if (frame.type === 'end') this.attempts.delete(frame.attemptId)
+    else if (frame.type === 'commit' && typeof frame.messageId === 'string') {
+      this.committed.set(frame.messageId, { ...attempt })
+    } else if ((frame.type === 'text-delta' || frame.type === 'reasoning-delta') && typeof frame.text === 'string' && frame.text) {
+      const sessionUpdate = frame.type === 'text-delta' ? 'agent_message_chunk' : 'agent_thought_chunk'
+      attempt[sessionUpdate] += frame.text
+      this.callbacks.update({ sessionUpdate, content: { type: 'text', text: frame.text } })
+    }
+  }
+
+  private receiveUpdate(update: any) {
+    const streamed = this.committed.get(update?.messageId)
+    const kind: unknown = update?.sessionUpdate
+    if (streamed && (kind === 'agent_message_chunk' || kind === 'agent_thought_chunk') && update.content?.type === 'text') {
+      const remaining = streamed[kind]
+      const text = update.content.text
+      // Consume only this message's streamed prefix; identical text in another
+      // model call or a retry is a new delta. Keep final-only suffixes as fallback.
+      if (remaining.startsWith(text)) {
+        streamed[kind] = remaining.slice(text.length)
+        return
+      }
+      streamed[kind] = ''
+      if (text.startsWith(remaining)) update = { ...update, content: { ...update.content, text: text.slice(remaining.length) } }
+    }
+    this.callbacks.update(update)
   }
 
   async prompt(input: {
@@ -147,5 +191,7 @@ export class DshAcpTurn {
       pending.reject(error)
     }
     this.pending.clear()
+    this.attempts.clear()
+    this.committed.clear()
   }
 }
