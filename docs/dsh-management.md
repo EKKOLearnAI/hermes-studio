@@ -1,5 +1,7 @@
 # DeepSeek Harness integration
 
+This page describes the current integration. The proposed next stages for reusing Web Profiles, Agent presets, native plugins and browser plugin runtimes are documented in [DSH 配置复用与插件完整接入规划](planning/dsh-profiles-and-plugins.md); those stages are not implemented by this planning document.
+
 Open **Agent Manager → DeepSeek Harness** to install `@deepseek-ai/dsh`, detect an existing `dsh` CLI, check for updates, or uninstall the CLI. Installation uses the official npm registry and the same global package management path as other Coding Agents. Update checks include prerelease ordering, such as `rc.1` to `rc.2`.
 
 The Settings button opens the shared Coding Agent configuration pages:
