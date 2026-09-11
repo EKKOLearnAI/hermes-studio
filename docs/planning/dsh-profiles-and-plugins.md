@@ -1,7 +1,9 @@
 # DSH 配置复用与插件完整接入规划
 
-日期：2026-09-11  
-状态：规划，尚未实施。本文提交到 [PR #3011](https://github.com/EKKOLearnAI/hermes-studio/pull/3011)，不代表该 PR 已实现下面的完整插件能力。  
+日期：2026-09-11
+
+状态：规划，尚未实施。本文提交到 [PR #3011](https://github.com/EKKOLearnAI/hermes-studio/pull/3011)，不代表该 PR 已实现下面的完整插件能力。
+
 实现基线：Studio `32027ae4`；真实 CLI 验证版本为 DSH `0.1.5-rc.1`。
 
 ## 1. 目标与范围
