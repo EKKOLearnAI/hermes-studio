@@ -111,7 +111,8 @@ function buildApiUrl(baseUrl: string, pathWithV1: string): string {
   if (base.endsWith('/v1')) return `${base}${providerPath}`
   try {
     const pathname = new URL(base).pathname.replace(/\/+$/, '')
-    if (pathname) return `${base}${providerPath}`
+    // Match provider catalog API roots; plain proxy prefixes still need /v1.
+    if (/\/(?:v\d+(?:beta)?|openai)$/.test(pathname)) return `${base}${providerPath}`
   } catch {
     // Keep the legacy /v1 default for non-standard base URL strings.
   }
