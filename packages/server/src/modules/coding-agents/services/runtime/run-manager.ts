@@ -2432,7 +2432,7 @@ export class CodingAgentRunManager {
           },
           error: (message, usage) => {
             run.codexPendingUsage = usage || run.codexPendingUsage
-            this.failCodexExecTurn(run, message)
+            this.failCodexExecTurn(run, message, usage)
           },
           status: message => this.emitTerminalStatus(run, message),
         })
@@ -2457,7 +2457,7 @@ export class CodingAgentRunManager {
         }
         if (run.printCompleted) return
         if (code === 0) this.completeClaudePrintTurn(run, run.codexPendingUsage)
-        else this.failCodexExecTurn(run, run.codexPendingError || exitErrorMessage('Grok', code, run.currentChildStderr))
+        else this.failCodexExecTurn(run, run.codexPendingError || exitErrorMessage('Grok', code, run.currentChildStderr), run.codexPendingUsage)
       },
     })
     run.currentChild = child
@@ -2928,7 +2928,7 @@ export class CodingAgentRunManager {
     this.failCodexExecTurn(run, message)
   }
 
-  private failCodexExecTurn(run: ManagedCodingAgentRun, message: string) {
+  private failCodexExecTurn(run: ManagedCodingAgentRun, message: string, usage?: unknown) {
     this.handleClaudePrintResponseEvent(run, {
       type: 'response.failed',
       data: {
@@ -2940,6 +2940,7 @@ export class CodingAgentRunManager {
           model: run.launch.model,
           error: { message },
           output: [],
+          usage,
         },
       },
     })
