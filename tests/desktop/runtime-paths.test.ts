@@ -121,6 +121,18 @@ describe('desktop runtime paths', () => {
     }
   })
 
+  it.each(['linux', 'darwin', 'win32'] as const)('resolves the %s app icon in development and packaged builds', async (platform) => {
+    setPlatform(platform)
+    const { desktopIcon } = await import('../../packages/desktop/src/main/paths')
+    const appPath = tempDir()
+    mockElectronApp.getAppPath = () => appPath
+    const filename = platform === 'linux' ? 'iconLinux.png' : 'icon.png'
+
+    expect(desktopIcon()).toBe(join(appPath, 'build', filename))
+    mockElectronApp.isPackaged = true
+    expect(desktopIcon()).toBe(join(process.resourcesPath, 'build', filename))
+  })
+
   it('uses the downloaded runtime in packaged builds even when stale install resources exist', async () => {
     mkdirSync(join(process.resourcesPath, 'python'), { recursive: true })
     mkdirSync(join(process.resourcesPath, 'node'), { recursive: true })

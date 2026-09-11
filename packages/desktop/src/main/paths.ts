@@ -512,8 +512,9 @@ export function hermesBinExists(): boolean {
 }
 
 export function desktopIcon(): string {
-  if (isPackaged()) return resolve(process.resourcesPath, 'build', 'icon.png')
-  return resolve(desktopAppPath(), 'build', 'icon.png')
+  const filename = process.platform === 'linux' ? 'iconLinux.png' : 'icon.png'
+  if (isPackaged()) return resolve(process.resourcesPath, 'build', filename)
+  return resolve(desktopAppPath(), 'build', filename)
 }
 
 export function desktopWindowsTrayIcon(): string {
