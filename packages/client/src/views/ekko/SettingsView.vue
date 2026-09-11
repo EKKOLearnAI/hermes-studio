@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, toRaw, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, toRaw, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   NAlert,
@@ -17,6 +17,8 @@ import {
 } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import SettingRow from '@/components/hermes/settings/SettingRow.vue'
+import ReasoningEffortSupportNote from '@/components/hermes/chat/ReasoningEffortSupportNote.vue'
+import { filterReasoningEffortValues } from '@/utils/reasoning-effort'
 import {
   fetchEkkoSettings,
   saveEkkoSettings,
@@ -40,8 +42,16 @@ let saveTimer: ReturnType<typeof setTimeout> | undefined
 let editVersion = 0
 let saveAfterCurrent = false
 
-const reasoningEffortOptions = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
-  .map(value => ({ label: value, value }))
+const reasoningEffortOptions = computed(() => {
+  const values = filterReasoningEffortValues(
+    ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
+    form.value?.model.defaultProvider,
+    form.value?.model.defaultModel,
+  )
+  const current = form.value?.model.reasoningEffort || ''
+  if (current && !values.includes(current)) values.push(current)
+  return values.map(value => ({ label: value, value }))
+})
 const reasoningSummaryOptions = ['auto', 'concise', 'detailed']
   .map(value => ({ label: value, value }))
 function normalizeTab(value: unknown): SettingsTab {
@@ -186,7 +196,13 @@ onBeforeUnmount(() => {
                 <NInputNumber v-model:value="form.model.maxTokens" :min="1" clearable size="small" class="input-sm" @update:value="saveDebouncedChange" />
               </SettingRow>
               <SettingRow :label="t('ekkoConfig.reasoningEffort')" :hint="t('ekkoConfig.modelParameterHint')">
-                <NSelect v-model:value="form.model.reasoningEffort" :options="reasoningEffortOptions" size="small" class="input-md" @update:value="saveImmediateChange" />
+                <div class="reasoning-setting-control">
+                  <NSelect v-model:value="form.model.reasoningEffort" :options="reasoningEffortOptions" size="small" class="input-md" @update:value="saveImmediateChange" />
+                  <ReasoningEffortSupportNote
+                    :provider="form.model.defaultProvider"
+                    :model="form.model.defaultModel"
+                  />
+                </div>
               </SettingRow>
               <SettingRow :label="t('ekkoConfig.reasoningSummary')" :hint="t('ekkoConfig.modelParameterHint')">
                 <NSelect v-model:value="form.model.reasoningSummary" :options="reasoningSummaryOptions" size="small" class="input-md" @update:value="saveImmediateChange" />

@@ -22,6 +22,7 @@ import type {
 import type { ProviderApiMode } from '@/api/studio/provider-api-mode'
 import * as systemApi from '@/api/hermes/system'
 import { useModelsStore } from '@/stores/hermes/models'
+import ReasoningEffortSupportNote from '@/components/hermes/chat/ReasoningEffortSupportNote.vue'
 
 const props = defineProps<{
   show: boolean
@@ -362,6 +363,10 @@ async function clearCredentialNow() {
           <small v-if="manualModelWarning" class="warning-text">{{ t('models.unverifiedModelWarning') }}</small>
           <small v-else>{{ t('models.providerPreferredModelHint') }}</small>
         </label>
+        <ReasoningEffortSupportNote
+          :provider="provider.provider"
+          :model="preferredModel"
+        />
 
         <section v-if="can('api_key')" class="credential-section">
           <div class="section-heading">

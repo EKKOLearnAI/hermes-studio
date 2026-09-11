@@ -507,4 +507,15 @@ describe('ChatInput draft persistence', () => {
 
     expect(wrapper.find('.slash-command-dropdown').exists()).toBe(false)
   })
+
+  it('filters the reasoning slider for the active model and explains the declared levels', async () => {
+    const wrapper = mountForSession('session-kimi-reasoning', {
+      provider: 'kimi-coding',
+      model: 'kimi-k2.5',
+    })
+    await nextTick()
+
+    expect(wrapper.get('.n-slider-stub').attributes('max')).toBe('4')
+    expect(wrapper.find('.reasoning-effort-support').exists()).toBe(true)
+  })
 })

@@ -3,6 +3,7 @@ import { ref, watch, computed, onMounted, nextTick } from 'vue'
 import { NModal, NForm, NFormItem, NInput, NInputNumber, NButton, NSelect, NRadioGroup, NRadioButton, useMessage, useDialog } from 'naive-ui'
 import { useModelsStore } from '@/stores/hermes/models'
 import { useI18n } from 'vue-i18n'
+import ReasoningEffortSupportNote from '@/components/hermes/chat/ReasoningEffortSupportNote.vue'
 import CodexLoginModal from './CodexLoginModal.vue'
 import NousLoginModal from './NousLoginModal.vue'
 import CopilotLoginModal from './CopilotLoginModal.vue'
@@ -115,6 +116,9 @@ const presetOptions = computed(() =>
 const selectedPresetProvider = computed(() =>
   selectedPreset.value ? modelsStore.allProviders.find(g => g.provider === selectedPreset.value) : null,
 )
+const reasoningProvider = computed(() => selectedPreset.value || (
+  providerType.value === 'custom' ? customProviderKey(formData.value.name) : ''
+))
 const canEditPresetBaseUrl = computed(() => !!selectedPresetProvider.value?.base_url_env)
 const canFetchProviderCatalog = computed(() =>
   !!formData.value.base_url.trim() &&
@@ -568,6 +572,10 @@ function handleClose() {
           </NButton>
         </div>
       </NFormItem>
+      <ReasoningEffortSupportNote
+        :provider="reasoningProvider"
+        :model="formData.model"
+      />
 
       <NFormItem v-if="providerType === 'custom'" :label="t('models.contextLength')">
         <NInputNumber

@@ -16,11 +16,13 @@ import { useToolTraceVisibility } from '@/composables/useToolTraceVisibility'
 import { extractClipboardFiles } from '@/utils/clipboard-files'
 import VoiceDialogueControls from './VoiceDialogueControls.vue'
 import BundleCreateModal from './BundleCreateModal.vue'
+import ReasoningEffortSupportNote from './ReasoningEffortSupportNote.vue'
 import { BRIDGE_SESSION_COMMAND_DEFINITIONS } from '@/utils/hermes/bridge-session-commands'
 import { clampChatInputHeight, isMobileChatInputViewport } from '@/utils/chat-input-height'
 import { normalizeComposerVoiceTranscript, useComposerVoiceInput } from '@/composables/useComposerVoiceInput'
 import { extractRepresentativeVideoFrames, isVideoFile } from '@/utils/video-frame-extraction'
 import ImagePreviewOverlay from './ImagePreviewOverlay.vue'
+import { filterReasoningEffortValues } from '@/utils/reasoning-effort'
 
 const chatStore = useChatStore()
 const appStore = useAppStore()
@@ -48,16 +50,28 @@ const emit = defineEmits<{
   voiceClick: []
 }>()
 
-const reasoningEffortOptions = computed(() => [
-  { label: t('chat.reasoningEffort.options.default'), value: '' },
-  { label: t('chat.reasoningEffort.options.none'), value: 'none' },
-  { label: t('chat.reasoningEffort.options.minimal'), value: 'minimal' },
-  { label: t('chat.reasoningEffort.options.low'), value: 'low' },
-  { label: t('chat.reasoningEffort.options.medium'), value: 'medium' },
-  { label: t('chat.reasoningEffort.options.high'), value: 'high' },
-  { label: t('chat.reasoningEffort.options.xhigh'), value: 'xhigh' },
-  { label: t('chat.reasoningEffort.options.max'), value: 'max' },
-])
+const CHAT_REASONING_EFFORT_VALUES = ['', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
+const currentReasoningProvider = computed(() =>
+  chatStore.activeSession?.provider || appStore.selectedProvider,
+)
+const currentReasoningModel = computed(() =>
+  chatStore.activeSession?.model || appStore.selectedModel,
+)
+const reasoningEffortOptions = computed(() => {
+  const current = chatStore.activeSession?.reasoningEffort || ''
+  const values = filterReasoningEffortValues(
+    CHAT_REASONING_EFFORT_VALUES,
+    currentReasoningProvider.value,
+    currentReasoningModel.value,
+  )
+  // Keep a previously persisted value visible until the user explicitly changes it.
+  // New selections still come only from the model's filtered policy.
+  if (current && !values.includes(current)) values.push(current)
+  return values.map(value => ({
+    label: t(`chat.reasoningEffort.options.${value || 'default'}`),
+    value,
+  }))
+})
 const currentReasoningEffort = computed<string>(() =>
   chatStore.activeSession?.reasoningEffort || ''
 )
@@ -1309,6 +1323,10 @@ function openAttachmentPreview(attachment: Attachment) {
               <div class="reasoning-effort-slider-hint">
                 {{ t('chat.reasoningEffort.dragHint', { count: reasoningEffortOptions.length }) }}
               </div>
+              <ReasoningEffortSupportNote
+                :provider="currentReasoningProvider"
+                :model="currentReasoningModel"
+              />
             </div>
           </NPopover>
 

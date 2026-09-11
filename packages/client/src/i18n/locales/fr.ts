@@ -911,6 +911,8 @@ export default {
       tooltip: 'Effort de raisonnement',
       dragHint: 'Faites glisser pour choisir · {count} niveaux',
       defaultLabel: 'Par défaut',
+      supportHint: 'Niveaux officiels : {official}. Le support du fournisseur peut varier selon la route.',
+      supportHintExtended: 'Niveaux officiels : {official}. Les niveaux étendus : {extensions} peuvent fonctionner sur des routes compatibles. Le support du fournisseur peut varier selon la route.',
       options: {
         default: 'Par défaut (config.yaml)',
         none: 'Aucun',

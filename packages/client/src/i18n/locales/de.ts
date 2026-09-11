@@ -911,6 +911,8 @@ export default {
       tooltip: 'Denkaufwand',
       dragHint: 'Zum Auswählen ziehen · {count} Stufen',
       defaultLabel: 'Standard',
+      supportHint: 'Offizielle Stufen: {official}. Die tatsächliche Provider-Unterstützung kann je nach Route variieren.',
+      supportHintExtended: 'Offizielle Stufen: {official}. Erweiterte Stufen: {extensions} funktionieren möglicherweise auf kompatiblen Routen. Die tatsächliche Provider-Unterstützung kann je nach Route variieren.',
       options: {
         default: 'Standard (config.yaml)',
         none: 'Keiner',

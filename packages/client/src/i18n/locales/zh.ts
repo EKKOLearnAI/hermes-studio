@@ -937,6 +937,8 @@ export default {
       tooltip: '推理强度',
       dragHint: '拖动选择 · 共 {count} 档',
       defaultLabel: '默认',
+      supportHint: '官方档位：{official}。不同渠道的实际支持可能不同。',
+      supportHintExtended: '官方档位：{official}。扩展档位：{extensions}，仅部分兼容渠道可能支持。不同渠道的实际支持可能不同。',
       options: {
         default: '默认 (config.yaml)',
         none: '无',

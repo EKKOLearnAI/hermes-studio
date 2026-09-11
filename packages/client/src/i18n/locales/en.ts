@@ -937,6 +937,8 @@ export default {
       tooltip: 'Reasoning effort',
       dragHint: 'Drag to choose · {count} levels',
       defaultLabel: 'Default',
+      supportHint: 'Official levels: {official}. Provider support can still vary by route.',
+      supportHintExtended: 'Official levels: {official}. Extended levels: {extensions} may work on compatible routes. Provider support can still vary by route.',
       options: {
         default: 'Default (config.yaml)',
         none: 'None',

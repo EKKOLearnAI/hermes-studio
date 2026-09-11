@@ -930,6 +930,8 @@ export default {
       tooltip: 'جهد التفكير',
       dragHint: 'اسحب للاختيار · {count} درجات',
       defaultLabel: 'افتراضي',
+      supportHint: 'المستويات الرسمية: {official}. قد يختلف دعم المزوّد حسب المسار.',
+      supportHintExtended: 'المستويات الرسمية: {official}. قد تعمل المستويات الموسّعة: {extensions} عبر المسارات المتوافقة فقط. قد يختلف دعم المزوّد حسب المسار.',
       options: {
         default: 'افتراضي (config.yaml)',
         none: 'بدون',
