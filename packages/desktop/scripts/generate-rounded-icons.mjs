@@ -1,9 +1,9 @@
-import { writeFile } from 'node:fs/promises'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import sharp from 'sharp'
 
 const buildDir = new URL('../build/', import.meta.url)
-// Keep the original artwork intact; only the tile's outside corners change.
+// Keep the original artwork intact while rounding the tile's outside corners.
 function renderRounded(size, radius) {
   const mask = Buffer.from(`<svg width="${size}" height="${size}"><rect width="${size}" height="${size}" rx="${size * radius}" fill="white"/></svg>`)
   return sharp(fileURLToPath(new URL('icon.png', buildDir)))
@@ -12,6 +12,20 @@ function renderRounded(size, radius) {
     .composite([{ input: mask, blend: 'dest-in' }])
     .png()
     .toBuffer()
+}
+
+// Linux shells display the supplied silhouette; leave space around the tile
+// so its visual weight matches neighboring launcher icons.
+await mkdir(new URL('icons/', buildDir), { recursive: true })
+for (const size of [16, 32, 48, 64, 128, 256, 512]) {
+  const padding = Math.round(size / 16)
+  const tile = await renderRounded(size - padding * 2, 0.2)
+  const icon = await sharp(tile)
+    .extend({ top: padding, bottom: padding, left: padding, right: padding, background: '#00000000' })
+    .png()
+    .toBuffer()
+  await writeFile(new URL(`icons/${size}x${size}.png`, buildDir), icon)
+  if (size === 512) await writeFile(new URL('iconLinux.png', buildDir), icon)
 }
 
 const windowsRadius = 0.16

@@ -1,6 +1,7 @@
 import { readFileSync } from 'fs'
 import { resolve } from 'path'
 import { describe, expect, it } from 'vitest'
+import sharp from 'sharp'
 
 function pngSize(path: string): { width: number; height: number } {
   const png = readFileSync(resolve(path))
@@ -12,6 +13,29 @@ function pngSize(path: string): { width: number; height: number } {
 }
 
 describe('desktop app icon', () => {
+  it('leaves transparent margins and rounded corners around every Linux launcher tile', async () => {
+    for (const size of [16, 32, 48, 64, 128, 256, 512]) {
+      const { data, info } = await sharp(resolve(`packages/desktop/build/icons/${size}x${size}.png`))
+        .ensureAlpha().raw().toBuffer({ resolveWithObject: true })
+      const alpha = (x: number, y: number) => data[(y * info.width + x) * info.channels + 3]
+      const padding = Math.round(size / 16)
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          if (x < padding || y < padding || x >= size - padding || y >= size - padding) {
+            expect(alpha(x, y)).toBe(0)
+          }
+        }
+      }
+      expect(alpha(padding, padding)).toBeLessThan(32)
+      expect(alpha(size / 2, padding)).toBe(255)
+      expect(alpha(size / 2, size / 2)).toBe(255)
+    }
+    expect(readFileSync(resolve('packages/desktop/build/iconLinux.png')))
+      .toEqual(readFileSync(resolve('packages/desktop/build/icons/512x512.png')))
+    expect(readFileSync(resolve('packages/desktop/electron-builder.yml'), 'utf8'))
+      .toContain('- "iconLinux.png"')
+  })
+
   it('ships the cross-platform source and every required Linux PNG size', () => {
     expect(pngSize('packages/desktop/build/icon.png')).toEqual({ width: 1024, height: 1024 })
     for (const size of [16, 32, 48, 64, 128, 256, 512]) {
