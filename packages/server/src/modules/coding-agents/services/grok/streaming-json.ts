@@ -4,9 +4,9 @@ export type GrokStreamEvent =
   | { type: 'tool_call'; toolCallId: string; title: string; toolName: string; rawInput: unknown; status: string }
   | { type: 'tool_call_update'; toolCallId: string; status: string; content: unknown; rawOutput: unknown }
   | { type: 'plan'; entries: unknown }
-  | { type: 'usage'; usage: unknown; stopReason: string }
-  | { type: 'end'; sessionId: string; stopReason: string; usage: unknown }
-  | { type: 'error'; message: string; usage?: unknown }
+  | { type: 'usage'; usage: unknown; stopReason: string; messageId?: string }
+  | { type: 'end'; sessionId: string; stopReason: string; usage: unknown; modelUsage?: unknown }
+  | { type: 'error'; message: string; usage?: unknown; modelUsage?: unknown }
   | { type: 'status'; message: string }
 
 function statusMessage(event: any): string {
@@ -50,7 +50,7 @@ export function parseGrokStreamingJsonLine(line: string): GrokStreamEvent | null
   }
   if (type === 'plan') return { type, entries: event.entries }
   if (type === 'usage') {
-    return { type, usage: event.usage ?? event.data?.usage, stopReason: String(event.stopReason || event.data?.stopReason || '') }
+    return { type, usage: event.usage ?? event.data?.usage, stopReason: String(event.stopReason || event.data?.stopReason || ''), ...(event.messageId ? { messageId: String(event.messageId) } : {}) }
   }
   if (type === 'end') {
     return {
@@ -58,10 +58,11 @@ export function parseGrokStreamingJsonLine(line: string): GrokStreamEvent | null
       sessionId: String(event.sessionId || ''),
       stopReason: String(event.stopReason || ''),
       usage: event.usage ?? event.data?.usage,
+      ...(event.modelUsage || event.data?.modelUsage ? { modelUsage: event.modelUsage ?? event.data?.modelUsage } : {}),
     }
   }
   if (type === 'error') {
-    return { type, message: String(event.message || event.data?.message || 'Grok run failed'), usage: event.usage ?? event.data?.usage }
+    return { type, message: String(event.message || event.data?.message || 'Grok run failed'), usage: event.usage ?? event.data?.usage, ...(event.modelUsage || event.data?.modelUsage ? { modelUsage: event.modelUsage ?? event.data?.modelUsage } : {}) }
   }
   const message = statusMessage(event)
   return message ? { type: 'status', message } : null

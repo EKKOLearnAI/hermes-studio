@@ -28,6 +28,9 @@ import { updateManagedPromptFileSync } from '../prompt-file'
 import { grokSessionExists, startGrokTurnProcess } from '../grok/turn-process'
 import { applyGrokStreamEvent } from '../grok/event-adapter'
 import { isolatedCodingAgentChildEnv } from './child-env'
+import { NativeTurnUsage, type NativeUsageRow } from './native-usage'
+import { readCodexTurnModel, readOpenCodeMessageModel } from './native-model'
+import { getCodingAgentGlobalHome } from '../../../studio/public/coding-agent-global-home'
 
 export { isolatedCodingAgentChildEnv } from './child-env'
 
@@ -184,6 +187,10 @@ interface ManagedCodingAgentRun {
   codexChatText?: string
   codexPendingUsage?: any
   codexPendingError?: string
+  codexTurnFailed?: boolean
+  nativeUsage?: NativeTurnUsage
+  nativeTurnStartedAt?: number
+  nativeCompletionPending?: boolean
   terminalUsageRefresh?: Promise<void>
   stoppedByUser?: boolean
   pendingChatCompletionEvent?: 'run.completed' | 'run.failed'
@@ -787,10 +794,17 @@ export class CodingAgentRunManager {
   send(sessionId: string, input: string, options: CodingAgentRunSendOptions = {}): { runId: string; messageId?: number } {
     const run = this.getBySession(sessionId)
     if (!run) throw new Error('Coding agent session not found')
+    if (run.nativeCompletionPending) throw new Error('Coding agent is still completing the previous input')
     if (agentUpdateLocked(run.launch.agentId)) throw new Error('Agent is updating; retry after completion')
     const text = String(input || '').trim()
     const images = Array.isArray(options.images) ? options.images : []
     if (!text && images.length === 0) throw new Error('Input is required')
+    // Keep native metadata separate from launch configuration: global CLIs can
+    // choose a different model each turn, including during a resumed session.
+    if (!childIsRunning(run.currentChild) || (run.launch.agentId === 'pi' && !run.turnActive)) {
+      run.nativeUsage = new NativeTurnUsage()
+      run.nativeTurnStartedAt = Date.now()
+    }
     const systemPrompt = String(options.systemPrompt || '').trim()
     this.ensureDbSession(run)
     run.assistantMessageId = undefined
@@ -1154,22 +1168,9 @@ export class CodingAgentRunManager {
     if (isTerminalEvent) {
       run.assistantMessageId = this.persistTerminalResponse(run)
       const final = (storageSafeResponseEvent.data as any).response || storageSafeResponseEvent.data
-      if (run.launch.mode !== 'scoped' && final?.usage) {
-        const usage = normalizeTokenUsage(final.usage)
-        if (!usage.isEstimated) {
-          recordSessionUsage({
-            sessionId: run.launch.sessionId,
-            runId: final?.id || run.printResponseId || run.runMarker,
-            source: 'coding_agent',
-            agent: usageCodingAgent(run.launch.agentId),
-            usageScope: 'run',
-            usage: final.usage,
-            profile: run.launch.profile,
-            model: final?.model || run.launch.model,
-            provider: run.launch.provider,
-            isEstimated: false,
-          })
-        }
+      if (run.launch.mode !== 'scoped' && !['opencode', 'pi'].includes(run.launch.agentId)) {
+        const rows = (run.nativeUsage || new NativeTurnUsage()).rows(run.launch.agentId, final?.usage, final?.model || run.launch.model)
+        this.recordNativeUsage(run, rows, final?.id || run.printResponseId || run.runMarker || run.id)
       }
       const deferPiUsageRefresh = run.launch.agentId === 'pi'
       run.terminalUsageRefresh = deferPiUsageRefresh
@@ -1205,6 +1206,24 @@ export class CodingAgentRunManager {
     run.state.responseRun = undefined
     updateSessionStats(run.launch.sessionId)
     return assistantMessageId
+  }
+
+  private recordNativeUsage(run: ManagedCodingAgentRun, rows: NativeUsageRow[], responseId: string) {
+    for (const row of rows) {
+      recordSessionUsage({
+        sessionId: run.launch.sessionId,
+        runId: `${responseId}:${row.id}`,
+        source: 'coding_agent',
+        agent: usageCodingAgent(run.launch.agentId),
+        usageScope: row.scope,
+        apiCalls: row.apiCalls,
+        usage: row.usage,
+        profile: run.launch.profile,
+        model: row.model,
+        provider: row.provider || run.launch.provider,
+        isEstimated: false,
+      })
+    }
   }
 
   private schedulePiTerminalUsageRefresh(run: ManagedCodingAgentRun) {
@@ -1648,6 +1667,10 @@ export class CodingAgentRunManager {
     }
 
     if (run.printCompleted) return
+    if (run.launch.mode === 'global') {
+      const row = run.nativeUsage?.observePi(event)
+      if (row) this.recordNativeUsage(run, [row], run.printResponseId || run.id)
+    }
     if (event.type === 'auto_retry_start') {
       run.piWillRetry = true
       return
@@ -1983,6 +2006,7 @@ export class CodingAgentRunManager {
     }
 
     if (run.printCompleted) return
+    if (run.launch.mode === 'global') run.nativeUsage?.observeClaude(event)
 
     if (event.type === 'stream_event' && event.event) {
       this.handleClaudeAnthropicStreamEvent(run, event.event)
@@ -2349,7 +2373,7 @@ export class CodingAgentRunManager {
           id: run.printResponseId,
           object: 'response',
           status: 'completed',
-          model: run.launch.model,
+          model: run.nativeUsage?.model || run.launch.model,
           output,
           usage,
         },
@@ -2410,6 +2434,7 @@ export class CodingAgentRunManager {
       images,
       onEvent: (event) => {
         this.touch(run)
+        if (run.launch.mode === 'global') run.nativeUsage?.observeGrok(event)
         applyGrokStreamEvent(event, {
           text: value => this.appendCodexText(run, value),
           thought: value => this.appendCodexReasoning(run, value),
@@ -2432,7 +2457,7 @@ export class CodingAgentRunManager {
           },
           error: (message, usage) => {
             run.codexPendingUsage = usage || run.codexPendingUsage
-            this.failCodexExecTurn(run, message, usage)
+            this.failCodexExecTurn(run, message, run.codexPendingUsage)
           },
           status: message => this.emitTerminalStatus(run, message),
         })
@@ -2595,6 +2620,8 @@ export class CodingAgentRunManager {
           reasoningTokens: tokens.reasoning,
         })
         if (!usage.isEstimated) {
+          const nativeModel = readOpenCodeMessageModel(run.launch.env?.OPENCODE_DB, nativeSessionId || run.launch.agentNativeSessionId || '', String(part.messageID || ''))
+          if (nativeModel && run.nativeUsage) Object.assign(run.nativeUsage, nativeModel)
           recordSessionUsage({
             sessionId: run.launch.sessionId,
             runId: String(part.id),
@@ -2604,8 +2631,8 @@ export class CodingAgentRunManager {
             apiCalls: 1,
             usage,
             profile: run.launch.profile,
-            model: run.launch.model,
-            provider: run.launch.provider,
+            model: nativeModel?.model || run.launch.model,
+            provider: nativeModel?.provider || run.launch.provider,
             isEstimated: false,
           })
         }
@@ -2699,6 +2726,7 @@ export class CodingAgentRunManager {
     run.printTextStarted = false
     run.printText = ''
     run.codexPendingError = undefined
+    run.codexTurnFailed = false
     run.printCompleted = false
     run.responseStartEmitted = false
     run.terminalEventHandled = false
@@ -2786,13 +2814,29 @@ export class CodingAgentRunManager {
       })
     })
 
-    child.on('exit', (code) => {
+    // Native stdout owns global usage. Drain it before final accounting and
+    // model lookup; `exit` can precede the last JSONL bytes.
+    child.on(run.launch.mode === 'global' ? 'close' : 'exit', (code: number | null) => {
       if (stdoutBuffer.trim()) this.handleCodexExecLine(run, stdoutBuffer)
       if (run.currentChildKillTimer) clearTimeout(run.currentChildKillTimer)
       run.currentChildKillTimer = undefined
       run.currentChild = undefined
       logger.info({ runId: run.id, sessionId: run.launch.sessionId, code }, '[coding-agent-run] codex exec exited')
-      this.finishCodexExecTurn(run, code)
+      const nativeSessionId = run.launch.agentNativeSessionId
+      if (run.launch.mode === 'global' && nativeSessionId && run.nativeTurnStartedAt) {
+        const home = run.launch.env?.CODEX_HOME || process.env.CODEX_HOME || join(getCodingAgentGlobalHome(), '.codex')
+        run.nativeCompletionPending = true
+        void readCodexTurnModel(home, nativeSessionId, run.nativeTurnStartedAt).then(metadata => {
+          run.nativeCompletionPending = false
+          if (run.exited || run.stoppedByUser) return
+          if (metadata && run.nativeUsage) Object.assign(run.nativeUsage, metadata)
+          this.finishCodexExecTurn(run, code)
+        }).catch(err => {
+          run.nativeCompletionPending = false
+          logger.warn({ err, runId: run.id }, '[coding-agent-run] failed to read native model metadata')
+          if (!run.exited && !run.stoppedByUser) this.finishCodexExecTurn(run, code)
+        })
+      } else this.finishCodexExecTurn(run, code)
     })
   }
 
@@ -2802,7 +2846,7 @@ export class CodingAgentRunManager {
       void this.emitAndMarkPrintChatRunCompletedAfterUsage(run, run.pendingChatCompletionEvent, run.pendingChatCompletionPayload)
       return
     }
-    if (code === 0) {
+    if (code === 0 && !run.codexTurnFailed) {
       this.completeCodexExecTurn(run, run.codexPendingUsage)
       return
     }
@@ -2817,6 +2861,7 @@ export class CodingAgentRunManager {
           model: run.launch.model,
           error: { message: run.codexPendingError || exitErrorMessage('Codex', code, run.currentChildStderr) },
           output: [],
+          usage: run.codexPendingUsage,
         },
       },
     })
@@ -2869,7 +2914,11 @@ export class CodingAgentRunManager {
       return
     }
     if (type === 'turn.failed') {
-      this.failCodexExecTurn(run, event.error?.message || event.message || 'Codex run failed')
+      run.codexTurnFailed = true
+      run.codexPendingUsage = event.usage ?? run.codexPendingUsage
+      const message = event.error?.message || event.message || 'Codex run failed'
+      if (run.launch.mode === 'global') this.deferCodexExecError(run, message)
+      else this.failCodexExecTurn(run, message, run.codexPendingUsage)
       return
     }
     if (type === 'error') {
@@ -2909,7 +2958,11 @@ export class CodingAgentRunManager {
       return
     }
     if (method === 'turn/failed') {
-      this.failCodexExecTurn(run, params.error?.message || params.message || 'Codex run failed')
+      run.codexTurnFailed = true
+      run.codexPendingUsage = params.usage ?? run.codexPendingUsage
+      const message = params.error?.message || params.message || 'Codex run failed'
+      if (run.launch.mode === 'global') this.deferCodexExecError(run, message)
+      else this.failCodexExecTurn(run, message, run.codexPendingUsage)
       return
     }
     if (method === 'error') {
@@ -2921,11 +2974,11 @@ export class CodingAgentRunManager {
     // Codex emits broad `error` events for recoverable stream retries as well as
     // failures. Let the native process exit status arbitrate the turn: exit 0
     // discards this provisional error, while a non-zero exit reports it.
-    if (childIsRunning(run.currentChild)) {
+    if (childIsRunning(run.currentChild) || (run.launch.mode === 'global' && run.currentChild)) {
       run.codexPendingError = message
       return
     }
-    this.failCodexExecTurn(run, message)
+    this.failCodexExecTurn(run, message, run.codexPendingUsage)
   }
 
   private failCodexExecTurn(run: ManagedCodingAgentRun, message: string, usage?: unknown) {

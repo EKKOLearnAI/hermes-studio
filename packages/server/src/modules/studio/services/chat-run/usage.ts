@@ -110,7 +110,9 @@ export async function calcAndUpdateUsage(
         ...usage,
         ...(latest
           ? {
-              contextInputTokens: Number(latest.input_tokens || 0),
+              // Accounting keeps ordinary and cached input disjoint, but both
+              // occupy the model's context window.
+              contextInputTokens: Number(latest.input_tokens || 0) + Number(latest.cache_read_tokens || 0) + Number(latest.cache_write_tokens || 0),
               contextOutputTokens: Number(latest.output_tokens || 0),
             }
           : {}),
