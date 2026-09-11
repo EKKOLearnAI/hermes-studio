@@ -70,6 +70,29 @@ PORT=6060
 - The auth token is auto-generated on first run and printed to container logs.
 - Deleting the token file and restarting will generate a new one.
 
+### Coding agent installations
+
+Coding agents installed from Studio (Claude Code, Codex, Pi, OpenCode, and Grok)
+use npm's global prefix at `/home/agent/.hermes-web-ui/coding-agent/npm`.
+The image and Compose put its `bin` directory on `PATH`. With the default
+mounts, packages and executable links are saved under
+`${HERMES_DATA_DIR}/hermes-web-ui/coding-agent/npm` and remain available after
+container recreation or image updates. Studio's Pi MCP adapter and scoped
+agent configurations also use the existing Studio data volume.
+
+Older images installed these CLIs outside the data volume. After upgrading,
+reinstall affected agents once from Studio to place them in the persistent
+directory. Packages already lost when an old container was removed cannot be
+recovered from the new image. A restart of the same container normally retains
+its writable filesystem; recreation replaces it.
+
+For custom deployments, persist `/home/agent/.hermes-web-ui`, or set
+`NPM_CONFIG_PREFIX` to a directory inside your own persistent mount and include
+`$NPM_CONFIG_PREFIX/bin` on `PATH`. Do not mount over `/usr/local`, which also
+contains the image's Node.js runtime. Native CLI login/configuration directories
+under `/home/agent` are separate from the npm installation; mount those as well
+if you use native global logins and need to retain them across recreation.
+
 ## Port Mapping
 
 | Port | Description |
