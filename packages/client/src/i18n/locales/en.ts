@@ -3506,6 +3506,22 @@ export default {
 
   // Changelog
   changelog: {
+    new_0_7_19_1: 'Rebranded as Ekko Studio with unified app icons, website domains, CLI commands, and product documentation (#2966, #2980, #2981, #2992, #2994)',
+    new_0_7_19_2: 'Fixed desktop restart loops, interrupted updates, and startup failures; preserved sign-in and browser data across upgrades and migrated Windows startup settings (#2931, #2979, #2988)',
+    new_0_7_19_3: 'Added native OpenCode Free with keyless chat creation and Coding Agent access; available models load in the background (#2932)',
+    new_0_7_19_4: 'Fixed OpenCode session compatibility for Ekko and Coding Agents routed through Studio; Hermes still requires a runtime upgrade (#2996)',
+    new_0_7_19_5: 'Ekko now saves task plans and shows live progress cards; the sidebar stays active while delegated background tasks are running (#2952, #2961)',
+    new_0_7_19_6: 'Chat file links jump to and highlight cited lines; the workspace file tree collapses without a gap while retaining file and folder state (#2947, #2965)',
+    new_0_7_19_7: 'Desktop web links can open in the embedded or system browser; the embedded panel appears immediately, before the page finishes loading (#2928, #2956)',
+    new_0_7_19_8: 'Browser annotations support individual deletion and undo; fixed errors when closing tabs or clearing annotations (#2949, #2944)',
+    new_0_7_19_9: 'Read-aloud skips hidden reasoning and preserves meaningful symbols such as minus and percent signs; Doubao TTS supports 0.5–2x speed synced to the active profile (#2945, #2950, #2978)',
+    new_0_7_19_10: 'Restored enable and disable switches by default in Hermes and Ekko skill lists (#2933)',
+    new_0_7_19_11: 'With the updated App, added foreground notifications for chat approvals, clarifications, finished runs, group Agent replies, and workflow completion or failure; fixed relay cleanup after disconnects (#2940, #2946)',
+    new_0_7_19_12: 'With the updated App, session categories support independent pagination with correct pinned-session filtering and category totals (#2977, #2982)',
+    new_0_7_19_13: 'Direct chats can read iOS steps, sleep, heart rate, and other health data after user confirmation; requires a compatible App and does not support Android yet (#2972)',
+    new_0_7_19_14: 'Added a Studio announcement dialog that shows only the latest announcement and remembers dismissal; fetch failures do not interrupt use (#2989)',
+    new_0_7_19_15: 'Fixed preservation of multiline Codex settings and Hook tables, premature profile-restart timeouts, and Docker startup blocked by failed optional patches (#2951, #2960, #2969)',
+    new_0_7_19_16: 'Added groundwork for Agent auto-update policies; no UI or background updater is enabled, and Agents are not automatically upgraded (#2923)',
     new_0_7_18_1: 'Added OpenCode as a Coding Agent with session resume, streamed tool calls, configuration, memory, Skills, workflows, and group chat support (#2890)',
     new_0_7_18_2: 'Group chats now connect remote Agents through cloud relay, with improved streaming order, reconnection, summary restoration, shared image access, tool folding, and mobile layout (#2927)',
     new_0_7_18_3: 'Added one-time mobile location, calendar, and reminder capabilities; sensitive actions require consent, deletion targets the confirmed item, and consent timeouts and request origins are validated (#2820, #2926)',

@@ -528,6 +528,7 @@ export class AgentRuntime {
         const modelClient = this.modelClientFor(input)
         emit({ type: 'model.started', runId, step })
         const request = this.modelRequest(input, messages, modelClient, contextKey, modelSignal)
+        request.metadata = { ...request.metadata, session_id: contextKey || runId }
         const recoveryDirective = this.currentRecoveryDirective()
         if (recoveryDirective?.active && request.tools?.length) {
           const allowed = new Set(recoveryDirective.allowedToolNames)
@@ -1040,6 +1041,7 @@ export class AgentRuntime {
       requestLogger: this.runtimeLogger,
       requestLogContext: input.logContext,
       requestRunId: runId,
+      sessionId: contextKey || runId,
       onUsage: input.onSkillReviewUsage,
       onStarted: reviewId => emit?.({ type: 'skill.review.started', runId, reviewId }),
       onCompleted: (reviewId, mutations) => emit?.({

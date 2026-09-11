@@ -8,7 +8,7 @@ import {
   parseServerSentEventLine,
   providerHttpError,
   providerUrl,
-  requestHeaders,
+  modelRequestHeaders,
 } from '../http'
 import type {
   AgentMessage,
@@ -152,12 +152,12 @@ export class OpenAICompatibleModelClient implements ModelClient {
   }
 
   async create(request: ModelRequest): Promise<ModelResponse> {
-    const response = await this.postWithImageFallback({ ...request, stream: false }, request.signal)
+    const response = await this.postWithImageFallback(request, false, request.signal)
     return normalizeOpenAIChatResponse(this.provider, await parseResponseJson(this.provider, response))
   }
 
   async *stream(request: ModelRequest): AsyncIterable<ModelEvent> {
-    const response = await this.postWithImageFallback({ ...request, stream: true }, request.signal)
+    const response = await this.postWithImageFallback(request, true, request.signal)
 
     if (!response.body) {
       throw new ModelProviderError('Model provider returned an empty stream body.', {
@@ -271,26 +271,26 @@ export class OpenAICompatibleModelClient implements ModelClient {
     }
   }
 
-  private async postWithImageFallback(request: ModelRequest, signal?: AbortSignal): Promise<Response> {
+  private async postWithImageFallback(request: ModelRequest, stream: boolean, signal?: AbortSignal): Promise<Response> {
     const model = request.model ?? this.config.defaultModel
     const target = chatTargetKey(this.config, model)
     const initialConfig = textOnlyChatTargets.has(target)
       ? withoutVision(this.config)
       : this.config
-    const payload = toOpenAIChatPayload(initialConfig, request)
+    const payload = toOpenAIChatPayload(initialConfig, { ...request, stream })
     try {
-      return await this.post(payload, signal)
+      return await this.post(payload, request, signal)
     } catch (error) {
       if (!payloadContainsImage(payload) || !isUnsupportedImageError(error)) throw error
       rememberTextOnlyChatTarget(target)
-      return this.post(toOpenAIChatPayload(withoutVision(this.config), request), signal)
+      return this.post(toOpenAIChatPayload(withoutVision(this.config), { ...request, stream }), request, signal)
     }
   }
 
-  private async post(payload: OpenAIChatPayload, signal?: AbortSignal): Promise<Response> {
+  private async post(payload: OpenAIChatPayload, request: ModelRequest, signal?: AbortSignal): Promise<Response> {
     const response = await this.fetchImpl(chatCompletionsUrl(this.config), {
       method: 'POST',
-      headers: requestHeaders(this.config),
+      headers: modelRequestHeaders(this.config, request),
       body: JSON.stringify(payload),
       signal: abortSignal(this.config.timeoutMs, signal),
     })

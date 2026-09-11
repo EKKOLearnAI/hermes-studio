@@ -1,7 +1,8 @@
 # Architecture
 
-Hermes Web UI is a TypeScript monorepo that ships a browser dashboard, a Koa
-backend, and an Electron desktop distribution around Hermes Agent.
+Ekko Studio is a TypeScript monorepo that ships a local-first AI workspace
+through a web console, a Koa backend, and an Electron desktop app. It integrates
+Ekko Agent, Hermes Agent, and coding agents for chat, coding, and workflows.
 
 ## Package Boundaries
 

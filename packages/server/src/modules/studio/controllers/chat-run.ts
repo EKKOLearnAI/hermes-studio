@@ -58,6 +58,8 @@ const CHAT_RUN_EVENTS = [
   'calendar.resolved',
   'reminder.requested',
   'reminder.resolved',
+  'health.requested',
+  'health.resolved',
   'peer.user.message',
 ]
 
@@ -123,6 +125,40 @@ export async function requestMobileCalendar(ctx: Context) {
       includeCompleted: body.include_completed,
       limit: body.limit,
       item: body.item,
+      timeoutMs: body.timeout_ms,
+    })
+    ctx.body = { ok: true, session_id: sessionId, ...result }
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err)
+    ctx.status = error === 'Session not found' ? 404 : 400
+    ctx.body = { ok: false, error }
+  }
+}
+
+export async function requestMobileHealth(ctx: Context) {
+  const body = (ctx.request.body || {}) as Record<string, unknown>
+  const sessionId = String(body.session_id || '').trim()
+  if (!sessionId) {
+    ctx.status = 400
+    ctx.body = { ok: false, error: 'session_id is required' }
+    return
+  }
+  const server = getChatRunServer()
+  if (!server?.requestMobileHealth) {
+    ctx.status = 503
+    ctx.body = { ok: false, error: 'Chat run service is unavailable' }
+    return
+  }
+  const profile = String(ctx.state.profile?.name || 'default').trim() || 'default'
+  try {
+    const result = await server.requestMobileHealth({
+      sessionId,
+      profile,
+      purpose: body.purpose,
+      metrics: body.metrics,
+      startMs: body.start_ms,
+      endMs: body.end_ms,
+      limit: body.limit,
       timeoutMs: body.timeout_ms,
     })
     ctx.body = { ok: true, session_id: sessionId, ...result }

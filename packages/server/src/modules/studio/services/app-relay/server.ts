@@ -60,6 +60,7 @@ const ALLOWED_CHAT_RUN_CLIENT_EVENTS = new Set([
   'calendar.respond',
   'reminder.respond',
   'location.respond',
+  'health.respond',
 ])
 const ALLOWED_GROUP_CHAT_CLIENT_EVENTS = new Set([
   'join',

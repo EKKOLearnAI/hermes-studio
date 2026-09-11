@@ -12,7 +12,7 @@ import type {
   ModelResponse,
   ModelUsage,
 } from '../types'
-import { isPlainRecord, parseJson, postJson, postStream, providerUrl, readServerSentEvents } from '../http'
+import { modelRequestHeaders, isPlainRecord, parseJson, postJson, postStream, providerUrl, readServerSentEvents } from '../http'
 import { collectModelEvents, normalizeAgentReasoning } from '../messages'
 
 interface OpenAIResponsesPayload {
@@ -136,7 +136,7 @@ export class OpenAIResponsesModelClient implements ModelClient {
       this.fetchImpl,
       responsesUrl(this.config),
       toOpenAIResponsesPayload(this.config, { ...request, stream: false }),
-      undefined,
+      modelRequestHeaders(this.config, request),
       request.signal,
     )
     return normalizeOpenAIResponsesResponse(response)
@@ -148,7 +148,7 @@ export class OpenAIResponsesModelClient implements ModelClient {
       this.fetchImpl,
       responsesUrl(this.config),
       toOpenAIResponsesPayload(this.config, { ...request, stream: true }),
-      undefined,
+      modelRequestHeaders(this.config, request),
       request.signal,
     )
 

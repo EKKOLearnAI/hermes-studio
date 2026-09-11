@@ -223,7 +223,7 @@ async function requestEnvelope(path, options = {}) {
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...(profile ? { 'X-Hermes-Profile': profile } : {}),
   }
-  const fetchRequest = path === '/api/studio/mobile-calendar/request' ? fetchMobileConsent : fetch
+  const fetchRequest = path === '/api/studio/mobile-calendar/request' || path === '/api/studio/mobile-health/request' ? fetchMobileConsent : fetch
   const response = await fetchRequest(`${baseUrl()}${appendQuery(path, options.query)}`, {
     method,
     headers,
@@ -1353,6 +1353,20 @@ const tools = [
     }, ['session_id', 'action', 'purpose']),
   },
   {
+    name: 'ekko_studio_use_mobile_health',
+    toolset: 'use',
+    description: 'With the user’s explicit request, ask their iPhone or iPad App to read selected Apple HealthKit data once in the current direct chat. iOS only; read-only; no background collection, diagnosis, advertising, delegated tasks, workflows, or group chats.',
+    inputSchema: inputSchema({
+      session_id: { type: 'string', description: 'Exact current Ekko Studio direct-chat session id supplied in the run context.' },
+      purpose: { type: 'string', description: 'Short user-visible reason for reading the health data.' },
+      metrics: { type: 'array', items: { type: 'string', enum: ['steps', 'sleep', 'heart_rate', 'resting_heart_rate', 'heart_rate_variability', 'oxygen_saturation', 'body_weight', 'active_energy', 'distance_walking_running', 'workouts'] }, minItems: 1, uniqueItems: true, description: 'Health metrics to read.' },
+      start_ms: { type: 'number', description: 'Range start as Unix milliseconds.' },
+      end_ms: { type: 'number', description: 'Range end as Unix milliseconds, not in the future; maximum range is 31 days.' },
+      limit: { type: 'number', minimum: 1, maximum: 100, description: 'Maximum sleep or workout records returned.' },
+      timeout_ms: { type: 'number', minimum: 3000, maximum: 300000, default: 300000, description: 'Wait time for one-time App confirmation.' },
+    }, ['session_id', 'purpose', 'metrics', 'start_ms', 'end_ms']),
+  },
+  {
     name: 'ekko_studio_use_workflows_list',
     toolset: 'use',
     description: 'List Ekko Studio workflows for the selected or requested profile.',
@@ -2013,6 +2027,11 @@ async function callTool(name, args = {}) {
           capability: 'reminder',
           ...pickDefined(currentMobileSessionArgs(args), ['session_id', 'action', 'purpose', 'start_ms', 'end_ms', 'include_completed', 'limit', 'item', 'timeout_ms']),
         },
+      })))
+    case 'ekko_studio_use_mobile_health':
+      return jsonText(await request('/api/studio/mobile-health/request', withAuthArgs(currentMobileSessionArgs(args), {
+        method: 'POST',
+        body: pickDefined(currentMobileSessionArgs(args), ['session_id', 'purpose', 'metrics', 'start_ms', 'end_ms', 'limit', 'timeout_ms']),
       })))
     case 'ekko_studio_use_workflows_list':
       return jsonText(await request('/api/studio/workflows', withAuthArgs(args, {

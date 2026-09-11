@@ -24,10 +24,10 @@ Studio installs these global npm packages:
 | --- | --- | --- |
 | Claude Code | `claude` | `@anthropic-ai/claude-code` |
 | Codex | `codex` | `@openai/codex` |
-| Pi | `pi` | Studio-pinned `@earendil-works/pi-coding-agent` |
+| Pi | `pi` | `@earendil-works/pi-coding-agent` |
 | Grok | `grok` | `@xai-official/grok` |
 
-At this Studio revision, Pi is pinned to `0.84.1`. Its installation is incomplete without Studio's separately pinned `pi-mcp-adapter` `2.24.0`, installed below:
+Pi follows the package's current npm version, like the other coding agents. Its installation is incomplete without `pi-mcp-adapter`, which also follows its current npm version and is installed below:
 
 ```text
 <HERMES_WEB_UI_HOME>/coding-agent/pi-mcp-adapter
@@ -38,13 +38,13 @@ The Agents page install action effectively performs the following. The Pi adapte
 ```bash
 npm install -g @anthropic-ai/claude-code
 npm install -g @openai/codex --registry=https://registry.npmjs.org
-npm install -g @earendil-works/pi-coding-agent@0.84.1
+npm install -g @earendil-works/pi-coding-agent
 npm install -g @xai-official/grok --registry=https://registry.npmjs.org
 studio_home="${HERMES_WEB_UI_HOME:-$HOME/.hermes-web-ui}"
-npm install --prefix "$studio_home/coding-agent/pi-mcp-adapter" --save-exact pi-mcp-adapter@2.24.0
+npm install --prefix "$studio_home/coding-agent/pi-mcp-adapter" pi-mcp-adapter
 ```
 
-Run only the line for the requested Agent. For Pi, run both Pi lines, or use the Agents page so Studio chooses the revision's current pins automatically.
+Run only the line for the requested Agent. For Pi, run both Pi lines, or use the Agents page so Studio installs the packages' current npm versions automatically.
 
 ## Success criteria
 
@@ -75,7 +75,7 @@ The Agents page **Check update** action behaves as follows:
 
 - Claude Code: compares the detected version with `npm view @anthropic-ai/claude-code version`.
 - Codex: compares the detected version with `npm view @openai/codex version --registry=https://registry.npmjs.org`.
-- Pi: compares the detected version with Studio's pinned Pi version; it does not chase npm latest independently.
+- Pi: compares the detected version with `npm view @earendil-works/pi-coding-agent version`.
 - Grok: compares the detected version with `npm view @xai-official/grok version --registry=https://registry.npmjs.org`.
 
 Studio uses the official npm Registry only for Codex and Grok installation and

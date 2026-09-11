@@ -56,10 +56,7 @@ const CLAUDE_CODE_ROOT_PERMISSION_ARGS = ['--permission-mode', 'auto']
 // model context window, so it can compact too late for the 20MB proxy body
 // limit. Mirror Hermes' 50% compression budget and pass Studio's window.
 const CLAUDE_CODE_AUTO_COMPACT_PERCENT = 50
-const PI_MCP_ADAPTER_VERSION = '2.24.0'
-const PI_MCP_ADAPTER_PACKAGE = `pi-mcp-adapter@${PI_MCP_ADAPTER_VERSION}`
-const PI_CODING_AGENT_VERSION = '0.84.1'
-const PI_CODING_AGENT_PACKAGE = `@earendil-works/pi-coding-agent@${PI_CODING_AGENT_VERSION}`
+const PI_MCP_ADAPTER_PACKAGE = 'pi-mcp-adapter'
 const OFFICIAL_NPM_REGISTRY = 'https://registry.npmjs.org'
 const PI_PROVIDER_ID = 'hermes-studio'
 const PI_PROXY_TARGET_FILE = 'proxy-target.json'
@@ -2722,6 +2719,10 @@ export function withCodingAgentRegistry(id: CodingAgentId, args: string[]): stri
     : [...args]
 }
 
+export function piMcpAdapterInstallArgs(adapterRoot: string): string[] {
+  return ['install', '--prefix', adapterRoot, PI_MCP_ADAPTER_PACKAGE]
+}
+
 export function getCodingAgentConfigFileDefinitions(id: string): CodingAgentConfigFileDefinition[] {
   const tool = getCodingAgentDefinition(id)
   if (!tool) return []
@@ -2758,7 +2759,7 @@ export async function getCodingAgentStatus(definition: CodingAgentDefinition): P
           rawVersion,
           source: 'user-cli',
           path: resolvedCommand,
-          error: `Pi MCP Adapter ${PI_MCP_ADAPTER_VERSION} is not installed`,
+          error: 'Pi MCP Adapter is not installed',
         }
         recordCodingAgentStatus(status)
         return status
@@ -2864,12 +2865,6 @@ export async function checkUpdateAgent(id: string): Promise<CodingAgentUpdateRes
     throw err
   }
   try {
-    if (tool.id === 'pi') {
-      const status = await getCodingAgentStatus(tool)
-      const latestVersion = PI_CODING_AGENT_VERSION
-      const updateAvailable = status.installed && !versionGte(status.version, latestVersion)
-      return { success: true, tool: status, latestVersion, updateAvailable }
-    }
     const env = await commandEnv()
     const { stdout } = await runNpm(
       withCodingAgentRegistry(tool.id, ['view', tool.packageName, 'version']),
@@ -2903,7 +2898,7 @@ export async function installCodingAgent(id: string): Promise<CodingAgentMutatio
     const env = await commandEnv()
     await runNpm(withCodingAgentRegistry(
       tool.id,
-      ['install', '-g', tool.id === 'pi' ? PI_CODING_AGENT_PACKAGE : tool.packageName],
+      ['install', '-g', tool.packageName],
     ), {
       timeout: 10 * 60 * 1000,
       env,
@@ -2911,7 +2906,7 @@ export async function installCodingAgent(id: string): Promise<CodingAgentMutatio
     if (tool.id === 'pi') {
       const adapterRoot = getPiMcpAdapterRoot()
       await mkdir(adapterRoot, { recursive: true })
-      await runNpm(['install', '--prefix', adapterRoot, '--save-exact', PI_MCP_ADAPTER_PACKAGE], {
+      await runNpm(piMcpAdapterInstallArgs(adapterRoot), {
         timeout: 10 * 60 * 1000,
         env,
       })
@@ -3491,7 +3486,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     const liveSettingsContent = await safeReadFile(getLiveConfigFileDefinition(tool.id, 'settings')?.absolutePath || '') || ''
     const skipBundledAdapter = userSettingsProvidesPiMcpAdapter([liveSettingsContent])
     if (!skipBundledAdapter && !existsSync(getPiMcpAdapterEntry())) {
-      const err = new Error(`Pi MCP Adapter ${PI_MCP_ADAPTER_VERSION} is not installed. Reinstall Pi from Coding Agents.`)
+      const err = new Error('Pi MCP Adapter is not installed. Reinstall Pi from Coding Agents.')
       ;(err as any).status = 400
       throw err
     }

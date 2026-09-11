@@ -10,5 +10,5 @@ it('fetches anonymously and excludes paid models and the Go-only free-named twin
   ] })))
   vi.stubGlobal('fetch', fetchMock)
   expect(await fetchOpenCodeFreeModels()).toEqual(['deepseek-v4-flash-free', 'mimo-v2.5-free'])
-  expect(fetchMock).toHaveBeenCalledWith('https://opencode.ai/zen/v1/models', expect.objectContaining({ headers: {}, signal: expect.any(AbortSignal) }))
+  expect(fetchMock).toHaveBeenCalledWith('https://opencode.ai/zen/v1/models', expect.objectContaining({ headers: { 'x-opencode-session': expect.any(String) }, signal: expect.any(AbortSignal) }))
 })

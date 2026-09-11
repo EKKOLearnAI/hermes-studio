@@ -1,5 +1,25 @@
 import { ModelProviderError, isRetryableStatus } from './errors'
-import type { ModelProviderConfig } from './types'
+import { randomUUID } from 'node:crypto'
+import { openCodeSessionHeaders } from './opencode-session'
+import type { ModelProviderConfig, ModelRequest } from './types'
+
+const requestSessions = new WeakMap<ModelRequest, string>()
+
+export function modelRequestHeaders(
+  config: ModelProviderConfig,
+  request: ModelRequest,
+  defaults: Record<string, string> = {},
+): HeadersInit {
+  let sessionId = typeof request.metadata?.session_id === 'string' ? request.metadata.session_id.trim() : ''
+  if (!sessionId) {
+    sessionId = requestSessions.get(request) || randomUUID()
+    requestSessions.set(request, sessionId)
+  }
+  return requestHeaders(config, {
+    ...openCodeSessionHeaders(config.baseUrl || '', sessionId, config.id),
+    ...defaults,
+  })
+}
 
 export function requestHeaders(config: ModelProviderConfig, defaults: Record<string, string> = {}): HeadersInit {
   const headers: Record<string, string> = {
