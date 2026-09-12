@@ -3536,6 +3536,18 @@ export default {
 
   // Changelog
   changelog: {
+    new_0_7_20_1: 'Added DeepSeek Harness (DSH) installation management and integration with direct chats, group chats, and workflows, including Agent preset selection and mode preservation on resume; updated English and Chinese guides (#3020, #3023)',
+    new_0_7_20_2: 'Added native DSH Web plugin configuration, plugin lists, and Agent preset management with copying, default selection, and custom preset deletion; DSH and Web dependencies must be installed on the backend host (#3020)',
+    new_0_7_20_3: 'Group chat Agent creation and editing now use a right-side drawer with a scrollable form, fixed action buttons, and full-width layout on mobile (#3020)',
+    new_0_7_20_4: 'Shared skills are now read-only across Coding Agent pages to prevent accidental edits or deletion; DSH-private skills remain editable (#3020)',
+    new_0_7_20_5: 'Pi installation and updates follow the latest npm versions and prefer an enabled user MCP adapter to avoid duplicate tool and flag registration (#2999, #2991)',
+    new_0_7_20_6: 'Fixed global Coding Agent usage and model attribution, preserving usage from completed responses and improving cached token accounting; historical records are not backfilled (#3005)',
+    new_0_7_20_7: 'Fixed lost usage on failed Grok turns, custom-provider context bounds, and runtime settings refresh after reasoning-effort changes (#3002)',
+    new_0_7_20_8: 'Coding Agents installed through Studio in Docker now persist in the Studio data volume across container recreation and updates; agents installed with older images need a one-time reinstall (#3006)',
+    new_0_7_20_9: 'Hidden the unsupported OpenCode /compact command; manual entry explains the limitation without interrupting the current task (#3010)',
+    new_0_7_20_10: 'Fixed approval session association for Hermes Agent 0.21 and later while retaining compatibility with older runtimes (#3018)',
+    new_0_7_20_11: 'Updated default apikey domains to apikey.fan and added a one-time startup migration of old endpoints in existing Hermes configurations, preserving paths, keys, and model settings (#3022)',
+    new_0_7_20_12: 'Improved Linux launcher and window icons with rounded corners and transparent margins for a more balanced visual size (#3008)',
     new_0_7_19_1: 'Rebranded as Ekko Studio with unified app icons, website domains, CLI commands, and product documentation (#2966, #2980, #2981, #2992, #2994)',
     new_0_7_19_2: 'Fixed desktop restart loops, interrupted updates, and startup failures; preserved sign-in and browser data across upgrades and migrated Windows startup settings (#2931, #2979, #2988)',
     new_0_7_19_3: 'Added native OpenCode Free with keyless chat creation and Coding Agent access; available models load in the background (#2932)',
