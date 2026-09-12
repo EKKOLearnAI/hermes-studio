@@ -4,12 +4,14 @@ import { authenticate, mockHermesApi, TEST_ACCESS_KEY } from './fixtures'
 for (const mobile of [false, true]) test(`DSH native slot and plugin list retain their state (${mobile ? 'mobile' : 'desktop'})`, async ({ page }) => {
   if (mobile) await page.setViewportSize({ width: 390, height: 844 })
   await authenticate(page, TEST_ACCESS_KEY, 'research')
+  await page.addInitScript(() => localStorage.setItem('hermes_brightness', 'system'))
+  await page.emulateMedia({ colorScheme: 'dark' })
   const api = await mockHermesApi(page)
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message))
   let opens = 0
   await page.route('**/api/coding-agents/dsh/ui-session', route => { opens++; return route.fulfill({ json: { id: 'fixture', path: '/api/coding-agents/dsh/ui/fixture/' } }) })
   await page.route('**/api/coding-agents/dsh/ui-session/fixture', route => route.fulfill({ status: 204 }))
-  await page.route('**/api/coding-agents/dsh/ui/fixture/', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><label>Plugin-owned field<input></label><script>parent.postMessage({type:"studio-dsh-ui-ready"},location.origin)</script>' }))
+  await page.route('**/api/coding-agents/dsh/ui/fixture/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><label>Plugin-owned field<input></label><script>document.body.dataset.theme=new URL(location.href).searchParams.get("studioTheme");window.addEventListener("message",e=>{if(e.data?.type==="studio-dsh-theme")document.body.dataset.theme=e.data.theme});parent.postMessage({type:"studio-dsh-ui-ready"},location.origin)</script>' }))
   const inventory: any = { source: 'native-presets', sourceHome: '/fixture/.dsh', packageVersion: '0.1.5-rc.2', defaultPreset: 'standard', runtimeConnected: false, discovery: 'shipped-and-user-roots',
     web: { profile: 'web', revision: 'a'.repeat(64), sourcePath: '/fixture/.dsh/profiles/web/package.json', packages: [{ name: '@liustack/modlens', title: 'ModLens', description: 'Vision tools for text-only models.', version: '3.26.1', requested: 'github:liustack/modlens#a1923d0', bundle: true, containsBrowserPart: true, error: '' }] },
     presets: [{ id: 'standard', name: 'Standard', isDefault: true, trust: 'system', sourcePath: '/fixture/standard/agent.cordis.yml', entries: Array.from({ length: 28 }, (_, i) => ({ entryId: `tool-${i}`, moduleName: `@deepseek-ai/tool-${i}`, configuredEnabled: true, runtimePhase: null, groupPath: [] })) }] }
@@ -24,6 +26,14 @@ for (const mobile of [false, true]) test(`DSH native slot and plugin list retain
   await expect(panel.getByRole('tab')).toHaveCount(2)
   const input = panel.frameLocator('iframe').getByLabel('Plugin-owned field')
   await input.fill('native draft')
+  const nativeBody = panel.frameLocator('iframe').locator('body')
+  await expect(nativeBody).toHaveAttribute('data-theme', 'dark')
+  await page.emulateMedia({ colorScheme: 'light' })
+  await expect(nativeBody).toHaveAttribute('data-theme', 'light')
+  await page.emulateMedia({ colorScheme: 'dark' })
+  await expect(nativeBody).toHaveAttribute('data-theme', 'dark')
+  await expect(input).toHaveValue('native draft')
+  expect(opens).toBe(1)
   await panel.getByRole('tab', { name: 'Plugin list', exact: true }).click()
   await expect(panel.getByTestId('dsh-web-package')).toContainText('ModLens')
   await expect(panel.getByTestId('dsh-web-package')).toContainText('Vision tools for text-only models.')

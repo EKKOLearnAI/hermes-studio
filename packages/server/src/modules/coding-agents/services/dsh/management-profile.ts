@@ -37,7 +37,7 @@ export async function prepareDshManagementProfile(input: { command: string; sour
   }
   const slot = join(directory, 'node_modules/studio-dsh-ui')
   await mkdir(slot, { recursive: true })
-  await writeFile(join(slot, 'package.json'), JSON.stringify({ name: 'studio-dsh-ui', type: 'module', exports: { '.': './index.js', './client': './client.js', './package.json': './package.json' }, dsh: { client: { platform: 'web', immediately: true, inject: ['slots', 'layout'], external: ['react'] } } }))
+  await writeFile(join(slot, 'package.json'), JSON.stringify({ name: 'studio-dsh-ui', type: 'module', exports: { '.': './index.js', './client': './client.js', './package.json': './package.json' }, dsh: { client: { platform: 'web', immediately: true, inject: ['slots', 'layout', 'locale', 'theme'], external: ['react'] } } }))
   await writeFile(join(slot, 'index.js'), DSH_UI_SLOT_HOST)
   await writeFile(join(slot, 'client.js'), DSH_UI_SLOT_CLIENT)
   const patch = join(input.rootDir, 'management.patch.yml')

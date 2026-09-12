@@ -2,11 +2,26 @@
 export const DSH_UI_SLOT_CLIENT = String.raw`
 window.__ModuleLoader__.load({id:'studio-dsh-ui',factory(require){
   const React=require('react');
-  return {inject:['slots','layout','locale'],apply(ctx){
+  return {inject:['slots','layout','locale','theme'],apply(ctx){
     ctx.effect(()=>{
       const t=ctx.locale.bind('settings.plugins');
       const sync=()=>{document.documentElement.lang=ctx.locale.getSnapshot().active;document.documentElement.style.setProperty('--studio-dsh-expand',JSON.stringify(t('expand')));document.documentElement.style.setProperty('--studio-dsh-collapse',JSON.stringify(t('collapse')))};
       sync();return ctx.locale.subscribe(sync);
+    });
+    ctx.effect(()=>{
+      // Registered themes are frame-local; setTheme on a built-in id persists to DSH settings.
+      const disposeThemes=['light','dark'].map(scheme=>ctx.theme.register({...ctx.theme.getTheme().themes.find(theme=>theme.id===scheme),id:'studio-'+scheme}));
+      let selected=new URL(location.href).searchParams.get('studioTheme');
+      let disposed=false;
+      const sync=()=>{if(!disposed&&(selected==='light'||selected==='dark'))ctx.theme.setTheme('studio-'+selected)};
+      const receive=event=>{
+        if(event.source!==parent||event.origin!==location.origin||event.data?.type!=='studio-dsh-theme'||!['light','dark'].includes(event.data.theme))return;
+        selected=event.data.theme;sync();
+      };
+      // Native settings refreshes may adopt their own preference; the embedded view follows Studio.
+      const stop=ctx.on('theme/change',()=>{if(ctx.theme.getTheme().preference!=='studio-'+selected)queueMicrotask(sync)});
+      window.addEventListener('message',receive);sync();
+      return ()=>{disposed=true;window.removeEventListener('message',receive);stop();disposeThemes.reverse().forEach(dispose=>dispose())};
     });
     ctx.slots.register({name:'root',priority:-100,children:{'settings.plugins.tab':{kind:'list',scope:'root'}}},function StudioDshSlot(props){
       React.useEffect(()=>{parent.postMessage({type:'studio-dsh-ui-ready'},location.origin)},[]);

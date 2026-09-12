@@ -26,6 +26,11 @@ The **Plugins** page has exactly two tabs:
 
 The old Studio ACP package store, rollback API, installer and runtime overlays have been removed. There is no migration or compatibility path. Existing old files are never consulted or automatically deleted.
 
+The embedded configuration follows Studio's resolved light/dark mode, including
+system-mode changes, through frame-scoped theme messages. The bridge uses native
+registered palettes so plugin tokens and controls switch together without
+reloading drafts or persisting Studio's choice into DSH's `ui-theme` settings.
+
 The configuration runtime is an owned native Web process on an OS-assigned loopback port, using the source Web dependencies and native settings/credential files. Studio retains the native authentication cookie server-side. A super-admin creates a short-lived frame ticket; every HTTP/WS request checks the ticket and current user authorization, and targets only that owned DSH process. The frame renders the configuration slot without the native chat/navigation shell. Unmount revokes its ticket; shutdown terminates owned processes and transport connections.
 
 Web and desktop continue to build with the existing Vue/Vite and Electron pipelines. DSH's React, Cordis and plugin browser bundles are loaded at runtime from the installed DSH dependency graph, inside the frame; they are not dependencies of Studio's renderer or bundled into its desktop artifacts. DSH must be installed on the Studio backend host. Both transports use Studio's origin, including reverse-proxied HTTPS; no browser access to the backend machine's loopback port is needed. Unknown plugin/runtime combinations still require compatibility verification; this is not a guarantee that every third-party plugin targets only supported native services.
