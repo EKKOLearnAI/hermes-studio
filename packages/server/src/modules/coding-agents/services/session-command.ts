@@ -227,6 +227,16 @@ export async function handleCodingAgentSessionCommand(
     const compactRow = getSession(sessionId)
     const compactInfo = codingAgentRunManager.getRunInfo(sessionId)
     const compactAgentId = compactRow?.agent || compactInfo?.agentId || ''
+    if (compactAgentId === 'opencode') {
+      emitCommand({
+        ok: false,
+        action: 'compact',
+        terminal: !compactInfo?.running && !state.isWorking,
+        message: 'OpenCode /compact is not available in Studio. Compaction is managed by OpenCode internally.',
+        compacted: false,
+      })
+      return
+    }
     const compactAgentName = compactAgentId === 'codex'
       ? 'Codex'
       : compactAgentId === 'pi'
