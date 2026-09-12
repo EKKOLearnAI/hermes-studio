@@ -3118,6 +3118,8 @@ jobTriggered: 'Job ejecutado',
   },
 
   changelog: {
+    new_0_7_21_1: 'Corregido un fallo que impedía abrir la configuración de plugins DSH y los preajustes de Agent en Windows cuando se seleccionaba un script de inicio incorrecto (#3026)',
+    new_0_7_21_2: 'Los errores de inicio de la configuración DSH ahora indican la etapa fallida y el código del sistema o de salida, sin exponer registros de plugins ni credenciales (#3026)',
     new_0_7_20_1: 'Añadida la gestión de instalación de DeepSeek Harness (DSH) y su integración con chats individuales, grupos y workflows, con selección de preajustes Agent y conservación del modo al reanudar; guías en inglés y chino actualizadas (#3020, #3023)',
     new_0_7_20_2: 'Añadidas la configuración Web nativa de DSH, la lista de plugins y la gestión de preajustes Agent: copiar, elegir el predeterminado y borrar los personalizados; requiere DSH y dependencias Web en el servidor (#3020)',
     new_0_7_20_3: 'La creación y edición de Agents de grupo usa un panel lateral derecho con formulario desplazable, botones fijos y ancho completo en móviles (#3020)',
