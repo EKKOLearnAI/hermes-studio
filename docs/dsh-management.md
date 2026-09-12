@@ -43,6 +43,17 @@ DSH uses `danger-full-access` with approval policy `never`, including after rest
 
 Each turn initializes ACP, creates or resumes the stored native session, applies the selected model, and sends text/image content. Studio loads a small Cordis plugin from the private runtime home to forward DSH's native `agent/assistant-stream` text and reasoning deltas over a private ACP notification. Only the owned ACP session's live output reaches chat; subagent and auxiliary proxy requests are not forwarded. Committed ACP messages are deduplicated against their live attempt by message ID, while final-only output remains supported. Tools, completion and context updates still come from ACP. This applies to scoped and global runs across single chat, group chat and workflows, without changing the installed DSH package. Scoped billing uses the proxy usage ledger; ACP context occupancy is not counted as billed tokens. Global usage may be estimated. Native `/compact` is not exposed through this integration.
 
+ACP compatibility is checked against the integration points required for preset
+selection, restoration, persistence and permissions, rather than a version or
+whole-file hash allowlist. A user-installed newer version can run when those points
+remain compatible. Unrelated source changes do not block it. A missing or ambiguous
+integration point reports its specific capability before the private adapter is
+written; it never silently drops presets or resumes an empty replacement session.
+The generated copy records its upstream version and source hash for diagnostics.
+The installed DSH source remains unchanged. This check does not prove compatibility
+with every future semantic change; real native regression tests remain required
+when Studio changes its adapter.
+
 The adapter flushes persistence before resolving a completed ACP prompt. On normal completion Studio closes the ACP session to flush persistence, then closes stdin. The next turn starts a fresh process and resumes the same persisted session. Resume errors are reported without silently creating a replacement conversation. Cancelling a run or exiting Studio cancels ACP and terminates only Studio-owned processes, with forced cleanup if needed. This does not bind the DSH Web port or stop a separately started DSH instance.
 
 Validate the installed CLI without a paid model call with `NODE_ENV=test PORT=8648 DSH_REAL_ACP_E2E=1 npx vitest run tests/server/dsh-acp-real.test.ts`. This opt-in check uses an isolated temporary home and a local Responses fixture to verify model injection, shutdown and cross-process resume. The fixture pauses after its first text delta until Studio receives that delta, proving streaming happens before model completion; it also checks that final ACP output is not duplicated.

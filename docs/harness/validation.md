@@ -117,8 +117,11 @@ platform helpers rather than importing the shared agent registry.
 Web/ACP adapter upgrades additionally require the opt-in `dsh-web-real.test.ts`
 against each supported installed DSH version, including new/resumed presets,
 scoped/global model routing, Web bundle tool execution, child inheritance and
-unrestricted filesystem/shell access. Unknown ACP artifacts fail explicitly;
-do not remove the version/hash check to accommodate a new release.
+unrestricted filesystem/shell access. Do not reject an otherwise compatible
+installation by version number or whole-file hash. Validate the required adapter integration points and dependencies before
+writing the private copy, and report the specific missing/ambiguous capability.
+Keep the source hash as diagnostic metadata. Test an unlisted version with an
+unrelated artifact change as well as incompatible integration points.
 
 DSH plugin management has two client tabs under `components/coding-agents/dsh`
 and one DSH API module under `api/coding-agents/dsh.ts`. Shared views may render
