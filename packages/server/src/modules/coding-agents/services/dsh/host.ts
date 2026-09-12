@@ -1,6 +1,10 @@
+import { mkdir } from 'node:fs/promises'
 import { spawn } from 'node:child_process'
 import { killOwnedProcessTree } from '../../../studio/public/process-tree'
-import { DshPluginError } from './plugins'
+import { DshPluginError } from './errors'
+import { DshManagement } from './management'
+import { DshUiGateway } from './ui-gateway'
+import { changeNativeDshPlugins } from './plugins'
 import { readNativeDshPluginInventory } from './plugin-inventory'
 
 interface DshHostCommands {
@@ -30,9 +34,10 @@ export function createDshHost(host: DshHostCommands) {
     return readNativeDshPluginInventory(command, process.env.DSH_HOME?.trim() || host.getSourceHome())
   }
 
-  /** Package commands run only against a Studio staging Home with validated argv. */
+  /** Native package commands target the source Web profile with validated argv. */
   async function executeDshPluginCommand(home: string, args: string[], signal: AbortSignal): Promise<void> {
     signal.throwIfAborted()
+    await mkdir(home, { recursive: true })
     const env = await host.commandEnv()
     const command = await host.resolveCommandForExecution('dsh', env)
     const execution = host.commandExecution(command, args)
@@ -40,7 +45,7 @@ export function createDshHost(host: DshHostCommands) {
       const child = spawn(execution.command, execution.args, {
         cwd: home, detached: process.platform !== 'win32', windowsHide: true,
         ...('windowsVerbatimArguments' in execution ? { windowsVerbatimArguments: true } : {}),
-        env: { ...env, HOME: home, USERPROFILE: home, DSH_HOME: home, DSH_TELEMETRY_DISABLED: '1', ELECTRON_RUN_AS_NODE: '1' },
+        env: { ...env, DSH_HOME: home, DSH_TELEMETRY_DISABLED: '1', ELECTRON_RUN_AS_NODE: '1' },
         stdio: ['ignore', 'ignore', 'pipe'],
       })
       let stderr = ''
@@ -60,10 +65,19 @@ export function createDshHost(host: DshHostCommands) {
         else if (timedOut) reject(new DshPluginError(503, 'DSH_OPERATION_TIMEOUT', 'Plugin operation timed out'))
         else if (code === 0) resolve()
         else if (/pnpm not found|ENOENT/.test(stderr)) reject(new DshPluginError(503, 'DSH_DEPENDENCY_UNAVAILABLE', 'Install DSH and pnpm before managing plugins'))
-        else reject(new DshPluginError(422, 'DSH_PLUGIN_OPERATION_FAILED', 'Package installation failed; the previous version is unchanged'))
+        else reject(new DshPluginError(422, 'DSH_PLUGIN_OPERATION_FAILED', 'Web plugin operation failed; reload the list to inspect its current state'))
       })
     })
   }
 
-  return { getNativeDshPluginInventory, executeDshPluginCommand, runtimeInput }
+  const management = new DshManagement({ runtimeInput, commandEnv: host.commandEnv, commandExecution: host.commandExecution })
+  const ui = new DshUiGateway(management)
+  async function changePlugins(body: unknown, revision: string) {
+    const input = await runtimeInput()
+    await management.close()
+    try { await changeNativeDshPlugins({ command: input.installationCommand, sourceHome: input.sourceHome, body, revision, execute: executeDshPluginCommand }) }
+    finally { await management.close() }
+    return getNativeDshPluginInventory()
+  }
+  return { getNativeDshPluginInventory, executeDshPluginCommand, runtimeInput, management, ui, changePlugins }
 }

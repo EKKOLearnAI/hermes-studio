@@ -27,7 +27,6 @@ export async function prepareDshRuntime(input: {
   outputLimit?: number
   imageInput?: boolean
   reasoningEffort?: string
-  managedPluginPatches?: string[]
   installationCommand?: string
   launchPath?: string
 }) {
@@ -102,7 +101,7 @@ export async function prepareDshRuntime(input: {
   await writeFile(overlayPath, stringify(overlay), { mode: 0o600 })
   return {
     promptFile,
-    args: ['--profile', web?.profile || 'acp', ...(input.managedPluginPatches || []).flatMap(path => ['--patch', path]), ...(web ? ['--patch', web.patch] : []), '--patch', overlayPath],
+    args: ['--profile', web?.profile || 'acp', ...(web ? ['--patch', web.patch] : []), '--patch', overlayPath],
     env: { DSH_HOME: input.rootDir, DSH_PERMISSION_MODE: 'danger-full-access', ...(input.launchPath ? { PATH: input.launchPath } : {}) },
     files: ['settings.yaml', 'cordis.patch.yml', 'AGENTS.md', 'studio.patch.yml'].map(path => ({ key: path, path, absolutePath: join(input.rootDir, path) })),
   }

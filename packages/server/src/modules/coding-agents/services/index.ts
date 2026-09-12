@@ -1,6 +1,5 @@
 import { prepareDshRuntime, DSH_API_KEY_ENV } from './dsh/runtime-config'
 import { readDshMcpServers, validateDshSettings } from './dsh/config'
-import { getDshPluginStore } from './dsh/plugins'
 import { createDshHost } from './dsh/host'
 import { OPENCODE_FREE_PROVIDER, openCodeFreeRuntime } from '../../studio/contracts/opencode-free'
 import { beginAgentPreparation } from './update-lock'
@@ -2642,7 +2641,8 @@ function commandExecution(command: string, args: string[]): CommandExecution {
 
 const dshHost = createDshHost({ commandEnv, findCommandPaths, resolveCommandForExecution, commandExecution, getSourceHome: () => join(getGlobalConfigHome(), '.dsh') })
 export const getNativeDshPluginInventory = dshHost.getNativeDshPluginInventory
-export const executeDshPluginCommand = dshHost.executeDshPluginCommand
+export const dshPluginUi = dshHost.ui
+export const changeDshWebPlugins = dshHost.changePlugins
 
 function packageParts(packageName: string): string[] {
   return packageName.split('/').filter(Boolean)
@@ -3245,7 +3245,6 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     } else if (tool.id === 'dsh') {
       const prepared = await prepareDshRuntime({
         ...await dshHost.runtimeInput(),
-        managedPluginPatches: await getDshPluginStore().runtimePatches(),
         sharedSkills: join(getGlobalConfigHome(), '.agents', 'skills'),
         rootDir, systemPrompt, managedMcp: getCodingAgentManagedMcpServerConfigs('dsh', scope.profile),
       })
@@ -3667,7 +3666,6 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     const capabilities = getModelRuntimeCapabilities({ profile: scope.profile, provider, model })
     const prepared = await prepareDshRuntime({
       ...await dshHost.runtimeInput(),
-      managedPluginPatches: await getDshPluginStore().runtimePatches(),
       sharedSkills: join(getGlobalConfigHome(), '.agents', 'skills'),
       rootDir, systemPrompt: scopedSystemPrompt, model, baseUrl: proxyTarget.baseUrl,
       contextWindow: capabilities.contextWindow, outputLimit: capabilities.outputLimit,

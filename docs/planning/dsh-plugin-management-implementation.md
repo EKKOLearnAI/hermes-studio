@@ -1,5 +1,12 @@
 # DSH 插件清单与附加包管理：当前实现
 
+> Current implementation update: the standalone Studio ACP package store and
+> revision/rollback API described below have been removed before release. The
+> plugin page now has Configuration / List tabs, reads native Web packages,
+> mounts native plugin configuration slots in an owned DSH Web runtime.
+> Plugin-specific Studio forms and API adapters have been removed. See
+> [current behavior](../dsh-management.md). Earlier sections are historical design.
+
 本页记录当前代码，不替代完整的 [Profiles / Plugins 规划](dsh-profiles-and-plugins.md)。
 
 ## 原生插件清单

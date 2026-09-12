@@ -2,11 +2,15 @@ import { createRequire } from 'node:module'
 import { readFile, readdir, realpath, stat } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative } from 'node:path'
 import { isMap, isScalar, isSeq, parseDocument, type YAMLMap } from 'yaml'
-import { DshPluginError } from './plugins'
-import { dshInstallation } from './installation'
+import { DshPluginError } from './errors'
+import { dshInstallation, dshPackageDirectory } from './installation'
+import { createHash } from 'node:crypto'
+import { readDshPluginMetadata } from './plugin-metadata'
 
 export interface DshNativePluginEntry {
   entryId: string
+  title?: string
+  description?: string
   moduleName: string
   configuredEnabled: boolean | 'conditional'
   runtimePhase: null
@@ -52,7 +56,33 @@ export async function readNativeDshPluginInventory(command: string, sourceHome: 
   let packagePath: string
   try { packagePath = createRequire(installation).resolve('@deepseek-ai/dsh-agent-presets/package.json') }
   catch { throw new DshPluginError(422, 'DSH_CAPABILITY_UNSUPPORTED', 'This DSH installation does not expose native presets') }
-  return readNativeDshPresetRoots(packagePath, sourceHome)
+  const inventory = await readNativeDshPresetRoots(packagePath, sourceHome)
+  const cache = new Map<string, ReturnType<typeof readDshPluginMetadata>>()
+  await Promise.all(inventory.presets.flatMap(preset => preset.entries.map(async entry => {
+    if (!cache.has(entry.moduleName)) cache.set(entry.moduleName, readDshPluginMetadata(entry.moduleName, [installation, join(sourceHome, 'profiles/web/package.json')]))
+    const metadata = await cache.get(entry.moduleName)
+    if (metadata) { entry.title = metadata.title; entry.description = metadata.description }
+  })))
+  return { ...inventory, ...await readDshWebPackages(installation, sourceHome) }
+}
+
+/** Package installation and preset composition are separate native inventories. */
+export async function readDshWebPackages(installation: string, sourceHome: string) {
+  const sourcePath = join(sourceHome, 'profiles/web/package.json')
+  let content = '{}'
+  try { content = await readFile(sourcePath, 'utf8') } catch (error: any) { if (error.code !== 'ENOENT') throw error }
+  const manifest = JSON.parse(content)
+  const bundles: string[] = manifest.dsh?.profile?.bundles || []
+  const packages = await Promise.all(Object.entries(manifest.dependencies || {}).map(async ([name, requested]) => {
+    const entry = { name, title: name, description: '', requested: String(requested), version: '', bundle: bundles.includes(name), containsBrowserPart: false, sourcePath, error: '' }
+    try {
+      const directory = await dshPackageDirectory(name, [installation, sourcePath])
+      const pkg = JSON.parse(await readFile(join(directory, 'package.json'), 'utf8'))
+      entry.title = typeof pkg.displayName === 'string' ? pkg.displayName : String(pkg.name || name); entry.description = typeof pkg.description === 'string' ? pkg.description : ''; entry.version = String(pkg.version || ''); entry.containsBrowserPart = !!pkg.dsh?.client
+    } catch { entry.error = 'DSH_DEPENDENCY_UNAVAILABLE' }
+    return entry
+  }))
+  return { web: { profile: 'web' as const, sourcePath, revision: createHash('sha256').update(content).digest('hex'), packages } }
 }
 
 export async function readNativeDshPresetRoots(packagePath: string, sourceHome: string) {

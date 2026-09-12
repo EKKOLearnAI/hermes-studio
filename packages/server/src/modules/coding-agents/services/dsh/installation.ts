@@ -1,7 +1,7 @@
 import { createRequire } from 'node:module'
 import { readFile, realpath, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import { DshPluginError } from './plugins'
+import { DshPluginError } from './errors'
 
 export async function dshInstallation(command: string) {
   let directory: string

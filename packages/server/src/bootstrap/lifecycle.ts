@@ -1,4 +1,5 @@
 import { codingAgentRunManager } from '../modules/coding-agents/services/runtime/run-manager'
+import { shutdownDshManagement } from '../modules/coding-agents/services/dsh/management'
 import { shutdownDshPluginOperations } from '../modules/coding-agents/services/dsh/plugins'
 import { forceStopManagedGateways, shutdownManagedGateways } from '../modules/hermes/services/gateway/runner'
 import { closeDb } from '../modules/studio/infrastructure/database'
@@ -135,6 +136,7 @@ export function createShutdownHandler(
 
         await runShutdownStep('Preview runtime', stopPreviewRuntime)
         await runShutdownStep('DSH plugin operations', shutdownDshPluginOperations)
+        await runShutdownStep('DSH management host', shutdownDshManagement)
         await runShutdownStep('Local STT runtime', shutdownLocalSttRuntime)
         await runShutdownStep('Social message runtimes', shutdownSocialMessageRuntimes)
 

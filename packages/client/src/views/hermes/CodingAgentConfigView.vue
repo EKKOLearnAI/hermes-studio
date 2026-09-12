@@ -12,7 +12,7 @@ import {
 import type { SkillTarget } from '@/api/hermes/skills'
 import CodingAgentMcpPanel from '@/components/coding-agents/CodingAgentMcpPanel.vue'
 import CodingAgentSkillsPanel from '@/components/coding-agents/CodingAgentSkillsPanel.vue'
-import DshPluginsPanel from '@/components/coding-agents/DshPluginsPanel.vue'
+import DshPluginsPanel from '@/components/coding-agents/dsh/DshPluginsPanel.vue'
 
 const route = useRoute()
 const { t } = useI18n()

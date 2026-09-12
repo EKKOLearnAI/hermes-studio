@@ -1123,15 +1123,7 @@ if (!openapi.tags.find(t => t.name === 'Terminal')) {
   openapi.tags.push({ name: 'Terminal', description: 'WebSocket terminal access' })
 }
 
-// Native ACP plugin operations are asynchronous and require optimistic concurrency.
-const pluginOperationSchema = {
-  type: 'object', required: ['id', 'action', 'status', 'createdAt'],
-  properties: {
-    id: { type: 'string' }, action: { type: 'string', enum: ['install', 'update', 'remove', 'toggle', 'configure', 'rollback'] },
-    status: { type: 'string', enum: ['running', 'succeeded', 'failed'] }, createdAt: { type: 'string', format: 'date-time' },
-    finishedAt: { type: 'string', format: 'date-time' }, revision: { type: 'string' }, packageName: { type: 'string' }, code: { type: 'string' },
-  },
-}
+// DSH Web profile plugins and native schema-based settings.
 const pluginResponse = schema => ({ description: 'Plugin state', content: { 'application/json': { schema } } })
 const pluginError = description => ({ description, content: { 'application/json': { schema: {
   type: 'object', properties: { code: { type: 'string' }, error: { type: 'string' }, retryable: { type: 'boolean' } },
@@ -1139,55 +1131,38 @@ const pluginError = description => ({ description, content: { 'application/json'
 const pluginAuth = { security: [{ BearerAuth: [] }], tags: ['Coding Agents'] }
 openapi.paths['/api/coding-agents/dsh/plugin-inventory'] = { get: {
   ...pluginAuth, operationId: 'getNativeDshPluginInventory', summary: 'Discover native DSH preset plugin entries',
-  description: 'Super admin only. Reads the installed CLI dependency graph and native shipped/user preset compositions, recursively flattening groups. Includes disabled entries. Does not execute YAML expressions or connect to the Web runtime. Custom deployment roots and overlays are not resolved. Counts are per preset, not npm package counts. This inventory does not imply those presets are mounted in Studio ACP chats.',
+  description: 'Super admin only. Reads the installed CLI dependency graph and native shipped/user preset compositions, recursively flattening groups. Includes disabled entries. Does not execute YAML expressions or connect to the Web runtime. Custom deployment roots and overlays are not resolved. Counts are per preset, not npm package counts. Includes separately counted packages installed in the native Web profile. Runtime phases remain unknown for this static inventory.',
   responses: { '200': pluginResponse({ type: 'object', properties: {
     source: { type: 'string', enum: ['native-presets'] }, discovery: { type: 'string', enum: ['shipped-and-user-roots'] },
     sourceHome: { type: 'string' }, packageVersion: { type: 'string' }, defaultPreset: { type: 'string' }, runtimeConnected: { type: 'boolean', enum: [false] },
+    web: { type: 'object', properties: { profile: { type: 'string', enum: ['web'] }, sourcePath: { type: 'string' }, revision: { type: 'string' }, packages: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, title: { type: 'string' }, description: { type: 'string' }, requested: { type: 'string' }, version: { type: 'string' }, bundle: { type: 'boolean' }, containsBrowserPart: { type: 'boolean' }, sourcePath: { type: 'string' }, error: { type: 'string' } } } } } },
     presets: { type: 'array', items: { type: 'object', properties: {
       id: { type: 'string' }, name: { type: 'string' }, description: { type: 'string' }, trust: { type: 'string', enum: ['system', 'user'] },
       sourcePath: { type: 'string' }, isDefault: { type: 'boolean' }, error: { type: 'string' },
       entries: { type: 'array', items: { type: 'object', properties: {
-        entryId: { type: 'string' }, moduleName: { type: 'string' }, configuredEnabled: { oneOf: [{ type: 'boolean' }, { type: 'string', enum: ['conditional'] }] },
+        entryId: { type: 'string' }, title: { type: 'string' }, description: { type: 'string' }, moduleName: { type: 'string' }, configuredEnabled: { oneOf: [{ type: 'boolean' }, { type: 'string', enum: ['conditional'] }] },
         runtimePhase: { nullable: true, enum: [null] }, groupPath: { type: 'array', items: { type: 'string' } },
       } } },
     } } },
   } }), '401': pluginError('Authentication required'), '403': pluginError('Super admin required'), '422': pluginError('Native inventory unavailable in this installation'), '500': pluginError('Source unavailable') },
 } }
-openapi.paths['/api/coding-agents/dsh/plugins'] = { get: {
-  ...pluginAuth, operationId: 'listDshPlugins', summary: 'Read Studio-managed native ACP packages and configuration',
-  description: 'Super admin only. One supplemental source shared by DSH launches across chats. Configuration state is static; runtimePhase is null and compatibility is unverified. Returns the last 30 operations. Native user profiles and browser plugins are not managed here.',
-  responses: { '200': pluginResponse({ type: 'object', properties: {
-    sourceId: { type: 'string', enum: ['studio-acp'] }, revision: { type: 'string' }, activeRevision: { type: 'string', nullable: true }, content: { type: 'string' },
-    packages: { type: 'array', items: { type: 'object', properties: {
-      name: { type: 'string' }, version: { type: 'string' }, kind: { type: 'string', enum: ['bundle', 'dependency'] }, configuredEnabled: { type: 'boolean' },
-      containsBrowserPart: { type: 'boolean' }, compatibility: { type: 'string', enum: ['unverified'] }, runtimePhase: { nullable: true, enum: [null] },
-      entries: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, module: { type: 'string' }, configuredEnabled: { oneOf: [{ type: 'boolean' }, { type: 'string', enum: ['conditional'] }] } } } },
-    } } },
-    revisions: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, createdAt: { type: 'string', format: 'date-time' } } } },
-    operations: { type: 'array', items: pluginOperationSchema },
-  } }), '401': pluginError('Authentication required'), '403': pluginError('Super admin required'), '500': pluginError('State unavailable') },
-} }
-openapi.paths['/api/coding-agents/dsh/plugin-operations'] = { post: {
-  ...pluginAuth, operationId: 'changeDshPlugins', summary: 'Install, update, remove, enable, configure or roll back native ACP plugins',
-  description: 'Super admin only. Returns an asynchronous operation; poll the operation endpoint until succeeded or failed. Registry packages require exact versions. Installation scripts are disabled and newly installed bundles are disabled. Successful changes affect subsequent launches; existing processes retain their revision. Replaying the same idempotency key and request returns its prior operation. A different request using the same key returns 409. Configuration is YAML, validated without evaluating expressions. No browser activation or automatic retry.',
-  parameters: [{ in: 'header', name: 'If-Match', required: true, description: 'Quoted revision from GET plugins, for example "empty". Required for new operations.', schema: { type: 'string' } }],
+const packageResponses = { '200': pluginResponse({ type: 'object', additionalProperties: true }), '400': pluginError('Invalid package selection'), '403': pluginError('Super admin required'), '409': pluginError('Another package operation is running'), '412': pluginError('Web profile changed; reload before continuing'), '422': pluginError('Native package command failed'), '503': pluginError('DSH or package manager unavailable') }
+openapi.paths['/api/coding-agents/dsh/web-plugins'] = { post: {
+  ...pluginAuth, operationId: 'changeDshWebPlugins', summary: 'Install or remove packages in the native Web profile',
+  parameters: [{ in: 'header', name: 'If-Match', required: true, schema: { type: 'string' }, description: 'Quoted Web manifest revision from plugin-inventory' }],
   requestBody: { required: true, content: { 'application/json': { schema: { oneOf: [
-    [['install', 'update'], { packageSpec: { type: 'string', description: 'Registry package@exact-semver (no ranges, URLs, Git or file references)' } }],
-    [['remove'], { packageName: { type: 'string' } }],
-    [['toggle'], { packageName: { type: 'string' }, enabled: { type: 'boolean' } }],
-    [['configure'], { content: { type: 'string', description: 'YAML patch sequence, at most 256 KiB' } }],
-    [['rollback'], { revisionId: { type: 'string' } }],
-  ].map(([actions, properties]) => ({ type: 'object', required: ['action', 'idempotencyKey', ...Object.keys(properties)], properties: {
-    action: { type: 'string', enum: actions }, idempotencyKey: { type: 'string', pattern: '^[a-zA-Z0-9_-]{1,100}$' }, ...properties,
-  } })) } } } },
-  responses: { '202': pluginResponse(pluginOperationSchema), '400': pluginError('Invalid operation'), '401': pluginError('Authentication required'),
-    '403': pluginError('Super admin required'), '409': pluginError('Operation or idempotency conflict'), '412': pluginError('Revision changed; preserve the draft and reload'),
-    '428': pluginError('If-Match required'), '500': pluginError('State unavailable'), '503': pluginError('Shutting down') },
+    { type: 'object', required: ['action', 'packageSpec'], properties: { action: { type: 'string', enum: ['install'] }, packageSpec: { type: 'string', description: 'package@exact-version or github:owner/repo#commit' } } },
+    { type: 'object', required: ['action', 'packageName'], properties: { action: { type: 'string', enum: ['remove'] }, packageName: { type: 'string' } } },
+  ] } } } }, responses: packageResponses,
 } }
-openapi.paths['/api/coding-agents/dsh/plugin-operations/{operationId}'] = { get: {
-  ...pluginAuth, operationId: 'getDshPluginOperation', summary: 'Read a native ACP plugin operation outcome',
-  parameters: [{ in: 'path', name: 'operationId', required: true, schema: { type: 'string' } }],
-  responses: { '200': pluginResponse(pluginOperationSchema), '401': pluginError('Authentication required'), '403': pluginError('Super admin required'), '404': pluginError('Operation not found'), '500': pluginError('State unavailable') },
+openapi.paths['/api/coding-agents/dsh/ui-session'] = { post: {
+  ...pluginAuth, operationId: 'openDshPluginUi', summary: 'Open an authenticated native DSH configuration slot',
+  description: 'Super admin only. Starts the native Web runtime and returns a short-lived scoped frame path. Plugin forms and business APIs are owned by DSH and installed plugins.',
+  responses: { '200': pluginResponse({ type: 'object', properties: { id: { type: 'string' }, path: { type: 'string' } } }), '403': pluginError('Super admin required'), '503': pluginError('Native DSH Web runtime unavailable') },
+} }
+openapi.paths['/api/coding-agents/dsh/ui-session/{id}'] = { delete: {
+  ...pluginAuth, operationId: 'closeDshPluginUi', summary: 'Revoke a native plugin frame session',
+  parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string' } }], responses: { '204': { description: 'Frame session revoked' }, '403': pluginError('Super admin required') },
 } }
 
 // Write output

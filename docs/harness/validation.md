@@ -119,3 +119,22 @@ against each supported installed DSH version, including new/resumed presets,
 scoped/global model routing, Web bundle tool execution, child inheritance and
 unrestricted filesystem/shell access. Unknown ACP artifacts fail explicitly;
 do not remove the version/hash check to accommodate a new release.
+
+DSH plugin management has two client tabs under `components/coding-agents/dsh`
+and one DSH API module under `api/coding-agents/dsh.ts`. Shared views may render
+the entry component; they must not implement DSH transport or plugin forms.
+The harness rejects obsolete `managedPluginPatches` / `getDshPluginStore` runtime
+references. Keep native profile operations, the owned settings host and plugin
+adapters in server `services/dsh`.
+
+For settings changes, run `DSH_WEB_COMMAND=/absolute/path/to/dsh npx vitest run
+tests/server/dsh-settings-real.test.ts`. Optionally set `DSH_MODLENS_PACKAGE` to
+an installed ModLens package directory. This opens the real native slot in
+Chromium through the production HTTP/WebSocket transport, verifies native form
+saving and ModLens engine-dependent fields, and only mutates fixture homes.
+Browser coverage in `tests/e2e/dsh-plugins.spec.ts` verifies the two Studio tabs,
+native frame preservation, names/descriptions and native package removal.
+
+For packaging changes run the Web build and `npm --prefix packages/desktop run
+build`. The slot browser code must also be exercised from a minified server
+bundle; runtime serialization must not capture build-generated helper closures.

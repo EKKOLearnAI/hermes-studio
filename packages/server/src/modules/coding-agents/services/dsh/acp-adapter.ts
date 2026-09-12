@@ -4,7 +4,7 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { dshPackageDirectory } from './installation'
-import { DshPluginError } from './plugins'
+import { DshPluginError } from './errors'
 
 // Published rc.1 and rc.2 have identical ACP artifacts. Each supported upgrade
 // must review these setup/flush seams and pass the real Web-to-ACP tests.

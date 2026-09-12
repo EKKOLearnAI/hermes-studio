@@ -9,3 +9,14 @@ it('keeps Web composition and unrestricted execution policy inside DSH', () => {
   expect(dshModuleViolations('packages/server/src/modules/coding-agents/services/index.ts', 'export async function executeDshPluginCommand() {}')).toHaveLength(1)
   expect(dshModuleViolations('packages/server/src/modules/coding-agents/services/dsh/host.ts', "import { commandEnv } from '..'")).toHaveLength(1)
 })
+
+it('keeps the DSH slot transport out of shared client modules', () => {
+  const source = "import { openDshPluginUi } from '@/api/coding-agents/dsh'"
+  expect(dshModuleViolations('packages/client/src/components/coding-agents/dsh/DshPluginSettingsPanel.vue', source)).toEqual([])
+  expect(dshModuleViolations('packages/client/src/views/hermes/CodingAgentConfigView.vue', source)).toHaveLength(1)
+  expect(dshModuleViolations('packages/server/src/modules/coding-agents/services/dsh/runtime-config.ts', 'const managedPluginPatches = []')).toHaveLength(1)
+})
+
+it('rejects handwritten native plugin business adapters', () => {
+  expect(dshModuleViolations('packages/server/src/modules/coding-agents/services/dsh/example.ts', `const path = '/modlens/config'`)).toHaveLength(1)
+})
