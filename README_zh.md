@@ -6,7 +6,7 @@
 <p align="center">
   本地优先的 AI 工作区，支持多 Agent 聊天、编码和可视化工作流。<br/>
   提供桌面应用和可自托管的 Web 控制台，支持<br/>
-  <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a>、Ekko Agent、Claude Code、Codex、Pi、Grok 和 OpenCode。<br/>
+  <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a>、Ekko Agent、Claude Code、Codex、Pi、Grok、OpenCode 和 DeepSeek Harness（DSH）。<br/>
   在同一个工作区中管理对话、群组协作、语音、文件和设备。
 </p>
 
@@ -54,7 +54,7 @@ Ekko Studio 原名 Hermes Studio / Hermes Web UI。GitHub 仓库仍为
 
 | 模块 | Ekko Studio 能做什么 |
 |---|---|
-| 多 Agent 运行时 | 运行 Hermes、Ekko、Claude Code、Codex、Pi、Grok 和 OpenCode，支持流式回复、工具调用轨迹、生成文件预览、持久化会话和桌面独立聊天窗口。 |
+| 多 Agent 运行时 | 运行 Hermes、Ekko、Claude Code、Codex、Pi、Grok、OpenCode 和 DeepSeek Harness（DSH），支持流式回复、工具调用轨迹、生成文件预览、持久化会话和桌面独立聊天窗口。 |
 | Studio 工作区 | 为不同 Agent 运行时提供统一的单聊、群聊、Global Agent、工作流、文件、语音、媒体、设备、主题、日志、用量和 App 连接能力。 |
 | Agent 控制面 | 将 Hermes 的 Profile、Provider、模型、记忆、技能、插件、任务、Kanban、渠道和运行时管理保留在对应的 Agent 模块内。 |
 | 自动化 | 构建可执行的可视化工作流，通过定时任务、审批节点、群聊房间、平台渠道和 MCP Server 连接受支持的 Agent 运行时。 |
@@ -70,7 +70,7 @@ Ekko Studio 为受支持的 Agent 运行时提供统一工作区，
 |---|---|---|
 | Hermes | Hermes | Profile、Provider、模型、技能、插件、记忆、任务、Kanban、渠道、MCP、终端和 Hermes Runtime 集成。 |
 | Ekko | Ekko | Ekko 执行、审批、澄清、记忆、MCP 和 Provider Runtime。 |
-| Coding | Claude Code、Codex、Pi、Grok、OpenCode | Coding Agent 的安装、配置、代理、会话和进程执行。 |
+| Coding | Claude Code、Codex、Pi、Grok、OpenCode、DSH | Coding Agent 的安装、配置、代理、会话和进程执行。 |
 
 Studio 负责三个 Family 共用的能力：单聊、群聊、Global Agent 编排、工作流、
 Webhook、会话、文件与上传、TTS/STT、媒体、宠物、主题、设备、网络、日志、
@@ -82,7 +82,7 @@ Hermes 控制面 API 使用 `/api/hermes/*`。已经发布的旧版移动 App �
 
 ### AI 聊天
 
-- 聊天前端通过 Socket.IO `/chat-run` 实时流式更新；Studio 通过运行时适配器将任务分发给 Hermes、Ekko、Claude Code、Codex、Pi、Grok 或 OpenCode
+- 聊天前端通过 Socket.IO `/chat-run` 实时流式更新；Studio 通过运行时适配器将任务分发给 Hermes、Ekko、Claude Code、Codex、Pi、Grok、OpenCode 或 DSH
 - 多会话管理 — 创建、重命名、删除、切换会话
 - **自建会话数据库** — Studio 会话使用本地 SQLite；Hermes state.db 仅作为只读来源用于 Hermes 历史 API
 - 按来源分组会话（Telegram、Discord、Slack 等），可折叠手风琴面板
@@ -141,7 +141,7 @@ Hermes 控制面 API 使用 `/api/hermes/*`。已经发布的旧版移动 App �
 
 ### 可视化工作流
 
-- 基于 Vue Flow 的画布，支持 Hermes、Ekko、Claude Code、Codex、Pi、Grok、OpenCode 节点以及文件/图片附件
+- 基于 Vue Flow 的画布，支持 Hermes、Ekko、Claude Code、Codex、Pi、Grok、OpenCode、DSH 节点以及文件/图片附件
 - 支持有向连线、结构化条件、成功/失败路由、循环和审批门
 - 工作流定义可导入/导出，并支持按 Profile 管理工作区
 - 支持运行预算、截止时间、停止、重跑和持久化执行历史
@@ -186,10 +186,19 @@ Hermes 控制面 API 使用 `/api/hermes/*`。已经发布的旧版移动 App �
 
 ### Coding Agents
 
-- 在仪表盘中安装、配置、启动和监控 Claude Code、Codex、Pi、Grok 与 OpenCode
+- 在仪表盘中安装、配置、启动和监控 Claude Code、Codex、Pi、Grok、OpenCode 与 DeepSeek Harness（DSH）
 - 内置 Coding Agent 终端、会话历史、工作区选择、图片输入和文件 Diff
 - 提供独立代理路由和 API 模式，适配不同 Provider/模型
 - 支持桌面独立聊天窗口，并持久化输出和 reasoning 元数据
+
+#### DeepSeek Harness（DSH）
+
+- 支持单聊、群聊和工作流节点，可使用 Studio 选择的 Provider/模型，也可使用 DSH 原生全局配置。
+- 新建会话、添加群聊成员或配置工作流节点时可选择 Agent 预设，恢复会话时保留原有选择。
+- 复用原生 `web` profile 的插件。**插件配置**嵌入插件自带的设置界面并跟随黑白主题，**插件列表**管理已安装的包；Agent 预设使用独立的 Studio 管理页。
+- 管理 DSH 设置、指令、MCP 和私有技能。共享 `~/.agents/skills` 在所有 Coding Agent 页面中仅展示，禁止编辑和删除。
+
+通过 Agent 管理器，在运行 Studio 后端的机器上安装 DSH。安装原生插件还需要该机器的 PATH 中有 `pnpm`。配置方式、Profile 复用和兼容性说明见 [DSH 接入文档](docs/dsh-management.md)。
 
 ### 桌面 Agent 浏览器
 
@@ -485,7 +494,7 @@ Koa Bootstrap（仅负责组装）
           ├─ Hermes Family ─ Profile、模型、技能、记忆、任务、
           │                  Kanban、渠道、终端、Hermes Bridge
           ├─ Ekko Family ─── Ekko Runtime 与 Agent 自有服务
-          └─ Coding Family ─ Claude Code、Codex、Pi 适配器
+          └─ Coding Family ─ Claude Code、Codex、Pi、Grok、OpenCode、DSH 适配器
 ```
 
 服务端按业务归属组织在
