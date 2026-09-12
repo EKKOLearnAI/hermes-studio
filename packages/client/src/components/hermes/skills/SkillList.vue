@@ -248,7 +248,7 @@ function confirmDelete(category: string, skillName: string) {
                                     </span>
                                     <span v-if="skill.description" class="skill-desc">{{ skill.description }}</span>
                                 </div>
-                                <NSwitch v-if="!readonly && toggleable !== false" size="small" :value="skill.enabled !== false"
+                                <NSwitch v-if="!readonly && !skill.readonly && toggleable !== false" size="small" :value="skill.enabled !== false"
                                     :loading="togglingSkills.has(skill.name)"
                                     @update:value="handleToggle(cat.name, skill.name, $event)" @click.stop />
                             </button>
@@ -284,7 +284,7 @@ function confirmDelete(category: string, skillName: string) {
                             </span>
                             <span v-if="skill.description" class="skill-desc">{{ skill.description }}</span>
                         </div>
-                        <button v-if="!readonly && (skill.source ?? 'local') === 'local'" class="skill-action-btn"
+                        <button v-if="!readonly && !skill.readonly && (skill.source ?? 'local') === 'local'" class="skill-action-btn"
                             :title="t('skills.delete')" :disabled="deletingSkills.has(skill.name)"
                             @click.stop="confirmDelete(cat.name, skill.name)">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -296,7 +296,7 @@ function confirmDelete(category: string, skillName: string) {
                                 <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
                             </svg>
                         </button>
-                        <NSwitch v-if="!readonly && toggleable !== false" size="small" :value="skill.enabled !== false"
+                        <NSwitch v-if="!readonly && !skill.readonly && toggleable !== false" size="small" :value="skill.enabled !== false"
                             :loading="togglingSkills.has(skill.name)"
                             @update:value="handleToggle(cat.name, skill.name, $event)" @click.stop />
                     </button>

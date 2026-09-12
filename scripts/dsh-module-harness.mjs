@@ -21,6 +21,7 @@ export function dshModuleViolations(filename, source) {
     if (source.includes(token)) failures.push(`${file}: ${token} belongs in coding-agents/services/dsh`)
   }
   if (/function\s+(?:executeDshPluginCommand|getNativeDshPluginInventory)\s*\(/.test(source)) failures.push(`${file}: implement DSH plugin operations inside services/dsh; registry wiring may only delegate`)
+  if (/function\s+(?:findDshSkillFile|listDshSkills|validateDshSkill)\s*\(/.test(source)) failures.push(`${file}: DSH skill formats belong in services/dsh`)
   return failures
 }
 

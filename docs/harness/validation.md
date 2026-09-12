@@ -167,3 +167,10 @@ isolated homes and a local model fixture: verify scoped/global summary persisten
 continuation from the same native session, cancellation and retry, and a preset
 without a compaction backend. Keep the native request and patch inside DSH; a
 missing optional compaction registration point must not block ordinary chat.
+
+For shared Coding Agent skill permissions, run `skills-controller.test.ts`,
+`shared-skills-access.test.ts`, `skills-view.test.ts`, `skill-list.test.ts` and
+`shared-coding-agent-skills.spec.ts`. Verify shared directory and file aliases
+remain read-only, rejected deletion cannot fall back to Hermes, and DSH-private
+skills stay writable. Register native skill formats from bootstrap; agent modules
+must not import another agent’s implementation.

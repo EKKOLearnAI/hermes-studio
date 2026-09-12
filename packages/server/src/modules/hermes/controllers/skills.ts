@@ -1,4 +1,5 @@
-import { findDshSkillFile, listDshSkills, validateDshSkill } from '../services/skills/dsh-files'
+import { getSkillFileProvider } from '../../studio/public/skill-files'
+import { assertCodingAgentSkillWritable, isSharedCodingAgentSkill } from '../../studio/public/shared-skills'
 import { mkdir, readdir, readFile, realpath, rm, stat, writeFile, cp } from 'fs/promises'
 import { homedir, tmpdir } from 'os'
 import { dirname, join, resolve } from 'path'
@@ -73,7 +74,7 @@ async function resolveSkillDirForTarget(ctx: any, category: string, skillName: s
 
   if (target === 'dsh') {
     if (category !== 'misc') return null
-    const file = await findDshSkillFile([skillsDir, sharedAgentSkillsDir()], skillName)
+    const file = await getSkillFileProvider('dsh').findFile([skillsDir, sharedAgentSkillsDir()], skillName)
     return file && !file.flat ? file.directory : null
   }
   const localSkillDir = await findSkillDirInRoot(skillsDir, category, skillName)
@@ -535,7 +536,7 @@ export async function list(ctx: any) {
   try {
     if (target === 'dsh') {
       const roots = [skillsDir, sharedAgentSkillsDir()]
-      ctx.body = { categories: await listDshSkills(roots), archived: [], paths: { local: skillsDir, external: roots.slice(1) } }
+      ctx.body = { categories: await getSkillFileProvider('dsh').list(roots), archived: [], paths: { local: skillsDir, external: roots.slice(1) } }
       return
     }
     if (target !== 'hermes') {
@@ -559,7 +560,13 @@ export async function list(ctx: any) {
         categories = mergeExternalCategories(categories, sharedCategories)
       }
       ctx.body = {
-        categories,
+        categories: await Promise.all(categories.map(async category => ({
+          ...category,
+          skills: await Promise.all(category.skills.map(async (skill: { name: string }) => {
+            const directory = await resolveSkillDirForTarget(ctx, category.name, skill.name)
+            return { ...skill, readonly: directory ? await isSharedCodingAgentSkill(join(directory, 'SKILL.md')) : true }
+          })),
+        }))),
         archived: [],
         paths: { local: skillsDir, external: extraDirs },
       }
@@ -747,7 +754,7 @@ export async function listFiles(ctx: any) {
   const { category, skill } = ctx.params
   try {
     if (requestSkillTarget(ctx) === 'dsh' && category === 'misc') {
-      const file = await findDshSkillFile([requestTargetSkillsDir(ctx), sharedAgentSkillsDir()], skill)
+      const file = await getSkillFileProvider('dsh').findFile([requestTargetSkillsDir(ctx), sharedAgentSkillsDir()], skill)
       if (file?.flat) { ctx.body = { files: [] }; return }
     }
     const skillDir = await resolveSkillDirForTarget(ctx, category, skill)
@@ -771,7 +778,7 @@ export async function readFile_(ctx: any) {
   if (requestSkillTarget(ctx) === 'dsh') {
     const parts = String(filePath).split('/')
     if (parts[0] !== 'misc' || parts.length < 3) { ctx.status = 404; ctx.body = { error: 'File not found' }; return }
-    const file = await findDshSkillFile([profileSkillsDir, sharedAgentSkillsDir()], parts[1])
+    const file = await getSkillFileProvider('dsh').findFile([profileSkillsDir, sharedAgentSkillsDir()], parts[1])
     const suffix = parts.slice(2).join('/')
     const path = file ? (suffix === 'SKILL.md' ? file.path : !file.flat ? resolve(file.directory, suffix) : '') : ''
     if (!file || !path || !isPathWithin(path, file.directory)) { ctx.status = 404; ctx.body = { error: 'File not found' }; return }
@@ -899,9 +906,10 @@ export async function updateSkill(ctx: any) {
     }
 
     if (target === 'dsh') {
-      validateDshSkill(content)
-      const file = category === 'misc' ? await findDshSkillFile([skillsDir, sharedAgentSkillsDir()], name) : null
+      getSkillFileProvider('dsh').validate(content)
+      const file = category === 'misc' ? await getSkillFileProvider('dsh').findFile([skillsDir, sharedAgentSkillsDir()], name) : null
       if (!file) { ctx.status = 404; ctx.body = { error: 'Skill not found' }; return }
+      await assertCodingAgentSkillWritable(file.path)
       await writeFile(file.path, content, 'utf-8')
       ctx.body = { success: true }; return
     }
@@ -923,6 +931,7 @@ export async function updateSkill(ctx: any) {
       return
     }
 
+    await assertCodingAgentSkillWritable(join(localSkillDir, 'SKILL.md'))
     await writeFile(join(localSkillDir, 'SKILL.md'), content, 'utf-8')
     hashCache.delete(localSkillDir)
     ctx.body = { success: true }
@@ -985,10 +994,16 @@ export async function deleteSkill(ctx: any) {
   }
 
   if (requestSkillTarget(ctx) === 'dsh') {
-    const file = category === 'misc' ? await findDshSkillFile([requestTargetSkillsDir(ctx), sharedAgentSkillsDir()], name) : null
+    const file = category === 'misc' ? await getSkillFileProvider('dsh').findFile([requestTargetSkillsDir(ctx), sharedAgentSkillsDir()], name) : null
     if (!file) { ctx.status = 404; ctx.body = { error: 'Skill not found' }; return }
+    try { await assertCodingAgentSkillWritable(file.path) } catch (error: any) {
+      ctx.status = error.status || 500; ctx.body = { error: error.message }; return
+    }
     await rm(file.flat ? file.path : file.directory, { recursive: !file.flat, force: true })
     ctx.body = { success: true }; return
+  }
+  if (requestSkillTarget(ctx) !== 'hermes') {
+    ctx.status = 403; ctx.body = { error: 'Skill deletion is not supported for this Coding Agent target' }; return
   }
   const skillsDir = requestSkillsDir(ctx)
   try {
@@ -1017,6 +1032,7 @@ export async function deleteSkill(ctx: any) {
       return
     }
 
+    await assertCodingAgentSkillWritable(join(localSkillDir, 'SKILL.md'))
     await rm(localSkillDir, { recursive: true, force: true })
 
     // Cleanup `disabled` list in profile config so the deleted name doesn't linger
@@ -1107,6 +1123,9 @@ export async function importSkill(ctx: any) {
   if (target !== 'hermes' && target !== 'dsh') { ctx.status = 400; ctx.body = { error: 'Skill import is not supported for this target' }; return }
   if (target === 'dsh' && category) { ctx.status = 400; ctx.body = { error: 'DSH skills must be imported without a category' }; return }
   const skillsDir = requestTargetSkillsDir(ctx)
+  try { await assertCodingAgentSkillWritable(category ? join(skillsDir, category) : skillsDir) } catch (error: any) {
+    ctx.status = error.status || 500; ctx.body = { error: error.message }; return
+  }
   await mkdir(skillsDir, { recursive: true })
   const targetRoot = category ? join(skillsDir, category) : skillsDir
 
@@ -1208,14 +1227,14 @@ export async function importSkill(ctx: any) {
         return
       }
 
-      if (target === 'dsh') validateDshSkill((await safeReadFile(join(skillSrcDir, 'SKILL.md'))) || '')
+      if (target === 'dsh') getSkillFileProvider('dsh').validate((await safeReadFile(join(skillSrcDir, 'SKILL.md'))) || '')
       const targetDir = join(targetRoot, skillName)
       if (!isPathWithin(targetDir, skillsDir)) {
         ctx.status = 400
         ctx.body = { error: 'Resolved target path escapes skills directory' }
         return
       }
-      if (await pathExists(targetDir) || (target === 'dsh' && await findDshSkillFile([skillsDir], skillName))) {
+      if (await pathExists(targetDir) || (target === 'dsh' && await getSkillFileProvider('dsh').findFile([skillsDir], skillName))) {
         ctx.status = 409
         ctx.body = { error: `Skill "${skillName}" already exists` }
         return
@@ -1249,7 +1268,7 @@ export async function importSkill(ctx: any) {
       }
       if (target === 'dsh') {
         const definition = filePartsAll.find(p => (p.filename || '').replace(/\\/g, '/') === `${skillName}/SKILL.md`)
-        validateDshSkill(definition?.data.toString('utf-8') || '')
+        getSkillFileProvider('dsh').validate(definition?.data.toString('utf-8') || '')
       }
       // Must include SKILL.md
       const hasSkillMd = filePartsAll.some(p => {
@@ -1273,7 +1292,7 @@ export async function importSkill(ctx: any) {
         ctx.body = { error: 'Resolved target path escapes skills directory' }
         return
       }
-      if (await pathExists(targetDir) || (target === 'dsh' && await findDshSkillFile([skillsDir], skillName))) {
+      if (await pathExists(targetDir) || (target === 'dsh' && await getSkillFileProvider('dsh').findFile([skillsDir], skillName))) {
         ctx.status = 409
         ctx.body = { error: `Skill "${skillName}" already exists` }
         return

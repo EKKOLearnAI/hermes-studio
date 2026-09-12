@@ -52,6 +52,7 @@ const selectedSkillData = computed(() => {
 const isHermesTarget = computed(() => skillTarget.value === 'hermes')
 const selectedSkillReadonly = computed(() => {
   if (!selectedSkillData.value) return true
+  if (selectedSkillData.value.readonly) return true
   if (selectedCategory.value === '.archive') return true
   return (selectedSkillData.value.source || 'local') !== 'local'
 })

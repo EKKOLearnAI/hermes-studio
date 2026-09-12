@@ -26,6 +26,19 @@ vi.mock('naive-ui', () => ({
 }))
 
 describe('SkillList', () => {
+  it('hides deletion only for shared read-only entries in a writable DSH list', () => {
+    const wrapper = mount(SkillList, {
+      props: {
+        categories: [{ name: 'misc', description: '', skills: [
+          { name: 'shared', description: '', source: 'local', readonly: true },
+          { name: 'private', description: '', source: 'local' },
+        ] }], archived: [], selectedSkill: null, searchQuery: '', sourceFilter: null, toggleable: false,
+      },
+    })
+    expect(wrapper.findAll('.skill-action-btn')).toHaveLength(1)
+    expect(wrapper.text()).toContain('shared')
+    expect(wrapper.text()).toContain('private')
+  })
   describe.each([null, 'external'] as const)('toggle controls with source filter %s', sourceFilter => {
     function mountList(options: { readonly?: boolean; toggleable?: boolean } = {}) {
       return mount(SkillList, {

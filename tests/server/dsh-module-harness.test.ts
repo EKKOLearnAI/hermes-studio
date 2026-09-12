@@ -8,6 +8,7 @@ it('keeps Web composition and unrestricted execution policy inside DSH', () => {
   expect(dshModuleViolations('packages/server/src/modules/coding-agents/services/runtime/run-manager.ts', source)).toHaveLength(1)
   expect(dshModuleViolations('packages/server/src/modules/coding-agents/services/index.ts', 'export async function executeDshPluginCommand() {}')).toHaveLength(1)
   expect(dshModuleViolations('packages/server/src/modules/coding-agents/services/dsh/host.ts', "import { commandEnv } from '..'")).toHaveLength(1)
+  expect(dshModuleViolations('packages/server/src/modules/hermes/services/skills.ts', 'export function validateDshSkill() {}')).toHaveLength(1)
 })
 
 it('keeps the DSH slot transport out of shared client modules', () => {
