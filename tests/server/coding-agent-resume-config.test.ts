@@ -409,7 +409,7 @@ describe('coding agent resumed session config', () => {
     const { startCodingAgentRun } = await import('../../packages/server/src/bootstrap/coding-agents')
     const result = await startCodingAgentRun('codex', {
       sessionId: 'session-1',
-      baseUrl: 'https://api.apikey.fun/v1',
+      baseUrl: 'https://api.apikey.fan/v1',
       apiKey: 'sk-test',
     })
 

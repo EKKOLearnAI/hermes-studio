@@ -61,7 +61,7 @@ function openWorkflow() {
 
 function openApiRelay() {
   if (typeof window === 'undefined') return
-  window.open('https://apikey.fun/register?aff=LIBAPI', '_blank', 'noopener,noreferrer')
+  window.open('https://apikey.fan/register?aff=LIBAPI', '_blank', 'noopener,noreferrer')
 }
 </script>
 

@@ -103,7 +103,7 @@ function readJsonFile(path: string): any {
 }
 
 function buildApiUrl(baseUrl: string, pathWithV1: string): string {
-  const base = (baseUrl || 'https://api.apikey.fun/v1').replace(/\/+$/, '')
+  const base = (baseUrl || 'https://api.apikey.fan/v1').replace(/\/+$/, '')
   const apiPath = pathWithV1.startsWith('/') ? pathWithV1 : `/${pathWithV1}`
   if (base.endsWith('/v1') && apiPath.startsWith('/v1/')) return `${base}${apiPath.slice(3)}`
   return `${base}${apiPath}`

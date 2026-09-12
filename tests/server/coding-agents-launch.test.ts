@@ -3072,7 +3072,7 @@ describe('coding agent launch preparation', () => {
     const target = registerClaudeCodeProxyTarget({
       provider: 'fun-codex',
       model: 'gpt-5.5',
-      baseUrl: 'https://api.apikey.fun/v1',
+      baseUrl: 'https://api.apikey.fan/v1',
       apiKey: 'sk-upstream',
       apiMode: 'codex_responses',
     })
@@ -3094,7 +3094,7 @@ describe('coding agent launch preparation', () => {
 
     await claudeProxyMessages(ctx)
 
-    expect(fetchMock).toHaveBeenCalledWith('https://api.apikey.fun/v1/responses', expect.objectContaining({
+    expect(fetchMock).toHaveBeenCalledWith('https://api.apikey.fan/v1/responses', expect.objectContaining({
       method: 'POST',
       headers: expect.objectContaining({ Authorization: 'Bearer sk-upstream' }),
     }))
@@ -3120,7 +3120,7 @@ describe('coding agent launch preparation', () => {
     const target = registerClaudeCodeProxyTarget({
       provider: 'fun-codex',
       model: 'gpt-5.5',
-      baseUrl: 'https://api.apikey.fun/v1',
+      baseUrl: 'https://api.apikey.fan/v1',
       apiKey: 'sk-upstream',
       apiMode: 'codex_responses',
     })
@@ -3283,7 +3283,7 @@ describe('coding agent launch preparation', () => {
     const target = registerClaudeCodeProxyTarget({
       provider: 'fun-claude',
       model: 'claude-sonnet-4-6',
-      baseUrl: 'https://api.apikey.fun',
+      baseUrl: 'https://api.apikey.fan',
       apiKey: 'sk-upstream',
       apiMode: 'anthropic_messages',
     })
@@ -3306,7 +3306,7 @@ describe('coding agent launch preparation', () => {
 
     await claudeProxyMessages(ctx)
 
-    expect(fetchMock).toHaveBeenCalledWith('https://api.apikey.fun/v1/messages', expect.objectContaining({
+    expect(fetchMock).toHaveBeenCalledWith('https://api.apikey.fan/v1/messages', expect.objectContaining({
       method: 'POST',
       headers: expect.objectContaining({
         Authorization: 'Bearer sk-upstream',

@@ -130,8 +130,8 @@ const canFetchProviderCatalog = computed(() =>
 )
 
 const FUN_LINK_MAP: Record<string, string> = {
-  'fun-codex': 'https://apikey.fun/register?aff=LIBAPI',
-  'fun-claude': 'https://apikey.fun/register?aff=LIBAPI',
+  'fun-codex': 'https://apikey.fan/register?aff=LIBAPI',
+  'fun-claude': 'https://apikey.fan/register?aff=LIBAPI',
 }
 
 const funProviderLink = computed(() => selectedPreset.value ? FUN_LINK_MAP[selectedPreset.value] || '' : '')

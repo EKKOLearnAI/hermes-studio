@@ -237,7 +237,7 @@ describe('provider presets', () => {
     expect(missingMappings).toEqual([])
   })
 
-  it('routes apikey.fun Codex through the Responses transport', () => {
+  it('routes apikey.fan Codex through the Responses transport', () => {
     const preset = SERVER_PROVIDER_PRESETS.find((candidate) => candidate.value === FUN_CODEX_PROVIDER)
     expect(preset?.api_mode).toBe('codex_responses')
   })
