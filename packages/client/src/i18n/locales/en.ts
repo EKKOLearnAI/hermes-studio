@@ -3536,6 +3536,8 @@ export default {
 
   // Changelog
   changelog: {
+    new_0_7_21_1: 'Fixed DSH plugin configuration and Agent preset pages failing to open on Windows when startup selected the wrong command script (#3026)',
+    new_0_7_21_2: 'DSH configuration startup errors now identify the failed stage and system or exit code without exposing plugin logs or credentials (#3026)',
     new_0_7_20_1: 'Added DeepSeek Harness (DSH) installation management and integration with direct chats, group chats, and workflows, including Agent preset selection and mode preservation on resume; updated English and Chinese guides (#3020, #3023)',
     new_0_7_20_2: 'Added native DSH Web plugin configuration, plugin lists, and Agent preset management with copying, default selection, and custom preset deletion; DSH and Web dependencies must be installed on the backend host (#3020)',
     new_0_7_20_3: 'Group chat Agent creation and editing now use a right-side drawer with a scrollable form, fixed action buttons, and full-width layout on mobile (#3020)',
