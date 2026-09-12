@@ -111,6 +111,7 @@ export interface WorkflowNodeSnapshot {
     title: string
     agent: string
     agentMode: 'scoped' | 'global'
+    agentPreset?: string
     provider: string
     model: string
     apiMode: string
@@ -355,6 +356,7 @@ export function normalizeWorkflowNode(raw: unknown): WorkflowNodeSnapshot | null
       model,
       apiMode,
       reasoningEffort,
+      ...(typeof data.agentPreset === 'string' && data.agentPreset ? { agentPreset: data.agentPreset } : {}),
       input: typeof data.input === 'string' ? data.input : '',
       skills: stringArray(data.skills),
       images: stringArray(data.images),
@@ -1527,6 +1529,7 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
           ...((node.data.agent === 'hermes' || node.data.agent === 'ekko-agent')
             ? { background_delegation_enabled: false }
             : {}),
+          ...(node.data.agentPreset ? { agent_preset: node.data.agentPreset } : {}),
           ...(node.data.agent === 'hermes' || node.data.agentMode === 'global' ? {} : { apiMode: node.data.apiMode || undefined }),
           one_shot_model: true,
           ...(node.data.agentMode !== 'global' && node.data.reasoningEffort !== 'default'
@@ -2046,6 +2049,7 @@ export class WorkflowManager extends EventEmitter<WorkflowManagerEvents> {
             ...((node.data.agent === 'hermes' || node.data.agent === 'ekko-agent')
               ? { background_delegation_enabled: false }
               : {}),
+            ...(node.data.agentPreset ? { agent_preset: node.data.agentPreset } : {}),
             ...(node.data.agent === 'hermes' || node.data.agentMode === 'global' ? {} : { apiMode: node.data.apiMode || undefined }),
             one_shot_model: true,
             ...(node.data.agentMode !== 'global' && node.data.reasoningEffort !== 'default'

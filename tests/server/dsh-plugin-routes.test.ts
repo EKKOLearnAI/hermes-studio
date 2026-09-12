@@ -3,8 +3,8 @@ import { bodyParser } from '@koa/bodyparser'
 import { once } from 'node:events'
 import { afterEach, expect, it, vi } from 'vitest'
 import type { Server } from 'node:http'
-const doubles = vi.hoisted(() => ({ native: vi.fn(), change: vi.fn(), create: vi.fn(), remove: vi.fn() }))
-vi.mock('../../packages/server/src/modules/coding-agents/services', async original => ({ ...await original<typeof import('../../packages/server/src/modules/coding-agents/services')>(), getNativeDshPluginInventory: doubles.native, changeDshWebPlugins: doubles.change, dshPluginUi: doubles }))
+const doubles = vi.hoisted(() => ({ native: vi.fn(), change: vi.fn(), create: vi.fn(), remove: vi.fn(), choices: vi.fn() }))
+vi.mock('../../packages/server/src/modules/coding-agents/services', async original => ({ ...await original<typeof import('../../packages/server/src/modules/coding-agents/services')>(), getNativeDshPluginInventory: doubles.native, changeDshWebPlugins: doubles.change, dshPluginUi: doubles, dshAgentPresets: doubles }))
 import { codingAgentRoutes } from '../../packages/server/src/modules/coding-agents/routes/agents'
 const servers: Server[] = []
 afterEach(async () => { vi.clearAllMocks(); await Promise.all(servers.splice(0).map(server => new Promise<void>(resolve => server.close(() => resolve())))) })
@@ -28,4 +28,13 @@ it('forwards native revisions and removes the old ACP management endpoints', asy
   const response = await fetch(`${base}/api/coding-agents/dsh/web-plugins`, { method: 'POST', headers: { 'content-type': 'application/json', 'if-match': `"${revision}"` }, body: JSON.stringify(body) })
   expect(response.status).toBe(200); expect(doubles.change).toHaveBeenCalledWith(body, revision)
   for (const path of ['plugins', 'plugin-operations/id', 'plugin-settings', 'plugin-settings/modlens']) expect((await fetch(`${base}/api/coding-agents/dsh/${path}`)).status).toBe(404)
+})
+
+it('allows chat users to read safe preset choices while authoring remains restricted', async () => {
+  doubles.choices.mockResolvedValue({ presets: [{ id: 'minimal', name: 'Minimal', isDefault: true }] })
+  const base = await server('user')
+  const response = await fetch(`${base}/api/coding-agents/dsh/session-presets`)
+  expect(response.status).toBe(200)
+  expect(await response.json()).toEqual({ presets: [{ id: 'minimal', name: 'Minimal', isDefault: true }] })
+  expect((await fetch(`${base}/api/coding-agents/dsh/agent-presets`)).status).toBe(403)
 })

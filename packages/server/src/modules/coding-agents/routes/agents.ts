@@ -6,6 +6,9 @@ import * as plugins from '../controllers/dsh-plugins'
 
 export const codingAgentRoutes = new Router()
 
+// Authenticated chat users can select modes without access to native configuration.
+codingAgentRoutes.get('/api/coding-agents/dsh/session-presets', presets.choices)
+
 codingAgentRoutes.get('/api/coding-agents/dsh/agent-presets', requireSuperAdmin, presets.list)
 codingAgentRoutes.post('/api/coding-agents/dsh/agent-presets', requireSuperAdmin, presets.copy)
 codingAgentRoutes.get('/api/coding-agents/dsh/agent-presets/:presetId', requireSuperAdmin, presets.read)

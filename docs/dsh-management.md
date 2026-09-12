@@ -63,9 +63,33 @@ changes are made in the preset files.
 Studio’s DSH-only preset API calls `agentPresets/list`, `read`, `copy`,
 `deletePreset` and the native settings methods through the existing management
 process. There is no additional service and no standalone preset CLI command in
-the validated installation. Native cookies stay server-side. All routes require
+the validated installation. Native cookies stay server-side. Management routes require
 a super administrator. The source bundle/profile/home preset configuration is
 preserved; management and ACP share the source user preset root, so authored
 presets survive management restarts. Defaults affect new sessions; resumed
 sessions retain their original preset. The plugin configuration slot keeps its
 native UI service dependencies, including `uiWorkspace` and the directory picker.
+
+### Mode selection for chats, group members and workflows
+
+The new-chat drawer shows a DSH mode selector only for DeepSeek Harness. It loads
+names, descriptions, default and availability from the read-only
+`GET /api/coding-agents/dsh/session-presets` endpoint. Chat users can read these
+choices; native configuration and authoring endpoints still require a super admin.
+Unavailable presets are disabled, and a failed roster load blocks creation with a
+retry action. Both global and scoped model configurations support preset selection.
+
+The shared chat transport and session record carry only an opaque `agent_preset`
+identifier. DSH validates it on the first launch and persists the resolved choice;
+subsequent launches keep that stored choice even if the global default or model
+changes. The DSH ACP adapter passes it through `session/new` metadata before
+mounting the preset. Native resume reads the preset from native session history.
+Selecting a mode does not update the Web profile default. Profile-wide plugins
+remain global; preset-owned tools and plugins follow the chosen composition.
+
+Group member forms and workflow nodes reuse the same DSH selector. Group member
+records, reusable member presets and remote descriptors retain `agentPreset`.
+Workflow definitions, exports/imports and run snapshots retain the same identifier.
+Both execution paths forward it as `agent_preset` to the coding-agent runner;
+DSH remains responsible for resolving and mounting the selected native composition.
+Workflow node controls scroll when the selected Agent exposes more settings.

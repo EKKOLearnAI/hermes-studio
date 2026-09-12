@@ -413,6 +413,7 @@ export async function listConversations(ctx: any) {
     agent_mode: s.agent_mode,
     agent_session_id: s.agent_session_id,
     agent_native_session_id: s.agent_native_session_id,
+    agent_preset: s.agent_preset,
     model: s.model,
     provider: s.provider,
     api_mode: s.api_mode,

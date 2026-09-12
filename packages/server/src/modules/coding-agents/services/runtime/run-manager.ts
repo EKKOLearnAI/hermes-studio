@@ -81,6 +81,7 @@ try {
 }
 
 export interface CodingAgentRunLaunch {
+  agentPreset?: string
   agentSessionId: string
   agentId: string
   mode: 'scoped' | 'global'
@@ -1319,6 +1320,7 @@ export class CodingAgentRunManager {
       provider: run.launch.provider,
       api_mode: run.launch.apiMode || '',
       reasoning_effort: run.launch.reasoningEffort || '',
+      agent_preset: run.launch.agentPreset || '',
       title: '',
       workspace: run.launch.workspaceDir,
     })

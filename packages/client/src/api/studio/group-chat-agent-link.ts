@@ -7,6 +7,7 @@ export type RemoteGroupAgentDescriptor = {
   provider: string
   model: string
   apiMode: string
+  agentPreset?: string
   reasoningEffort: string
   name: string
   description: string

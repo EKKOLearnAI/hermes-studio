@@ -7,7 +7,7 @@ export function dshModuleViolations(filename, source) {
   if (file.startsWith('packages/client/src/')) {
     if (file.includes('/components/coding-agents/dsh/') || file === 'packages/client/src/api/coding-agents/dsh.ts') return []
     const importsDshApi = /from ['"][^'"]*api\/coding-agents\/dsh['"]/.test(source)
-    const leaksDsh = source.includes('settings.plugin.item') || source.includes('agentPresets/list') || source.includes('STUDIO_DSH_UI_READY') || source.includes('/api/coding-agents/dsh/ui-session')
+    const leaksDsh = source.includes('settings.plugin.item') || source.includes('agentPresets/list') || source.includes('STUDIO_DSH_UI_READY') || source.includes('/api/coding-agents/dsh/ui-session') || source.includes('/api/coding-agents/dsh/session-presets')
     return importsDshApi || leaksDsh ? [`${file}: DSH forms and API behavior belong in the DSH client module`] : []
   }
   if (source.includes('/modlens/config') || source.includes('saveModlensSettings') || source.includes('settingsFields(')) return [`${file}: plugin-specific forms and endpoints belong to native DSH plugins`]

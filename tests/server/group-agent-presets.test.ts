@@ -116,7 +116,8 @@ describe('group Agent presets', () => {
 
     const created = createGroupAgentPreset({
       ownerUserId: 7,
-      agent: 'codex',
+      agent: 'dsh',
+      agentPreset: 'minimal',
       profile: 'research',
       provider: 'openai',
       model: 'gpt-test',

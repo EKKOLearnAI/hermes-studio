@@ -28,3 +28,27 @@ it('refuses mismatched native responses and unavailable defaults', async () => {
   await expect(service.makeDefault('missing')).rejects.toMatchObject({ status: 422 })
   await expect(service.makeDefault('broken')).rejects.toMatchObject({ status: 422 })
 })
+
+it('fixes a session preset independently of the global default and rejects unavailable choices', async () => {
+  const fetcher = vi.fn(async (_url: string, init: RequestInit) => {
+    const request = JSON.parse(String(init.body))
+    expect(request.method).toBe('agentPresets/list')
+    return Response.json({ type: 'server-response', rpcId: request.rpcId, result: { ok: true, value: { presets: [
+      { id: 'standard', name: 'Standard', isDefault: true }, { id: 'minimal', name: 'Minimal', isDefault: false },
+      { id: 'broken', isDefault: false, broken: '/private/plugin.mjs failed' },
+    ], authorable: true } } })
+  })
+  vi.stubGlobal('fetch', fetcher)
+  expect(await service.forSession('minimal')).toBe('minimal')
+  expect(await service.forSession(undefined)).toBe('standard')
+  await expect(service.forSession('missing')).rejects.toMatchObject({ status: 422 })
+  await expect(service.forSession('broken')).rejects.toMatchObject({ status: 422 })
+  await expect(service.forSession('../bad')).rejects.toMatchObject({ status: 400 })
+  const calls = fetcher.mock.calls.length
+  expect(await service.forSession('standard', 'minimal')).toBe('minimal')
+  expect(fetcher).toHaveBeenCalledTimes(calls)
+  expect(await service.choices()).toEqual({ presets: [
+    { id: 'standard', name: 'Standard', isDefault: true }, { id: 'minimal', name: 'Minimal', isDefault: false },
+    { id: 'broken', isDefault: false, unavailable: true },
+  ] })
+})

@@ -197,6 +197,7 @@ export async function startRun(ctx: Context) {
   try {
     const body = ctx.request.body as {
       sessionId?: string
+      agentPreset?: string
       mode?: any
       profile?: string
       provider?: string
@@ -207,6 +208,7 @@ export async function startRun(ctx: Context) {
     }
     ctx.body = await startCodingAgentRun(ctx.params.id, {
       sessionId: String(body.sessionId || ''),
+      agentPreset: body.agentPreset,
       mode: body.mode,
       profile: ctx.state.profile?.name || body.profile,
       provider: body.provider,

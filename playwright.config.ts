@@ -23,6 +23,7 @@ export default defineConfig({
     video: BROWSER_CHANNEL ? 'off' : 'retain-on-failure',
   },
   webServer: {
+    env: { HERMES_WEB_UI_VITE_CACHE_DIR: `node_modules/.vite/playwright-${PORT}` },
     command: `npx vite --host 127.0.0.1 --port ${PORT}`,
     url: BASE_URL,
     reuseExistingServer: !process.env.CI,

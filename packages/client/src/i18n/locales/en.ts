@@ -1,7 +1,7 @@
 import { socialMessagesEn } from '../social-messages'
 
 export default {
-  dshPresets: {"title": "Agent presets", "unavailable": "Unable to load DSH Agent presets. Check the DSH installation and refresh.", "hint": "Defaults apply to new DSH sessions. Existing sessions keep their original preset.", "copy": "Duplicate", "view": "View", "setDefault": "Set as default", "default": "Default", "delete": "Delete", "deleteConfirm": "Delete preset “{name}” and its directory?", "identifier": "Identifier", "name": "Name", "idHint": "Use a unique identifier with lowercase letters, numbers and hyphens.", "empty": "No Agent presets", "copyTitle": "Duplicate preset: {name}", "create": "Create", "location": "Open folder"},
+  dshPresets: {"sessionMode": "DSH mode", "selectMode": "Select an Agent preset", "sessionHint": "Applies only to this new session. Tools and session plugins follow the selected preset.", "title": "Agent presets", "unavailable": "Unable to load DSH Agent presets. Check the DSH installation and refresh.", "hint": "Defaults apply to new DSH sessions. Existing sessions keep their original preset.", "copy": "Duplicate", "view": "View", "setDefault": "Set as default", "default": "Default", "delete": "Delete", "deleteConfirm": "Delete preset “{name}” and its directory?", "identifier": "Identifier", "name": "Name", "idHint": "Use a unique identifier with lowercase letters, numbers and hyphens.", "empty": "No Agent presets", "copyTitle": "Duplicate preset: {name}", "create": "Create", "location": "Open folder"},
   dshPlugins: {
     "configurationTab": "Plugin configuration",
     "listTab": "Plugin list",

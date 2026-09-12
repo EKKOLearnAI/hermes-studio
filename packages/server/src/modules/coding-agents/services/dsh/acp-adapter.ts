@@ -9,7 +9,7 @@ import { DshPluginError } from './errors'
 // Published rc.1 and rc.2 have identical ACP artifacts. Each supported upgrade
 // must review these setup/flush seams and pass the real Web-to-ACP tests.
 export const DSH_ACP_ARTIFACT_SHA256 = 'dcfa3790c65b58280d812e656ac439fe40303bf9b2f3b45842bdfb2345899cde'
-export const DSH_ACP_ADAPTER_REVISION = 1
+export const DSH_ACP_ADAPTER_REVISION = 2
 
 export async function writeDshAcpAdapter(installation: string, destination: string) {
   const directory = await dshPackageDirectory('@deepseek-ai/dsh-acp', [installation])
@@ -23,6 +23,7 @@ export async function writeDshAcpAdapter(installation: string, destination: stri
     if (source.split(before).length - 1 !== count) throw new Error('DSH ACP adapter source contract changed')
     source = source.split(before).join(after)
   }
+  replace('agentOptions: agentOptions(config),\n\t\t\t\t\tfallbackSelection:', 'agentOptions: agentOptions(config),\n\t\t\t\t\tagentPreset: params._meta?.agentPreset,\n\t\t\t\t\tfallbackSelection:')
   replace('meta: { cwd: options.cwd },', 'meta: { cwd: options.cwd, agentPreset: options.agentPreset },')
   replace('await mountAcpMcpServers(agentCtx, options.mcpServers, options.cwd);',
     'await mountAcpMcpServers(agentCtx, options.mcpServers, options.cwd);\n\t\t\t\tawait ctx.agentPresets.mount(agentCtx, options.agentPreset);', 2)

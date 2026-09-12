@@ -459,6 +459,7 @@ export interface Session {
   agentNativeSessionId?: string
   codingAgentId?: ChatCodingAgentId
   codingAgentMode?: 'global' | 'scoped'
+  agentPreset?: string
   messages: Message[]
   createdAt: number
   updatedAt: number
@@ -1172,6 +1173,7 @@ function mapHermesSession(s: SessionSummary): Session {
     model: s.model,
     provider: s.provider || (s as any).billing_provider || '',
     apiMode: s.api_mode,
+    agentPreset: s.agent_preset || undefined,
     reasoningEffort: s.reasoning_effort || undefined,
     messageCount: s.message_count,
     messageTotal: s.message_count,
@@ -1942,6 +1944,7 @@ export const useChatStore = defineStore('chat', () => {
     agent?: ChatAgentId
     codingAgentId?: ChatCodingAgentId
     codingAgentMode?: 'global' | 'scoped'
+    agentPreset?: string
     workspace?: string | null
     categoryId?: number | null
     baseUrl?: string
@@ -1959,6 +1962,7 @@ export const useChatStore = defineStore('chat', () => {
       agent: options.agent || codingAgentIdToAgent(codingAgentId) || 'hermes',
       codingAgentId,
       codingAgentMode,
+      agentPreset: options.agentPreset,
       messages: [],
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -2226,6 +2230,7 @@ export const useChatStore = defineStore('chat', () => {
     agent?: ChatAgentId
     codingAgentId?: ChatCodingAgentId
     codingAgentMode?: 'global' | 'scoped'
+    agentPreset?: string
     workspace?: string | null
     categoryId?: number | null
     baseUrl?: string
@@ -2244,6 +2249,7 @@ export const useChatStore = defineStore('chat', () => {
       agent: options.agent,
       codingAgentId,
       codingAgentMode: options.codingAgentMode,
+      agentPreset: options.agentPreset,
       workspace: options.workspace,
       categoryId: options.categoryId,
       baseUrl: options.baseUrl,
@@ -3715,6 +3721,7 @@ export const useChatStore = defineStore('chat', () => {
         ...(isCodingAgentExecution
           ? {
               coding_agent_id: codingAgentId,
+              agent_preset: activeSession.value?.agentPreset,
               mode: codingAgentMode,
               baseUrl: codingAgentMode === 'global' ? undefined : activeSession.value?.baseUrl || providerGroup?.base_url || undefined,
               apiKey: codingAgentMode === 'global' ? undefined : activeSession.value?.apiKey || providerGroup?.api_key || undefined,

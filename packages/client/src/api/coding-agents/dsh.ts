@@ -28,3 +28,6 @@ export const copyDshAgentPreset = (body: { from: string; id: string; name?: stri
 export const deleteDshAgentPreset = (id: string) => request<DshAgentPresets>(presetPath(id), { method: 'DELETE' })
 export const defaultDshAgentPreset = (id: string) => request<DshAgentPresets>(presetPath(id) + '/default', { method: 'PUT' })
 export const locateDshAgentPreset = (id: string) => request<{ path?: string; opened: boolean }>(presetPath(id) + '/location', { method: 'POST' })
+
+export type DshSessionPreset = Pick<DshAgentPreset, 'id' | 'name' | 'description' | 'isDefault'> & { unavailable?: boolean }
+export const listDshSessionPresets = () => request<{ presets: DshSessionPreset[] }>('/api/coding-agents/dsh/session-presets')

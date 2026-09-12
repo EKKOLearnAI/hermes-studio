@@ -92,6 +92,7 @@ export interface RoomAgent {
     provider: string
     model: string
     apiMode: string
+    agentPreset?: string
     reasoningEffort: string
     name: string
     description: string
@@ -130,6 +131,7 @@ export interface RoomAgentInput {
     provider?: string
     model?: string
     apiMode?: string
+    agentPreset?: string
     reasoningEffort?: string
     name?: string
     description?: string
@@ -160,6 +162,7 @@ export function groupAgentPresetToRoomAgentInput(preset: GroupAgentPreset): Room
         model: preset.model,
         apiMode: preset.agent === 'hermes' || preset.agentMode === 'global' ? undefined : preset.apiMode,
         reasoningEffort: preset.reasoningEffort,
+        agentPreset: preset.agentPreset,
         name: preset.name,
         description: preset.description,
         avatar: preset.avatar,

@@ -32,6 +32,8 @@ function createProxyConfig(): ProxyOptions {
 
 export default defineConfig({
   root: 'packages/client',
+  // Concurrent test/dev servers must not replace each other's optimized Vue runtime.
+  cacheDir: resolve(__dirname, process.env.HERMES_WEB_UI_VITE_CACHE_DIR || 'node_modules/.vite/client'),
   plugins: [vue()],
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),

@@ -1,7 +1,7 @@
 import { socialMessagesKo } from '../social-messages-locales'
 
 export default {
-  dshPresets: {"title": "Agent 프리셋", "unavailable": "DSH Agent 프리셋을 불러올 수 없습니다. DSH 설치를 확인하고 새로 고침하세요.", "hint": "기본 프리셋은 새 DSH 세션에 적용됩니다. 기존 세션은 원래 프리셋을 유지합니다.", "copy": "복제", "view": "보기", "setDefault": "기본값으로 설정", "default": "기본값", "delete": "삭제", "deleteConfirm": "프리셋 “{name}” 및 디렉터리를 삭제할까요?", "identifier": "식별자", "name": "이름", "idHint": "소문자, 숫자, 하이픈으로 고유한 식별자를 입력하세요.", "empty": "Agent 프리셋 없음", "copyTitle": "프리셋 복제: {name}", "create": "만들기", "location": "폴더 열기"},
+  dshPresets: {"sessionMode": "DSH 모드", "selectMode": "Agent 프리셋 선택", "sessionHint": "이 새 세션에만 적용됩니다. 선택한 프리셋에 따라 도구와 세션 플러그인을 불러옵니다.", "title": "Agent 프리셋", "unavailable": "DSH Agent 프리셋을 불러올 수 없습니다. DSH 설치를 확인하고 새로 고침하세요.", "hint": "기본 프리셋은 새 DSH 세션에 적용됩니다. 기존 세션은 원래 프리셋을 유지합니다.", "copy": "복제", "view": "보기", "setDefault": "기본값으로 설정", "default": "기본값", "delete": "삭제", "deleteConfirm": "프리셋 “{name}” 및 디렉터리를 삭제할까요?", "identifier": "식별자", "name": "이름", "idHint": "소문자, 숫자, 하이픈으로 고유한 식별자를 입력하세요.", "empty": "Agent 프리셋 없음", "copyTitle": "프리셋 복제: {name}", "create": "만들기", "location": "폴더 열기"},
   dshPlugins: {
     "configurationTab": "플러그인 설정",
     "listTab": "플러그인 목록",

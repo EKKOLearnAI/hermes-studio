@@ -917,6 +917,13 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
       return
     }
 
+    if (pathname === '/api/coding-agents/dsh/session-presets' && request.method() === 'GET') {
+      await route.fulfill(jsonResponse({ presets: [
+        { id: 'standard', name: 'Standard mode', description: 'File editing and delegation.', isDefault: true },
+        { id: 'minimal', name: 'Minimal mode', description: 'A minimal set of tools.', isDefault: false },
+      ] }))
+      return
+    }
     if (pathname === '/api/coding-agents' && request.method() === 'GET') {
       await route.fulfill(jsonResponse({ tools: [] }))
       return
@@ -978,7 +985,7 @@ export async function authenticate(page: Page, accessKey = TEST_ACCESS_KEY, prof
 }
 
 export async function mockChatSocket(page: Page) {
-  await page.route('**/node_modules/.vite/deps/socket__io-client.js*', async (route) => {
+  await page.route('**/node_modules/.vite/**/socket__io-client.js*', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/javascript',

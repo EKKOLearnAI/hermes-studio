@@ -35,6 +35,7 @@ export interface CodingAgentRunSocketData {
   apiMode?: any
   api_mode?: any
   reasoning_effort?: string
+  agent_preset?: string
   push_enabled?: boolean
   instructions?: string
   session_source?: 'global_agent' | 'workflow' | 'group_chat'
@@ -120,6 +121,7 @@ export async function handleCodingAgentRun(
       apiKey: data.apiKey || data.api_key,
       apiMode: launchApiMode,
       reasoningEffort: launchReasoningEffort,
+      agentPreset: data.agent_preset,
       sessionSource: data.session_source,
       ...(groupSystemPrompt ? { groupSystemPrompt } : {}),
       ...(groupRoomId && groupAgentId

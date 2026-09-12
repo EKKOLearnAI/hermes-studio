@@ -134,6 +134,7 @@ export class DshAcpTurn {
   async prompt(input: {
     cwd: string
     nativeSessionId?: string
+    agentPreset?: string
     modelValue?: string
     reasoningEffort?: string
     text: string
@@ -147,6 +148,7 @@ export class DshAcpTurn {
       throw new Error('The configured DSH model does not support image prompts')
     }
     const session = await this.request(input.nativeSessionId ? 'session/resume' : 'session/new', {
+      ...(!input.nativeSessionId && input.agentPreset ? { _meta: { agentPreset: input.agentPreset } } : {}),
       cwd: input.cwd, mcpServers: [], ...(input.nativeSessionId ? { sessionId: input.nativeSessionId } : {}),
     })
     this.sessionId = input.nativeSessionId || session?.sessionId

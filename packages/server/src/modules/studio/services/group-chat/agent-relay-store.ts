@@ -11,6 +11,7 @@ export type RemoteGroupAgentDescriptor = {
   provider: string
   model: string
   apiMode: string
+  agentPreset?: string
   reasoningEffort: string
   name: string
   description: string
@@ -73,6 +74,7 @@ export function normalizeRemoteGroupAgentDescriptor(
     model: agentMode === 'global' ? '' : boundedText(input.model, 500, 'model'),
     apiMode,
     reasoningEffort,
+    agentPreset: boundedText(input.agentPreset, 200, 'agentPreset') || undefined,
     name,
     description: boundedText(input.description, 2_000, 'description'),
     avatar,

@@ -110,6 +110,7 @@ type AgentInput = {
     provider?: string
     model?: string
     apiMode?: string
+    agentPreset?: string
     reasoningEffort?: string
     name?: string
     description?: string
@@ -206,6 +207,7 @@ async function createRoomAgentRuntimeClient(server: GroupChatServer, agentId: st
         model: String(input.model || '').trim(),
         apiMode: agent === 'hermes' ? '' : String(input.apiMode || '').trim(),
         reasoningEffort: String(input.reasoningEffort || '').trim(),
+        agentPreset: input.agentPreset,
         name: input.name || profile,
         description: input.description || '',
         invited: input.invited ? 1 : 0,
@@ -341,6 +343,7 @@ async function connectAndPersistRoomAgent(server: GroupChatServer, roomId: strin
             model,
             apiMode,
             reasoningEffort,
+            agentPreset: input.agentPreset,
             ...(avatar ? { avatar } : {}),
         })
         await server.agentClients.addAgentToRoom(roomId, client)
@@ -372,6 +375,7 @@ export async function createRoom(ctx: any) {
             provider?: string
             model?: string
             apiMode?: string
+            agentPreset?: string
             reasoningEffort?: string
             name?: string
             description?: string
@@ -504,6 +508,7 @@ export async function createRoom(ctx: any) {
                 model: a.model,
                 apiMode: a.apiMode,
                 reasoningEffort: a.reasoningEffort,
+                agentPreset: a.agentPreset,
                 name: a.name || a.profile,
                 description: a.description || '',
                 avatar: a.avatar,
@@ -575,6 +580,7 @@ export async function cloneRoom(ctx: any) {
                 model: sourceAgent.model,
                 apiMode: sourceAgent.apiMode,
                 reasoningEffort: sourceAgent.reasoningEffort,
+                agentPreset: sourceAgent.agentPreset,
                 name: sourceAgent.name,
                 description: sourceAgent.description,
                 avatar: sourceAgent.avatar,
@@ -733,13 +739,14 @@ export async function addRoomAgent(ctx: any) {
         ctx.body = { code: err?.code, error: err?.message || 'Agent preset is unavailable' }
         return
     }
-    const { agent, agentMode, profile, provider, model, apiMode, reasoningEffort, name, description, avatar, invited } = body as {
+    const { agent, agentMode, profile, provider, model, apiMode, reasoningEffort, agentPreset, name, description, avatar, invited } = body as {
         agent?: string
         agentMode?: string
         profile?: string
         provider?: string
         model?: string
         apiMode?: string
+        agentPreset?: string
         reasoningEffort?: string
         name?: string
         description?: string
@@ -827,6 +834,7 @@ export async function addRoomAgent(ctx: any) {
             model: normalizedModel,
             apiMode: normalizedApiMode,
             reasoningEffort: normalizedReasoningEffort,
+            agentPreset: typeof agentPreset === 'string' ? agentPreset.trim() : undefined,
             name: name || normalizedProfile,
             description: description || '',
             avatar: normalizedAvatar,
@@ -851,13 +859,14 @@ export async function updateRoomAgent(ctx: any) {
         return
     }
 
-    const { agent, agentMode, profile, provider, model, apiMode, reasoningEffort, name, description, avatar } = ctx.request.body as {
+    const { agent, agentMode, profile, provider, model, apiMode, reasoningEffort, agentPreset, name, description, avatar } = ctx.request.body as {
         agent?: string
         agentMode?: string
         profile?: string
         provider?: string
         model?: string
         apiMode?: string
+        agentPreset?: string
         reasoningEffort?: string
         name?: string
         description?: string
@@ -963,6 +972,7 @@ export async function updateRoomAgent(ctx: any) {
         model: normalizedModel,
         apiMode: normalizedApiMode,
         reasoningEffort: normalizedReasoningEffort,
+        agentPreset: typeof agentPreset === 'string' ? agentPreset.trim() : undefined,
         name: normalizedName || normalizedProfile,
         description: normalizedDescription,
         avatar: normalizedAvatar,
@@ -1006,6 +1016,7 @@ export async function updateRoomAgent(ctx: any) {
                 model: nextInput.model,
                 apiMode: nextInput.apiMode,
                 reasoningEffort: nextInput.reasoningEffort,
+                agentPreset: nextInput.agentPreset,
                 ...(nextInput.avatar ? { avatar: nextInput.avatar } : {}),
             },
         )

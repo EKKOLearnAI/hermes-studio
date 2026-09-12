@@ -296,6 +296,7 @@ export interface CodingAgentConfigFileContent extends CodingAgentConfigFileDefin
 }
 
 export interface CodingAgentLaunchInput extends CodingAgentConfigScope {
+  agentPreset?: string
   mode?: 'scoped' | 'global'
   model?: string
   workspace?: string | null
@@ -3780,6 +3781,7 @@ async function startCodingAgentRunInternal(
     throw err
   }
   const existingSession = getSession(sessionId)
+  const agentPreset = id === 'dsh' ? await dshHost.presets.forSession(input.agentPreset, existingSession?.agent_preset) : undefined
   const sessionSource = input.sessionSource === 'global_agent'
     ? 'global_agent'
     : input.sessionSource === 'group_chat'
@@ -3861,6 +3863,7 @@ async function startCodingAgentRunInternal(
     promptFile: launch.promptFile,
     state,
     reasoningEffort: launch.reasoningEffort,
+    agentPreset,
     sessionSource: sessionSource === 'global_agent' || sessionSource === 'workflow' || sessionSource === 'group_chat'
       ? sessionSource
       : undefined,
@@ -3869,6 +3872,7 @@ async function startCodingAgentRunInternal(
     source: sessionSource,
     agent: persistedAgentId(launch.agentId),
     agent_mode: launch.mode,
+    ...(agentPreset ? { agent_preset: agentPreset } : {}),
     agent_session_id: agentSessionId,
     agent_native_session_id: agentNativeSessionId,
     model: launch.model,

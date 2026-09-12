@@ -184,6 +184,10 @@ async function mockGroupChatApi(page: Page, offlinePresence = false) {
         ],
       })
     }
+    if (pathname === '/api/coding-agents/dsh/session-presets') return json({ presets: [
+      { id: 'standard', name: 'Standard mode', isDefault: true },
+      { id: 'minimal', name: 'Minimal mode', description: 'Minimal tools for this Agent.', isDefault: false },
+    ] })
     if (pathname === '/api/hermes/profiles') return json({ profiles: [{ name: 'default', active: true, model: 'test-model', gateway: 'test' }] })
     if (pathname === '/api/hermes/available-models') {
       return json({
@@ -418,7 +422,7 @@ async function mockGroupChatApi(page: Page, offlinePresence = false) {
 }
 
 async function mockGroupChatSocket(page: Page) {
-  await page.route('**/node_modules/.vite/deps/socket__io-client.js*', async (route) => {
+  await page.route('**/node_modules/.vite/**/socket__io-client.js*', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/javascript',
@@ -1221,12 +1225,18 @@ test.describe('group chat room deep links', () => {
     await modal.locator('.n-select').first().click()
     await page.getByText('DeepSeek Harness', { exact: true }).last().click()
     await expect(modal.locator('img[src="/coding-agents/deepseek.svg"]')).toBeVisible()
+    const mode = modal.getByTestId('dsh-session-preset')
+    await expect(mode).toContainText('Standard mode (Default)')
+    await mode.locator('.n-base-selection').click()
+    await page.getByText('Minimal mode', { exact: true }).last().click()
     await modal.getByPlaceholder('Custom name (leave empty to use profile name)').fill('DSH Worker')
     await modal.getByRole('button', { name: 'Add', exact: true }).click()
     await expect.poll(() => api.addedAgents.length).toBe(1)
     expect(api.addedAgents[0]).toMatchObject({ roomId: 'room-alpha', body: {
-      agent: 'dsh', agentMode: 'scoped', provider: 'test-provider', model: 'test-model', name: 'DSH Worker',
+      agent: 'dsh', agentMode: 'scoped', agentPreset: 'minimal', provider: 'test-provider', model: 'test-model', name: 'DSH Worker',
     } })
+    await page.getByRole('button', { name: 'DSH Worker', exact: true }).click()
+    await expect(page.locator('.modal').filter({ hasText: 'Edit DSH Worker' }).getByTestId('dsh-session-preset')).toContainText('Minimal mode')
   })
 
   test('cancels preset selection without changing the Agent form', async ({ page }) => {

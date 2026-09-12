@@ -21,7 +21,7 @@ const previewPng = Buffer.from(
 
 async function mockInviteSocket(page: Page, joinFailure: { code: string, error: string } | null = null, workerContent = 'How can I help?', withTools = false) {
   const joinFailureJson = JSON.stringify(joinFailure)
-  await page.route('**/node_modules/.vite/deps/socket__io-client.js*', async (route) => {
+  await page.route('**/node_modules/.vite/**/socket__io-client.js*', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/javascript',

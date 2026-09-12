@@ -31,6 +31,15 @@ function connection(options: { resumeError?: boolean; permissionRequired?: boole
 }
 
 describe('DSH ACP connection', () => {
+  it('passes a chosen preset only to a new native session', async () => {
+    const fresh = connection()
+    await fresh.turn.prompt({ cwd: '/workspace', text: 'go', images: [], agentPreset: 'minimal' })
+    expect(fresh.sent.find(message => message.method === 'session/new').params._meta).toEqual({ agentPreset: 'minimal' })
+    const resumed = connection()
+    await resumed.turn.prompt({ cwd: '/workspace', text: 'go', images: [], agentPreset: 'standard', nativeSessionId: 'native-1' })
+    expect(resumed.sent.find(message => message.method === 'session/resume').params).toEqual({ cwd: '/workspace', mcpServers: [], sessionId: 'native-1' })
+  })
+
   it('negotiates, creates, selects the opaque model value, prompts and closes before EOF', async () => {
     const { turn, sent, child, session } = connection()
     await expect(turn.prompt({ cwd: '/workspace', text: '--hello', images: [], modelValue: '["ekko-studio","custom"]' })).resolves.toBe('end_turn')

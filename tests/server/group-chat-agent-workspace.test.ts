@@ -210,6 +210,7 @@ describe('group chat agent workspace bridge runs', () => {
     const client = await clients.createAgent({
       agentId: `agent-${agent}`,
       agent,
+      agentPreset: agent === 'dsh' ? 'minimal' : undefined,
       profile: 'default',
       name: agent,
       description: '',
@@ -232,7 +233,7 @@ describe('group chat agent workspace bridge runs', () => {
     })
 
     expect(runAndWait).toHaveBeenCalledWith(
-      expect.objectContaining({ coding_agent_id: codingAgentId }),
+      expect.objectContaining({ coding_agent_id: codingAgentId, ...(agent === 'dsh' ? { agent_preset: 'minimal' } : {}) }),
       expect.anything(),
     )
     expect(mockSocket.emit).toHaveBeenCalledWith(

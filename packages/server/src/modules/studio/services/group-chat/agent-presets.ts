@@ -19,7 +19,7 @@ type CapabilityGroup = {
 }
 
 const ALLOWED_FIELDS = new Set([
-  'agent', 'agentMode', 'profile', 'provider', 'model', 'apiMode', 'reasoningEffort',
+  'agent', 'agentMode', 'profile', 'provider', 'model', 'apiMode', 'reasoningEffort', 'agentPreset',
   'name', 'description', 'avatar',
 ])
 const AGENTS = new Set<GroupAgentPresetAgent>(['hermes', 'ekko', 'codex', 'claude', 'pi', 'grok', 'opencode', 'dsh'])
@@ -91,6 +91,7 @@ export function normalizeGroupAgentPresetInput(input: unknown): Omit<GroupAgentP
     model: agentMode === 'global' ? '' : requiredText(record.model, 'model'),
     apiMode,
     reasoningEffort,
+    agentPreset: optionalText(record.agentPreset, 'agentPreset', 200) || undefined,
     name: requiredText(record.name, 'name', 120),
     description: optionalText(record.description, 'description', 2_000),
     avatar: normalizeAvatar(record.avatar),

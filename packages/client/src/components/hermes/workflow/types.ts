@@ -13,6 +13,8 @@ export interface WorkflowAgentNodeData {
   title: string
   agent: string
   agentMode: 'scoped' | 'global'
+  agentPreset?: string
+  agentPresetReady?: boolean
   provider: string
   model: string
   apiMode: CodingAgentApiMode
@@ -33,4 +35,4 @@ export interface WorkflowAgentNodeData {
   onUploadImages: (id: string, files: File[]) => Promise<string[]>
 }
 
-export type WorkflowAgentNodeEditableData = Pick<WorkflowAgentNodeData, 'title' | 'agent' | 'agentMode' | 'provider' | 'model' | 'apiMode' | 'reasoningEffort' | 'input' | 'skills' | 'images' | 'approvalRequired' | 'orchestration'>
+export type WorkflowAgentNodeEditableData = Pick<WorkflowAgentNodeData, 'title' | 'agent' | 'agentMode' | 'agentPreset' | 'agentPresetReady' | 'provider' | 'model' | 'apiMode' | 'reasoningEffort' | 'input' | 'skills' | 'images' | 'approvalRequired' | 'orchestration'>

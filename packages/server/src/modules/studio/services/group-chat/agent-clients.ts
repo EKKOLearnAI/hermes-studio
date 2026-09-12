@@ -41,6 +41,7 @@ export interface AgentConfig {
     provider?: string
     model?: string
     apiMode?: string
+    agentPreset?: string
     reasoningEffort?: string
     name: string
     description: string
@@ -107,6 +108,7 @@ export type GroupAgentSessionConfig = {
     provider?: string
     model?: string
     apiMode?: string
+    agentPreset?: string
     reasoningEffort?: string
 }
 type WorkspaceDiffTerminalStatus = 'completed' | 'failed' | 'aborted'
@@ -236,6 +238,7 @@ export interface GroupAgentExecutor {
     readonly provider: string
     readonly model: string
     readonly apiMode: string
+    readonly agentPreset?: string
     readonly reasoningEffort: string
     readonly name: string
     readonly description: string
@@ -335,6 +338,7 @@ export class AgentClient implements GroupAgentExecutor {
     readonly provider: string
     readonly model: string
     readonly apiMode: string
+    readonly agentPreset?: string
     readonly reasoningEffort: string
     readonly name: string
     readonly description: string
@@ -372,6 +376,7 @@ export class AgentClient implements GroupAgentExecutor {
         this.model = String(config.model || '').trim()
         this.apiMode = this.agent === 'hermes' ? '' : String(config.apiMode || '').trim()
         this.reasoningEffort = String(config.reasoningEffort || '').trim()
+        this.agentPreset = config.agentPreset
         this.name = config.name
         this.description = config.description
         this.backgroundDelegationEnabled = config.backgroundDelegationEnabled ?? false
@@ -1208,6 +1213,7 @@ export class AgentClient implements GroupAgentExecutor {
                 coding_agent_id: codingAgentId,
                 mode: usesGlobalCodingAgent ? 'global' : 'scoped',
                 profile: this.profile,
+                ...(this.agentPreset ? { agent_preset: this.agentPreset } : {}),
                 ...(!usesGlobalCodingAgent && this.reasoningEffort
                     ? { reasoning_effort: this.reasoningEffort }
                     : {}),
@@ -2023,7 +2029,8 @@ export function groupBridgeSessionId(
     const runtimeKey = agent !== 'hermes' || provider || model || apiMode || reasoningEffort || modeKey
         ? `_${agent}${modeKey}_${provider}_${model}_${apiMode}_${reasoningEffort}`
         : ''
-    const rawKey = `gc_${roomId}_${profile}_${name}_${sessionSeed || '0'}${runtimeKey}`
+    const presetKey = runtimeConfig.agentPreset ? `_preset_${runtimeConfig.agentPreset}` : ''
+    const rawKey = `gc_${roomId}_${profile}_${name}_${sessionSeed || '0'}${runtimeKey}${presetKey}`
     const safePrefix = rawKey.replace(/[^a-zA-Z0-9_-]/g, '_')
     const keyHash = createHash('sha256').update(rawKey).digest('hex').slice(0, 16)
     const suffix = `_h_${keyHash}`
@@ -2595,6 +2602,7 @@ export class AgentClients {
             model: String(agent.model || ''),
             apiMode: String(agent.apiMode || ''),
             reasoningEffort: String(agent.reasoningEffort || ''),
+            agentPreset: String(agent.agentPreset || ''),
             name: String(agent.name || ''),
             description: String(agent.description || ''),
         }

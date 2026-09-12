@@ -146,3 +146,10 @@ and Web profile tests, `dsh-settings-real.test.ts` with the installed CLI, and
 `tests/e2e/dsh-plugins.spec.ts` for changes. The real test covers native RPC, source
 directory persistence, default updates, restart retention and read-only shipped
 presets as well as plugin UI startup (including native directory-picker dependencies).
+
+For DSH chat, group-member and workflow modes, keep the selector and roster API in the DSH client module,
+and validation/ACP metadata in `services/dsh`. Shared chat code may carry and store
+only the generic preset identifier. Run `dsh-session-presets.spec.ts`, the DSH
+preset/runner tests and the real Web-to-ACP test on both supported releases. The
+real test must select a non-default preset, contrast a second session’s tools,
+and retain the original selection after resume and a default change.

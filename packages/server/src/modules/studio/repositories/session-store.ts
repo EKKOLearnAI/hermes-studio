@@ -15,6 +15,7 @@ export interface HermesSessionRow {
   source: string
   agent: string
   agent_mode: string
+  agent_preset: string
   agent_session_id: string
   agent_native_session_id: string
   user_id: string | null
@@ -120,6 +121,7 @@ function mapSessionRow(row: Record<string, unknown>): HermesSessionRow {
     source: String(row.source || 'api_server'),
     agent: String(row.agent || ''),
     agent_mode: String(row.agent_mode || ''),
+    agent_preset: String(row.agent_preset || ''),
     agent_session_id: String(row.agent_session_id || ''),
     agent_native_session_id: String(row.agent_native_session_id || ''),
     user_id: row.user_id != null ? String(row.user_id) : null,
@@ -187,6 +189,7 @@ export function createSession(data: {
   source?: string
   agent?: string
   agent_mode?: string
+  agent_preset?: string
   agent_session_id?: string
   agent_native_session_id?: string
   user_id?: string | number | null
@@ -207,6 +210,7 @@ export function createSession(data: {
     return {
       id: data.id, profile: data.profile || 'default', source, agent,
       agent_mode: data.agent_mode || '',
+      agent_preset: data.agent_preset || '',
       agent_session_id: data.agent_session_id || '', agent_native_session_id: data.agent_native_session_id || '',
       user_id: data.user_id == null ? null : String(data.user_id), model: data.model || '', provider: data.provider || '', api_mode: data.api_mode || '', reasoning_effort: data.reasoning_effort || '', title: data.title || null,
       parent_session_id: data.parent_session_id || null,
@@ -222,14 +226,15 @@ export function createSession(data: {
   }
   const db = getDb()!
   db.prepare(
-    `INSERT INTO ${SESSIONS_TABLE} (id, profile, source, agent, agent_mode, agent_session_id, agent_native_session_id, user_id, model, provider, api_mode, reasoning_effort, title, parent_session_id, started_at, last_active, workspace, category_id, push_enabled)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO ${SESSIONS_TABLE} (id, profile, source, agent, agent_mode, agent_preset, agent_session_id, agent_native_session_id, user_id, model, provider, api_mode, reasoning_effort, title, parent_session_id, started_at, last_active, workspace, category_id, push_enabled)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     data.id,
     data.profile || 'default',
     source,
     agent,
     data.agent_mode || '',
+    data.agent_preset || '',
     data.agent_session_id || '',
     data.agent_native_session_id || '',
     data.user_id == null ? null : String(data.user_id),
@@ -255,6 +260,7 @@ export function createBranchedSession(data: {
   source?: string
   agent?: string
   agent_mode?: string
+  agent_preset?: string
   agent_session_id?: string
   agent_native_session_id?: string
   user_id?: string | number | null
@@ -300,14 +306,15 @@ export function createBranchedSession(data: {
     ).run(data.ended_at, 'branched', data.parent_session_id)
 
     db.prepare(
-      `INSERT INTO ${SESSIONS_TABLE} (id, profile, source, agent, agent_mode, agent_session_id, agent_native_session_id, user_id, model, provider, api_mode, reasoning_effort, title, parent_session_id, started_at, last_active, workspace, category_id, message_count)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO ${SESSIONS_TABLE} (id, profile, source, agent, agent_mode, agent_preset, agent_session_id, agent_native_session_id, user_id, model, provider, api_mode, reasoning_effort, title, parent_session_id, started_at, last_active, workspace, category_id, message_count)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       data.id,
       data.profile || 'default',
       source,
       agent,
       data.agent_mode || '',
+      data.agent_preset || '',
       data.agent_session_id || '',
       data.agent_native_session_id || '',
       data.user_id == null ? null : String(data.user_id),

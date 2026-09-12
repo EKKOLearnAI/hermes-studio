@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import DshSessionPresetSelect from "@/components/coding-agents/dsh/DshSessionPresetSelect.vue"
 import { ref, computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, provide, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
@@ -173,6 +174,8 @@ const selectedAgentProvider = ref('')
 const selectedAgentModel = ref('')
 const selectedAgentApiMode = ref<CodingAgentApiMode>('codex_responses')
 const selectedAgentReasoningEffort = ref('')
+const selectedRuntimePreset = ref<string>()
+const selectedRuntimePresetReady = ref(false)
 const agentName = ref('')
 const agentDescription = ref('')
 const agentAvatar = ref<ProfileAvatarData | null>(null)
@@ -482,6 +485,7 @@ const agentAvatarPreview = computed(() =>
 const canConfirmAddAgent = computed(() =>
     Boolean(
         isGroupAgentAvailable(selectedAgentType.value) &&
+        (selectedAgentType.value !== 'dsh' || (selectedRuntimePreset.value && selectedRuntimePresetReady.value)) &&
         selectedProfile.value &&
         (usesGlobalAgentMode.value || (
             selectedAgentProvider.value &&
@@ -517,6 +521,8 @@ function handleAgentTypeChange(agent: GroupAgentType) {
         warnAgentUnavailable(agent)
         return
     }
+    selectedRuntimePreset.value = undefined
+    selectedRuntimePresetReady.value = false
     selectedAgentType.value = agent
     if (!['claude', 'codex', 'pi', 'grok', 'opencode', 'dsh'].includes(agent)) selectedAgentMode.value = 'scoped'
     if (selectedProfile.value) syncAgentModelSelection(selectedProfile.value)
@@ -1321,6 +1327,8 @@ async function handleSummaryConfigurationRequired() {
 function resetAgentForm() {
     selectedAgentPresetId.value = null
     selectedProfile.value = null
+    selectedRuntimePreset.value = undefined
+    selectedRuntimePresetReady.value = false
     selectedAgentType.value = firstAvailableGroupAgentType.value || 'hermes'
     selectedAgentMode.value = 'scoped'
     selectedAgentProvider.value = ''
@@ -1342,6 +1350,7 @@ function currentAgentPresetInput(): GroupAgentPresetInput | null {
         model: usesGlobalAgentMode.value ? '' : selectedAgentModel.value,
         apiMode: selectedAgentType.value === 'hermes' || usesGlobalAgentMode.value ? '' : selectedAgentApiMode.value,
         reasoningEffort: usesGlobalAgentMode.value ? '' : selectedAgentReasoningEffort.value,
+        agentPreset: selectedAgentType.value === 'dsh' ? selectedRuntimePreset.value : undefined,
         name: agentName.value.trim() || selectedProfile.value,
         description: agentDescription.value.trim(),
         avatar: agentAvatar.value ? JSON.stringify(agentAvatar.value) : '',
@@ -1412,6 +1421,7 @@ function applyAgentPreset(presetId: string | null) {
         inferCodingAgentApiMode(input.provider),
     )
     selectedAgentReasoningEffort.value = input.reasoningEffort || ''
+    selectedRuntimePreset.value = input.agentPreset
     agentName.value = input.name || ''
     agentDescription.value = input.description || ''
     agentAvatar.value = parseStoredAvatar(input.avatar)
@@ -1485,6 +1495,8 @@ async function handleAddAgent() {
     ])
     editingAgent.value = null
     resetAgentForm()
+    selectedRuntimePreset.value = undefined
+    selectedRuntimePresetReady.value = false
     selectedAgentType.value = firstAvailableGroupAgentType.value || 'hermes'
     selectedProfile.value =
         profilesStore.activeProfileName ||
@@ -1558,6 +1570,7 @@ async function handleEditAgent(agent: RoomAgent) {
         inferCodingAgentApiMode(agent.provider),
     )
     selectedAgentReasoningEffort.value = agent.reasoningEffort || ''
+    selectedRuntimePreset.value = agent.agentPreset
     agentName.value = agent.name || ''
     agentDescription.value = agent.description || ''
     agentAvatar.value = parseStoredAvatar(agent.avatar)
@@ -1706,6 +1719,7 @@ async function confirmAddAgent() {
             model: usesGlobalAgentMode.value ? '' : selectedAgentModel.value,
             apiMode: selectedAgentType.value === 'hermes' || usesGlobalAgentMode.value ? undefined : selectedAgentApiMode.value,
             reasoningEffort: usesGlobalAgentMode.value ? '' : selectedAgentReasoningEffort.value,
+            agentPreset: selectedAgentType.value === 'dsh' ? selectedRuntimePreset.value : undefined,
             name: agentName.value.trim() || undefined,
             description: agentDescription.value.trim() || undefined,
             avatar: agentAvatar.value ? JSON.stringify(agentAvatar.value) : '',
@@ -1740,6 +1754,7 @@ async function confirmUpdateAgent() {
             model: usesGlobalAgentMode.value ? '' : selectedAgentModel.value,
             apiMode: selectedAgentType.value === 'hermes' || usesGlobalAgentMode.value ? undefined : selectedAgentApiMode.value,
             reasoningEffort: usesGlobalAgentMode.value ? '' : selectedAgentReasoningEffort.value,
+            agentPreset: selectedAgentType.value === 'dsh' ? selectedRuntimePreset.value : undefined,
             name: agentName.value.trim() || undefined,
             description: agentDescription.value.trim() || undefined,
             avatar: agentAvatar.value ? JSON.stringify(agentAvatar.value) : '',
@@ -2823,6 +2838,9 @@ function handleClarifyKeydown(event: KeyboardEvent) {
                             @update:value="handleAgentProfileChange"
                         />
                     </div>
+                    <DshSessionPresetSelect v-if="selectedAgentType === 'dsh'" class="form-group"
+                        v-model="selectedRuntimePreset" :disabled="isSavingAgent"
+                        @valid="selectedRuntimePresetReady = $event" />
                     <div v-if="supportsGlobalAgentMode" class="form-group">
                         <label class="form-label">{{ t('codingAgents.launchModeScope') }}</label>
                         <NSelect

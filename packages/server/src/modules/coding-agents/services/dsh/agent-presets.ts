@@ -33,6 +33,19 @@ export class DshAgentPresetService {
     return value
   }
   list() { return this.call<DshAgentPresets>('agentPresets/list') }
+  async choices() {
+    const { presets } = await this.list()
+    return { presets: presets.map(({ id, name, description, isDefault, broken }) => ({ id, name, description, isDefault, ...(broken ? { unavailable: true } : {}) })) }
+  }
+  async forSession(requested: unknown, stored?: string) {
+    // The first launch fixes the preset, including across model/process changes.
+    if (stored) return this.id(stored)
+    const selected = requested === undefined ? undefined : this.id(requested)
+    const { presets } = await this.list()
+    const preset = selected ? presets.find(row => row.id === selected) : presets.find(row => row.isDefault)
+    if (!preset || preset.broken) throw new DshPluginError(422, 'DSH_PRESET_INVALID', 'Select an available DSH Agent preset')
+    return preset.id
+  }
   async read(id: unknown) { return this.call<{ agentPreset: string; content: string; name?: string; trust: 'system' | 'user' }>('agentPresets/read', { agentPreset: this.id(id) }) }
   async copy(body: unknown) {
     const value = body as Record<string, unknown> | null

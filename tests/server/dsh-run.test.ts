@@ -45,7 +45,7 @@ describe('DSH chat runner', () => {
     ;(manager as any).emitToChat = emitted
     ;(manager as any).markChatRunCompleted = () => {}
     vi.mocked(spawn).mockImplementation(() => createChild() as any)
-    manager.start({ agentSessionId: sessionId, sessionId, agentId: 'dsh', mode: 'scoped', profile: 'default',
+    manager.start({ agentSessionId: sessionId, sessionId, agentId: 'dsh', mode: 'scoped', profile: 'default', agentPreset: 'minimal',
       provider: 'test', model: 'test-model', command: 'dsh', args: ['--profile', 'acp'], shellCommand: 'dsh', workspaceDir: workspace })
   })
   afterEach(() => {
@@ -68,6 +68,8 @@ describe('DSH chat runner', () => {
   }
   it('maps ACP text, reasoning and tools and uses proxy billing without duplicate output', async () => {
     const child = await prompt('work')
+    expect(child.sent.find(message => message.method === 'session/new').params._meta).toEqual({ agentPreset: 'minimal' })
+    expect(getSession(sessionId)?.agent_preset).toBe('minimal')
     manager.handleResponseEvent(sessionId, { type: 'response.output_text.delta', data: { delta: 'duplicate proxy text' } })
     manager.handleProxyUsageEvent(sessionId, { type: 'response.completed', data: { response: { id: 'bill-1', usage: { input_tokens: 10, output_tokens: 5 } } } })
     update(child, { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'Thinking' } })

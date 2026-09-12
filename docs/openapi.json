@@ -2756,6 +2756,107 @@
         }
       }
     },
+    "/api/coding-agents/dsh/session-presets": {
+      "get": {
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "tags": [
+          "Coding Agents"
+        ],
+        "operationId": "listDshSessionPresets",
+        "summary": "List DSH modes available when creating a chat",
+        "description": "Available to authenticated chat users. Returns only preset identifiers, names, descriptions, default and availability; does not expose configuration files or authoring operations.",
+        "responses": {
+          "200": {
+            "description": "Plugin state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "presets"
+                  ],
+                  "properties": {
+                    "presets": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "id",
+                          "isDefault"
+                        ],
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "description": {
+                            "type": "string"
+                          },
+                          "isDefault": {
+                            "type": "boolean"
+                          },
+                          "unavailable": {
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Native preset service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "DSH installation unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/coding-agents/dsh/ui-session": {
       "post": {
         "security": [
@@ -3815,6 +3916,9 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "agentPreset": {
+                    "type": "string"
+                  },
                   "apiKey": {
                     "type": "string"
                   },
@@ -15015,6 +15119,9 @@
                     "type": "string"
                   },
                   "agentMode": {
+                    "type": "string"
+                  },
+                  "agentPreset": {
                     "type": "string"
                   },
                   "apiMode": {

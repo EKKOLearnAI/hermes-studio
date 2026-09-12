@@ -416,6 +416,55 @@ describe('workflow manager', () => {
     } finally { await manager.delete(workflow.id) }
   })
 
+  it('keeps a selected DSH preset in workflow snapshots and execution', async () => {
+    const { initAllStores } = await import('../../packages/server/src/modules/studio/infrastructure/database/init')
+    const { getDb } = await import('../../packages/server/src/modules/studio/infrastructure/database/index')
+    const { WorkflowManager } = await import('../../packages/server/src/modules/studio/services/workflow/manager')
+    initAllStores()
+    chatRunMock.runAndWait.mockReset().mockResolvedValue({ ok: true, output: 'done' })
+    const manager = new WorkflowManager()
+    const workflow = manager.create({
+      name: `DSH preset execution ${Date.now()}`,
+      profile: 'default',
+      nodes: [{ id: 'agent', type: 'agent', data: {
+        title: 'DSH preset', agent: 'dsh', agentMode: 'global',
+        provider: 'must-not-leak', model: 'must-not-leak', apiMode: 'chat_completions',
+        reasoningEffort: 'high', agentPreset: 'minimal', input: 'work',
+      } }],
+      edges: [],
+    })
+    try {
+      const result = await manager.runNow(workflow.id)
+      const runInput = chatRunMock.runAndWait.mock.calls[0]?.[0]
+      expect(runInput).toMatchObject({
+        coding_agent_id: 'dsh',
+        agent_id: 'dsh',
+        mode: 'global',
+        agent_preset: 'minimal',
+        profile: 'default',
+        one_shot_model: true,
+      })
+      expect(runInput).not.toHaveProperty('provider')
+      expect(runInput).not.toHaveProperty('model')
+      expect(runInput).not.toHaveProperty('apiMode')
+      expect(runInput).not.toHaveProperty('reasoning_effort')
+      expect(result.nodeSessions[0]).toMatchObject({
+        agent: 'dsh',
+        agent_mode: 'global',
+        status: 'completed',
+      })
+      expect(getDb()!.prepare(`SELECT source, agent, agent_mode, provider, model, api_mode FROM sessions WHERE id = ?`)
+        .get(result.nodeSessions[0]!.session_id)).toEqual({
+          source: 'workflow',
+          agent: 'dsh',
+          agent_mode: 'global',
+          provider: 'global',
+          model: '',
+          api_mode: '',
+        })
+    } finally { await manager.delete(workflow.id) }
+  })
+
   it('runs Ekko workflow nodes as scoped one-shot executions without background delegation', async () => {
     const { initAllStores } = await import('../../packages/server/src/modules/studio/infrastructure/database/init')
     const { getDb } = await import('../../packages/server/src/modules/studio/infrastructure/database/index')

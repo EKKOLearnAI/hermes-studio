@@ -30,6 +30,7 @@ export interface StartRunRequest {
   source?: 'api_server' | 'cli' | 'coding_agent' | 'global_agent' | 'workflow' | 'group_chat'
   session_source?: 'global_agent' | 'workflow' | 'group_chat'
   coding_agent_id?: ChatCodingAgentId
+  agent_preset?: string
   agent_id?: ChatCodingAgentId
   mode?: 'scoped' | 'global'
   workspace?: string | null

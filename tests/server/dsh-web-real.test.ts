@@ -204,7 +204,7 @@ it.skipIf(process.env.DSH_WEB_REAL !== '1')('runs a Web-installed bundle and cus
       }
     `)
     await writeFile(join(preset, 'preset.yml'), 'name: Custom Web preset\n')
-    const settings = 'agent-presets:\n  default: custom\npermission:\n  defaultPreset: workspace-write\n'
+    const settings = 'agent-presets:\n  default: standard\npermission:\n  defaultPreset: workspace-write\n'
     await writeFile(join(sourceHome, 'settings.yaml'), settings)
     server.listen(0, '127.0.0.1'); await once(server, 'listening')
     const input = { sourceHome, sharedSkills: join(root, 'skills'), rootDir: home, installationCommand: command,
@@ -219,7 +219,7 @@ it.skipIf(process.env.DSH_WEB_REAL !== '1')('runs a Web-installed bundle and cus
       return rpc
     }
     const rpc = await start()
-    const { sessionId } = await rpc.request('session/new', { cwd: workspace, mcpServers: [] })
+    const { sessionId } = await rpc.request('session/new', { cwd: workspace, mcpServers: [], _meta: { agentPreset: 'custom' } })
     expect(await rpc.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'Check Web plugin and child.' }] }, 40_000), rpc.stderr).toMatchObject({ stopReason: 'end_turn' })
     expect(await readFile(outside, 'utf8')).toBe('outside sandbox')
     expect(await readFile(shellOutside, 'utf8')).toBe('shell-access')
@@ -232,12 +232,23 @@ it.skipIf(process.env.DSH_WEB_REAL !== '1')('runs a Web-installed bundle and cus
     expect(JSON.stringify(requests[4].input)).toContain('CHILD_WEB_PRESET_PROBE')
     expect(steps).toEqual([])
     await rpc.request('session/close', { sessionId }); const exited = once(rpc.child, 'close'); rpc.child.stdin!.end(); await exited
+    // Another chat in the same Web profile sees its own selected tool set.
+    const minimal = await start()
+    const minimalSession = await minimal.request('session/new', { cwd: workspace, mcpServers: [], _meta: { agentPreset: 'minimal' } })
+    steps.push({ text: 'Minimal verified' })
+    await minimal.request('session/prompt', { sessionId: minimalSession.sessionId, prompt: [{ type: 'text', text: 'Check minimal mode.' }] })
+    const minimalTools = requests.at(-1).tools.map((tool: any) => tool.name)
+    expect(minimalTools).toContain('web_probe')
+    expect(minimalTools).not.toContain('custom_preset_probe')
+    expect(minimalTools).not.toContain('write')
+    await minimal.request('session/close', { sessionId: minimalSession.sessionId })
+    const minimalExit = once(minimal.child, 'close'); minimal.child.stdin!.end(); await minimalExit
     // A changed Web default must not silently change a restored session's tools.
     const logs = await readdir(join(home, 'sessions'), { recursive: true })
     const log = logs.find(path => path.includes(sessionId) && path.endsWith('.jsonl'))!
     const persisted = await readFile(join(home, 'sessions', log), 'utf8')
     expect(persisted.split('\n')[0], rpc.stderr + '\nSETTINGS: ' + await readFile(join(home, 'settings.yaml'), 'utf8')).toContain('custom')
-    await writeFile(join(sourceHome, 'settings.yaml'), settings.replace('default: custom', 'default: minimal'))
+    await writeFile(join(sourceHome, 'settings.yaml'), settings.replace('default: standard', 'default: minimal'))
     steps.push({ name: 'write', args: { file_path: restoredOutside, content: 'restored full access' } }, { text: 'Restored' })
     const restored = await start()
     await restored.request('session/resume', { sessionId, cwd: workspace, mcpServers: [] })
