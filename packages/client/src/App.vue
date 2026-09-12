@@ -423,7 +423,7 @@ useKeyboard();
   overflow-y: auto;
   background-color: $bg-primary;
 
-  .no-sidebar:not(.has-hermes-config-sidebar):not(.has-ekko-config-sidebar) & {
+  .no-sidebar:not(.has-hermes-config-sidebar):not(.has-ekko-config-sidebar):not(.has-coding-agent-config-sidebar) & {
     height: 100%;
   }
 
