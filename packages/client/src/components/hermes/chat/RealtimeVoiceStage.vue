@@ -157,6 +157,7 @@ const agentDisplayName = computed(() => {
     codex: 'Codex',
     grok: 'Grok',
     opencode: 'OpenCode',
+    dsh: 'DeepSeek Harness',
     'ekko-agent': 'Ekko',
   }[agent] || agent
 })

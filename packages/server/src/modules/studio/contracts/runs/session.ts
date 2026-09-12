@@ -156,7 +156,7 @@ export interface SessionState {
   queueInsertion?: QueueInsertionControl
   responseRun?: ResponseRunState
   source?: ChatRunSource
-  webhookAgent?: 'bridge' | 'ekko' | 'claude-code' | 'codex' | 'pi' | 'grok' | 'opencode'
+  webhookAgent?: 'bridge' | 'ekko' | 'claude-code' | 'codex' | 'pi' | 'grok' | 'opencode' | 'dsh'
   webhookRoomId?: string
   webhookWorkflowId?: string
   webhookWorkflowNodeId?: string
@@ -204,7 +204,7 @@ export interface BridgeContextState {
 }
 
 export type ChatRunSource = 'api_server' | 'cli' | 'coding_agent' | 'global_agent' | 'workflow' | 'group_chat'
-export type ChatCodingAgentId = 'claude-code' | 'codex' | 'pi' | 'grok' | 'opencode' | 'ekko-agent'
+export type ChatCodingAgentId = 'claude-code' | 'codex' | 'pi' | 'grok' | 'opencode' | 'dsh' | 'ekko-agent'
 
 export interface BridgeCompressionResult {
   messages: ChatMessage[]

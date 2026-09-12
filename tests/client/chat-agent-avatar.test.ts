@@ -22,6 +22,7 @@ describe('single chat Agent avatars', () => {
     ['Claude', { agent: 'claude' }, '/coding-agents/claude-code.svg'],
     ['Claude', { codingAgentId: 'claude-code' }, '/coding-agents/claude-code.svg'],
     ['Codex', { codingAgentId: 'codex' }, '/coding-agents/codex-openai.png'],
+    ['DeepSeek Harness', { codingAgentId: 'dsh' }, '/coding-agents/deepseek.svg'],
     ['Pi', { codingAgentId: 'pi' }, '/coding-agents/pi.svg'],
     ['Grok', { codingAgentId: 'grok' }, '/coding-agents/grok.svg'],
     ['OpenCode', { codingAgentId: 'opencode' }, '/coding-agents/opencode.png'],

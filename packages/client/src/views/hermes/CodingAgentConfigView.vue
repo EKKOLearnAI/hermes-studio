@@ -12,6 +12,8 @@ import {
 import type { SkillTarget } from '@/api/hermes/skills'
 import CodingAgentMcpPanel from '@/components/coding-agents/CodingAgentMcpPanel.vue'
 import CodingAgentSkillsPanel from '@/components/coding-agents/CodingAgentSkillsPanel.vue'
+import DshAgentPresetsPanel from '@/components/coding-agents/dsh/DshAgentPresetsPanel.vue'
+import DshPluginsPanel from '@/components/coding-agents/dsh/DshPluginsPanel.vue'
 
 const route = useRoute()
 const { t } = useI18n()
@@ -35,6 +37,7 @@ const settingsKeys: Record<CodingAgentId, Record<SettingsEditor, string>> = {
   pi: { preference: 'agents', configuration: 'settings' },
   grok: { preference: 'agents', configuration: 'settings' },
   opencode: { preference: 'memory', configuration: 'settings' },
+  dsh: { preference: 'memory', configuration: 'settings' },
 }
 
 const skillTargets: Record<CodingAgentId, SkillTarget> = {
@@ -43,6 +46,7 @@ const skillTargets: Record<CodingAgentId, SkillTarget> = {
   pi: 'pi',
   grok: 'grok',
   opencode: 'opencode',
+  dsh: 'dsh',
 }
 
 const editorKinds: SettingsEditor[] = ['preference', 'configuration']
@@ -132,7 +136,9 @@ watch([agentId, section], loadSettingsFiles, { immediate: true })
       <h2 class="header-title">{{ t('sidebar.settings') }}</h2>
     </header>
 
-    <div v-if="section === 'skills'" class="coding-agent-skills-content">
+    <DshPluginsPanel v-if="section === 'plugins' && validAgentId === 'dsh'" />
+    <DshAgentPresetsPanel v-else-if="section === 'presets' && validAgentId === 'dsh'" />
+    <div v-else-if="section === 'skills'" class="coding-agent-skills-content">
       <CodingAgentSkillsPanel :target="skillTarget" />
     </div>
 

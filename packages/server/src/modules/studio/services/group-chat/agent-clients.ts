@@ -35,12 +35,13 @@ export const GROUP_CHAT_AGENT_SOCKET_SECRET = randomBytes(32).toString('hex')
 
 export interface AgentConfig {
     agentId?: string
-    agent?: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi' | 'grok' | 'opencode'
+    agent?: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi' | 'grok' | 'opencode' | 'dsh'
     agentMode?: 'scoped' | 'global'
     profile: string
     provider?: string
     model?: string
     apiMode?: string
+    agentPreset?: string
     reasoningEffort?: string
     name: string
     description: string
@@ -102,11 +103,12 @@ export function mentionMessageToStoredContextMessage(roomId: string, msg: Mentio
 type GroupEstimateMessage = { role: 'user' | 'assistant'; content: string }
 export type GroupModelContext = { model: string; provider: string }
 export type GroupAgentSessionConfig = {
-    agent?: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi' | 'grok' | 'opencode'
+    agent?: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi' | 'grok' | 'opencode' | 'dsh'
     agentMode?: 'scoped' | 'global'
     provider?: string
     model?: string
     apiMode?: string
+    agentPreset?: string
     reasoningEffort?: string
 }
 type WorkspaceDiffTerminalStatus = 'completed' | 'failed' | 'aborted'
@@ -230,12 +232,13 @@ export interface GroupAgentEventSink {
 
 export interface GroupAgentExecutor {
     readonly agentId: string
-    readonly agent: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi' | 'grok' | 'opencode'
+    readonly agent: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi' | 'grok' | 'opencode' | 'dsh'
     readonly agentMode: 'scoped' | 'global'
     readonly profile: string
     readonly provider: string
     readonly model: string
     readonly apiMode: string
+    readonly agentPreset?: string
     readonly reasoningEffort: string
     readonly name: string
     readonly description: string
@@ -288,7 +291,7 @@ export interface GroupChatRunService {
             workspace?: string | null
             source?: string
             session_source?: 'group_chat'
-            coding_agent_id?: 'claude-code' | 'codex' | 'pi' | 'grok' | 'opencode' | 'ekko-agent'
+            coding_agent_id?: 'claude-code' | 'codex' | 'pi' | 'grok' | 'opencode' | 'dsh' | 'ekko-agent'
             mode?: 'scoped' | 'global'
             profile?: string
             reasoning_effort?: string
@@ -329,12 +332,13 @@ export interface GroupChatRunService {
 
 export class AgentClient implements GroupAgentExecutor {
     readonly agentId: string
-    readonly agent: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi' | 'grok' | 'opencode'
+    readonly agent: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi' | 'grok' | 'opencode' | 'dsh'
     readonly agentMode: 'scoped' | 'global'
     readonly profile: string
     readonly provider: string
     readonly model: string
     readonly apiMode: string
+    readonly agentPreset?: string
     readonly reasoningEffort: string
     readonly name: string
     readonly description: string
@@ -364,7 +368,7 @@ export class AgentClient implements GroupAgentExecutor {
     constructor(config: AgentConfig, handlers: AgentEventHandler = {}, eventSink: GroupAgentEventSink | null = null) {
         this.agentId = config.agentId || Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
         this.agent = config.agent || 'hermes'
-        this.agentMode = config.agentMode === 'global' && (this.agent === 'claude' || this.agent === 'codex' || this.agent === 'pi' || this.agent === 'grok' || this.agent === 'opencode')
+        this.agentMode = config.agentMode === 'global' && (this.agent === 'claude' || this.agent === 'codex' || this.agent === 'pi' || this.agent === 'grok' || (this.agent === 'opencode' || this.agent === 'dsh'))
             ? 'global'
             : 'scoped'
         this.profile = config.profile
@@ -372,6 +376,7 @@ export class AgentClient implements GroupAgentExecutor {
         this.model = String(config.model || '').trim()
         this.apiMode = this.agent === 'hermes' ? '' : String(config.apiMode || '').trim()
         this.reasoningEffort = String(config.reasoningEffort || '').trim()
+        this.agentPreset = config.agentPreset
         this.name = config.name
         this.description = config.description
         this.backgroundDelegationEnabled = config.backgroundDelegationEnabled ?? false
@@ -1185,7 +1190,7 @@ export class AgentClient implements GroupAgentExecutor {
                         ? 'pi'
                         : this.agent === 'grok'
                             ? 'grok'
-                            : this.agent === 'opencode'
+                            : this.agent === 'dsh' ? 'dsh' : this.agent === 'opencode'
                                 ? 'opencode'
                                 : 'codex'
             const usesGlobalCodingAgent = this.agentMode === 'global' && codingAgentId !== 'ekko-agent'
@@ -1208,6 +1213,7 @@ export class AgentClient implements GroupAgentExecutor {
                 coding_agent_id: codingAgentId,
                 mode: usesGlobalCodingAgent ? 'global' : 'scoped',
                 profile: this.profile,
+                ...(this.agentPreset ? { agent_preset: this.agentPreset } : {}),
                 ...(!usesGlobalCodingAgent && this.reasoningEffort
                     ? { reasoning_effort: this.reasoningEffort }
                     : {}),
@@ -2023,7 +2029,8 @@ export function groupBridgeSessionId(
     const runtimeKey = agent !== 'hermes' || provider || model || apiMode || reasoningEffort || modeKey
         ? `_${agent}${modeKey}_${provider}_${model}_${apiMode}_${reasoningEffort}`
         : ''
-    const rawKey = `gc_${roomId}_${profile}_${name}_${sessionSeed || '0'}${runtimeKey}`
+    const presetKey = runtimeConfig.agentPreset ? `_preset_${runtimeConfig.agentPreset}` : ''
+    const rawKey = `gc_${roomId}_${profile}_${name}_${sessionSeed || '0'}${runtimeKey}${presetKey}`
     const safePrefix = rawKey.replace(/[^a-zA-Z0-9_-]/g, '_')
     const keyHash = createHash('sha256').update(rawKey).digest('hex').slice(0, 16)
     const suffix = `_h_${keyHash}`
@@ -2595,6 +2602,7 @@ export class AgentClients {
             model: String(agent.model || ''),
             apiMode: String(agent.apiMode || ''),
             reasoningEffort: String(agent.reasoningEffort || ''),
+            agentPreset: String(agent.agentPreset || ''),
             name: String(agent.name || ''),
             description: String(agent.description || ''),
         }

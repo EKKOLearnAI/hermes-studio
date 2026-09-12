@@ -13,7 +13,9 @@ import { setupTerminalWebSocket } from '../modules/hermes/sockets/terminal'
 import { setupKanbanEventsWebSocket } from '../modules/hermes/sockets/kanban-events'
 import { startVersionCheck } from './health'
 import { registerRoutes } from './routes'
+import { dshPluginUi } from '../modules/coding-agents/services'
 import './chat-agent-runtime-adapter'
+import './skill-files-adapter'
 import { setGroupChatServer } from '../modules/studio/routes/group-chat'
 import { setChatRunServer } from '../modules/studio/public/chat-run'
 import { GroupChatServer } from '../modules/studio/public/group-chat'
@@ -499,6 +501,7 @@ export async function bootstrap() {
   // authenticated request here so the proxy can remove historical image data
   // before dispatching to any provider API mode.
   app.use(createCodexProxyRequestBodyParser(isAuthorizedCodexProxyRequest))
+  app.use(dshPluginUi.middleware)
   // Raise body limits above the default 1mb: profile avatars and MiMo voice-clone
   // reference audio are posted as base64 data URLs before reaching handlers.
   app.use(createRequestBodyParser())
@@ -541,6 +544,8 @@ export async function bootstrap() {
   bootstrapReady = true
   console.log('[bootstrap] web UI shell ready')
 
+  const closeDshPluginUi = dshPluginUi.attach(servers)
+  additionalShutdownSteps.push({ name: 'DSH plugin UI transport', close: closeDshPluginUi })
   const terminalWebSocket = setupTerminalWebSocket(servers)
   if (terminalWebSocket) {
     additionalShutdownSteps.push({
@@ -646,7 +651,8 @@ export async function bootstrap() {
         writeBadUpgradeRequest(socket)
         return
       }
-      if (url.pathname !== '/api/hermes/terminal' &&
+      if (!dshPluginUi.handlesUpgrade(req) &&
+        url.pathname !== '/api/hermes/terminal' &&
         url.pathname !== '/api/hermes/kanban/events' &&
         url.pathname !== getLanPeerSocketPath() &&
         !url.pathname.startsWith('/socket.io/')) {

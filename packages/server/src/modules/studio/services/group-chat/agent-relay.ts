@@ -347,12 +347,13 @@ function sameRemoteAgent(
 
 class RelayGroupAgentExecutor implements GroupAgentExecutor {
   readonly agentId: string
-  agent: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi' | 'grok' | 'opencode'
+  agent: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi' | 'grok' | 'opencode' | 'dsh'
   agentMode: 'scoped' | 'global'
   profile: string
   provider: string
   model: string
   apiMode: string
+  agentPreset?: string
   reasoningEffort: string
   name: string
   description: string
@@ -387,6 +388,7 @@ class RelayGroupAgentExecutor implements GroupAgentExecutor {
     this.model = String(agent.model || '')
     this.apiMode = String(agent.apiMode || '')
     this.reasoningEffort = String(agent.reasoningEffort || '')
+    this.agentPreset = agent.agentPreset
     this.name = String(agent.name || this.profile)
     this.description = String(agent.description || '')
     this.avatar = String(agent.avatar || '')
@@ -417,6 +419,7 @@ class RelayGroupAgentExecutor implements GroupAgentExecutor {
     this.model = String(agent.model || '')
     this.apiMode = String(agent.apiMode || '')
     this.reasoningEffort = String(agent.reasoningEffort || '')
+    this.agentPreset = agent.agentPreset
     this.name = String(agent.name || this.profile)
     this.description = String(agent.description || '')
     this.avatar = String(agent.avatar || '')
@@ -1248,6 +1251,7 @@ export class GroupAgentRelayServer {
             model: descriptor.model,
             apiMode: descriptor.apiMode,
             reasoningEffort: descriptor.reasoningEffort,
+            agentPreset: descriptor.agentPreset,
             avatar: descriptor.avatar,
             executorType: 'remote',
             ownerMemberId: request.ownerMemberId,
@@ -1270,6 +1274,7 @@ export class GroupAgentRelayServer {
         model: roomAgent.model,
         apiMode: roomAgent.apiMode,
         reasoningEffort: roomAgent.reasoningEffort,
+        agentPreset: roomAgent.agentPreset,
         name: roomAgent.name,
         description: roomAgent.description,
         invited: 1,
@@ -1353,6 +1358,7 @@ export class GroupAgentRelayServer {
           model: roomAgent.model,
           apiMode: roomAgent.apiMode,
           reasoningEffort: roomAgent.reasoningEffort,
+          agentPreset: roomAgent.agentPreset,
           name: roomAgent.name,
           description: roomAgent.description,
           avatar: roomAgent.avatar,
@@ -1404,6 +1410,7 @@ export class GroupAgentRelayServer {
                 model: descriptor.model,
                 apiMode: descriptor.apiMode,
                 reasoningEffort: descriptor.reasoningEffort,
+                agentPreset: descriptor.agentPreset,
                 avatar: descriptor.avatar,
               },
             )

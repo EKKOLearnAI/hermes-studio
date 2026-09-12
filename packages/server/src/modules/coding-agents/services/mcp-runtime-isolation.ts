@@ -5,6 +5,7 @@ import { parse as parseToml } from 'smol-toml'
 import { logger } from '../../studio/public/logging'
 import { killOwnedProcessTree } from '../../studio/public/process-tree'
 import { isolatedCodingAgentChildEnv } from './runtime/child-env'
+import { assertDshMcpProbeIsLiteral, readDshMcpServers, updateDshMcpServer } from './dsh/config'
 
 const STUDIO_MANAGED_NAMES = new Set([
   'hermes-studio-api',
@@ -233,7 +234,7 @@ export async function isolateUnhealthyRuntimeMcpServers(
   configPath: string,
   options: { probe?: typeof probeCodingAgentMcpConfig } = {},
 ): Promise<string[]> {
-  if (!['claude-code', 'codex', 'pi', 'grok', 'opencode'].includes(agentId)) return []
+  if (!['claude-code', 'codex', 'pi', 'grok', 'opencode', 'dsh'].includes(agentId)) return []
   let content: string
   try {
     content = await readFile(configPath, 'utf-8')
@@ -243,7 +244,12 @@ export async function isolateUnhealthyRuntimeMcpServers(
 
   let servers: Record<string, Record<string, any>>
   try {
-    servers = agentId === 'claude-code' || agentId === 'pi'
+    servers = agentId === 'dsh'
+      ? Object.fromEntries([...readDshMcpServers(content)].filter(([name]) => {
+          try { assertDshMcpProbeIsLiteral(content, name); return true }
+          catch { return false }
+        }))
+      : agentId === 'claude-code' || agentId === 'pi'
       ? jsonMcpServers(content)
       : agentId === 'opencode'
         ? openCodeMcpServers(content)
@@ -257,7 +263,9 @@ export async function isolateUnhealthyRuntimeMcpServers(
   if (!unhealthy.size) return []
 
   let updated = content
-  if (agentId === 'claude-code' || agentId === 'pi') {
+  if (agentId === 'dsh') {
+    for (const name of unhealthy.keys()) updated = updateDshMcpServer(updated, name, { ...servers[name], enabled: false })
+  } else if (agentId === 'claude-code' || agentId === 'pi') {
     const parsed = JSON.parse(content || '{}') as Record<string, any>
     const mcpServers = isRecord(parsed.mcpServers) ? { ...parsed.mcpServers } : {}
     for (const name of unhealthy.keys()) delete mcpServers[name]

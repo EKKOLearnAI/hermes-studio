@@ -13,6 +13,9 @@ async function selectWorkflowScheduleField(page: Page, modal: Locator, testId: s
 }
 
 test('workflow Run sends the selected total time budget', async ({ page }) => {
+  const renderErrors: string[] = []
+  page.on('console', message => { if (message.type() === 'error' && message.text().includes('uncaught Vue error')) renderErrors.push(message.text()) })
+  page.on('pageerror', error => renderErrors.push(error.message))
   await authenticate(page, TEST_ACCESS_KEY, 'research')
   const api = await mockHermesApi(page, {
     workflows: [{
@@ -47,10 +50,11 @@ test('workflow Run sends the selected total time budget', async ({ page }) => {
   ))!
   expect(JSON.parse(runRequest.postData || '{}')).toEqual({ timeout_ms: 750_000 })
   await expect(modal).toBeHidden()
+  expect(renderErrors).toEqual([])
   expect(api.unexpectedRequests).toEqual([])
 })
 
-test('workflow Coding Agent nodes hide auth providers and reset auth selections', async ({ page }) => {
+for (const agent of ['Codex', 'DeepSeek Harness']) test(`workflow ${agent} nodes hide auth providers and reset auth selections`, async ({ page }) => {
   await authenticate(page, TEST_ACCESS_KEY, 'research')
   const authGroup = {
     provider: 'openai-codex',
@@ -83,13 +87,32 @@ test('workflow Coding Agent nodes hide auth providers and reset auth selections'
   await expect(node.locator('.model-trigger')).toContainText('gpt-5-codex')
 
   await node.locator('.n-select').first().click()
-  await page.getByText('Codex', { exact: true }).last().click()
+  await page.getByText(agent, { exact: true }).last().click()
   await expect(node.locator('.model-trigger')).toContainText('test-model')
 
   await node.locator('.model-trigger').click()
   const modelDialog = page.getByRole('dialog')
   await expect(modelDialog.getByText('Test Provider', { exact: true })).toBeVisible()
   await expect(modelDialog.getByText('OpenAI Codex Subscription', { exact: true })).toHaveCount(0)
+  if (agent === 'DeepSeek Harness') {
+    await page.keyboard.press('Escape')
+    const preset = node.getByTestId('dsh-session-preset')
+    await expect(preset).toContainText('Standard mode (Default)')
+    await preset.locator('.n-base-selection').click()
+    await page.getByText('Minimal mode', { exact: true }).last().click()
+    await page.locator('.header-actions').getByRole('button', { name: 'Save', exact: true }).click()
+    await expect.poll(() => api.requests.filter(request => request.method === 'PATCH' && request.pathname === '/api/studio/workflows/wf-auth-provider').length).toBeGreaterThan(0)
+    const saved = api.requests.findLast(request => request.method === 'PATCH' && request.pathname === '/api/studio/workflows/wf-auth-provider')!
+    expect(JSON.parse(saved.postData || '{}').nodes[0].data).toMatchObject({ agent: 'dsh', agentPreset: 'minimal', provider: 'test-provider', model: 'test-model' })
+  }
+  if (agent === 'DeepSeek Harness') {
+    const saved = api.requests.findLast(request => request.method === 'PATCH' && request.pathname === '/api/studio/workflows/wf-auth-provider')!
+    const workflow = { id: 'wf-auth-provider', name: 'Provider policy', profile: 'research', created_at: 1, updated_at: 2, ...JSON.parse(saved.postData || '{}') }
+    await page.route('**/api/studio/workflows', route => route.fulfill({ json: { workflows: [workflow] } }))
+    await page.reload()
+    await expect(page.getByTestId('dsh-session-preset')).toContainText('Minimal mode')
+    await page.screenshot({ path: '/tmp/dsh-workflow-mode.png', animations: 'disabled' })
+  }
   expect(api.unexpectedRequests).toEqual([])
 })
 

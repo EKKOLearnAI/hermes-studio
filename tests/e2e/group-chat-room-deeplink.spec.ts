@@ -180,9 +180,14 @@ async function mockGroupChatApi(page: Page, offlinePresence = false) {
           { id: 'codex', name: 'Codex', provider: 'OpenAI', kind: 'coding-agent', installed: true, version: '1.0.0', source: 'user-cli', path: '/usr/local/bin/codex', error: '', installations: [] },
           { id: 'pi', name: 'Pi', provider: 'Pi', kind: 'coding-agent', installed: true, version: '1.0.0', source: 'user-cli', path: '/usr/local/bin/pi', error: '', installations: [] },
           { id: 'grok', name: 'Grok', provider: 'xAI', kind: 'coding-agent', installed: true, version: '1.0.0', source: 'user-cli', path: '/usr/local/bin/grok', error: '', installations: [] },
+          { id: 'dsh', name: 'DeepSeek Harness', provider: 'DeepSeek', kind: 'coding-agent', installed: true, version: '0.1.5-rc.1', source: 'user-cli', path: '/usr/local/bin/dsh', error: '', installations: [] },
         ],
       })
     }
+    if (pathname === '/api/coding-agents/dsh/session-presets') return json({ presets: [
+      { id: 'standard', name: 'Standard mode', isDefault: true },
+      { id: 'minimal', name: 'Minimal mode', description: 'Minimal tools for this Agent.', isDefault: false },
+    ] })
     if (pathname === '/api/hermes/profiles') return json({ profiles: [{ name: 'default', active: true, model: 'test-model', gateway: 'test' }] })
     if (pathname === '/api/hermes/available-models') {
       return json({
@@ -417,7 +422,7 @@ async function mockGroupChatApi(page: Page, offlinePresence = false) {
 }
 
 async function mockGroupChatSocket(page: Page) {
-  await page.route('**/node_modules/.vite/deps/socket__io-client.js*', async (route) => {
+  await page.route('**/node_modules/.vite/**/socket__io-client.js*', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/javascript',
@@ -1171,7 +1176,7 @@ test.describe('group chat room deep links', () => {
       await expect(trigger).toHaveCSS('-webkit-app-region', 'no-drag')
       await trigger.click()
 
-      const modal = page.locator('.modal').filter({ hasText: 'Edit Worker' })
+      const modal = page.locator('.n-drawer').filter({ hasText: 'Edit Worker' })
       await expect(modal).toBeVisible()
       await expect(modal.getByText('Avatar', { exact: true })).toBeVisible()
       await expect(modal.getByText('Agent Name', { exact: true })).toBeVisible()
@@ -1182,7 +1187,7 @@ test.describe('group chat room deep links', () => {
     const api = await setup(page, '/#/hermes/group-chat/room/room-alpha')
 
     await page.locator('.agent-avatar-rail-add').click()
-    const modal = page.locator('.modal').filter({ hasText: 'Add Agent' })
+    const modal = page.locator('.n-drawer').filter({ hasText: 'Add Agent' })
     const nameInput = modal.getByPlaceholder('Custom name (leave empty to use profile name)')
     await nameInput.fill('Draft Agent')
     await modal.getByRole('button', { name: 'Choose preset' }).click()
@@ -1213,11 +1218,41 @@ test.describe('group chat room deep links', () => {
     }])
   })
 
+  for (const mobile of [false, true]) test(`adds DSH from the ${mobile ? 'mobile' : 'desktop'} Agent drawer with the selected mode`, async ({ page }) => {
+    if (mobile) await page.setViewportSize({ width: 390, height: 844 })
+    const api = await setup(page, '/#/hermes/group-chat/room/room-alpha')
+    await page.locator('.agent-avatar-rail-add').click()
+    const modal = page.locator('.n-drawer').filter({ hasText: 'Add Agent' })
+    await modal.locator('.n-select').first().click()
+    await page.getByText('DeepSeek Harness', { exact: true }).last().click()
+    await expect(modal.locator('img[src="/coding-agents/deepseek.svg"]')).toBeVisible()
+    const mode = modal.getByTestId('dsh-session-preset')
+    await expect(mode).toContainText('Standard mode (Default)')
+    await mode.locator('.n-base-selection').click()
+    await page.getByText('Minimal mode', { exact: true }).last().click()
+    await modal.getByPlaceholder('Custom name (leave empty to use profile name)').fill('DSH Worker')
+    const footer = modal.locator('.n-drawer-footer')
+    await expect(footer.getByRole('button', { name: 'Add', exact: true })).toBeInViewport()
+    await expect.poll(async () => modal.evaluate(element => ({
+      right: Math.round(element.getBoundingClientRect().right),
+      width: Math.round(element.getBoundingClientRect().width),
+      viewport: window.innerWidth,
+      fits: document.documentElement.scrollWidth <= window.innerWidth,
+    }))).toEqual({ right: mobile ? 390 : 1280, width: mobile ? 390 : 520, viewport: mobile ? 390 : 1280, fits: true })
+    await modal.getByRole('button', { name: 'Add', exact: true }).click()
+    await expect.poll(() => api.addedAgents.length).toBe(1)
+    expect(api.addedAgents[0]).toMatchObject({ roomId: 'room-alpha', body: {
+      agent: 'dsh', agentMode: 'scoped', agentPreset: 'minimal', provider: 'test-provider', model: 'test-model', name: 'DSH Worker',
+    } })
+    await page.getByRole('button', { name: 'DSH Worker', exact: true }).click()
+    await expect(page.locator('.n-drawer').filter({ hasText: 'Edit DSH Worker' }).getByTestId('dsh-session-preset')).toContainText('Minimal mode')
+  })
+
   test('cancels preset selection without changing the Agent form', async ({ page }) => {
     await setup(page, '/#/hermes/group-chat/room/room-alpha')
 
     await page.locator('.agent-avatar-rail-add').click()
-    const modal = page.locator('.modal').filter({ hasText: 'Add Agent' })
+    const modal = page.locator('.n-drawer').filter({ hasText: 'Add Agent' })
     const nameInput = modal.getByPlaceholder('Custom name (leave empty to use profile name)')
     await nameInput.fill('Keep this draft')
     await modal.getByRole('button', { name: 'Choose preset' }).click()
@@ -1254,12 +1289,12 @@ test.describe('group chat room deep links', () => {
     const api = await setup(page, '/#/hermes/group-chat/room/room-alpha')
 
     await page.locator('.agent-avatar-rail-add').click()
-    const addModal = page.locator('.modal').filter({ hasText: 'Add Agent' })
+    const addModal = page.locator('.n-drawer').filter({ hasText: 'Add Agent' })
     await expect(addModal.getByRole('button', { name: 'Manage presets' })).toHaveCount(0)
     await addModal.getByRole('button', { name: 'Cancel' }).click()
 
     await page.getByRole('button', { name: 'Worker' }).click()
-    const editModal = page.locator('.modal').filter({ hasText: 'Edit Worker' })
+    const editModal = page.locator('.n-drawer').filter({ hasText: 'Edit Worker' })
     await editModal.getByRole('button', { name: 'Manage presets' }).click()
     const presetDialog = page.locator('.agent-preset-dialog').filter({ hasText: 'Manage presets' })
     await presetDialog.getByRole('button', { name: 'Save current Agent as new preset' }).click()

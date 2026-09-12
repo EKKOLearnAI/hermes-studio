@@ -23,6 +23,27 @@ afterEach(() => {
 })
 
 describe('workflow Coding Agent skill roots', () => {
+  it('resolves DSH direct bundles and flat shared skills without falling back to Codex or nested categories', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'studio-workflow-dsh-skills-'))
+    process.env.HERMES_CODING_AGENT_GLOBAL_HOME = root
+    try {
+      for (const [path, content] of [
+        ['.dsh/skills/direct/SKILL.md', 'DSH bundle'], ['.agents/skills/shared.md', 'Shared flat skill'],
+        ['.dsh/skills/custom_file.md', 'Skill filename may differ from its frontmatter name'],
+        ['.dsh/skills/category/nested/SKILL.md', 'Nested'], ['.codex/skills/.system/codex-only/SKILL.md', 'Codex'],
+      ]) {
+        const parts = path.split('/')
+        await mkdir(join(root, ...parts.slice(0, -1)), { recursive: true })
+        await writeFile(join(root, path), content)
+      }
+      const { resolveWorkflowSkillContent } = await import('../../packages/server/src/modules/studio/services/workflow/skill-resolver')
+      const resolve = (skillName: string) => resolveWorkflowSkillContent({ agent: 'dsh', profile: 'default', skillName })
+      await expect(resolve('direct')).resolves.toMatchObject({ target: 'dsh', content: 'DSH bundle' })
+      await expect(resolve('shared')).resolves.toMatchObject({ target: 'dsh', content: 'Shared flat skill' })
+      await expect(resolve('custom_file')).resolves.toMatchObject({ target: 'dsh', content: 'Skill filename may differ from its frontmatter name' })
+      for (const name of ['nested', 'codex-only', '../shared']) await expect(resolve(name)).resolves.toBeNull()
+    } finally { await rm(root, { recursive: true, force: true }) }
+  })
   it('resolves OpenCode skills from the authoritative global home', async () => {
     const root = await mkdtemp(join(tmpdir(), 'hermes-workflow-opencode-skills-'))
     const skillDir = join(root, '.config', 'opencode', 'skills', 'release-notes')

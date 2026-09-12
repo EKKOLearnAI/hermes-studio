@@ -4,6 +4,8 @@ import { tmpdir } from 'os'
 import { dirname, join } from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { parse as parseToml } from 'smol-toml'
+import { parse as parseYaml } from 'yaml'
+import { readDshMcpServers } from '../../packages/server/src/modules/coding-agents/services/dsh/config'
 import { claudeProxyMessages, claudeProxyModels, registerClaudeCodeProxyTarget } from '../../packages/server/src/modules/coding-agents/services/claude-code/proxy'
 import {
   revokeCodexProxyTargets,
@@ -31,6 +33,15 @@ import { codingAgentRunManager } from '../../packages/server/src/modules/coding-
 import { configureProfileConfig } from '../../packages/server/src/modules/studio/public/profile-config'
 import * as providerRuntime from '../../packages/server/src/modules/studio/public/provider-runtime'
 import { upsertCodingAgentMcpServer } from '../../packages/server/src/modules/coding-agents/services/mcp-manager'
+
+// Registry tests verify isolated homes/model injection without requiring a
+// machine-wide DSH install. Real Web composition is covered by dsh-web-real.
+vi.mock('../../packages/server/src/modules/coding-agents/services/dsh/host', async original => {
+  const actual = await original<typeof import('../../packages/server/src/modules/coding-agents/services/dsh/host')>()
+  return { ...actual, createDshHost: (host: Parameters<typeof actual.createDshHost>[0]) => ({
+    ...actual.createDshHost(host), runtimeInput: async () => ({ sourceHome: host.getSourceHome(), launchPath: '/fixture/bin' }),
+  }) }
+})
 
 const homes: string[] = []
 
@@ -74,6 +85,32 @@ function makeHome() {
 
 beforeEach(() => {
   mockProcessUid(1000)
+})
+
+it.each(['scoped', 'global'] as const)('prepares DSH %s ACP homes independently for simultaneous conversations', async mode => {
+  const home = makeHome()
+  const input = { mode, profile: 'default', provider: 'custom:test', model: 'test-model',
+    baseUrl: 'https://api.example.com/v1', apiKey: 'upstream-test-secret', apiMode: 'chat_completions',
+    workspace: join(home, 'workspace'), groupSystemPrompt: 'DSH group instructions' }
+  const launch = await prepareCodingAgentLaunch('dsh', { ...input, sessionId: 'one', agentSessionId: 'run-one' })
+  const other = await prepareCodingAgentLaunch('dsh', { ...input, sessionId: 'two', agentSessionId: 'run-two' })
+  expect(launch.rootDir).not.toBe(other.rootDir)
+  expect(launch.env.DSH_HOME).toBe(launch.rootDir)
+  expect(launch.env.DSH_PERMISSION_MODE).toBe('danger-full-access')
+  expect(launch.env.PATH).toContain('/fixture/bin')
+  expect(launch.args).toEqual(['--profile', 'acp', '--patch', join(launch.rootDir, 'studio.patch.yml')])
+  expect(readFileSync(launch.promptFile!, 'utf8')).toContain('DSH group instructions')
+  const servers = readDshMcpServers(readFileSync(join(launch.rootDir, 'cordis.patch.yml'), 'utf8'))
+  expect(servers.size).toBeGreaterThanOrEqual(4)
+  for (const server of servers.values()) expect(server.env.ELECTRON_RUN_AS_NODE).toBe('1')
+  const overlay = readFileSync(join(launch.rootDir, 'studio.patch.yml'), 'utf8')
+  expect(overlay).not.toContain('upstream-test-secret')
+  const acpConfig = parseYaml(overlay).find((row: any) => row.id === 'acp')
+  if (mode === 'scoped') {
+    expect(acpConfig.config).toEqual({ provider: 'ekko-studio', model: 'test-model' })
+    expect(launch.env.HERMES_DSH_API_KEY).toBeTruthy()
+    expect(launch.env.HERMES_DSH_API_KEY).not.toBe('upstream-test-secret')
+  } else expect(acpConfig).toBeUndefined()
 })
 
 afterEach(() => {

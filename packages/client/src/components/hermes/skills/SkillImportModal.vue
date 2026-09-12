@@ -6,6 +6,7 @@ import { importSkill } from '@/api/hermes/skills'
 import { useI18n } from 'vue-i18n'
 
 const props = defineProps<{
+  allowCategory?: boolean
   importHandler?: (files: File[], category?: string) => Promise<{ name?: string }>
 }>()
 
@@ -117,7 +118,7 @@ function handleClose() {
       <p class="hint">{{ mode === 'zip' ? t('skills.importHintZip') : t('skills.importHintFolder') }}</p>
     </div>
 
-    <div class="form-row">
+    <div v-if="allowCategory !== false" class="form-row">
       <label class="field-label">{{ t('skills.importTargetCategory') }}</label>
       <NInput
         v-model:value="category"

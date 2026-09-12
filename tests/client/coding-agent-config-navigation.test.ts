@@ -17,7 +17,7 @@ describe('coding Agent configuration navigation', () => {
     const router = readClientFile('router/index.ts')
     const sidebar = readClientFile('components/layout/CodingAgentConfigSidebar.vue')
 
-    expect(router).toContain("path: '/studio/agents/:agentId/:section(skills|mcp|settings)'")
+    expect(router).toContain("path: '/studio/agents/:agentId/:section(skills|mcp|settings|plugins|presets)'")
     expect(router).toContain("name: 'codingAgent.config'")
     expect(router).toContain('codingAgentConfig: true')
     expect(app).toContain('@/components/layout/CodingAgentConfigSidebar.vue')

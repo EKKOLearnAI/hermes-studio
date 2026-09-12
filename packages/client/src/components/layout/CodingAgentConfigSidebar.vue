@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import PluginIcon from '@/components/common/PluginIcon.vue'
 import RouteLinkItem from '@/components/common/RouteLinkItem.vue'
 import { useAppStore } from '@/stores/hermes/app'
 
@@ -16,6 +17,7 @@ const agentId = computed(() => String(route.params.agentId || ''))
 const activeSection = computed(() => String(route.params.section || 'settings'))
 
 const items = computed(() => [
+  ...(agentId.value === 'dsh' ? [{ section: 'plugins', label: t('sidebar.plugins'), icon: 'plugins' }, { section: 'presets', label: t('dshPresets.title'), icon: 'presets' }] : []),
   { section: 'skills', label: t('sidebar.skills'), icon: 'skills' },
   { section: 'mcp', label: t('sidebar.mcp'), icon: 'mcp' },
   { section: 'settings', label: t('sidebar.settings'), icon: 'settings' },
@@ -66,7 +68,11 @@ onUnmounted(() => {
         :to="{ name: 'codingAgent.config', params: { agentId, section: item.section } }"
         :active="activeSection === item.section"
       >
-        <svg v-if="item.icon === 'skills'" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <PluginIcon v-if="item.icon === 'plugins'" />
+        <svg v-else-if="item.icon === 'presets'" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="4" y="7" width="16" height="14" rx="3" /><path d="M12 3v4M9 17h6M8 12h.01M16 12h.01" />
+        </svg>
+        <svg v-else-if="item.icon === 'skills'" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
           <path d="m12 2 9 5-9 5-9-5 9-5Z" />
           <path d="m3 12 9 5 9-5M3 17l9 5 9-5" />
         </svg>

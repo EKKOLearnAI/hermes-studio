@@ -142,6 +142,7 @@ describe('GroupMessageList scroll behavior', () => {
       'Pi',
       'Grok',
       'OpenCode',
+      'DeepSeek Harness',
     ])
     expect(wrapper.get('.empty-state p').text()).toBe('groupChat.emptyState')
     expect(wrapper.text()).not.toContain('chat.emptyState')

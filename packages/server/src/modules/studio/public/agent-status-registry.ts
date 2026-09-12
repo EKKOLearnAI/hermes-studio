@@ -1,4 +1,4 @@
-export type AgentStatusId = 'hermes' | 'ekko-agent' | 'claude-code' | 'codex' | 'pi' | 'grok' | 'opencode'
+export type AgentStatusId = 'hermes' | 'ekko-agent' | 'claude-code' | 'codex' | 'pi' | 'grok' | 'opencode' | 'dsh'
 
 export type AgentStatusSource =
   | 'managed-runtime'
@@ -46,7 +46,7 @@ export interface AgentAvailabilitySnapshot {
   agents: AgentAvailabilityRecord[]
 }
 
-const AGENT_ORDER: AgentStatusId[] = ['hermes', 'ekko-agent', 'claude-code', 'codex', 'pi', 'grok', 'opencode']
+const AGENT_ORDER: AgentStatusId[] = ['hermes', 'ekko-agent', 'claude-code', 'codex', 'pi', 'grok', 'opencode', 'dsh']
 
 const DEFAULTS: Record<AgentStatusId, Omit<AgentStatusRecord, 'updatedAt'>> = {
   hermes: {
@@ -108,6 +108,10 @@ const DEFAULTS: Record<AgentStatusId, Omit<AgentStatusRecord, 'updatedAt'>> = {
     path: '',
     error: '',
     installations: [],
+  },
+  dsh: {
+    id: 'dsh', name: 'DeepSeek Harness', provider: 'DeepSeek', kind: 'coding-agent',
+    installed: false, version: '', source: 'not-installed', path: '', error: '', installations: [],
   },
   opencode: {
     id: 'opencode',

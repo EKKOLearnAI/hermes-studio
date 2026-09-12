@@ -47,6 +47,7 @@ export async function resolveGroupAgentPresetForApplication(user: any, presetId:
     model: preset.model,
     apiMode: preset.apiMode,
     reasoningEffort: preset.reasoningEffort,
+    agentPreset: preset.agentPreset,
     name: preset.name,
     description: preset.description,
     avatar: preset.avatar,

@@ -45,7 +45,7 @@ describe('group chat REST route baseline', () => {
       source: 'user-cli',
       path: '/usr/local/bin/hermes',
     })
-    for (const id of ['claude-code', 'codex', 'pi', 'grok', 'opencode'] as const) {
+    for (const id of ['claude-code', 'codex', 'pi', 'grok', 'opencode', 'dsh'] as const) {
       updateAgentStatus(id, { installed: true, source: 'user-cli', path: `/usr/local/bin/${id}` })
     }
     storage = {
@@ -1242,14 +1242,14 @@ describe('group chat REST route baseline', () => {
     expect(broadcastRoomAgents).toHaveBeenCalledWith('room-1')
   })
 
-  it('uses global CLI configuration for supported room agents without persisting scoped overrides', async () => {
+  it.each(['codex', 'dsh'] as const)('uses global CLI configuration for %s without persisting scoped overrides', async agent => {
     storage.rooms.set('room-global', { id: 'room-global', name: 'Global Room', inviteCode: 'GLOBAL1' })
 
     const res = await fetch(`${baseUrl}/api/studio/group-chat/rooms/room-global/agents`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        agent: 'codex',
+        agent,
         agentMode: 'global',
         profile: 'research',
         provider: 'must-not-persist',
@@ -1263,7 +1263,7 @@ describe('group chat REST route baseline', () => {
     expect(res.status).toBe(200)
     await expect(res.json()).resolves.toMatchObject({
       agent: expect.objectContaining({
-        agent: 'codex',
+        agent,
         agentMode: 'global',
         provider: '',
         model: '',
@@ -1272,7 +1272,7 @@ describe('group chat REST route baseline', () => {
       }),
     })
     expect(agentClients.createAgent).toHaveBeenCalledWith(expect.objectContaining({
-      agent: 'codex',
+      agent,
       agentMode: 'global',
       provider: '',
       model: '',
@@ -1280,7 +1280,7 @@ describe('group chat REST route baseline', () => {
       reasoningEffort: '',
     }))
     expect(storage.addRoomAgent.mock.calls.at(-1)?.[6]).toMatchObject({
-      agent: 'codex',
+      agent,
       agentMode: 'global',
       provider: '',
       model: '',

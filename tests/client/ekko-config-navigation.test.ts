@@ -15,7 +15,7 @@ describe('Ekko configuration navigation', () => {
     expect(app).toContain('route.meta?.ekkoConfig === true')
     expect(app).toContain('v-if="!isLoginPage && usesEkkoConfigSidebar"')
     expect(app).toContain("'has-ekko-config-sidebar': usesEkkoConfigSidebar")
-    expect(app).toContain('.no-sidebar:not(.has-hermes-config-sidebar):not(.has-ekko-config-sidebar) &')
+    expect(app).toContain('.no-sidebar:not(.has-hermes-config-sidebar):not(.has-ekko-config-sidebar):not(.has-coding-agent-config-sidebar) &')
 
     for (const [path, name] of [
       ['/ekko/memory', 'ekko.memory'],

@@ -132,13 +132,13 @@ test('edits a provider without rendering its existing credential', async ({ page
 })
 
 
-for (const agent of ['Hermes', 'Ekko', 'Claude', 'Codex', 'Pi', 'Grok', 'OpenCode']) {
+for (const agent of ['Hermes', 'Ekko', 'Claude', 'Codex', 'Pi', 'Grok', 'OpenCode', 'DeepSeek Harness']) {
   test(`creates an OpenCode Free ${agent} chat without asking for a key`, async ({ page }) => {
     await authenticate(page, TEST_ACCESS_KEY)
     await mockHermesApi(page, { modelGroups: [{ provider: 'opencode-free', label: 'OpenCode Free', base_url: 'https://opencode.ai/zen/v1', api_key: '', builtin: true, models: ['mimo-v2.5-free'], catalog_status: 'ready' }] })
     await mockChatSocket(page)
     await page.route('**/api/coding-agents', route => route.fulfill({ json: {
-      tools: ['claude-code', 'codex', 'pi', 'grok', 'opencode'].map(id => ({ id, name: id, installed: true })),
+      tools: ['claude-code', 'codex', 'pi', 'grok', 'opencode', 'dsh'].map(id => ({ id, name: id, installed: true })),
     } }))
     await page.goto('/#/hermes/chat')
     await page.getByRole('button', { name: 'New Chat' }).click()
@@ -167,4 +167,46 @@ test('updates a pending free catalog inside the new chat drawer', async ({ page 
   freeGroup.models = ['mimo-v2.5-free']
   freeGroup.catalog_status = 'ready'
   await expect(create).toBeEnabled({ timeout: 10_000 })
+})
+
+for (const mode of ['scoped', 'global']) test(`DSH ${mode} chat selects its model and displays deltas before completion`, async ({ page }) => {
+  await authenticate(page, TEST_ACCESS_KEY)
+  const api = await mockHermesApi(page)
+  await mockChatSocket(page)
+  await page.route('**/api/coding-agents', route => route.fulfill({ json: { tools: [{ id: 'dsh', name: 'DeepSeek Harness', installed: true }] } }))
+  await page.goto('/#/hermes/chat')
+  await page.getByRole('button', { name: 'New Chat' }).click()
+  const form = page.locator('.new-chat-drawer')
+  await form.locator('.new-chat-field').filter({ hasText: /^Agent/ }).locator('.n-base-selection').click()
+  await page.getByText('DeepSeek Harness', { exact: true }).last().click()
+  if (mode === 'global') await form.getByText('Global config', { exact: true }).click()
+  await form.getByRole('button', { name: 'Create', exact: true }).click()
+  await expect(page).toHaveURL(/#\/hermes\/session\//)
+  const input = page.getByPlaceholder('Type a message... (Enter to send, Shift+Enter for new line)')
+  await input.fill('DSH integration check')
+  await page.getByRole('button', { name: 'Send', exact: true }).click()
+  await expect.poll(() => page.evaluate(() => (window as any).__PW_CHAT_SOCKET__?.emitted?.filter((item: any) => item.event === 'run').length || 0)).toBe(1)
+  const payload = await page.evaluate(() => (window as any).__PW_CHAT_SOCKET__.emitted.find((item: any) => item.event === 'run').payload)
+  expect(payload).toMatchObject({ coding_agent_id: 'dsh', mode })
+  if (mode === 'scoped') expect(payload).toMatchObject({ provider: 'test-provider', model: 'test-model' })
+  await expect(page.locator('img[src="/coding-agents/deepseek.svg"]').first()).toBeVisible()
+  await page.evaluate(sid => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('run.started', { event: 'run.started', session_id: sid, run_id: 'dsh-stream' })
+    socket.__trigger('message.delta', { event: 'message.delta', session_id: sid, run_id: 'dsh-stream', delta: 'DSH first chunk' })
+  }, payload.session_id)
+  await expect(page.getByText('DSH first chunk', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible()
+  await page.evaluate(sid => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('message.delta', { event: 'message.delta', session_id: sid, run_id: 'dsh-stream', delta: ' and second chunk' })
+  }, payload.session_id)
+  await expect(page.getByText('DSH first chunk and second chunk', { exact: true })).toBeVisible()
+  await page.evaluate(sid => {
+    const socket = (window as any).__PW_CHAT_SOCKET__.latest
+    socket.__trigger('run.completed', { event: 'run.completed', session_id: sid, run_id: 'dsh-stream', output: 'DSH first chunk and second chunk' })
+  }, payload.session_id)
+  await expect(page.getByText('DSH first chunk and second chunk', { exact: true })).toHaveCount(1)
+  await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0)
+  expect(api.unexpectedRequests).toEqual([])
 })

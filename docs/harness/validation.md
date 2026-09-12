@@ -103,3 +103,63 @@ When a command fails:
 3. Fix the product bug when there is one.
 4. Update docs or `scripts/harness-check.mjs` when the same class of mistake
    should be prevented next time.
+
+## DSH module boundary
+
+DSH source discovery, Web composition, plugin commands, permission policy, ACP
+lifecycle and protocol translation belong in
+`packages/server/src/modules/coding-agents/services/dsh/`. Shared registry and
+runtime files may pass configuration and generic callbacks, but must not own
+DSH Web patches, permission defaults or ACP construction. DSH modules receive
+platform helpers rather than importing the shared agent registry.
+`npm run harness:check` runs `scripts/dsh-module-harness.mjs` to enforce this.
+
+Web/ACP adapter upgrades additionally require the opt-in `dsh-web-real.test.ts`
+against each supported installed DSH version, including new/resumed presets,
+scoped/global model routing, Web bundle tool execution, child inheritance and
+unrestricted filesystem/shell access. Do not reject an otherwise compatible
+installation by version number or whole-file hash. Validate the required adapter integration points and dependencies before
+writing the private copy, and report the specific missing/ambiguous capability.
+Keep the source hash as diagnostic metadata. Test an unlisted version with an
+unrelated artifact change as well as incompatible integration points.
+
+DSH plugin management has two client tabs under `components/coding-agents/dsh`
+and one DSH API module under `api/coding-agents/dsh.ts`. Shared views may render
+the entry component; they must not implement DSH transport or plugin forms.
+The harness rejects obsolete `managedPluginPatches` / `getDshPluginStore` runtime
+references. Keep native profile operations, the owned settings host and plugin
+adapters in server `services/dsh`.
+
+For settings changes, run `DSH_WEB_COMMAND=/absolute/path/to/dsh npx vitest run
+tests/server/dsh-settings-real.test.ts`. Optionally set `DSH_MODLENS_PACKAGE` to
+an installed ModLens package directory. This opens the real native slot in
+Chromium through the production HTTP/WebSocket transport, verifies native form
+saving and ModLens engine-dependent fields, and only mutates fixture homes.
+Browser coverage in `tests/e2e/dsh-plugins.spec.ts` verifies the two Studio tabs,
+native frame preservation, names/descriptions and native package removal.
+
+For packaging changes run the Web build and `npm --prefix packages/desktop run
+build`. The slot browser code must also be exercised from a minified server
+bundle; runtime serialization must not capture build-generated helper closures.
+
+The DSH Agent presets page is a Studio Vue component, separate from the native
+plugin configuration iframe. Preset operations stay in `services/dsh/agent-presets.ts`
+and use the existing management host. Run `dsh-agent-presets.test.ts`, the DSH route
+and Web profile tests, `dsh-settings-real.test.ts` with the installed CLI, and
+`tests/e2e/dsh-plugins.spec.ts` for changes. The real test covers native RPC, source
+directory persistence, default updates, restart retention and read-only shipped
+presets as well as plugin UI startup (including native directory-picker dependencies).
+
+For DSH chat, group-member and workflow modes, keep the selector and roster API in the DSH client module,
+and validation/ACP metadata in `services/dsh`. Shared chat code may carry and store
+only the generic preset identifier. Run `dsh-session-presets.spec.ts`, the DSH
+preset/runner tests and the real Web-to-ACP test on both supported releases. The
+real test must select a non-default preset, contrast a second session’s tools,
+and retain the original selection after resume and a default change.
+
+For shared Coding Agent skill permissions, run `skills-controller.test.ts`,
+`shared-skills-access.test.ts`, `skills-view.test.ts`, `skill-list.test.ts` and
+`shared-coding-agent-skills.spec.ts`. Verify shared directory and file aliases
+remain read-only, rejected deletion cannot fall back to Hermes, and DSH-private
+skills stay writable. Register native skill formats from bootstrap; agent modules
+must not import another agent’s implementation.

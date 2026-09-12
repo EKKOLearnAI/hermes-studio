@@ -230,12 +230,13 @@ interface RoomAgent {
     id: string
     roomId: string
     agentId: string
-    agent: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi' | 'grok' | 'opencode'
+    agent: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi' | 'grok' | 'opencode' | 'dsh'
     agentMode: 'scoped' | 'global'
     profile: string
     provider: string
     model: string
     apiMode: string
+    agentPreset?: string
     reasoningEffort: string
     name: string
     description: string
@@ -259,11 +260,12 @@ interface GroupAgentActivity {
 }
 
 interface RoomAgentMetadata {
-    agent?: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi' | 'grok' | 'opencode'
+    agent?: 'hermes' | 'ekko' | 'codex' | 'claude' | 'pi' | 'grok' | 'opencode' | 'dsh'
     agentMode?: 'scoped' | 'global'
     provider?: string
     model?: string
     apiMode?: string
+    agentPreset?: string
     reasoningEffort?: string
     avatar?: string
     executorType?: 'server' | 'remote'
@@ -382,6 +384,7 @@ const ROOM_AGENT_SELECT_COLUMNS = [
     'model',
     'apiMode',
     'reasoningEffort',
+    'agentPreset',
     'name',
     'description',
     'avatar',
@@ -2541,6 +2544,7 @@ class ChatStorage {
         const model = agentMode === 'global' ? '' : String(metadata.model || '').trim()
         const apiMode = agent === 'hermes' || agentMode === 'global' ? '' : String(metadata.apiMode || '').trim()
         const reasoningEffort = agentMode === 'global' ? '' : String(metadata.reasoningEffort || '').trim()
+        const agentPreset = typeof metadata.agentPreset === 'string' ? metadata.agentPreset.trim() : ''
         const avatar = String(metadata.avatar || '').trim()
         const executorType = metadata.executorType === 'remote' ? 'remote' : 'server'
         const ownerMemberId = String(metadata.ownerMemberId || '').trim()
@@ -2549,17 +2553,17 @@ class ChatStorage {
         this.db()?.prepare(
             `INSERT INTO gc_room_agents (
                 id, roomId, agentId, agent, agentMode, profile, provider, model, apiMode,
-                reasoningEffort, name, description, avatar, invited,
+                reasoningEffort, agentPreset, name, description, avatar, invited,
                 executorType, ownerMemberId, connectorId, remoteOrigin
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         ).run(
             id, roomId, agentId, agent, agentMode, profile, provider, model, apiMode,
-            reasoningEffort, name, description, avatar, invited,
+            reasoningEffort, agentPreset, name, description, avatar, invited,
             executorType, ownerMemberId, connectorId, remoteOrigin,
         )
         return {
             id, roomId, agentId, agent, agentMode, profile, provider, model, apiMode,
-            reasoningEffort, name, description, avatar, invited,
+            reasoningEffort, agentPreset, name, description, avatar, invited,
             executorType, ownerMemberId, connectorId, remoteOrigin,
         }
     }
@@ -2593,6 +2597,7 @@ class ChatStorage {
             model: String(target.model || ''),
             apiMode: String(target.apiMode || ''),
             reasoningEffort: String(target.reasoningEffort || ''),
+            agentPreset: String(target.agentPreset || ''),
             name: String(target.name || ''),
             description: String(target.description || ''),
             executorType: String(target.executorType || ''),
@@ -2619,12 +2624,13 @@ class ChatStorage {
         const model = agentMode === 'global' ? '' : String(metadata.model || '').trim()
         const apiMode = agent === 'hermes' || agentMode === 'global' ? '' : String(metadata.apiMode || '').trim()
         const reasoningEffort = agentMode === 'global' ? '' : String(metadata.reasoningEffort || '').trim()
+        const agentPreset = typeof metadata.agentPreset === 'string' ? metadata.agentPreset.trim() : ''
         const avatar = String(metadata.avatar || '').trim()
         this.db()?.prepare(
             `UPDATE gc_room_agents
-             SET agent = ?, agentMode = ?, profile = ?, provider = ?, model = ?, apiMode = ?, reasoningEffort = ?, name = ?, description = ?, avatar = ?
+             SET agent = ?, agentMode = ?, profile = ?, provider = ?, model = ?, apiMode = ?, reasoningEffort = ?, agentPreset = ?, name = ?, description = ?, avatar = ?
              WHERE roomId = ? AND removedAt = 0 AND (id = ? OR agentId = ?)`
-        ).run(agent, agentMode, profile, provider, model, apiMode, reasoningEffort, name, description, avatar, roomId, agentRef, agentRef)
+        ).run(agent, agentMode, profile, provider, model, apiMode, reasoningEffort, agentPreset, name, description, avatar, roomId, agentRef, agentRef)
         return this.getRoomAgent(roomId, agentRef)
     }
 
@@ -3732,6 +3738,7 @@ export class GroupChatServer {
                     model: agent.model,
                     apiMode: agent.apiMode,
                     reasoningEffort: agent.reasoningEffort,
+                    agentPreset: agent.agentPreset,
                 }))
             }
         }
@@ -3844,6 +3851,7 @@ export class GroupChatServer {
                         model: agent.model,
                         apiMode: agent.apiMode,
                         reasoningEffort: agent.reasoningEffort,
+                        agentPreset: agent.agentPreset,
                         name: agent.name,
                         description: agent.description,
                         invited: agent.invited,
@@ -4198,6 +4206,7 @@ export class GroupChatServer {
             model: roomAgent.model,
             apiMode: roomAgent.apiMode,
             reasoningEffort: roomAgent.reasoningEffort,
+            agentPreset: roomAgent.agentPreset,
         })
         return sessionId === expected && !this.isRoomAgentSessionFenced(roomId, sessionId)
     }

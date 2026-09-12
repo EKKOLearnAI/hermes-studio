@@ -76,3 +76,10 @@ git worktree remove ../worktrees/hermes-web-ui-<short-topic>
 ```
 
 Only remove the worktree you created.
+
+Vite development and Playwright servers use separate dependency caches. The client
+cache defaults to `node_modules/.vite/client`; Playwright sets
+`HERMES_WEB_UI_VITE_CACHE_DIR=node_modules/.vite/playwright-<port>`. Do not share
+optimized Vue bundles between concurrently running servers: replacing them while
+a page is open can mix Vue runtime instances and break slot rendering. Browser
+socket mocks must match nested cache directories as well as dependency filenames.

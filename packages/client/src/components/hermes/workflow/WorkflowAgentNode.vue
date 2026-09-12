@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import DshSessionPresetSelect from "@/components/coding-agents/dsh/DshSessionPresetSelect.vue"
 import { computed, ref } from 'vue'
 import { Handle, Position, type NodeProps } from '@vue-flow/core'
 import { NodeResizer } from '@vue-flow/node-resizer'
@@ -30,7 +31,7 @@ const statusTip = computed(() => (
     : ''
 ))
 const isCodingAgent = computed(() => props.data.agent !== 'hermes')
-const supportsGlobalMode = computed(() => ['claude-code', 'codex', 'pi', 'grok', 'opencode'].includes(props.data.agent))
+const supportsGlobalMode = computed(() => ['claude-code', 'codex', 'pi', 'grok', 'opencode', 'dsh'].includes(props.data.agent))
 const usesScopedModel = computed(() => !supportsGlobalMode.value || props.data.agentMode !== 'global')
 const agentModeOptions = computed(() => [
   { label: t('codingAgents.launchModeGlobal'), value: 'global' },
@@ -187,6 +188,8 @@ async function uploadImages(files: File[]) {
         :placeholder="t('workflow.node.agent')"
         @update:value="value => updateField('agent', value as string)"
       />
+      <DshSessionPresetSelect v-if="data.agent === 'dsh'" :model-value="data.agentPreset" :disabled="data.readonly"
+        @update:model-value="updateField('agentPreset', $event)" @valid="updateField('agentPresetReady', $event)" />
       <NSelect
         v-if="supportsGlobalMode"
         :value="data.agentMode"
@@ -497,6 +500,7 @@ async function uploadImages(files: File[]) {
   padding: 12px;
   flex: 1;
   min-height: 0;
+  overflow-y: auto;
 }
 
 .node-field-row {

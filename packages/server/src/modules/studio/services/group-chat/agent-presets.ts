@@ -19,14 +19,14 @@ type CapabilityGroup = {
 }
 
 const ALLOWED_FIELDS = new Set([
-  'agent', 'agentMode', 'profile', 'provider', 'model', 'apiMode', 'reasoningEffort',
+  'agent', 'agentMode', 'profile', 'provider', 'model', 'apiMode', 'reasoningEffort', 'agentPreset',
   'name', 'description', 'avatar',
 ])
-const AGENTS = new Set<GroupAgentPresetAgent>(['hermes', 'ekko', 'codex', 'claude', 'pi', 'grok', 'opencode'])
+const AGENTS = new Set<GroupAgentPresetAgent>(['hermes', 'ekko', 'codex', 'claude', 'pi', 'grok', 'opencode', 'dsh'])
 const API_MODES = new Set(['chat_completions', 'codex_responses', 'anthropic_messages'])
 const REASONING_EFFORTS = new Set(['', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
 const AVATAR_MAX_LENGTH = 1_500_000
-const GLOBAL_MODE_AGENTS = new Set<GroupAgentPresetAgent>(['codex', 'claude', 'pi', 'grok', 'opencode'])
+const GLOBAL_MODE_AGENTS = new Set<GroupAgentPresetAgent>(['codex', 'claude', 'pi', 'grok', 'opencode', 'dsh'])
 
 function requiredText(value: unknown, field: string, max = 200): string {
   const normalized = typeof value === 'string' ? value.trim() : ''
@@ -91,6 +91,7 @@ export function normalizeGroupAgentPresetInput(input: unknown): Omit<GroupAgentP
     model: agentMode === 'global' ? '' : requiredText(record.model, 'model'),
     apiMode,
     reasoningEffort,
+    agentPreset: optionalText(record.agentPreset, 'agentPreset', 200) || undefined,
     name: requiredText(record.name, 'name', 120),
     description: optionalText(record.description, 'description', 2_000),
     avatar: normalizeAvatar(record.avatar),
