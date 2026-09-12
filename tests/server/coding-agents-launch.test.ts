@@ -34,6 +34,15 @@ import { configureProfileConfig } from '../../packages/server/src/modules/studio
 import * as providerRuntime from '../../packages/server/src/modules/studio/public/provider-runtime'
 import { upsertCodingAgentMcpServer } from '../../packages/server/src/modules/coding-agents/services/mcp-manager'
 
+// Registry tests verify isolated homes/model injection without requiring a
+// machine-wide DSH install. Real Web composition is covered by dsh-web-real.
+vi.mock('../../packages/server/src/modules/coding-agents/services/dsh/host', async original => {
+  const actual = await original<typeof import('../../packages/server/src/modules/coding-agents/services/dsh/host')>()
+  return { ...actual, createDshHost: (host: Parameters<typeof actual.createDshHost>[0]) => ({
+    ...actual.createDshHost(host), runtimeInput: async () => ({ sourceHome: host.getSourceHome(), launchPath: '/fixture/bin' }),
+  }) }
+})
+
 const homes: string[] = []
 
 function mockProcessUid(uid: number) {
@@ -87,6 +96,8 @@ it.each(['scoped', 'global'] as const)('prepares DSH %s ACP homes independently 
   const other = await prepareCodingAgentLaunch('dsh', { ...input, sessionId: 'two', agentSessionId: 'run-two' })
   expect(launch.rootDir).not.toBe(other.rootDir)
   expect(launch.env.DSH_HOME).toBe(launch.rootDir)
+  expect(launch.env.DSH_PERMISSION_MODE).toBe('danger-full-access')
+  expect(launch.env.PATH).toContain('/fixture/bin')
   expect(launch.args).toEqual(['--profile', 'acp', '--patch', join(launch.rootDir, 'studio.patch.yml')])
   expect(readFileSync(launch.promptFile!, 'utf8')).toContain('DSH group instructions')
   const servers = readDshMcpServers(readFileSync(join(launch.rootDir, 'cordis.patch.yml'), 'utf8'))

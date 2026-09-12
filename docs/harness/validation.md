@@ -103,3 +103,19 @@ When a command fails:
 3. Fix the product bug when there is one.
 4. Update docs or `scripts/harness-check.mjs` when the same class of mistake
    should be prevented next time.
+
+## DSH module boundary
+
+DSH source discovery, Web composition, plugin commands, permission policy, ACP
+lifecycle and protocol translation belong in
+`packages/server/src/modules/coding-agents/services/dsh/`. Shared registry and
+runtime files may pass configuration and generic callbacks, but must not own
+DSH Web patches, permission defaults or ACP construction. DSH modules receive
+platform helpers rather than importing the shared agent registry.
+`npm run harness:check` runs `scripts/dsh-module-harness.mjs` to enforce this.
+
+Web/ACP adapter upgrades additionally require the opt-in `dsh-web-real.test.ts`
+against each supported installed DSH version, including new/resumed presets,
+scoped/global model routing, Web bundle tool execution, child inheritance and
+unrestricted filesystem/shell access. Unknown ACP artifacts fail explicitly;
+do not remove the version/hash check to accommodate a new release.

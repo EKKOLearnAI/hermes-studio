@@ -1,5 +1,5 @@
-import { DshAcpTurn } from '../dsh/acp-turn'
-import { DSH_MODEL_PROVIDER } from '../dsh/runtime-config'
+import type { DshAcpTurn } from '../dsh/acp-turn'
+import { startDshChatTurn } from '../dsh/chat-turn'
 import { agentUpdateLocked, noteAgentActivity } from '../update-lock'
 import { dirname, join } from 'path'
 import { existsSync, accessSync, chmodSync, constants as fsConstants, readFileSync, writeFileSync } from 'fs'
@@ -159,7 +159,7 @@ interface PiRpcPendingRequest {
   timeoutTimer: ReturnType<typeof setTimeout>
 }
 
-interface ManagedCodingAgentRun {
+export interface ManagedCodingAgentRun {
   id: string
   launch: CodingAgentRunLaunch
   pty?: { pid: number; write: (data: string) => void; kill: (signal?: string) => void; onData: (cb: (data: string) => void) => void; onExit: (cb: (event: { exitCode: number }) => void) => void }
@@ -2397,89 +2397,17 @@ export class CodingAgentRunManager {
   }
 
   private startDshTurn(run: ManagedCodingAgentRun, input: string, systemPrompt: string, images: CodingAgentImageInput[]) {
-    if (childIsRunning(run.currentChild)) throw new Error('DSH is still processing the previous input')
-    const responseId = `resp_${Date.now()}`
-    Object.assign(run, {
-      printResponseId: responseId, printMessageId: `msg_${responseId}`, printTextStarted: false,
-      printText: '', printCompleted: false, responseStartEmitted: false, terminalEventHandled: false,
-      codexToolBlocks: new Map(), currentChildStderr: '', runMarker: undefined, memoryExportStarted: false,
-      pendingChatCompletionEvent: undefined, pendingChatCompletionPayload: undefined,
-    })
-    if (run.launch.promptFile) updateManagedPromptFileSync(run.launch.promptFile, systemPrompt)
-    this.handleClaudePrintResponseEvent(run, { type: 'response.created', data: {
-      type: 'response.created', response: { id: responseId, object: 'response', status: 'in_progress', model: run.launch.model, output: [] },
-    } })
-    const child = spawnCodingAgentChild(run.launch.command, run.launch.args, {
-      cwd: run.launch.workspaceDir, pipeStdin: true,
-      env: run.launch.mode === 'global' ? { ...process.env, ...run.launch.env } : isolatedCodingAgentChildEnv(run.launch.env),
-    })
-    run.currentChild = child
-    const turn = new DshAcpTurn(child, {
-      permissionRequired: run.launch.approvalRequired,
-      session: id => {
-        run.launch.agentNativeSessionId = id
-        run.nativeResumeReady = true
-        updateSession(run.launch.sessionId, { agent_native_session_id: id })
-      },
-      config: options => {
-        if (run.launch.mode !== 'global') return
-        const model = options.find(option => option.id === 'model')?.currentValue
-        try {
-          const [, name] = JSON.parse(model)
-          if (typeof name === 'string') {
-            run.launch.model = name
-            updateSession(run.launch.sessionId, { model: name })
-          }
-        } catch { /* Older ACP implementations may use opaque model values. */ }
-      },
-      update: update => {
-        if (run.exited || run.stoppedByUser || run.printCompleted) return
-        this.touch(run)
-        if (update.sessionUpdate === 'agent_message_chunk' && update.content?.type === 'text') this.appendCodexText(run, update.content.text, true)
-        else if (update.sessionUpdate === 'agent_thought_chunk' && update.content?.type === 'text') this.appendCodexReasoning(run, update.content.text)
-        else if (update.sessionUpdate === 'tool_call') this.handleCodexItemStarted(run, {
-          type: 'mcp_tool_call', id: update.toolCallId, tool: update.title || 'DSH tool', arguments: update.rawInput,
-        })
-        else if (update.sessionUpdate === 'tool_call_update' && ['completed', 'failed'].includes(update.status)) {
-          const output = update.rawOutput ?? (update.content || []).map((entry: any) => entry.content?.text || '').join('\n')
-          this.handleCodexItemCompleted(run, { type: 'mcp_tool_call', id: update.toolCallId, output,
-            ...(update.status === 'failed' ? { error: { message: String(output) } } : {}),
-          })
-        }
-        else if (update.sessionUpdate === 'usage_update' && Number.isFinite(update.used)) {
-          updateContextTokenUsage(run.launch.sessionId, run.state, (event: string, payload: any) => this.emitToChat(run.launch.sessionId, event, payload), update.used)
-        }
-      },
-    })
-    run.dshTurn = turn
-    child.stderr?.on('data', (chunk: Buffer) => { appendChildStderr(run, chunk); this.touch(run) })
-    child.on('close', code => {
-      if (run.currentChild !== child) return
-      run.currentChild = undefined
-      if (run.currentChildKillTimer) clearTimeout(run.currentChildKillTimer)
-      if (run.exited || run.stoppedByUser) return
-      if (run.pendingChatCompletionEvent) {
-        void this.emitAndMarkPrintChatRunCompletedAfterUsage(run, run.pendingChatCompletionEvent, run.pendingChatCompletionPayload)
-      } else if (!run.printCompleted) this.failClaudePrintTurn(run, exitErrorMessage('DSH', code, run.currentChildStderr))
-    })
-    void turn.prompt({
-      cwd: run.launch.workspaceDir, text: input, images,
-      nativeSessionId: run.nativeResumeReady ? run.launch.agentNativeSessionId : undefined,
-      modelValue: run.launch.mode === 'scoped' ? JSON.stringify([DSH_MODEL_PROVIDER, run.launch.model]) : undefined,
-      reasoningEffort: run.launch.mode === 'scoped' ? run.launch.reasoningEffort : undefined,
-    }).then(reason => {
-      if (run.exited || run.stoppedByUser) return
-      if (reason === 'end_turn' || reason === 'max_tokens') this.completeClaudePrintTurn(run)
-      else this.failClaudePrintTurn(run, `DSH stopped: ${reason}`)
-    }).catch(error => {
-      if (!run.exited && !run.stoppedByUser) this.failClaudePrintTurn(run, childProcessErrorMessage(error))
-      terminateChildProcess(child)
-    }).finally(() => {
-      turn.dispose()
-      if (run.dshTurn === turn) run.dshTurn = undefined
-      if (childIsRunning(child)) {
-        run.currentChildKillTimer = setTimeout(() => forceKillChildProcess(child), 1500)
-      }
+    startDshChatTurn(run, input, systemPrompt, images, {
+      spawn: spawnCodingAgentChild, isRunning: childIsRunning,
+      terminate: terminateChildProcess, forceKill: forceKillChildProcess,
+      processError: childProcessErrorMessage, exitError: (code, stderr) => exitErrorMessage('DSH', code, stderr),
+      stderr: chunk => { appendChildStderr(run, chunk) }, touch: () => this.touch(run),
+      response: event => this.handleClaudePrintResponseEvent(run, event),
+      text: (text, live) => this.appendCodexText(run, text, live), reasoning: text => this.appendCodexReasoning(run, text),
+      toolStarted: item => this.handleCodexItemStarted(run, item), toolCompleted: item => this.handleCodexItemCompleted(run, item),
+      emit: (event, payload) => this.emitToChat(run.launch.sessionId, event, payload),
+      completeAfterUsage: (event, payload) => this.emitAndMarkPrintChatRunCompletedAfterUsage(run, event, payload),
+      complete: () => this.completeClaudePrintTurn(run), fail: message => this.failClaudePrintTurn(run, message),
     })
   }
 

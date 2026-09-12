@@ -4,7 +4,7 @@ export default {
   dshPlugins: {
     "nativeTitle": "네이티브 프리셋 플러그인",
     "nativeCount": "플러그인 {count}개",
-    "nativeHint": "설치된 DSH의 기본 및 사용자 프리셋 설정을 읽습니다. 사용자 지정 배포 경로와 Web 실시간 상태는 포함하지 않으며 Studio ACP 대화에서 활성화되었음을 의미하지 않습니다.",
+    "nativeHint": "Studio ACP는 DSH Web 프로필의 백엔드 플러그인과 기본 Agent 프리셋을 불러옵니다. 이 목록은 기본 및 사용자 프리셋 미리보기이며 선택해도 기본값은 바뀌지 않습니다. 브라우저 UI와 Web 실시간 상태는 아직 연결되지 않았습니다.",
     "nativeFailed": "프리셋 설정을 읽을 수 없습니다. DSH 설치와 파일을 확인하세요.",
     "searchPlugins": "플러그인 ID 또는 모듈 검색",
     "shipped": "기본 프리셋",

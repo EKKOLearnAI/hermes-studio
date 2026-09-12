@@ -4,7 +4,7 @@ export default {
   dshPlugins: {
     "nativeTitle": "原生預設外掛",
     "nativeCount": "{count} 個外掛",
-    "nativeHint": "讀取目前安裝的 DSH 內建預設與使用者預設。此為設定清單，尚未包含部署自訂目錄與 Web 即時狀態，也不代表這些預設已在 Studio ACP 對話中生效。",
+    "nativeHint": "Studio ACP 會載入 DSH Web Profile 的後端外掛和預設 Agent 預設集。此處預覽內建與使用者預設集，切換清單不會修改預設值；瀏覽器介面與 Web 即時狀態尚未接入。",
     "nativeFailed": "無法讀取此原生預設設定，請檢查 DSH 安裝與來源檔案。",
     "searchPlugins": "搜尋外掛 ID 或模組",
     "shipped": "內建預設",

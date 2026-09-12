@@ -4,7 +4,7 @@ export default {
   dshPlugins: {
     "nativeTitle": "原生预设插件",
     "nativeCount": "{count} 个插件",
-    "nativeHint": "读取当前安装的 DSH 内置预设和用户预设。这里展示配置清单，尚未包含部署自定义目录和 Web 实时状态，也不表示这些预设已在 Studio ACP 会话中生效。",
+    "nativeHint": "Studio ACP 会加载 DSH Web Profile 的后端插件和默认 Agent 预设。此处预览内置与用户预设，切换列表不会修改默认预设；浏览器界面和 Web 实时状态尚未接入。",
     "nativeFailed": "无法读取此原生预设配置，请检查 DSH 安装和来源文件。",
     "searchPlugins": "搜索插件 ID 或模块",
     "shipped": "内置预设",

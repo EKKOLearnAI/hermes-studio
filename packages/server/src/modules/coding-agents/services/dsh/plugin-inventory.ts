@@ -3,6 +3,7 @@ import { readFile, readdir, realpath, stat } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative } from 'node:path'
 import { isMap, isScalar, isSeq, parseDocument, type YAMLMap } from 'yaml'
 import { DshPluginError } from './plugins'
+import { dshInstallation } from './installation'
 
 export interface DshNativePluginEntry {
   entryId: string
@@ -47,19 +48,7 @@ function within(root: string, path: string) { const rel = relative(root, path); 
 
 /** Resolve the installed CLI's own dependency graph, not Studio's supplemental package list. */
 export async function readNativeDshPluginInventory(command: string, sourceHome: string) {
-  let executable: string
-  try { executable = await realpath(command) } catch { throw new DshPluginError(503, 'DSH_DEPENDENCY_UNAVAILABLE', 'DSH is not installed') }
-  let directory = dirname(executable), installation: string | null = null
-  for (;;) {
-    for (const candidate of [join(directory, 'package.json'), join(directory, 'node_modules/@deepseek-ai/dsh/package.json')]) {
-      try { if (JSON.parse(await readFile(candidate, 'utf8')).name === '@deepseek-ai/dsh') { installation = candidate; break } } catch {}
-    }
-    if (installation) break
-    const parent = dirname(directory)
-    if (parent === directory) break
-    directory = parent
-  }
-  if (!installation) throw new DshPluginError(422, 'DSH_CAPABILITY_UNSUPPORTED', 'Unable to locate the installed DSH package')
+  const installation = await dshInstallation(command)
   let packagePath: string
   try { packagePath = createRequire(installation).resolve('@deepseek-ai/dsh-agent-presets/package.json') }
   catch { throw new DshPluginError(422, 'DSH_CAPABILITY_UNSUPPORTED', 'This DSH installation does not expose native presets') }

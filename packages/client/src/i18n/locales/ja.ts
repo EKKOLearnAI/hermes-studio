@@ -4,7 +4,7 @@ export default {
   dshPlugins: {
     "nativeTitle": "ネイティブプリセットのプラグイン",
     "nativeCount": "{count} 個のプラグイン",
-    "nativeHint": "インストール済み DSH の組み込み・ユーザープリセットを読み取ります。設定の一覧であり、独自の配置ディレクトリや Web の稼働状態は含みません。Studio ACP チャットでの有効化を示すものではありません。",
+    "nativeHint": "Studio ACP は DSH Web プロファイルのバックエンドプラグインと既定の Agent プリセットを読み込みます。この一覧は組み込み・ユーザープリセットのプレビューです。切り替えても既定値は変わりません。ブラウザー UI と Web の稼働状態は未接続です。",
     "nativeFailed": "プリセット設定を読み取れません。DSH のインストールとファイルを確認してください。",
     "searchPlugins": "プラグイン ID・モジュールを検索",
     "shipped": "組み込みプリセット",

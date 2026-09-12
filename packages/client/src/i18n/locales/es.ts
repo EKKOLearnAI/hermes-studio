@@ -4,7 +4,7 @@ export default {
   dshPlugins: {
     "nativeTitle": "Plugins de preajustes nativos",
     "nativeCount": "{count} plugins",
-    "nativeHint": "Lee los preajustes incluidos y del usuario en DSH. Es un inventario de configuración: no incluye rutas de despliegue personalizadas ni estado Web en vivo, y no implica activación en los chats ACP de Studio.",
+    "nativeHint": "Studio ACP carga los plugins de backend y el preajuste de agente predeterminado del perfil Web de DSH. Esta lista muestra los preajustes incluidos y del usuario; la selección no cambia el predeterminado. Las interfaces del navegador y el estado Web en vivo aún no están conectados.",
     "nativeFailed": "No se puede leer el preajuste. Comprueba DSH y sus archivos.",
     "searchPlugins": "Buscar ID o módulo",
     "shipped": "Preajuste incluido",

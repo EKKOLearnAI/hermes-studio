@@ -4,7 +4,7 @@ export default {
   dshPlugins: {
     "nativeTitle": "Plugins des préréglages natifs",
     "nativeCount": "{count} plugins",
-    "nativeHint": "Lit les préréglages fournis et utilisateur de DSH. Cet inventaire de configuration exclut les répertoires de déploiement personnalisés et l’état Web en direct, et ne signifie pas une activation dans les conversations ACP de Studio.",
+    "nativeHint": "Studio ACP charge les plugins backend et le préréglage Agent par défaut du profil Web DSH. Cette liste prévisualise les préréglages fournis et utilisateur ; la sélection ne modifie pas le défaut. Les interfaces navigateur et l’état Web en direct ne sont pas encore connectés.",
     "nativeFailed": "Lecture du préréglage impossible. Vérifiez DSH et ses fichiers.",
     "searchPlugins": "Rechercher un ID ou module",
     "shipped": "Préréglage fourni",

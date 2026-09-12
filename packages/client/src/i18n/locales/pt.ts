@@ -4,7 +4,7 @@ export default {
   dshPlugins: {
     "nativeTitle": "Plugins de predefinições nativas",
     "nativeCount": "{count} plugins",
-    "nativeHint": "Lê predefinições incluídas e do usuário no DSH instalado. É um inventário de configuração: não inclui diretórios de implantação personalizados nem estado Web ao vivo, e não indica ativação nas conversas ACP do Studio.",
+    "nativeHint": "Studio ACP carrega os plugins de backend e a predefinição de agente padrão do perfil Web do DSH. Esta lista mostra as predefinições incluídas e do usuário; a seleção não altera o padrão. As interfaces do navegador e o estado Web ao vivo ainda não estão conectados.",
     "nativeFailed": "Não foi possível ler a predefinição. Confira o DSH e os arquivos.",
     "searchPlugins": "Buscar ID ou módulo",
     "shipped": "Predefinição incluída",

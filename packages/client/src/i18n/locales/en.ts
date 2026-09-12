@@ -4,7 +4,7 @@ export default {
   dshPlugins: {
     "nativeTitle": "Native preset plugins",
     "nativeCount": "{count} plugins",
-    "nativeHint": "Reads shipped presets and user presets from the installed DSH. This is configuration inventory: it does not include custom deployment roots, live Web status, or imply these presets are active in Studio ACP chats.",
+    "nativeHint": "Studio ACP loads backend plugins and the default agent preset from your DSH Web profile. This list previews shipped and user presets; changing this selector does not change the default. Browser interfaces and live Web status are not connected.",
     "nativeFailed": "Unable to read this native preset configuration. Check the DSH installation and source files.",
     "searchPlugins": "Search plugin ID or module",
     "shipped": "Shipped preset",

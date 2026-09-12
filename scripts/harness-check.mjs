@@ -4,9 +4,11 @@ import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { checkServerModuleBoundaries } from './server-module-boundaries.mjs'
 import { hasManagedMcpNodeMode } from './managed-mcp-harness.mjs'
+import { checkDshModuleBoundaries } from './dsh-module-harness.mjs'
 
 const root = process.cwd()
 const failures = []
+failures.push(...await checkDshModuleBoundaries(root))
 
 function fail(message) {
   failures.push(message)
