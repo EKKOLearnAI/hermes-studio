@@ -156,3 +156,10 @@ only the generic preset identifier. Run `dsh-session-presets.spec.ts`, the DSH
 preset/runner tests and the real Web-to-ACP test on both supported releases. The
 real test must select a non-default preset, contrast a second session’s tools,
 and retain the original selection after resume and a default change.
+
+For shared Coding Agent skill permissions, run `skills-controller.test.ts`,
+`shared-skills-access.test.ts`, `skills-view.test.ts`, `skill-list.test.ts` and
+`shared-coding-agent-skills.spec.ts`. Verify shared directory and file aliases
+remain read-only, rejected deletion cannot fall back to Hermes, and DSH-private
+skills stay writable. Register native skill formats from bootstrap; agent modules
+must not import another agent’s implementation.

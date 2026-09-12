@@ -17,7 +17,7 @@ These are global CLI files, independent of the active Hermes profile. As with th
 
 Settings require a YAML mapping. MCP changes use Cordis plugin patches with `@deepseek-ai/dsh-mcp-client`, preserving unrelated plugins, comments, tags and anchors. Studio accepts stdio and Streamable HTTP connections. It preserves DSH `!!js` expressions as data and refuses to connection-test an MCP whose configuration depends on those expressions. Studio-managed MCP overrides remain in Studio state; they are not inserted into the user's native patch file.
 
-Skills support direct `<name>/SKILL.md` bundles and flat `<name>.md` files. Files must have YAML frontmatter containing a kebab-case `name` and a `description`. Imports accept a skill folder or ZIP and go directly into `.dsh/skills`, without Hermes category directories. The editor can read, edit and delete native skills, including flat files. Nested category directories are not scanned. Invocation flags can be edited in frontmatter; the Hermes enable switch is hidden for DSH.
+Skills support direct `<name>/SKILL.md` bundles and flat `<name>.md` files. Files must have YAML frontmatter containing a kebab-case `name` and a `description`. Imports accept a skill folder or ZIP and go directly into `.dsh/skills`, without Hermes category directories. The editor can read, edit and delete DSH-private skills, including flat files. Shared `.agents/skills` entries are display-only in every Coding Agent page; the API marks them read-only and rejects edits, deletion and imports into that directory, including symbolic-link aliases. Nested category directories are not scanned. Invocation flags can be edited in frontmatter; the Hermes enable switch is hidden for DSH.
 
 The **Plugins** page has exactly two tabs:
 
@@ -61,6 +61,8 @@ Validate the installed CLI without a paid model call with `NODE_ENV=test PORT=86
 Native format reference: [DeepSeek Harness source, dsh-v0.1.5-rc.1](https://github.com/deepseek-ai/deepseek-harness/tree/dsh-v0.1.5-rc.1).
 
 Validate the Web-backed production path with `DSH_WEB_REAL=1 DSH_WEB_COMMAND=/absolute/path/to/dsh npx vitest run tests/server/dsh-web-real.test.ts`. It uses temporary native Web bundles/presets and a local model fixture, including real tool calls and writes outside the workspace; no model credentials or external model requests are needed.
+
+DSH skill format handling lives in `services/dsh/skills.ts` and is registered at bootstrap through Studio’s generic skill-file provider interface. Shared skill write protection belongs to Studio’s common file-access policy.
 
 ## Agent presets
 

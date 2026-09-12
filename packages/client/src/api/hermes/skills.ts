@@ -8,6 +8,7 @@ export interface SkillInfo {
   description: string
   enabled?: boolean
   source?: SkillSource
+  readonly?: boolean
   modified?: boolean
   patchCount?: number
   useCount?: number

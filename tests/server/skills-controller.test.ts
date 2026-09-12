@@ -49,6 +49,7 @@ vi.mock('../../packages/server/src/modules/studio/public/files', () => ({
 
 async function loadController() {
   vi.resetModules()
+  await import('../../packages/server/src/bootstrap/skill-files-adapter')
   return import('../../packages/server/src/modules/hermes/controllers/skills')
 }
 
@@ -106,6 +107,73 @@ describe('skills controller', () => {
     }))
     mockGetSkillUsageSyncCursor.mockReturnValue(0)
     mockListSkillUsageEventsAfterMessageId.mockResolvedValue({ events: [], cursor: 12, reset: false })
+  })
+
+  it.each(['codex', 'pi', 'grok', 'opencode', 'dsh', 'claude'])('exposes shared skills as read-only for %s and rejects writes without touching Hermes', async target => {
+    const root = await mkdtemp(join(tmpdir(), 'studio-shared-skill-'))
+    const previous = process.env.HERMES_CODING_AGENT_GLOBAL_HOME
+    process.env.HERMES_CODING_AGENT_GLOBAL_HOME = root
+    const content = '---\nname: shared\ndescription: Shared skill\n---\nOriginal\n'
+    const shared = join(root, '.agents/skills/shared/SKILL.md')
+    const hermes = join(root, 'hermes/skills/shared/SKILL.md')
+    mockGetProfileDir.mockReturnValue(join(root, 'hermes'))
+    try {
+      await mkdir(join(root, '.agents/skills/shared'), { recursive: true })
+      await mkdir(join(root, 'hermes/skills/shared'), { recursive: true })
+      await writeFile(shared, content)
+      await writeFile(hermes, '# Hermes original')
+      if (target === 'claude') {
+        await mkdir(join(root, '.claude/skills'), { recursive: true })
+        await symlink(join(root, '.agents/skills/shared'), join(root, '.claude/skills/shared'), 'dir')
+      }
+      const controller = await loadController()
+      const ctx: any = { query: { target }, params: { category: 'misc', skill: 'shared' }, state: {}, request: { body: { content: content + 'Edited' } } }
+      await controller.list(ctx)
+      expect(ctx.body.categories.flatMap((c: any) => c.skills)).toContainEqual(expect.objectContaining({ name: 'shared', readonly: true }))
+      await controller.updateSkill(ctx)
+      expect(ctx.status).toBe(403)
+      await controller.deleteSkill(ctx)
+      expect(ctx.status).toBe(403)
+      expect(await readFile(shared, 'utf8')).toBe(content)
+      expect(await readFile(hermes, 'utf8')).toBe('# Hermes original')
+      const readCtx = { ...ctx, params: { path: 'misc/shared/SKILL.md' } }
+      await controller.readFile_(readCtx)
+      expect(readCtx.body.content).toBe(content)
+    } finally {
+      if (previous === undefined) delete process.env.HERMES_CODING_AGENT_GLOBAL_HOME
+      else process.env.HERMES_CODING_AGENT_GLOBAL_HOME = previous
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('protects flat shared skills and DSH aliases while keeping a same-name private skill writable', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'studio-shared-flat-'))
+    const previous = process.env.HERMES_CODING_AGENT_GLOBAL_HOME
+    process.env.HERMES_CODING_AGENT_GLOBAL_HOME = root
+    const content = '---\nname: example\ndescription: Example\n---\nOriginal\n'
+    try {
+      await mkdir(join(root, '.agents/skills'), { recursive: true })
+      await mkdir(join(root, '.dsh/skills'), { recursive: true })
+      await writeFile(join(root, '.agents/skills/shared.md'), content)
+      await symlink(join(root, '.agents/skills/shared.md'), join(root, '.dsh/skills/alias.md'))
+      const controller = await loadController()
+      for (const name of ['shared', 'alias']) {
+        const ctx: any = { query: { target: 'dsh' }, params: { category: 'misc', skill: name }, request: { body: { content } } }
+        await controller.updateSkill(ctx); expect(ctx.status).toBe(403)
+        await controller.deleteSkill(ctx); expect(ctx.status).toBe(403)
+      }
+      await writeFile(join(root, '.dsh/skills/shared.md'), content)
+      const ctx: any = { query: { target: 'dsh' }, params: { category: 'misc', skill: 'shared' }, request: { body: { content: content + 'Private edit' } } }
+      await controller.updateSkill(ctx)
+      expect(ctx.body).toEqual({ success: true })
+      await controller.deleteSkill(ctx)
+      expect(ctx.body).toEqual({ success: true })
+      expect(await readFile(join(root, '.agents/skills/shared.md'), 'utf8')).toBe(content)
+    } finally {
+      if (previous === undefined) delete process.env.HERMES_CODING_AGENT_GLOBAL_HOME
+      else process.env.HERMES_CODING_AGENT_GLOBAL_HOME = previous
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   it('lists, reads, edits and deletes DSH native flat and bundled skills', async () => {
@@ -422,7 +490,7 @@ describe('skills controller', () => {
     }
   })
 
-  it('updates Grok skills from the shared agent skills directory', async () => {
+  it('rejects edits to Grok skills from the shared agent skills directory', async () => {
     const root = await mkdtemp(join(tmpdir(), 'hermes-web-ui-grok-shared-skill-update-'))
     const previousHome = process.env.HOME
     const sharedSkillDir = join(root, '.agents', 'skills', 'shared-skill')
@@ -443,8 +511,8 @@ describe('skills controller', () => {
 
       await updateSkill(ctx)
 
-      expect(ctx.body).toEqual({ success: true })
-      expect(await readFile(join(sharedSkillDir, 'SKILL.md'), 'utf-8')).toBe('# Shared Skill\nafter\n')
+      expect(ctx.status).toBe(403)
+      expect(await readFile(join(sharedSkillDir, 'SKILL.md'), 'utf-8')).toBe('# Shared Skill\nbefore\n')
     } finally {
       if (previousHome == null) delete process.env.HOME
       else process.env.HOME = previousHome
@@ -742,7 +810,7 @@ describe('skills controller', () => {
     }
   })
 
-  it('updates Codex user skills but not Codex system skills', async () => {
+  it('keeps Codex shared and system skills read-only', async () => {
     const root = await mkdtemp(join(tmpdir(), 'hermes-web-ui-update-codex-skill-'))
     const previousHome = process.env.HOME
     const userSkillDir = join(root, '.agents', 'skills', 'user-skill')
@@ -766,8 +834,8 @@ describe('skills controller', () => {
 
       await updateSkill(userCtx)
 
-      await expect(readFile(join(userSkillDir, 'SKILL.md'), 'utf-8')).resolves.toBe('# Updated User Skill\n')
-      expect(userCtx.body).toEqual({ success: true })
+      await expect(readFile(join(userSkillDir, 'SKILL.md'), 'utf-8')).resolves.toBe('# User Skill\n')
+      expect(userCtx.status).toBe(403)
 
       const systemCtx: any = {
         query: { target: 'codex' },

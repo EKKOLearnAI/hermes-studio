@@ -1,6 +1,7 @@
 import { readFile, readdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { load } from 'js-yaml'
+import { isSharedCodingAgentSkill } from '../../../studio/public/shared-skills'
 
 function safeName(name: string): boolean {
   return Boolean(name) && !name.startsWith('.') && !/[\\/\x00-\x1f]/.test(name)
@@ -35,7 +36,7 @@ export async function findDshSkillFile(roots: string[], name: string): Promise<D
 
 /** Match DSH's direct bundles and flat Markdown files; nested categories aren't discovered. */
 export async function listDshSkills(roots: string[]) {
-  const skills = new Map<string, { name: string; description: string; enabled: boolean; source: string }>()
+  const skills = new Map<string, { name: string; description: string; enabled: boolean; source: string; readonly: boolean }>()
   const loadedNames = new Set<string>()
   for (const root of roots) {
     let entries
@@ -54,7 +55,7 @@ export async function listDshSkills(roots: string[]) {
         const metadata = validateDshSkill(content)
         if (loadedNames.has(metadata.name)) continue
         loadedNames.add(metadata.name)
-        skills.set(name, { name, description: metadata.description, enabled: true, source: 'local' })
+        skills.set(name, { name, description: metadata.description, enabled: true, source: 'local', readonly: await isSharedCodingAgentSkill(file.path) })
       } catch { /* DSH also omits malformed skill definitions. */ }
     }
   }
