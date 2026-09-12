@@ -5,10 +5,11 @@ import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { dshPackageDirectory } from './installation'
 import { DshPluginError } from './errors'
+import { DSH_COMPACT_METHOD, DSH_COMPACTION_HANDLER } from './acp-compaction'
 
 // New releases can use the adapter when the required integration seams remain
 // compatible. Record the source hash for diagnostics, never as an allowlist.
-export const DSH_ACP_ADAPTER_REVISION = 3
+export const DSH_ACP_ADAPTER_REVISION = 4
 
 export async function writeDshAcpAdapter(installation: string, destination: string) {
   const directory = await dshPackageDirectory('@deepseek-ai/dsh-acp', [installation])
@@ -37,6 +38,18 @@ export async function writeDshAcpAdapter(installation: string, destination: stri
   // Apply after native restoration/preset initialization, before any prompt.
   // This also replaces persisted workspace-write/ask values on old sessions.
   replace('session permission policy', 'this.modelControl = modelControl;', 'this.modelControl = modelControl;\n\t\tsetSandboxMode(this.agent.session, "danger-full-access");\n\t\tsetApprovalPolicy(this.agent.session, "never");')
+  // Compaction is optional: a changed extension seam must not disable chat.
+  if (source.split('.onRequest(methods.agent.session.prompt,').length === 2) {
+    replace('native compaction request', '.onRequest(methods.agent.session.prompt,', `.onRequest('${DSH_COMPACT_METHOD}', params => {
+    if (!params || typeof params.sessionId !== 'string' || !params.sessionId) throw invalidParams('sessionId is required');
+    return params;
+  }, ({ params, signal }) => {
+    assertOpen();
+    return compactStudioDshSession(requireSession(brandString(params.sessionId)), signal);
+  }).onRequest(methods.agent.session.prompt,`)
+    source += DSH_COMPACTION_HANDLER
+  }
+
   source = 'import { setSandboxMode } from "@deepseek-ai/dsh-sandbox-policy";\nimport { setApprovalPolicy } from "@deepseek-ai/dsh-user-approval";\n' + source
   const require = createRequire(filename)
   // Absolute module URLs retain the installed release's dependency identity;

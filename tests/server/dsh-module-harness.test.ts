@@ -21,3 +21,10 @@ it('keeps the DSH slot transport out of shared client modules', () => {
 it('rejects handwritten native plugin business adapters', () => {
   expect(dshModuleViolations('packages/server/src/modules/coding-agents/services/dsh/example.ts', `const path = '/modlens/config'`)).toHaveLength(1)
 })
+
+it('allows generic compaction dispatch but keeps the native ACP extension in DSH', () => {
+  const shared = 'packages/server/src/modules/coding-agents/services/runtime/run-manager.ts'
+  expect(dshModuleViolations(shared, 'return compactDshRun(run, args, host)')).toEqual([])
+  expect(dshModuleViolations(shared, "request('_ekko/compact', params)")).toHaveLength(1)
+  expect(dshModuleViolations('packages/server/src/modules/coding-agents/services/dsh/acp-compaction.ts', "const method = '_ekko/compact'")).toEqual([])
+})

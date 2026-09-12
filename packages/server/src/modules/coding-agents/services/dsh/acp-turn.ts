@@ -4,6 +4,15 @@ import { StringDecoder } from 'node:string_decoder'
 import type { CodingAgentImageInput } from '../../protocol/types'
 import { dshReasoningEffort } from './runtime-config'
 import { DSH_STREAM_METHOD } from './stream-plugin'
+import { DSH_COMPACT_METHOD, type DshCompactResult } from './acp-compaction'
+
+interface DshSessionInput {
+  cwd: string
+  nativeSessionId?: string
+  agentPreset?: string
+  modelValue?: string
+  reasoningEffort?: string
+}
 
 interface StreamedText { agent_message_chunk: string; agent_thought_chunk: string }
 
@@ -131,20 +140,12 @@ export class DshAcpTurn {
     this.callbacks.update(update)
   }
 
-  async prompt(input: {
-    cwd: string
-    nativeSessionId?: string
-    agentPreset?: string
-    modelValue?: string
-    reasoningEffort?: string
-    text: string
-    images: CodingAgentImageInput[]
-  }): Promise<string> {
+  private async openSession(input: DshSessionInput, images: CodingAgentImageInput[] = []) {
     const initialized = await this.request('initialize', {
       protocolVersion: 1, clientCapabilities: {}, clientInfo: { name: 'ekko-studio', version: '1.0.0' },
     })
     if (initialized?.protocolVersion !== 1) throw new Error('Unsupported DSH ACP protocol version')
-    if (input.images.length && !initialized.agentCapabilities?.promptCapabilities?.image) {
+    if (images.length && !initialized.agentCapabilities?.promptCapabilities?.image) {
       throw new Error('The configured DSH model does not support image prompts')
     }
     const session = await this.request(input.nativeSessionId ? 'session/resume' : 'session/new', {
@@ -169,14 +170,38 @@ export class DshAcpTurn {
       options = configured.configOptions || options
     }
     this.callbacks.config(options)
+  }
+
+  private async closeSession() {
+    await this.request('session/close', { sessionId: this.sessionId }, 10_000)
+    this.child.stdin?.end()
+  }
+
+  async compact(input: DshSessionInput & { nativeSessionId: string }): Promise<DshCompactResult> {
+    if (!input.nativeSessionId.trim()) throw new Error('DSH session has no native history to compact')
+    await this.openSession(input)
+    let result: DshCompactResult
+    try {
+      result = await this.request(DSH_COMPACT_METHOD, { sessionId: this.sessionId }, 300_000)
+      if (typeof result?.compacted !== 'boolean') throw new Error('DSH returned an invalid compaction result')
+    } catch (error) {
+      this.cancel()
+      await this.closeSession().catch(() => {})
+      throw error
+    }
+    await this.closeSession()
+    return result
+  }
+
+  async prompt(input: DshSessionInput & { text: string; images: CodingAgentImageInput[] }): Promise<string> {
+    await this.openSession(input, input.images)
     const prompt: any[] = input.text ? [{ type: 'text', text: input.text }] : []
     for (const image of input.images) prompt.push({
       type: 'image', mimeType: image.mediaType || 'image/png', data: readFileSync(image.path).toString('base64'),
     })
     const result = await this.request('session/prompt', { sessionId: this.sessionId, prompt }, 0)
     // Explicit close flushes persistence before EOF; the manager owns exit escalation.
-    await this.request('session/close', { sessionId: this.sessionId }, 10_000)
-    this.child.stdin?.end()
+    await this.closeSession()
     return String(result?.stopReason || 'unknown')
   }
 

@@ -226,6 +226,73 @@ describe('coding agent session commands', () => {
     expect(commands.at(-1)).toMatchObject({ action: 'compact', compacted: true })
   })
 
+  it.each([false, true])('compacts DSH native history with existing runner=%s', async existing => {
+    getSessionMock.mockReturnValue({ agent: 'dsh', agent_mode: 'global', agent_native_session_id: 'dsh-native', workspace: '/tmp/work' })
+    getRunInfoMock.mockReturnValue(existing ? { agentId: 'dsh', running: false } : null)
+    compactMock.mockResolvedValue({ compacted: true, beforeTokens: 1200, afterTokens: 400 })
+    const { handleCodingAgentSessionCommand } = await import('../../packages/server/src/modules/coding-agents/services/session-command')
+    const { socket, nsp, emitted } = makeSocket()
+    await handleCodingAgentSessionCommand(nsp, socket as any, { session_id: 'session-1' },
+      { name: 'compact', rawName: 'compact', args: '' }, 'default', new Map())
+    expect(compactMock).toHaveBeenCalledWith('session-1', '')
+    if (existing) {
+      expect(startCodingAgentRunMock).not.toHaveBeenCalled()
+      expect(stopMock).not.toHaveBeenCalled()
+    } else {
+      expect(startCodingAgentRunMock).toHaveBeenCalledWith('dsh', expect.objectContaining({ agentNativeSessionId: 'dsh-native', mode: 'global' }), expect.any(Object))
+      expect(stopMock).toHaveBeenCalledWith('session-1', { reportClosed: false })
+    }
+    const commands = emitted.filter(item => item.event === 'session.command').map(item => item.payload)
+    expect(commands[0].message).toContain('DeepSeek Harness')
+    expect(commands.at(-1)).toMatchObject({ compacted: true, terminal: true, message: 'Compaction completed. Before: 1200 tokens. After: 400 tokens.' })
+    expect(compactStoredCodingAgentSessionMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects duplicate native startup without ending or replacing the first command', async () => {
+    getSessionMock.mockReturnValue({ agent: 'dsh', agent_native_session_id: 'dsh-native' })
+    let finishStart!: () => void
+    startCodingAgentRunMock.mockImplementationOnce(() => new Promise(resolve => {
+      finishStart = () => resolve({ agentSessionId: 'agent-session-1' })
+    }))
+    compactMock.mockResolvedValue({ compacted: false })
+    const { handleCodingAgentSessionCommand } = await import('../../packages/server/src/modules/coding-agents/services/session-command')
+    const first = makeSocket(), second = makeSocket()
+    const command = { name: 'compact', rawName: 'compact', args: '' } as const
+    const pending = handleCodingAgentSessionCommand(first.nsp, first.socket as any, { session_id: 'session-1' }, command, 'default', new Map())
+    await vi.waitFor(() => expect(finishStart).toBeTypeOf('function'))
+    await handleCodingAgentSessionCommand(second.nsp, second.socket as any, { session_id: 'session-1' }, command, 'default', new Map())
+    expect(second.emitted.at(-1)?.payload).toMatchObject({ ok: false, terminal: false, message: expect.stringContaining('session is starting') })
+    expect(startCodingAgentRunMock).toHaveBeenCalledTimes(1)
+    expect(stopMock).not.toHaveBeenCalled()
+    finishStart()
+    await pending
+    expect(compactMock).toHaveBeenCalledTimes(1)
+    expect(stopMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('cleans up a temporary DSH runner when native compaction fails', async () => {
+    getSessionMock.mockReturnValue({ agent: 'dsh', agent_native_session_id: 'dsh-native' })
+    compactMock.mockRejectedValue(new Error('The selected DSH preset does not provide native compaction'))
+    const { handleCodingAgentSessionCommand } = await import('../../packages/server/src/modules/coding-agents/services/session-command')
+    const { socket, nsp, emitted } = makeSocket()
+    await handleCodingAgentSessionCommand(nsp, socket as any, { session_id: 'session-1' }, { name: 'compact', rawName: 'compact', args: '' }, 'default', new Map())
+    expect(stopMock).toHaveBeenCalledWith('session-1', { reportClosed: false })
+    expect(emitted.at(-1)?.payload).toMatchObject({ ok: false, terminal: true, message: expect.stringContaining('does not provide native compaction') })
+    expect(compactStoredCodingAgentSessionMock).not.toHaveBeenCalled()
+  })
+
+  it('keeps an active DSH turn running when manual compaction is rejected', async () => {
+    getSessionMock.mockReturnValue({ agent: 'dsh' })
+    getRunInfoMock.mockReturnValue({ agentId: 'dsh', running: true })
+    compactMock.mockRejectedValue(new Error('DSH is still processing the previous input'))
+    const { handleCodingAgentSessionCommand } = await import('../../packages/server/src/modules/coding-agents/services/session-command')
+    const { socket, nsp, emitted } = makeSocket()
+    await handleCodingAgentSessionCommand(nsp, socket as any, { session_id: 'session-1' },
+      { name: 'compact', rawName: 'compact', args: '' }, 'default', new Map())
+    expect(emitted.filter(item => item.event === 'session.command').at(-1)?.payload).toMatchObject({ ok: false, compacted: false, terminal: false })
+    expect(stopMock).not.toHaveBeenCalled()
+  })
+
   it('rejects busy coding-agent compaction without running the Studio fallback', async () => {
     compactMock.mockRejectedValue(new Error('Coding agent is still processing the previous input'))
     getSessionMock.mockReturnValue({ id: 'session-1', agent: 'codex' })

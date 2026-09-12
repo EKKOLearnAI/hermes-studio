@@ -107,7 +107,7 @@ When a command fails:
 ## DSH module boundary
 
 DSH source discovery, Web composition, plugin commands, permission policy, ACP
-lifecycle and protocol translation belong in
+lifecycle, native compaction and protocol translation belong in
 `packages/server/src/modules/coding-agents/services/dsh/`. Shared registry and
 runtime files may pass configuration and generic callbacks, but must not own
 DSH Web patches, permission defaults or ACP construction. DSH modules receive
@@ -156,6 +156,17 @@ only the generic preset identifier. Run `dsh-session-presets.spec.ts`, the DSH
 preset/runner tests and the real Web-to-ACP test on both supported releases. The
 real test must select a non-default preset, contrast a second session’s tools,
 and retain the original selection after resume and a default change.
+
+For native DSH `/compact`, run `dsh-acp-adapter.test.ts`, `dsh-acp-turn.test.ts`,
+`dsh-run.test.ts`, `coding-agent-session-command.test.ts` and
+`dsh-module-harness.test.ts`. Also run `DSH_WEB_REAL=1
+DSH_WEB_COMMAND=/absolute/path/to/dsh npx vitest run
+tests/server/dsh-compaction-real.test.ts tests/server/dsh-web-real.test.ts
+--maxWorkers=1` on each supported installed release. These real-runtime tests use
+isolated homes and a local model fixture: verify scoped/global summary persistence,
+continuation from the same native session, cancellation and retry, and a preset
+without a compaction backend. Keep the native request and patch inside DSH; a
+missing optional compaction registration point must not block ordinary chat.
 
 For shared Coding Agent skill permissions, run `skills-controller.test.ts`,
 `shared-skills-access.test.ts`, `skills-view.test.ts`, `skill-list.test.ts` and
