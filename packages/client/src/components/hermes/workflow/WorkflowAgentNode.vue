@@ -6,11 +6,13 @@ import { NInput, NSelect, NSwitch, NTooltip, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import WorkflowModelSelector from './WorkflowModelSelector.vue'
 import WorkflowFieldHelp from './WorkflowFieldHelp.vue'
+import ReasoningEffortSupportNote from '@/components/hermes/chat/ReasoningEffortSupportNote.vue'
 import type { WorkflowAgentNodeData, WorkflowAgentNodeEditableData } from './types'
 import type { ChatCodingAgentId, CodingAgentApiMode } from '@/api/coding-agents'
 import type { ProviderApiMode } from '@/api/studio/provider-api-mode'
 import { getFileDownloadUrl } from '@/api/studio/files'
 import { canScopedCodingAgentUseProvider } from '@/utils/codingAgentProviders'
+import { filterReasoningEffortValues } from '@/utils/reasoning-effort'
 
 import '@vue-flow/node-resizer/dist/style.css'
 
@@ -49,16 +51,31 @@ const apiModeOptions = computed(() => [
   { label: t('codingAgents.protocolOpenAiResponses'), value: 'codex_responses' },
   { label: t('codingAgents.protocolAnthropicMessages'), value: 'anthropic_messages' },
 ])
-const reasoningEffortOptions = computed(() => [
-  { label: t('chat.reasoningEffort.options.default'), value: 'default' },
-  { label: t('chat.reasoningEffort.options.none'), value: 'none' },
-  { label: t('chat.reasoningEffort.options.minimal'), value: 'minimal' },
-  { label: t('chat.reasoningEffort.options.low'), value: 'low' },
-  { label: t('chat.reasoningEffort.options.medium'), value: 'medium' },
-  { label: t('chat.reasoningEffort.options.high'), value: 'high' },
-  { label: t('chat.reasoningEffort.options.xhigh'), value: 'xhigh' },
-  { label: t('chat.reasoningEffort.options.max'), value: 'max' },
-])
+const reasoningEffortOptions = computed(() => {
+  const options = [
+    { label: t('chat.reasoningEffort.options.default'), value: 'default' },
+    { label: t('chat.reasoningEffort.options.none'), value: 'none' },
+    { label: t('chat.reasoningEffort.options.minimal'), value: 'minimal' },
+    { label: t('chat.reasoningEffort.options.low'), value: 'low' },
+    { label: t('chat.reasoningEffort.options.medium'), value: 'medium' },
+    { label: t('chat.reasoningEffort.options.high'), value: 'high' },
+    { label: t('chat.reasoningEffort.options.xhigh'), value: 'xhigh' },
+    { label: t('chat.reasoningEffort.options.max'), value: 'max' },
+  ]
+  const filteredValues = new Set(filterReasoningEffortValues(
+    options.map(option => option.value),
+    props.data.provider,
+    props.data.model,
+  ))
+  const current = props.data.reasoningEffort || ''
+  if (current && !filteredValues.has(current)) {
+    return [
+      ...options.filter(option => filteredValues.has(option.value)),
+      { label: current, value: current },
+    ]
+  }
+  return options.filter(option => filteredValues.has(option.value))
+})
 const imageAttachments = computed(() => props.data.images.filter(isImagePath))
 const fileAttachments = computed(() => props.data.images.filter(path => !isImagePath(path)))
 
@@ -221,6 +238,11 @@ async function uploadImages(files: File[]) {
         :disabled="data.readonly"
         :placeholder="t('chat.reasoningEffort.tooltip')"
         @update:value="value => updateField('reasoningEffort', value as string)"
+      />
+      <ReasoningEffortSupportNote
+        v-if="usesScopedModel"
+        :provider="data.provider"
+        :model="data.model"
       />
       <div class="node-field-row">
         <span class="node-field-label-row">

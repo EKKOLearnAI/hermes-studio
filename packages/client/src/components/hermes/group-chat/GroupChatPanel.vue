@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, provide, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import ReasoningEffortSupportNote from '@/components/hermes/chat/ReasoningEffortSupportNote.vue'
+import { filterReasoningEffortValues } from '@/utils/reasoning-effort'
 import { useRouter } from 'vue-router'
 import { useMessage, NInput, NButton, NSpace, NSelect, NPopconfirm, NInputNumber, NDropdown, NModal, NPopover, NDrawer, NDrawerContent, NSwitch, type DropdownOption } from 'naive-ui'
 import { useGroupChatStore } from '@/stores/hermes/group-chat'
@@ -368,16 +370,20 @@ const pendingAgentPreset = computed(() =>
     agentPresets.value.find(preset => preset.id === pendingAgentPresetId.value) || null
 )
 
-const agentReasoningEffortOptions = computed(() => [
-    { label: t('chat.reasoningEffort.options.default'), value: '' },
-    { label: t('chat.reasoningEffort.options.none'), value: 'none' },
-    { label: t('chat.reasoningEffort.options.minimal'), value: 'minimal' },
-    { label: t('chat.reasoningEffort.options.low'), value: 'low' },
-    { label: t('chat.reasoningEffort.options.medium'), value: 'medium' },
-    { label: t('chat.reasoningEffort.options.high'), value: 'high' },
-    { label: t('chat.reasoningEffort.options.xhigh'), value: 'xhigh' },
-    { label: t('chat.reasoningEffort.options.max'), value: 'max' },
-])
+const GROUP_AGENT_REASONING_EFFORT_VALUES = ['', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
+const agentReasoningEffortOptions = computed(() => {
+    const values = filterReasoningEffortValues(
+        GROUP_AGENT_REASONING_EFFORT_VALUES,
+        selectedAgentProvider.value,
+        selectedAgentModel.value,
+    )
+    const current = selectedAgentReasoningEffort.value
+    if (current && !values.includes(current)) values.push(current)
+    return values.map(value => ({
+        label: t(`chat.reasoningEffort.options.${value || 'default'}`),
+        value,
+    }))
+})
 
 const summaryModelGroups = computed(() =>
     (appStore.profileModelGroups.find(entry => entry.profile === summaryConfig.value.summaryProfile)?.groups || [])
@@ -2864,6 +2870,10 @@ function handleClarifyKeydown(event: KeyboardEvent) {
                             v-model:value="selectedAgentReasoningEffort"
                             :options="agentReasoningEffortOptions"
                             :placeholder="t('chat.reasoningEffort.tooltip')"
+                        />
+                        <ReasoningEffortSupportNote
+                            :provider="selectedAgentProvider"
+                            :model="selectedAgentModel"
                         />
                     </div>
                     <div class="form-group">

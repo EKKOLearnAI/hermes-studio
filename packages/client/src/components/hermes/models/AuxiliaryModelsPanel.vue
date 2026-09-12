@@ -2,6 +2,8 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { NButton, NInput, NInputNumber, NModal, NSelect, NSpin, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
+import ReasoningEffortSupportNote from '@/components/hermes/chat/ReasoningEffortSupportNote.vue'
+import { filterReasoningEffortValues } from '@/utils/reasoning-effort'
 import {
   fetchAuxiliaryModels,
   fetchDelegationModel,
@@ -73,16 +75,20 @@ const delegationModelOptions = computed(() => {
   return options
 })
 
-const reasoningEffortOptions = computed(() => [
-  { label: t('chat.reasoningEffort.options.none'), value: 'none' },
-  { label: t('chat.reasoningEffort.options.minimal'), value: 'minimal' },
-  { label: t('chat.reasoningEffort.options.low'), value: 'low' },
-  { label: t('chat.reasoningEffort.options.medium'), value: 'medium' },
-  { label: t('chat.reasoningEffort.options.high'), value: 'high' },
-  { label: t('chat.reasoningEffort.options.xhigh'), value: 'xhigh' },
-  { label: t('chat.reasoningEffort.options.max'), value: 'max' },
-  { label: t('chat.reasoningEffort.options.ultra'), value: 'ultra' },
-])
+const AUXILIARY_REASONING_EFFORT_VALUES = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const
+const reasoningEffortOptions = computed(() => {
+  const values = filterReasoningEffortValues(
+    AUXILIARY_REASONING_EFFORT_VALUES,
+    delegationForm.value.provider,
+    delegationForm.value.model,
+  )
+  const current = delegationForm.value.reasoning_effort || ''
+  if (current && !values.includes(current)) values.push(current)
+  return values.map(value => ({
+    label: t(`chat.reasoningEffort.options.${value}`),
+    value,
+  }))
+})
 
 const delegationModelLabel = computed(() => {
   if (!delegation.value.model) return t('models.delegationInheritMain')
@@ -513,6 +519,10 @@ watch(() => delegationForm.value.provider, (provider) => {
             :options="reasoningEffortOptions"
             :placeholder="t('models.delegationInheritReasoning')"
             clearable
+          />
+          <ReasoningEffortSupportNote
+            :provider="delegationForm.provider"
+            :model="delegationForm.model"
           />
         </label>
       </div>

@@ -911,6 +911,8 @@ export default {
       tooltip: '추론 노력',
       dragHint: '드래그하여 선택 · {count}단계',
       defaultLabel: '기본값',
+      supportHint: '공식 단계: {official}. 실제 지원 여부는 경로에 따라 달라질 수 있습니다.',
+      supportHintExtended: '공식 단계: {official}. 확장 단계: {extensions} (호환 경로에서만 가능할 수 있음). 실제 지원 여부는 경로에 따라 달라질 수 있습니다.',
       options: {
         default: '기본값 (config.yaml)',
         none: '없음',

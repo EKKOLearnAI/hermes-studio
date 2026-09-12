@@ -2,6 +2,9 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { NButton, NInput, NInputNumber, NModal, NSelect, NSpin, NSwitch, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
+import ReasoningEffortSupportNote from '@/components/hermes/chat/ReasoningEffortSupportNote.vue'
+import ReasoningEffortModelBadge from '@/components/hermes/chat/ReasoningEffortModelBadge.vue'
+import { filterReasoningEffortValues } from '@/utils/reasoning-effort'
 import { fetchMoaConfig, saveMoaConfig, type MoaConfig, type MoaModelSlot, type MoaPreset } from '@/api/hermes/config'
 import { useAppStore } from '@/stores/hermes/app'
 import { useModelsStore } from '@/stores/hermes/models'
@@ -80,16 +83,21 @@ function clonePreset(preset: MoaPreset): MoaPreset {
   return JSON.parse(JSON.stringify(preset))
 }
 
-const reasoningEffortOptions = computed(() => [
-  { label: t('chat.reasoningEffort.options.none'), value: 'none' },
-  { label: t('chat.reasoningEffort.options.minimal'), value: 'minimal' },
-  { label: t('chat.reasoningEffort.options.low'), value: 'low' },
-  { label: t('chat.reasoningEffort.options.medium'), value: 'medium' },
-  { label: t('chat.reasoningEffort.options.high'), value: 'high' },
-  { label: t('chat.reasoningEffort.options.xhigh'), value: 'xhigh' },
-  { label: t('chat.reasoningEffort.options.max'), value: 'max' },
-  { label: t('chat.reasoningEffort.options.ultra'), value: 'ultra' },
-])
+const MOA_REASONING_EFFORT_VALUES = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const
+
+function reasoningEffortOptionsFor(slot?: MoaModelSlot) {
+  const values = filterReasoningEffortValues(
+    MOA_REASONING_EFFORT_VALUES,
+    slot?.provider,
+    slot?.model,
+  )
+  const current = slot?.reasoning_effort || ''
+  if (current && !values.includes(current)) values.push(current)
+  return values.map(value => ({
+    label: t(`chat.reasoningEffort.options.${value}`),
+    value,
+  }))
+}
 
 function slotLabel(slot?: MoaModelSlot): string {
   if (!slot?.provider || !slot?.model) return t('models.combinationNotSet')
@@ -364,24 +372,29 @@ watch(() => profilesStore.activeProfileName, () => {
             </NButton>
           </div>
           <div class="slot-editor-list">
-            <div v-for="(slot, index) in formPreset.reference_models" :key="index" class="slot-editor-row">
-              <span class="slot-pair">{{ slotLabel(slot) }}</span>
-              <NSelect
-                v-model:value="slot.reasoning_effort"
-                :options="reasoningEffortOptions"
-                size="small"
-                clearable
-                :placeholder="t('chat.reasoningEffort.tooltip')"
-                :style="{ width: '130px' }"
-              />
-              <span class="slot-row-actions">
-                <NButton size="small" quaternary @click="openModelPicker('reference', index)">
-                  {{ t('common.edit') }}
-                </NButton>
-                <NButton size="small" quaternary @click="removeReference(index)">
-                  {{ t('common.delete') }}
-                </NButton>
-              </span>
+            <div v-for="(slot, index) in formPreset.reference_models" :key="index" class="slot-editor-entry">
+              <div class="slot-editor-row">
+                <span class="slot-pair">{{ slotLabel(slot) }}</span>
+                <NSelect
+                  v-model:value="slot.reasoning_effort"
+                  :options="reasoningEffortOptionsFor(slot)"
+                  size="small"
+                  clearable
+                  :placeholder="t('chat.reasoningEffort.tooltip')"
+                  :style="{ width: '130px' }"
+                />
+                <span class="slot-row-actions">
+                  <NButton size="small" quaternary @click="openModelPicker('reference', index)">
+                    {{ t('common.edit') }}
+                  </NButton>
+                  <NButton size="small" quaternary @click="removeReference(index)">
+                    {{ t('common.delete') }}
+                  </NButton>
+                </span>
+              </div>
+              <div class="slot-support-note">
+                <ReasoningEffortSupportNote :provider="slot.provider" :model="slot.model" />
+              </div>
             </div>
           </div>
         </div>
@@ -390,21 +403,29 @@ watch(() => profilesStore.activeProfileName, () => {
           <div class="slot-section-header">
             <h4>{{ t('models.combinationAggregator') }}</h4>
           </div>
-          <div class="slot-editor-row aggregator-row">
-            <span class="slot-pair">{{ slotLabel(formPreset.aggregator) }}</span>
-            <NSelect
-              v-model:value="formPreset.aggregator.reasoning_effort"
-              :options="reasoningEffortOptions"
-              size="small"
-              clearable
-              :placeholder="t('chat.reasoningEffort.tooltip')"
-              :style="{ width: '130px' }"
-            />
-            <span class="slot-row-actions">
-              <NButton size="small" quaternary @click="openModelPicker('aggregator')">
-                {{ t('common.edit') }}
-              </NButton>
-            </span>
+          <div class="slot-editor-entry aggregator-entry">
+            <div class="slot-editor-row aggregator-row">
+              <span class="slot-pair">{{ slotLabel(formPreset.aggregator) }}</span>
+              <NSelect
+                v-model:value="formPreset.aggregator.reasoning_effort"
+                :options="reasoningEffortOptionsFor(formPreset.aggregator)"
+                size="small"
+                clearable
+                :placeholder="t('chat.reasoningEffort.tooltip')"
+                :style="{ width: '130px' }"
+              />
+              <span class="slot-row-actions">
+                <NButton size="small" quaternary @click="openModelPicker('aggregator')">
+                  {{ t('common.edit') }}
+                </NButton>
+              </span>
+            </div>
+            <div class="slot-support-note">
+              <ReasoningEffortSupportNote
+                :provider="formPreset.aggregator.provider"
+                :model="formPreset.aggregator.model"
+              />
+            </div>
           </div>
         </div>
       </div>
@@ -465,6 +486,7 @@ watch(() => profilesStore.activeProfileName, () => {
                   {{ t('models.aliasCanonical', { model }) }}
                 </span>
               </span>
+              <ReasoningEffortModelBadge :provider="group.provider" :model="model" />
               <span v-if="group.model_meta?.[model]?.preview" class="model-badge-preview">{{ t('models.previewBadge') }}</span>
               <span v-if="group.model_meta?.[model]?.disabled" class="model-badge-disabled">{{ t('models.disabledBadge') }}</span>
               <span v-if="isCustomModel(model, group.provider)" class="model-badge-custom">{{ t('models.customBadge') }}</span>
@@ -678,6 +700,10 @@ watch(() => profilesStore.activeProfileName, () => {
   align-items: center;
   padding: 10px 12px;
   border-top: 1px solid $border-light;
+}
+
+.slot-support-note {
+  padding: 0 12px 8px;
 }
 
 .slot-pair {

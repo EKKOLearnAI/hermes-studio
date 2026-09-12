@@ -928,6 +928,8 @@ export default {
       tooltip: '推理強度',
       dragHint: '拖曳選擇 · 共 {count} 檔',
       defaultLabel: '預設',
+      supportHint: '官方檔位：{official}。不同渠道的實際支援可能不同。',
+      supportHintExtended: '官方檔位：{official}。延伸檔位：{extensions}，僅部分相容渠道可能支援。不同渠道的實際支援可能不同。',
       options: {
         default: '預設 (config.yaml)',
         none: '無',

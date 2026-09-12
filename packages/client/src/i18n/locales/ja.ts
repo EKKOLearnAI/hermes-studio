@@ -911,6 +911,8 @@ export default {
       tooltip: '推論の労力',
       dragHint: 'ドラッグして選択 · 全 {count} 段階',
       defaultLabel: '既定',
+      supportHint: '公式レベル：{official}。実際の対応は接続先によって異なる場合があります。',
+      supportHintExtended: '公式レベル：{official}。拡張レベル：{extensions}（互換性のある接続先のみ）。実際の対応は接続先によって異なる場合があります。',
       options: {
         default: '既定 (config.yaml)',
         none: 'なし',

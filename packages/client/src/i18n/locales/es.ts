@@ -911,6 +911,8 @@ export default {
       tooltip: 'Esfuerzo de razonamiento',
       dragHint: 'Arrastra para elegir · {count} niveles',
       defaultLabel: 'Predeterminado',
+      supportHint: 'Niveles oficiales: {official}. El soporte del proveedor puede variar según la ruta.',
+      supportHintExtended: 'Niveles oficiales: {official}. Los niveles extendidos: {extensions} pueden funcionar en rutas compatibles. El soporte del proveedor puede variar según la ruta.',
       options: {
         default: 'Predeterminado (config.yaml)',
         none: 'Ninguno',

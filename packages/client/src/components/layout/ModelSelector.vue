@@ -5,6 +5,7 @@ import { useAppStore } from '@/stores/hermes/app'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import { useCollapsedProviderGroups } from '@/composables/useCollapsedProviderGroups'
 import { useI18n } from 'vue-i18n'
+import ReasoningEffortModelBadge from '@/components/hermes/chat/ReasoningEffortModelBadge.vue'
 
 const emit = defineEmits<{
   'modal-show-change': [show: boolean]
@@ -217,6 +218,7 @@ async function handleRefresh() {
                   {{ t('models.aliasCanonical', { model }) }}
                 </span>
               </span>
+              <ReasoningEffortModelBadge :provider="group.provider" :model="model" />
               <span v-if="group.model_meta?.[model]?.preview" class="model-badge-preview">{{ t('models.previewBadge') }}</span>
               <span v-if="group.model_meta?.[model]?.disabled" class="model-badge-disabled">{{ t('models.disabledBadge') }}</span>
               <span v-if="isCustomModel(model, group.provider)" class="model-badge-custom">{{ t('models.customBadge') }}</span>

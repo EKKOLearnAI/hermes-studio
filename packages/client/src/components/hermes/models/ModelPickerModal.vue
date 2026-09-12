@@ -6,6 +6,7 @@ import type { AvailableModelGroup } from '@/api/hermes/system'
 import type { ProviderApiMode } from '@/api/studio/provider-api-mode'
 import { useCollapsedProviderGroups } from '@/composables/useCollapsedProviderGroups'
 import { useAppStore } from '@/stores/hermes/app'
+import ReasoningEffortModelBadge from '@/components/hermes/chat/ReasoningEffortModelBadge.vue'
 
 type ModelSelection = {
   provider: string
@@ -149,6 +150,7 @@ watch(() => props.show, (show) => {
                 {{ t('models.aliasCanonical', { model }) }}
               </span>
             </span>
+            <ReasoningEffortModelBadge :provider="group.provider" :model="model" />
             <span v-if="group.model_meta?.[model]?.preview" class="model-badge-preview">{{ t('models.previewBadge') }}</span>
             <span v-if="group.model_meta?.[model]?.disabled" class="model-badge-disabled">{{ t('models.disabledBadge') }}</span>
             <span v-if="isCustomModel(model, group.provider)" class="model-badge-custom">{{ t('models.customBadge') }}</span>
