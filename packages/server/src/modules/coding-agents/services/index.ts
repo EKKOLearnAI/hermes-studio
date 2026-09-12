@@ -1,8 +1,11 @@
 import { prepareDshRuntime, DSH_API_KEY_ENV } from './dsh/runtime-config'
 import { readDshMcpServers, validateDshSettings } from './dsh/config'
+import { DshPluginError, getDshPluginStore } from './dsh/plugins'
+import { readNativeDshPluginInventory } from './dsh/plugin-inventory'
 import { OPENCODE_FREE_PROVIDER, openCodeFreeRuntime } from '../../studio/contracts/opencode-free'
 import { beginAgentPreparation } from './update-lock'
-import { execFile } from 'child_process'
+import { execFile, spawn } from 'child_process'
+import { killOwnedProcessTree } from '../../studio/public/process-tree'
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'crypto'
 import { existsSync, readdirSync, realpathSync } from 'fs'
 import { chmod, copyFile, cp, lstat, mkdir, open, readFile, readdir, rename, rm, stat, symlink, writeFile } from 'fs/promises'
@@ -2638,6 +2641,51 @@ function commandExecution(command: string, args: string[]): CommandExecution {
   return { command: normalizedCommand, args }
 }
 
+export async function getNativeDshPluginInventory() {
+  // Unlike spawn, filesystem discovery needs an absolute executable path on
+  // every platform. resolveCommandForExecution intentionally leaves POSIX
+  // commands bare, so use the same PATH lookup as installation discovery.
+  const commands = await findCommandPaths('dsh', await commandEnv())
+  const command = commands[0]
+  if (!command) throw new DshPluginError(503, 'DSH_DEPENDENCY_UNAVAILABLE', 'DSH is not installed')
+  return readNativeDshPluginInventory(command, process.env.DSH_HOME?.trim() || join(getGlobalConfigHome(), '.dsh'))
+}
+
+/** Package commands run only against a Studio staging Home with validated argv. */
+export async function executeDshPluginCommand(home: string, args: string[], signal: AbortSignal): Promise<void> {
+  signal.throwIfAborted()
+  const env = getCurrentNodeEnv()
+  const command = await resolveCommandForExecution('dsh', env)
+  const execution = commandExecution(command, args)
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(execution.command, execution.args, {
+      cwd: home, detached: process.platform !== 'win32', windowsHide: true,
+      ...('windowsVerbatimArguments' in execution ? { windowsVerbatimArguments: true } : {}),
+      env: { ...env, HOME: home, USERPROFILE: home, DSH_HOME: home, DSH_TELEMETRY_DISABLED: '1', ELECTRON_RUN_AS_NODE: '1' },
+      stdio: ['ignore', 'ignore', 'pipe'],
+    })
+    let stderr = ''
+    let timedOut = false
+    child.stderr?.on('data', chunk => { stderr = (stderr + String(chunk)).slice(-32_768) })
+    const stop = () => killOwnedProcessTree(child.pid, () => {
+      try { if (child.pid) process.kill(-child.pid, 'SIGKILL') } catch { child.kill('SIGKILL') }
+    })
+    const timeout = setTimeout(() => { timedOut = true; stop() }, 300_000)
+    const cleanup = () => { clearTimeout(timeout); signal.removeEventListener('abort', stop) }
+    signal.addEventListener('abort', stop, { once: true })
+    if (signal.aborted) stop()
+    child.once('error', () => { cleanup(); reject(new DshPluginError(503, 'DSH_DEPENDENCY_UNAVAILABLE', 'DSH or its package manager is unavailable')) })
+    child.once('close', code => {
+      cleanup()
+      if (signal.aborted) reject(new DshPluginError(503, 'DSH_OPERATION_INTERRUPTED', 'Plugin operation interrupted'))
+      else if (timedOut) reject(new DshPluginError(503, 'DSH_OPERATION_TIMEOUT', 'Plugin operation timed out'))
+      else if (code === 0) resolve()
+      else if (/pnpm not found|ENOENT/.test(stderr)) reject(new DshPluginError(503, 'DSH_DEPENDENCY_UNAVAILABLE', 'Install DSH and pnpm before managing plugins'))
+      else reject(new DshPluginError(422, 'DSH_PLUGIN_OPERATION_FAILED', 'Package installation failed; the previous version is unchanged'))
+    })
+  })
+}
+
 function packageParts(packageName: string): string[] {
   return packageName.split('/').filter(Boolean)
 }
@@ -3238,6 +3286,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       args = ['--always-approve', '--no-auto-update']
     } else if (tool.id === 'dsh') {
       const prepared = await prepareDshRuntime({
+        managedPluginPatches: await getDshPluginStore().runtimePatches(),
         sourceHome: join(getGlobalConfigHome(), '.dsh'),
         sharedSkills: join(getGlobalConfigHome(), '.agents', 'skills'),
         rootDir, systemPrompt, managedMcp: getCodingAgentManagedMcpServerConfigs('dsh', scope.profile),
@@ -3659,6 +3708,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     })
     const capabilities = getModelRuntimeCapabilities({ profile: scope.profile, provider, model })
     const prepared = await prepareDshRuntime({
+      managedPluginPatches: await getDshPluginStore().runtimePatches(),
       sourceHome: join(getGlobalConfigHome(), '.dsh'),
       sharedSkills: join(getGlobalConfigHome(), '.agents', 'skills'),
       rootDir, systemPrompt: scopedSystemPrompt, model, baseUrl: proxyTarget.baseUrl,

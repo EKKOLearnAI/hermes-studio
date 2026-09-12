@@ -1,8 +1,14 @@
-import { requireAdmin } from '../../studio/public/auth'
+import { requireAdmin, requireSuperAdmin } from '../../studio/public/auth'
 import Router from '@koa/router'
 import * as ctrl from '../controllers/agents'
+import * as plugins from '../controllers/dsh-plugins'
 
 export const codingAgentRoutes = new Router()
+
+codingAgentRoutes.get('/api/coding-agents/dsh/plugin-inventory', requireSuperAdmin, plugins.inventory)
+codingAgentRoutes.get('/api/coding-agents/dsh/plugins', requireSuperAdmin, plugins.list)
+codingAgentRoutes.post('/api/coding-agents/dsh/plugin-operations', requireSuperAdmin, plugins.submit)
+codingAgentRoutes.get('/api/coding-agents/dsh/plugin-operations/:operationId', requireSuperAdmin, plugins.operation)
 
 codingAgentRoutes.get('/api/coding-agents/update-policies', requireAdmin, ctrl.updatePolicies)
 codingAgentRoutes.put('/api/coding-agents/:id/update-policy', requireAdmin, ctrl.setUpdatePolicy)

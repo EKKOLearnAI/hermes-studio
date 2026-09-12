@@ -26,6 +26,7 @@ export async function prepareDshRuntime(input: {
   outputLimit?: number
   imageInput?: boolean
   reasoningEffort?: string
+  managedPluginPatches?: string[]
 }) {
   await mkdir(input.rootDir, { recursive: true })
   const read = async (name: string) => {
@@ -82,7 +83,7 @@ export async function prepareDshRuntime(input: {
   await writeFile(overlayPath, stringify(overlay), { mode: 0o600 })
   return {
     promptFile,
-    args: ['--profile', 'acp', '--patch', overlayPath],
+    args: ['--profile', 'acp', ...(input.managedPluginPatches || []).flatMap(path => ['--patch', path]), '--patch', overlayPath],
     files: ['settings.yaml', 'cordis.patch.yml', 'AGENTS.md', 'studio.patch.yml'].map(path => ({ key: path, path, absolutePath: join(input.rootDir, path) })),
   }
 }
