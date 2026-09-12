@@ -114,7 +114,7 @@ watch(
 )
 const showCreateModal = ref(false)
 const showCloneModal = ref(false)
-const showAddAgentModal = ref(false)
+const showAddAgentDrawer = ref(false)
 const showGroupChatRefactorNotice = ref(false)
 const showManualRoomLinkModal = ref(false)
 const manualRoomLink = ref('')
@@ -1478,9 +1478,9 @@ async function deleteAgentPreset() {
     }
 }
 
-function closeAgentModal() {
+function closeAgentDrawer() {
     closeAgentPresetDialog()
-    showAddAgentModal.value = false
+    showAddAgentDrawer.value = false
     editingAgent.value = null
     resetAgentForm()
 }
@@ -1505,7 +1505,7 @@ async function handleAddAgent() {
         'default'
     syncAgentModelSelection(selectedProfile.value)
     selectedAgentReasoningEffort.value = ''
-    showAddAgentModal.value = true
+    showAddAgentDrawer.value = true
 }
 
 function randomAgentAvatarSeed() {
@@ -1574,7 +1574,7 @@ async function handleEditAgent(agent: RoomAgent) {
     agentName.value = agent.name || ''
     agentDescription.value = agent.description || ''
     agentAvatar.value = parseStoredAvatar(agent.avatar)
-    showAddAgentModal.value = true
+    showAddAgentDrawer.value = true
 }
 
 onMounted(() => {
@@ -1724,7 +1724,7 @@ async function confirmAddAgent() {
             description: agentDescription.value.trim() || undefined,
             avatar: agentAvatar.value ? JSON.stringify(agentAvatar.value) : '',
         })
-        closeAgentModal()
+        closeAgentDrawer()
         message.success(t('groupChat.agentAdded'))
     } catch (err: any) {
         if (err.message?.includes('already')) {
@@ -1759,7 +1759,7 @@ async function confirmUpdateAgent() {
             description: agentDescription.value.trim() || undefined,
             avatar: agentAvatar.value ? JSON.stringify(agentAvatar.value) : '',
         })
-        closeAgentModal()
+        closeAgentDrawer()
         message.success(t('common.saved'))
     } catch (err: any) {
         message.error(extractApiErrorMessage(err))
@@ -2047,7 +2047,7 @@ async function handleRemoveAgent(agent: RoomAgent) {
     try {
         await store.removeAgentFromRoom(store.currentRoomId, agent.id)
         if (editingAgent.value && (editingAgent.value.id === agent.id || editingAgent.value.agentId === agent.agentId)) {
-            closeAgentModal()
+            closeAgentDrawer()
         }
     } catch {
         message.error(t('common.deleteFailed'))
@@ -2775,10 +2775,20 @@ function handleClarifyKeydown(event: KeyboardEvent) {
             </NDrawerContent>
         </NDrawer>
 
-        <Teleport to="body">
-            <div v-if="showAddAgentModal" class="modal-backdrop" @click.self="closeAgentModal">
-                <div class="modal">
-                    <h3>{{ editingAgent ? t('groupChat.editAgentTitle', { name: editingAgent.name }) : t('groupChat.addAgent') }}</h3>
+        <NDrawer
+            :show="showAddAgentDrawer"
+            placement="right"
+            :width="workspacePanelMobile ? '100%' : 520"
+            :z-index="1000"
+            :mask-closable="!isSavingAgent"
+            :close-on-esc="!isSavingAgent && !showAgentPresetDialog"
+            :trap-focus="!showAgentPresetDialog"
+            @update:show="!$event && closeAgentDrawer()"
+        >
+            <NDrawerContent
+                :title="editingAgent ? t('groupChat.editAgentTitle', { name: editingAgent.name }) : t('groupChat.addAgent')"
+                :closable="!isSavingAgent"
+            >
                     <div v-if="!editingAgent" class="agent-preset-entry">
                         <NButton secondary block @click="openAgentPresetSelection">
                             {{ t('groupChat.chooseAgentPreset') }}
@@ -2901,7 +2911,8 @@ function handleClarifyKeydown(event: KeyboardEvent) {
                             :placeholder="t('groupChat.agentDescPlaceholder')"
                         />
                     </div>
-                    <div class="modal-actions" :class="{ 'agent-modal-actions': editingAgent }">
+                <template #footer>
+                    <div class="agent-drawer-actions" :class="{ 'is-editing': editingAgent }">
                         <NButton
                             v-if="editingAgent"
                             type="error"
@@ -2912,7 +2923,7 @@ function handleClarifyKeydown(event: KeyboardEvent) {
                             {{ t('common.delete') }}
                         </NButton>
                         <NSpace justify="end">
-                            <NButton :disabled="isSavingAgent" @click="closeAgentModal">{{ t('common.cancel') }}</NButton>
+                            <NButton :disabled="isSavingAgent" @click="closeAgentDrawer">{{ t('common.cancel') }}</NButton>
                             <NButton
                                 type="primary"
                                 :disabled="!canConfirmAddAgent"
@@ -2923,8 +2934,11 @@ function handleClarifyKeydown(event: KeyboardEvent) {
                             </NButton>
                         </NSpace>
                     </div>
-                </div>
-            </div>
+                </template>
+            </NDrawerContent>
+        </NDrawer>
+
+        <Teleport to="body">
             <div
                 v-if="showAgentPresetDialog"
                 class="modal-backdrop agent-preset-dialog-backdrop"
@@ -5190,8 +5204,15 @@ export default defineComponent({ components: { CreateRoomForm } })
     gap: 8px;
 }
 
-.agent-modal-actions {
-    justify-content: space-between;
+.agent-drawer-actions {
+    display: flex;
+    width: 100%;
+    justify-content: flex-end;
+    gap: 8px;
+
+    &.is-editing {
+        justify-content: space-between;
+    }
 }
 
 .form-hint {
