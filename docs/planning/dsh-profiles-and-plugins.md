@@ -4,7 +4,9 @@
 
 修订：2026-09-12，规划 v0.2。补充可执行契约、任务依赖和发布门槛；没有新增运行时实现或真实兼容性测试结果。
 
-状态：规划，尚未实施。本文提交到 [PR #3011](https://github.com/EKKOLearnAI/hermes-studio/pull/3011)，不代表该 PR 已实现下面的完整插件能力。
+后续进展：同日完成独立 M0 后端实验并补充证据链接；生产运行时未切换。
+
+状态：生产功能仍为规划。T01/T02 的首轮固定 rc.1、macOS 后端实验已通过，见[兼容性证据](dsh-compatibility-evidence.md)。本文提交到 [PR #3011](https://github.com/EKKOLearnAI/hermes-studio/pull/3011)，不代表该 PR 已实现下面的完整插件能力。
 
 实现基线：Studio `32027ae4`；真实 CLI 验证版本为 DSH `0.1.5-rc.1`。
 
