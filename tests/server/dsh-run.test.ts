@@ -10,6 +10,7 @@ import { CodingAgentRunManager } from '../../packages/server/src/modules/coding-
 import { initAllHermesTables } from '../../packages/server/src/modules/studio/infrastructure/database/schemas'
 import { getSession } from '../../packages/server/src/modules/studio/repositories/session-store'
 import { getRecordedUsageTotals } from '../../packages/server/src/modules/studio/repositories/usage-store'
+import { DSH_COMPACT_METHOD } from '../../packages/server/src/modules/coding-agents/services/dsh/acp-compaction'
 import { DSH_STREAM_METHOD } from '../../packages/server/src/modules/coding-agents/services/dsh/stream-plugin'
 
 vi.mock('child_process', async original => ({ ...await original<typeof import('child_process')>(), spawn: vi.fn() }))
@@ -17,6 +18,7 @@ vi.mock('child_process', async original => ({ ...await original<typeof import('c
 describe('DSH chat runner', () => {
   let manager: CodingAgentRunManager, workspace: string, sessionId: string, emitted: ReturnType<typeof vi.fn>
   let children: ReturnType<typeof createChild>[]
+  let holdCompaction = false
   function createChild() {
     const child = Object.assign(new EventEmitter(), {
       stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(),
@@ -25,9 +27,10 @@ describe('DSH chat runner', () => {
     child.stdin.on('data', chunk => {
       const message = JSON.parse(chunk.toString())
       child.sent.push(message)
-      if (!message.method || message.method === 'session/prompt') return
+      if (!message.method || message.method === 'session/prompt' || (holdCompaction && message.method === DSH_COMPACT_METHOD)) return
       const result = message.method === 'initialize' ? { protocolVersion: 1 }
-        : message.method === 'session/new' ? { sessionId: 'dsh-native' } : {}
+        : message.method === 'session/new' ? { sessionId: 'dsh-native' }
+        : message.method === DSH_COMPACT_METHOD ? { compacted: true, beforeTokens: 900, afterTokens: 250 } : {}
       queueMicrotask(() => child.stdout.write(`${JSON.stringify({ id: message.id, result })}\n`))
     })
     child.stdin.on('finish', () => setImmediate(() => { child.exitCode = 0; child.emit('close', 0) }))
@@ -39,6 +42,7 @@ describe('DSH chat runner', () => {
     workspace = mkdtempSync(join(tmpdir(), 'studio-dsh-run-'))
     sessionId = `chat-${workspace}`
     children = []
+    holdCompaction = false
     manager = new CodingAgentRunManager()
     emitted = vi.fn()
     vi.spyOn(process, 'kill').mockReturnValue(true)
@@ -93,6 +97,45 @@ describe('DSH chat runner', () => {
     finish(next)
     await vi.waitFor(() => expect(next.exitCode).toBe(0))
   })
+  it('compacts persisted history and updates context without adding an assistant message', async () => {
+    const child = await prompt('work')
+    finish(child)
+    await vi.waitFor(() => expect(child.exitCode).toBe(0))
+    emitted.mockClear()
+    await expect(manager.compact(sessionId)).resolves.toMatchObject({ compacted: true, afterTokens: 250 })
+    const maintenance = children.at(-1)!
+    expect(maintenance.sent.map(message => message.method)).toContain(DSH_COMPACT_METHOD)
+    expect(maintenance.sent.map(message => message.method)).not.toContain('session/prompt')
+    expect(maintenance.sent.find(message => message.method === 'session/resume').params.sessionId).toBe('dsh-native')
+    expect(emitted).toHaveBeenCalledWith(sessionId, 'usage.updated', expect.objectContaining({ contextTokens: 250 }))
+    expect(emitted.mock.calls.some(([, event]) => event === 'run.completed')).toBe(false)
+    await vi.waitFor(() => expect(maintenance.exitCode).toBe(0))
+    const next = await prompt('continue')
+    finish(next)
+  })
+
+  it('rejects argument and empty-history requests without starting a process', async () => {
+    await expect(manager.compact(sessionId, 'instructions')).rejects.toThrow('does not accept arguments')
+    await expect(manager.compact(sessionId)).rejects.toThrow('no native history')
+    expect(children).toHaveLength(0)
+  })
+
+  it('cancels an owned compaction and rejects duplicate requests while it runs', async () => {
+    const child = await prompt('work')
+    finish(child)
+    await vi.waitFor(() => expect(child.exitCode).toBe(0))
+    holdCompaction = true
+    const pending = manager.compact(sessionId)
+    const rejected = expect(pending).rejects.toThrow(/disposed|closed/)
+    const maintenance = children.at(-1)!
+    await vi.waitFor(() => expect(maintenance.sent.at(-1)?.method).toBe(DSH_COMPACT_METHOD))
+    await expect(manager.compact(sessionId)).rejects.toThrow('still processing')
+    expect(manager.getRunInfo(sessionId)?.running).toBe(true)
+    manager.stop(sessionId, { reportClosed: false })
+    await rejected
+    expect(maintenance.sent.some(message => message.method === 'session/cancel')).toBe(true)
+  })
+
   it('reports failure when DSH exits without an ACP result', async () => {
     const child = await prompt('work')
     child.stderr.write('startup failed')

@@ -3,6 +3,7 @@ import { PassThrough } from 'node:stream'
 import type { ChildProcess } from 'node:child_process'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DshAcpTurn } from '../../packages/server/src/modules/coding-agents/services/dsh/acp-turn'
+import { DSH_COMPACT_METHOD } from '../../packages/server/src/modules/coding-agents/services/dsh/acp-compaction'
 import { DSH_STREAM_METHOD } from '../../packages/server/src/modules/coding-agents/services/dsh/stream-plugin'
 
 const turns: DshAcpTurn[] = []
@@ -20,7 +21,8 @@ function connection(options: { resumeError?: boolean; permissionRequired?: boole
     const result = message.method === 'initialize'
       ? { protocolVersion: 1, agentCapabilities: { promptCapabilities: { image: false } } }
       : message.method === 'session/new' ? { sessionId: 'native-1', configOptions: [] }
-      : message.method === 'session/prompt' ? { stopReason: 'end_turn' } : {}
+      : message.method === 'session/prompt' ? { stopReason: 'end_turn' }
+      : message.method === DSH_COMPACT_METHOD ? { compacted: true, beforeTokens: 900, afterTokens: 300 } : {}
     if (options.holdPrompt && message.method === 'session/prompt') return
     queueMicrotask(() => receive({ id: message.id, ...(message.method === 'session/resume' && options.resumeError
       ? { error: { code: -32000, message: 'Session missing' } } : { result }) }))
@@ -31,6 +33,24 @@ function connection(options: { resumeError?: boolean; permissionRequired?: boole
 }
 
 describe('DSH ACP connection', () => {
+  it('resumes native history for compaction without sending a conversational prompt', async () => {
+    const { turn, sent, child } = connection()
+    await expect(turn.compact({ cwd: '/workspace', nativeSessionId: 'native-1', modelValue: '["ekko-studio","model"]' }))
+      .resolves.toEqual({ compacted: true, beforeTokens: 900, afterTokens: 300 })
+    expect(sent.map(message => message.method)).toEqual(['initialize', 'session/resume', 'session/set_config_option', DSH_COMPACT_METHOD, 'session/close'])
+    expect(sent[3].params).toEqual({ sessionId: 'native-1' })
+    expect(child.stdin.writableEnded).toBe(true)
+  })
+
+  it('does not create a replacement history for missing or failed compaction resume', async () => {
+    const missing = connection()
+    await expect(missing.turn.compact({ cwd: '/workspace', nativeSessionId: '' })).rejects.toThrow('no native history')
+    expect(missing.sent).toEqual([])
+    const failed = connection({ resumeError: true })
+    await expect(failed.turn.compact({ cwd: '/workspace', nativeSessionId: 'missing' })).rejects.toThrow('Session missing')
+    expect(failed.sent.map(message => message.method)).toEqual(['initialize', 'session/resume'])
+  })
+
   it('passes a chosen preset only to a new native session', async () => {
     const fresh = connection()
     await fresh.turn.prompt({ cwd: '/workspace', text: 'go', images: [], agentPreset: 'minimal' })

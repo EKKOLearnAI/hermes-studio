@@ -83,7 +83,7 @@ export async function handleCodingAgentSessionCommand(
       const row = getSession(sessionId)
       const runInfo = codingAgentRunManager.getRunInfo(sessionId)
       if (row?.agent === 'pi' || runInfo?.agentId === 'pi') {
-        const stats = await withPiRpcSession(sessionId, profile, state, () => (
+        const stats = await withNativeRpcSession(sessionId, profile, state, 'pi', () => (
           codingAgentRunManager.getPiSessionStats(sessionId)
         ))
         if (command.name === 'context') {
@@ -160,7 +160,7 @@ export async function handleCodingAgentSessionCommand(
     const info = codingAgentRunManager.getRunInfo(sessionId)
     if (row?.agent === 'pi' || info?.agentId === 'pi') {
       try {
-        const piState = await withPiRpcSession(sessionId, profile, state, () => (
+        const piState = await withNativeRpcSession(sessionId, profile, state, 'pi', () => (
           codingAgentRunManager.getPiSessionState(sessionId)
         ))
         const running = piState.isStreaming || piState.isCompacting
@@ -243,7 +243,7 @@ export async function handleCodingAgentSessionCommand(
         ? 'Pi'
         : compactAgentId === 'grok'
           ? 'Grok'
-          : 'Claude Code'
+          : compactAgentId === 'dsh' ? 'DeepSeek Harness' : 'Claude Code'
     emitCommand({
       action: 'compact',
       terminal: false,
@@ -253,15 +253,15 @@ export async function handleCodingAgentSessionCommand(
     try {
       let result: CodingAgentCompactResult
       try {
-        if (compactAgentId === 'pi') {
-          result = await withPiRpcSession<CodingAgentCompactResult>(sessionId, profile, state, () => (
+        if (compactAgentId === 'pi' || compactAgentId === 'dsh') {
+          result = await withNativeRpcSession<CodingAgentCompactResult>(sessionId, profile, state, compactAgentId, () => (
             codingAgentRunManager.compact(sessionId, command.args)
           ))
         } else {
           result = await codingAgentRunManager.compact(sessionId, command.args)
         }
       } catch (err) {
-        if (compactAgentId === 'pi') throw err
+        if (compactAgentId === 'pi' || compactAgentId === 'dsh') throw err
         if (!(err instanceof Error) || !err.message.includes('Coding agent session not found')) throw err
         result = await restartCodingAgentRunForCompact(sessionId, profile, state, command.args)
       }
@@ -278,7 +278,7 @@ export async function handleCodingAgentSessionCommand(
       emitCommand({
         ok: false,
         action: 'compact',
-        terminal: true,
+        terminal: !nativeRpcSessionsStarting.has(sessionId) && !codingAgentRunManager.getRunInfo(sessionId)?.running && !state.isWorking,
         message: `Compaction failed: ${err instanceof Error ? err.message : String(err)}`,
         compacted: false,
       })
@@ -323,28 +323,37 @@ async function restartCodingAgentRunForCompact(
   return result
 }
 
-async function withPiRpcSession<T>(
+const nativeRpcSessionsStarting = new Set<string>()
+
+async function withNativeRpcSession<T>(
   sessionId: string,
   profile: string,
   state: SessionState,
+  agentId: 'pi' | 'dsh',
   operation: () => Promise<T> | T,
 ): Promise<T> {
+  if (nativeRpcSessionsStarting.has(sessionId)) throw new Error('Coding agent session is starting; retry after it is ready')
   const existing = codingAgentRunManager.getRunInfo(sessionId)
-  if (existing && existing.agentId !== 'pi') {
-    throw new Error(`Session is running ${existing.agentId}, not Pi`)
+  if (existing && existing.agentId !== agentId) {
+    throw new Error(`Session is running ${existing.agentId}, not ${agentId}`)
   }
   let started = false
   if (!existing) {
     const row = getSession(sessionId)
-    if (!row || row.agent !== 'pi') throw new Error('Pi coding agent session not found')
-    await startCodingAgentRun('pi', {
-      sessionId,
-      profile,
-      mode: row.agent_mode === 'global' ? 'global' : 'scoped',
-      workspace: row.workspace || undefined,
-      agentNativeSessionId: row.agent_native_session_id || undefined,
-      agentSessionId: row.agent_session_id || undefined,
-    }, state)
+    if (!row || row.agent !== agentId) throw new Error(`${agentId} coding agent session not found`)
+    nativeRpcSessionsStarting.add(sessionId)
+    try {
+      await startCodingAgentRun(agentId, {
+        sessionId,
+        profile,
+        mode: row.agent_mode === 'global' ? 'global' : 'scoped',
+        workspace: row.workspace || undefined,
+        agentNativeSessionId: row.agent_native_session_id || undefined,
+        agentSessionId: row.agent_session_id || undefined,
+      }, state)
+    } finally {
+      nativeRpcSessionsStarting.delete(sessionId)
+    }
     started = true
   }
   try {

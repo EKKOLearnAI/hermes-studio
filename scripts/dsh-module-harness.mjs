@@ -17,7 +17,7 @@ export function dshModuleViolations(filename, source) {
       ? [`${file}: DSH services must receive platform helpers instead of importing the agent registry`] : []
   }
   const failures = []
-  for (const token of ['DSH_PERMISSION_MODE', 'studio-web-acp', '@deepseek-ai/dsh-web-app', 'writeDshAcpAdapter', 'prepareDshWebProfile', 'new DshAcpTurn(', 'STUDIO_DSH_UI_READY', 'prepareDshManagementProfile', 'DSH_UI_SLOT_CLIENT', 'dshPresetSourceConfig', 'new DshAgentPresetService(']) {
+  for (const token of ['DSH_PERMISSION_MODE', 'studio-web-acp', '@deepseek-ai/dsh-web-app', 'writeDshAcpAdapter', 'prepareDshWebProfile', 'new DshAcpTurn(', 'STUDIO_DSH_UI_READY', 'prepareDshManagementProfile', 'DSH_UI_SLOT_CLIENT', 'dshPresetSourceConfig', 'new DshAgentPresetService(', 'DSH_COMPACT_METHOD', '_ekko/compact', 'compactStudioDshSession']) {
     if (source.includes(token)) failures.push(`${file}: ${token} belongs in coding-agents/services/dsh`)
   }
   if (/function\s+(?:executeDshPluginCommand|getNativeDshPluginInventory)\s*\(/.test(source)) failures.push(`${file}: implement DSH plugin operations inside services/dsh; registry wiring may only delegate`)

@@ -46,8 +46,21 @@ it.each(['0.1.5-rc.2', '0.2.0', '9.0.0-beta.1'])('adapts compatible ACP %s witho
   expect(flush).toHaveBeenCalledWith(agent.session)
   expect(agent.session).toEqual({ sandbox: 'danger-full-access', approval: 'never' })
   expect(adapter.unrelatedNewFeature).toBe(true)
+  expect(await readFile(input.destination, 'utf8')).not.toContain('_ekko/compact')
   expect(await readFile(join(input.pkg, 'lib/index.js'), 'utf8')).toBe(input.source)
   expect(await readFile(input.destination, 'utf8')).toContain(`upstream ${version} (MIT); source sha256`)
+})
+
+it('keeps chat adaptation available when a future ACP has ambiguous optional compaction hooks', async () => {
+  const input = await fixture('10.0.0', source => source + `
+export function changedRegistration(server, methods) {
+  server.onRequest(methods.agent.session.prompt, () => {});
+  server.onRequest(methods.agent.session.prompt, () => {});
+}`)
+  await writeDshAcpAdapter(input.installation, input.destination)
+  const adapter = await import(pathToFileURL(input.destination).href)
+  expect(adapter.newOptions({}, { _meta: { agentPreset: 'custom' } }).agentPreset).toBe('custom')
+  expect(await readFile(input.destination, 'utf8')).not.toContain('_ekko/compact')
 })
 
 it.each([

@@ -1,5 +1,6 @@
 import type { DshAcpTurn } from '../dsh/acp-turn'
 import { startDshChatTurn } from '../dsh/chat-turn'
+import { compactDshRun } from '../dsh/compaction'
 import { agentUpdateLocked, noteAgentActivity } from '../update-lock'
 import { dirname, join } from 'path'
 import { existsSync, accessSync, chmodSync, constants as fsConstants, readFileSync, writeFileSync } from 'fs'
@@ -879,6 +880,12 @@ export class CodingAgentRunManager {
     const run = this.getBySession(sessionId)
     if (!run) throw new Error('Coding agent session not found')
     if (agentUpdateLocked(run.launch.agentId)) throw new Error('Agent is updating; retry after completion')
+    if (run.launch.agentId === 'dsh') return compactDshRun(run, args, {
+      spawn: spawnCodingAgentChild, isRunning: childIsRunning,
+      terminate: terminateChildProcess, forceKill: forceKillChildProcess,
+      stderr: chunk => { appendChildStderr(run, chunk) }, touch: () => this.touch(run),
+      emit: (event, payload) => this.emitToChat(run.launch.sessionId, event, payload),
+    })
     if (run.launch.agentId === 'pi') {
       if (run.turnActive) throw new Error('Pi is still processing the previous input')
       if (!childIsRunning(run.currentChild)) throw new Error('Pi RPC process is not available')
