@@ -38,7 +38,7 @@ describe('agent runner endpoint resolver', () => {
       'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
     )
     expect(chatCompletionsUrl('https://api.z.ai/api/paas/v4')).toBe('https://api.z.ai/api/paas/v4/chat/completions')
-    expect(responsesUrl('https://api.apikey.fun/v1/')).toBe('https://api.apikey.fun/v1/responses')
+    expect(responsesUrl('https://api.apikey.fan/v1/')).toBe('https://api.apikey.fan/v1/responses')
   })
 
   it('does not duplicate existing endpoint paths', () => {
@@ -50,7 +50,7 @@ describe('agent runner endpoint resolver', () => {
   })
 
   it('handles Anthropic-compatible roots', () => {
-    expect(anthropicMessagesUrl('https://api.apikey.fun')).toBe('https://api.apikey.fun/v1/messages')
+    expect(anthropicMessagesUrl('https://api.apikey.fan')).toBe('https://api.apikey.fan/v1/messages')
     expect(anthropicMessagesUrl('https://api.z.ai/api/anthropic')).toBe('https://api.z.ai/api/anthropic/v1/messages')
     expect(providerEndpointUrl('anthropic_messages', 'https://api.example.com/v1')).toBe('https://api.example.com/v1/messages')
   })

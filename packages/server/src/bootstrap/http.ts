@@ -29,6 +29,7 @@ import { getAgentBridgeManager, startAgentBridgeManager } from '../modules/herme
 import { HermesSkillInjector } from '../modules/hermes/services/skills/injector'
 import { injectBundledMcpServer } from '../modules/hermes/services/mcp/studio-autoinject'
 import { ensureProfileGatewaysRunning } from '../modules/hermes/services/gateway/autostart'
+import { runRegisteredStartupTasks } from './startup-tasks'
 import { refreshConfiguredProviderModelCatalogsInBackground } from '../modules/hermes/services/providers/model-catalog-cache'
 import { initializeOpenCodeFreeInBackground } from '../modules/hermes/services/providers/opencode-free'
 import {
@@ -371,6 +372,11 @@ function recordLockedHermesSelection(selection: HermesRuntimeSelection): void {
 export async function bootstrap() {
   bootstrapReady = false
   console.log(`hermes-web-ui v${APP_VERSION} starting...`)
+  try {
+    await runRegisteredStartupTasks()
+  } catch {
+    logger.warn('[bootstrap] startup task state could not be read or saved; deferred remaining tasks')
+  }
   await ensureStartupDirectory(config.uploadDir, 'upload')
   if (shouldCreateWebUiDataDir()) {
     await ensureStartupDirectory(config.dataDir, 'development data')

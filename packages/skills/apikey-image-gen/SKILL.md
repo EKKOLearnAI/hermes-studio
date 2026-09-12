@@ -7,7 +7,7 @@ license: MIT
 platforms: [linux, macos, windows, termux]
 metadata:
   hermes:
-    tags: [api.apikey.fun, custom-provider, image-generation, image-editing, media]
+    tags: [api.apikey.fan, custom-provider, image-generation, image-editing, media]
 prerequisites:
   commands: [curl]
 ---
@@ -28,7 +28,7 @@ Do not use any built-in image generation tool as a fallback. If the Hermes Web U
 ```yaml
 custom_providers:
   - name: fun-codex
-    base_url: https://api.apikey.fun/v1
+    base_url: https://api.apikey.fan/v1
     api_key: ...
     model: gpt-5.5
     api_mode: codex_responses
@@ -223,7 +223,7 @@ Successful responses include:
   "mode": "text",
   "output_paths": ["/absolute/path/to/output.png"],
   "provider": "fun-codex",
-  "base_url": "https://api.apikey.fun/v1"
+  "base_url": "https://api.apikey.fan/v1"
 }
 ```
 

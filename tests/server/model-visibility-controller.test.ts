@@ -70,8 +70,8 @@ vi.mock('../../packages/server/src/modules/studio/contracts/providers', () => ({
   PROVIDER_PRESETS: [
     {
       value: 'fun-codex',
-      label: 'Codex-apikey.fun',
-      base_url: 'https://api.apikey.fun/v1',
+      label: 'Codex-apikey.fan',
+      base_url: 'https://api.apikey.fan/v1',
       models: ['gpt-5.5', 'gpt-5.4'],
       builtin: true,
     },
