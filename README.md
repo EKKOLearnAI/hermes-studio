@@ -6,7 +6,7 @@
 <p align="center">
   A local-first AI workspace for multi-agent chat, coding, and visual workflows.<br/>
   Available as a desktop app and self-hosted web console, with support for<br/>
-  <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a>, Ekko Agent, Claude Code, Codex, Pi, Grok, and OpenCode.<br/>
+  <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a>, Ekko Agent, Claude Code, Codex, Pi, Grok, OpenCode, and DeepSeek Harness (DSH).<br/>
   Bring conversations, group collaboration, voice, files, and devices together in one place.
 </p>
 
@@ -54,7 +54,7 @@ Browse installed skills, read their instructions, and enable them as needed.
 
 | Area | What Ekko Studio does |
 | --- | --- |
-| Multi-agent runtime | Runs Hermes, Ekko, Claude Code, Codex, Pi, Grok, and OpenCode with streaming responses, tool traces, generated-file previews, persistent sessions, and standalone desktop chat windows. |
+| Multi-agent runtime | Runs Hermes, Ekko, Claude Code, Codex, Pi, Grok, OpenCode, and DeepSeek Harness (DSH) with streaming responses, tool traces, generated-file previews, persistent sessions, and standalone desktop chat windows. |
 | Studio workspace | Provides shared chats, group chat, global-agent runs, workflows, files, voice, media, devices, themes, logs, usage, and App connectivity across agent runtimes. |
 | Agent control planes | Keeps Hermes profiles, providers, models, memory, skills, plugins, jobs, Kanban, channels, and runtime management in their owning agent module. |
 | Automation | Builds executable visual workflows and connects the supported runtimes through schedules, approval gates, group-chat rooms, platform channels, and MCP servers. |
@@ -70,7 +70,7 @@ grouped into three agent families:
 | --- | --- | --- |
 | Hermes | Hermes | Profiles, providers, models, skills, plugins, memory, jobs, Kanban, channels, MCP, terminal, and Hermes runtime integration. |
 | Ekko | Ekko | Ekko execution, approvals, clarifications, memory, MCP, and provider runtime behavior. |
-| Coding | Claude Code, Codex, Pi, Grok, OpenCode | Coding-agent installation, configuration, proxies, sessions, and process execution. |
+| Coding | Claude Code, Codex, Pi, Grok, OpenCode, DSH | Coding-agent installation, configuration, proxies, sessions, and process execution. |
 
 Studio owns capabilities shared by those families: single chat, group chat,
 global-agent orchestration, workflows, webhooks, sessions, files and uploads,
@@ -84,7 +84,7 @@ controllers.
 
 ### AI Chat
 
-- Real-time chat streaming over Socket.IO `/chat-run`; Studio dispatches each run to Hermes, Ekko, Claude Code, Codex, Pi, Grok, or OpenCode through runtime adapters
+- Real-time chat streaming over Socket.IO `/chat-run`; Studio dispatches each run to Hermes, Ekko, Claude Code, Codex, Pi, Grok, OpenCode, or DSH through runtime adapters
 - Multi-session management — create, rename, delete, switch between sessions
 - **Self-built session database** — local SQLite storage for Studio sessions; Hermes state.db remains a read-only source for Hermes history APIs
 - Session grouping by source (Telegram, Discord, Slack, etc.) with collapsible accordion
@@ -143,7 +143,7 @@ Unified configuration for **10 platforms** in one page:
 
 ### Visual Workflows
 
-- Vue Flow canvas for Hermes, Ekko, Claude Code, Codex, Pi, Grok, and OpenCode nodes with file/image attachments
+- Vue Flow canvas for Hermes, Ekko, Claude Code, Codex, Pi, Grok, OpenCode, and DeepSeek Harness (DSH) nodes with file/image attachments
 - Directed edges, structured conditions, success/failure routes, loops, and approval gates
 - Import/export for portable workflow definitions and profile-aware workspaces
 - Run budgets, deadlines, stop/rerun controls, and persisted execution history
@@ -188,10 +188,19 @@ Unified configuration for **10 platforms** in one page:
 
 ### Coding Agents
 
-- Install, configure, launch, and monitor Claude Code, Codex, Pi, Grok, and OpenCode from the dashboard
+- Install, configure, launch, and monitor Claude Code, Codex, Pi, Grok, OpenCode, and DeepSeek Harness (DSH) from the dashboard
 - Built-in coding-agent terminal, session history, workspace selection, images, and file diffs
 - Dedicated proxy routes and API modes for provider/model compatibility
 - Standalone desktop chat windows and persisted output/reasoning metadata
+
+#### DeepSeek Harness (DSH)
+
+- Use DSH in single chats, group-chat rooms, and workflow nodes, with Studio-selected providers/models or native global configuration.
+- Select an Agent preset when creating a chat, adding a group member, or configuring a workflow node; resumed conversations retain their selected preset.
+- Reuse the native `web` profile’s plugins. **Plugin configuration** embeds the plugins’ own settings UI with light/dark theme support; **Plugin list** manages installed packages. Agent presets have a separate Studio management page.
+- Manage DSH settings, instructions, MCP, and private skills. Shared `~/.agents/skills` entries are display-only in every Coding Agent page; editing and deletion are blocked.
+
+Install DSH on the machine running the Studio backend through Agent Manager. Native plugin installation requires `pnpm` on that machine’s PATH. See [DSH setup, profiles, and compatibility](docs/dsh-management.md) for details.
 
 ### Desktop Agent Browser
 
@@ -494,7 +503,7 @@ Koa bootstrap (composition only)
           ├─ Hermes family ─── profiles, models, skills, memory, jobs,
           │                    Kanban, channels, terminal, Hermes bridge
           ├─ Ekko family ───── Ekko runtime and agent-owned services
-          └─ Coding family ─── Claude Code, Codex, and Pi adapters
+          └─ Coding family ─── Claude Code, Codex, Pi, Grok, OpenCode, DSH adapters
 ```
 
 The server is organized by business ownership under
