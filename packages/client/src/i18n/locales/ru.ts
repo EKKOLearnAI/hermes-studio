@@ -1,6 +1,7 @@
 import { socialMessagesRu } from '../social-messages-locales'
 
 export default {
+  dshPresets: {"title": "Пресеты Agent", "unavailable": "Не удалось загрузить пресеты DSH Agent. Проверьте установку DSH и обновите страницу.", "hint": "Пресет по умолчанию применяется к новым сеансам DSH. Существующие сеансы сохраняют исходный пресет.", "copy": "Дублировать", "view": "Просмотр", "setDefault": "По умолчанию", "default": "По умолчанию", "delete": "Удалить", "deleteConfirm": "Удалить пресет «{name}» и его каталог?", "identifier": "Идентификатор", "name": "Название", "idHint": "Используйте уникальный идентификатор из строчных латинских букв, цифр и дефисов.", "empty": "Нет пресетов Agent", "copyTitle": "Дублировать пресет: {name}", "create": "Создать", "location": "Открыть папку"},
   dshPlugins: {
     "configurationTab": "Настройки плагинов",
     "listTab": "Список плагинов",

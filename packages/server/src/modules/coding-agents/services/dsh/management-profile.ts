@@ -1,7 +1,7 @@
 import { mkdir, symlink, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { stringify } from 'yaml'
-import { anchorDshPatch, optionalDshFile } from './web-profile'
+import { anchorDshPatch, dshPresetSourceConfig, optionalDshFile } from './web-profile'
 import { dshInstallation, dshPackageDirectory } from './installation'
 import { DSH_UI_SLOT_CLIENT, DSH_UI_SLOT_HOST } from './ui-slot'
 
@@ -17,15 +17,23 @@ export async function prepareDshManagementProfile(input: { command: string; sour
   const profile = 'studio-plugins'
   const directory = join(input.rootDir, 'profiles', profile)
   await mkdir(directory, { recursive: true })
+  const layers: string[] = []
   for (const name of new Set([...bundles, ...Object.keys(manifest.dependencies || {})])) {
     const target = await dshPackageDirectory(name, [installation, manifestPath])
+    if (bundles.includes(name)) {
+      const pkg = JSON.parse(await optionalDshFile(join(target, 'package.json')))
+      if (typeof pkg.dsh?.bundle?.patch !== 'string') throw new Error(`Web bundle ${name} has no composition patch`)
+      layers.push(await optionalDshFile(join(target, pkg.dsh.bundle.patch)))
+    }
     const link = join(directory, 'node_modules', name)
     await mkdir(dirname(link), { recursive: true })
     await symlink(target, link, process.platform === 'win32' ? 'junction' : 'dir')
   }
   await writeFile(join(directory, 'package.json'), JSON.stringify({ ...manifest, dsh: { ...manifest.dsh, profile: { ...manifest.dsh.profile, patchReload: 'startup' } } }))
   for (const [target, sourcePath] of [[join(directory, 'cordis.patch.yml'), join(source, 'cordis.patch.yml')], [join(input.rootDir, 'cordis.patch.yml'), join(input.sourceHome, 'cordis.patch.yml')]]) {
-    await writeFile(target, anchorDshPatch(await optionalDshFile(sourcePath, '[]'), sourcePath), { mode: 0o600 })
+    const content = await optionalDshFile(sourcePath, '[]')
+    layers.push(content)
+    await writeFile(target, anchorDshPatch(content, sourcePath), { mode: 0o600 })
   }
   const slot = join(directory, 'node_modules/studio-dsh-ui')
   await mkdir(slot, { recursive: true })
@@ -35,6 +43,7 @@ export async function prepareDshManagementProfile(input: { command: string; sour
   const patch = join(input.rootDir, 'management.patch.yml')
   await writeFile(patch, stringify([
     { id: 'ui-sidebar', disabled: true },
+    { id: 'agent-presets', inject: ['settings'], config: dshPresetSourceConfig(layers, input.sourceHome) },
     { id: 'web-runtime', config: { printUrl: false, openBrowser: false, surfaceContext: false } },
     { id: 'settings', config: { path: join(input.sourceHome, 'settings.yaml') } },
     { id: 'credentials', config: { path: join(input.sourceHome, '.credentials.yaml'), dshHome: input.sourceHome } },

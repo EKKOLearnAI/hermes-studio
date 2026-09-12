@@ -12,6 +12,7 @@ import {
 import type { SkillTarget } from '@/api/hermes/skills'
 import CodingAgentMcpPanel from '@/components/coding-agents/CodingAgentMcpPanel.vue'
 import CodingAgentSkillsPanel from '@/components/coding-agents/CodingAgentSkillsPanel.vue'
+import DshAgentPresetsPanel from '@/components/coding-agents/dsh/DshAgentPresetsPanel.vue'
 import DshPluginsPanel from '@/components/coding-agents/dsh/DshPluginsPanel.vue'
 
 const route = useRoute()
@@ -136,6 +137,7 @@ watch([agentId, section], loadSettingsFiles, { immediate: true })
     </header>
 
     <DshPluginsPanel v-if="section === 'plugins' && validAgentId === 'dsh'" />
+    <DshAgentPresetsPanel v-else-if="section === 'presets' && validAgentId === 'dsh'" />
     <div v-else-if="section === 'skills'" class="coding-agent-skills-content">
       <CodingAgentSkillsPanel :target="skillTarget" />
     </div>

@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process'
 import { killOwnedProcessTree } from '../../../studio/public/process-tree'
 import { DshPluginError } from './errors'
 import { DshManagement } from './management'
+import { DshAgentPresetService } from './agent-presets'
 import { DshUiGateway } from './ui-gateway'
 import { changeNativeDshPlugins } from './plugins'
 import { readNativeDshPluginInventory } from './plugin-inventory'
@@ -79,5 +80,5 @@ export function createDshHost(host: DshHostCommands) {
     finally { await management.close() }
     return getNativeDshPluginInventory()
   }
-  return { getNativeDshPluginInventory, executeDshPluginCommand, runtimeInput, management, ui, changePlugins }
+  return { getNativeDshPluginInventory, executeDshPluginCommand, runtimeInput, management, ui, changePlugins, presets: new DshAgentPresetService(management) }
 }

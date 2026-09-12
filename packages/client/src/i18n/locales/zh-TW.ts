@@ -1,6 +1,7 @@
 import { socialMessagesZhTw } from '../social-messages'
 
 export default {
+  dshPresets: {"title": "Agent 預設", "unavailable": "無法載入 DSH Agent 預設，請檢查 DSH 安裝後重新整理。", "hint": "預設套用於新的 DSH 對話，既有對話保留原來的預設。", "copy": "複製", "view": "檢視", "setDefault": "設為預設", "default": "預設", "delete": "刪除", "deleteConfirm": "刪除預設「{name}」及其目錄？", "identifier": "識別碼", "name": "名稱", "idHint": "使用不重複的小寫字母、數字和連字號作為識別碼。", "empty": "尚無 Agent 預設", "copyTitle": "複製預設：{name}", "create": "建立", "location": "開啟目錄"},
   dshPlugins: {
     "configurationTab": "外掛設定",
     "listTab": "外掛列表",

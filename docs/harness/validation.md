@@ -138,3 +138,11 @@ native frame preservation, names/descriptions and native package removal.
 For packaging changes run the Web build and `npm --prefix packages/desktop run
 build`. The slot browser code must also be exercised from a minified server
 bundle; runtime serialization must not capture build-generated helper closures.
+
+The DSH Agent presets page is a Studio Vue component, separate from the native
+plugin configuration iframe. Preset operations stay in `services/dsh/agent-presets.ts`
+and use the existing management host. Run `dsh-agent-presets.test.ts`, the DSH route
+and Web profile tests, `dsh-settings-real.test.ts` with the installed CLI, and
+`tests/e2e/dsh-plugins.spec.ts` for changes. The real test covers native RPC, source
+directory persistence, default updates, restart retention and read-only shipped
+presets as well as plugin UI startup (including native directory-picker dependencies).

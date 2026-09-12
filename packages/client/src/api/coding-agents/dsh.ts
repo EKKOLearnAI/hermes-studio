@@ -18,3 +18,13 @@ export const changeWebPlugins = (body: { action: 'install'; packageSpec: string 
   request<DshNativePluginInventory>('/api/coding-agents/dsh/web-plugins', { method: 'POST', headers: { 'If-Match': `"${revision}"` }, body: JSON.stringify(body) })
 export const openDshPluginUi = () => request<{ id: string; path: string }>('/api/coding-agents/dsh/ui-session', { method: 'POST' })
 export const closeDshPluginUi = (id: string) => request<void>(`/api/coding-agents/dsh/ui-session/${id}`, { method: 'DELETE' })
+
+export interface DshAgentPreset { id: string; name?: string; description?: string; trust: 'system' | 'user'; isDefault: boolean; broken?: string }
+export interface DshAgentPresets { presets: DshAgentPreset[]; authorable: boolean }
+const presetPath = (id: string) => `/api/coding-agents/dsh/agent-presets/${encodeURIComponent(id)}`
+export const listDshAgentPresets = () => request<DshAgentPresets>('/api/coding-agents/dsh/agent-presets')
+export const readDshAgentPreset = (id: string) => request<{ agentPreset: string; content: string }>(presetPath(id))
+export const copyDshAgentPreset = (body: { from: string; id: string; name?: string }) => request<DshAgentPresets>('/api/coding-agents/dsh/agent-presets', { method: 'POST', body: JSON.stringify(body) })
+export const deleteDshAgentPreset = (id: string) => request<DshAgentPresets>(presetPath(id), { method: 'DELETE' })
+export const defaultDshAgentPreset = (id: string) => request<DshAgentPresets>(presetPath(id) + '/default', { method: 'PUT' })
+export const locateDshAgentPreset = (id: string) => request<{ path?: string; opened: boolean }>(presetPath(id) + '/location', { method: 'POST' })

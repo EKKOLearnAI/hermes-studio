@@ -1,6 +1,7 @@
 import { socialMessagesJa } from '../social-messages-locales'
 
 export default {
+  dshPresets: {"title": "Agent プリセット", "unavailable": "DSH Agent プリセットを読み込めません。DSH のインストールを確認して再読み込みしてください。", "hint": "既定のプリセットは新しい DSH セッションに適用されます。既存のセッションは元のプリセットを維持します。", "copy": "複製", "view": "表示", "setDefault": "既定に設定", "default": "既定", "delete": "削除", "deleteConfirm": "プリセット「{name}」とそのディレクトリを削除しますか？", "identifier": "識別子", "name": "名前", "idHint": "小文字、数字、ハイフンで一意の識別子を指定してください。", "empty": "Agent プリセットはありません", "copyTitle": "プリセットを複製: {name}", "create": "作成", "location": "フォルダーを開く"},
   dshPlugins: {
     "configurationTab": "プラグイン設定",
     "listTab": "プラグイン一覧",

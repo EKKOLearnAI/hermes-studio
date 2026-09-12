@@ -16,7 +16,7 @@ async function server(role?: string) {
 }
 it.each([undefined, 'user', 'admin'])('protects native configuration and packages from role %s', async role => {
   const base = await server(role)
-  for (const [path, method] of [['plugin-inventory', 'GET'], ['ui-session', 'POST'], ['ui-session/id', 'DELETE'], ['web-plugins', 'POST']]) expect((await fetch(`${base}/api/coding-agents/dsh/${path}`, { method })).status).toBe(403)
+  for (const [path, method] of [['plugin-inventory', 'GET'], ['ui-session', 'POST'], ['ui-session/id', 'DELETE'], ['web-plugins', 'POST'], ['agent-presets', 'GET'], ['agent-presets', 'POST'], ['agent-presets/test', 'GET'], ['agent-presets/test', 'DELETE'], ['agent-presets/test/default', 'PUT'], ['agent-presets/test/location', 'POST']]) expect((await fetch(`${base}/api/coding-agents/dsh/${path}`, { method })).status).toBe(403)
   expect(doubles.create).not.toHaveBeenCalled(); expect(doubles.change).not.toHaveBeenCalled()
 })
 it('forwards native revisions and removes the old ACP management endpoints', async () => {

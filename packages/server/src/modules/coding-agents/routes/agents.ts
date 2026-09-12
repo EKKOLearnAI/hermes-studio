@@ -1,9 +1,17 @@
 import { requireAdmin, requireSuperAdmin } from '../../studio/public/auth'
 import Router from '@koa/router'
 import * as ctrl from '../controllers/agents'
+import * as presets from '../controllers/dsh-agent-presets'
 import * as plugins from '../controllers/dsh-plugins'
 
 export const codingAgentRoutes = new Router()
+
+codingAgentRoutes.get('/api/coding-agents/dsh/agent-presets', requireSuperAdmin, presets.list)
+codingAgentRoutes.post('/api/coding-agents/dsh/agent-presets', requireSuperAdmin, presets.copy)
+codingAgentRoutes.get('/api/coding-agents/dsh/agent-presets/:presetId', requireSuperAdmin, presets.read)
+codingAgentRoutes.delete('/api/coding-agents/dsh/agent-presets/:presetId', requireSuperAdmin, presets.remove)
+codingAgentRoutes.put('/api/coding-agents/dsh/agent-presets/:presetId/default', requireSuperAdmin, presets.makeDefault)
+codingAgentRoutes.post('/api/coding-agents/dsh/agent-presets/:presetId/location', requireSuperAdmin, presets.openLocation)
 
 codingAgentRoutes.get('/api/coding-agents/dsh/plugin-inventory', requireSuperAdmin, plugins.inventory)
 codingAgentRoutes.post('/api/coding-agents/dsh/web-plugins', requireSuperAdmin, plugins.change)

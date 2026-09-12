@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { parse } from 'yaml'
 import { afterEach, expect, it, vi } from 'vitest'
+import { prepareDshManagementProfile } from '../../packages/server/src/modules/coding-agents/services/dsh/management-profile'
 import { prepareDshWebProfile } from '../../packages/server/src/modules/coding-agents/services/dsh/web-profile'
 
 vi.mock('../../packages/server/src/modules/coding-agents/services/dsh/acp-adapter', () => ({ writeDshAcpAdapter: vi.fn() }))
@@ -62,4 +63,16 @@ it('reports unresolved source dependencies instead of silently dropping Web plug
   const input = await fixture()
   await rm(input.bundle, { recursive: true })
   await expect(prepareDshWebProfile(input)).rejects.toMatchObject({ code: 'DSH_DEPENDENCY_UNAVAILABLE' })
+})
+
+it('uses the same persistent authoring roots in management and ACP, including home overrides', async () => {
+  const input = await fixture()
+  const homePatch = '- id: agent-presets\n  config:\n    default: home-preset\n    includeUserRoot: false\n    roots:\n      - path: /home-presets\n        trust: user\n'
+  await writeFile(join(input.sourceHome, 'cordis.patch.yml'), homePatch)
+  const management = await prepareDshManagementProfile(input)
+  const acp = await prepareDshWebProfile({ ...input, rootDir: join(input.rootDir, 'acp') })
+  const readPresetConfig = async (path: string) => parse(await readFile(path, 'utf8'), { logLevel: 'silent' }).find((row: any) => row.id === 'agent-presets').config
+  expect(await readPresetConfig(management.patch)).toEqual(await readPresetConfig(acp.patch))
+  expect(await readPresetConfig(management.patch)).toEqual({ default: 'home-preset', includeUserRoot: false, roots: [{ path: '/home-presets', trust: 'user' }] })
+  expect(await readFile(join(input.sourceHome, 'cordis.patch.yml'), 'utf8')).toBe(homePatch)
 })

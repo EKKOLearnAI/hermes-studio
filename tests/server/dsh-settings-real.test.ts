@@ -5,6 +5,7 @@ import { once } from 'node:events'
 import Koa from 'koa'
 import { chromium } from '@playwright/test'
 import { expect, it, vi } from 'vitest'
+import { DshAgentPresetService } from '../../packages/server/src/modules/coding-agents/services/dsh/agent-presets'
 import { DshManagement } from '../../packages/server/src/modules/coding-agents/services/dsh/management'
 import { DshUiGateway } from '../../packages/server/src/modules/coding-agents/services/dsh/ui-gateway'
 import { securityHeaders } from '../../packages/server/src/modules/studio/middleware/security'
@@ -64,6 +65,20 @@ it.skipIf(!process.env.DSH_WEB_COMMAND)('renders native plugin slots and submits
     await page.evaluate(() => window.scrollTo(0, 0))
     await page.screenshot({ path: '/tmp/dsh-native-slot-mobile.png' })
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+    const presets = new DshAgentPresetService(management)
+    expect((await presets.list()).presets).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'standard', isDefault: true })]))
+    const source = await presets.read('standard')
+    expect(source.content).toContain('name:')
+    await presets.copy({ from: 'standard', id: 'fixture-copy', name: 'Fixture copy' })
+    expect(await readFile(join(home, '.agent-presets/fixture-copy/agent.cordis.yml'), 'utf8')).toBe(source.content)
+    await presets.makeDefault('fixture-copy')
+    expect(await readFile(join(home, 'settings.yaml'), 'utf8')).toContain('default: fixture-copy')
+    await expect(presets.remove('standard')).rejects.toMatchObject({ status: 403 })
+    await page.close()
+    await management.close()
+    expect((await presets.list()).presets).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'fixture-copy', isDefault: true, name: 'Fixture copy' })]))
+    expect((await presets.remove('fixture-copy')).presets.some(row => row.id === 'fixture-copy')).toBe(false)
+    expect(await readFile(join(home, 'settings.yaml'), 'utf8')).not.toContain('default: fixture-copy')
     expect(errors).toEqual([])
     gateway.remove(session.id, 'fixture-admin')
     expect((await fetch(base + session.path)).status).toBe(401)

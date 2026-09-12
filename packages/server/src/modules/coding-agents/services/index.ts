@@ -2642,6 +2642,7 @@ function commandExecution(command: string, args: string[]): CommandExecution {
 const dshHost = createDshHost({ commandEnv, findCommandPaths, resolveCommandForExecution, commandExecution, getSourceHome: () => join(getGlobalConfigHome(), '.dsh') })
 export const getNativeDshPluginInventory = dshHost.getNativeDshPluginInventory
 export const dshPluginUi = dshHost.ui
+export const dshAgentPresets = dshHost.presets
 export const changeDshWebPlugins = dshHost.changePlugins
 
 function packageParts(packageName: string): string[] {

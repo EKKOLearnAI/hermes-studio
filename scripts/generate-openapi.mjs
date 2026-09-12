@@ -1165,6 +1165,24 @@ openapi.paths['/api/coding-agents/dsh/ui-session/{id}'] = { delete: {
   parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'string' } }], responses: { '204': { description: 'Frame session revoked' }, '403': pluginError('Super admin required') },
 } }
 
+// Studio-owned Agent preset presentation over the existing native DSH host.
+const presetRowSchema = { type: 'object', required: ['id', 'trust', 'isDefault'], properties: {
+  id: { type: 'string' }, name: { type: 'string' }, description: { type: 'string' }, trust: { type: 'string', enum: ['system', 'user'] }, isDefault: { type: 'boolean' }, broken: { type: 'string' },
+} }
+const presetRosterSchema = { type: 'object', required: ['presets', 'authorable'], properties: { presets: { type: 'array', items: presetRowSchema }, authorable: { type: 'boolean' } } }
+const presetErrors = { '400': pluginError('Invalid preset request'), '403': pluginError('Super admin required or shipped preset is read-only'), '404': pluginError('Preset not found'), '422': pluginError('Unavailable preset or invalid operation'), '502': pluginError('Native preset service unavailable'), '503': pluginError('DSH installation unavailable') }
+const presetParameters = [{ in: 'path', name: 'presetId', required: true, schema: { type: 'string', pattern: '^[a-z0-9][a-z0-9-]*$', maxLength: 200 } }]
+openapi.paths['/api/coding-agents/dsh/agent-presets'] = {
+  get: { ...pluginAuth, operationId: 'listDshAgentPresets', summary: 'List the live native Agent preset roster', description: 'Reuses the existing owned DSH management host, including configured preset roots. Returns names, descriptions, default, authoring availability and broken states.', responses: { '200': pluginResponse(presetRosterSchema), ...presetErrors } },
+  post: { ...pluginAuth, operationId: 'copyDshAgentPreset', summary: 'Duplicate a native Agent preset into its writable source root', requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['from', 'id'], properties: { from: { type: 'string' }, id: { type: 'string', pattern: '^[a-z0-9][a-z0-9-]*$', maxLength: 200 }, name: { type: 'string', maxLength: 200 } } } } } }, responses: { '200': pluginResponse(presetRosterSchema), ...presetErrors } },
+}
+openapi.paths['/api/coding-agents/dsh/agent-presets/{presetId}'] = {
+  get: { ...pluginAuth, operationId: 'readDshAgentPreset', summary: 'Read a native preset composition', parameters: presetParameters, responses: { '200': pluginResponse({ type: 'object', properties: { agentPreset: { type: 'string' }, content: { type: 'string' }, name: { type: 'string' }, trust: { type: 'string', enum: ['system', 'user'] } } }), ...presetErrors } },
+  delete: { ...pluginAuth, operationId: 'deleteDshAgentPreset', summary: 'Delete a custom preset directory through DSH', description: 'Native DSH rejects shipped presets and clears a deleted user default. Existing sessions retain their mounted composition.', parameters: presetParameters, responses: { '200': pluginResponse(presetRosterSchema), ...presetErrors } },
+}
+openapi.paths['/api/coding-agents/dsh/agent-presets/{presetId}/default'] = { put: { ...pluginAuth, operationId: 'defaultDshAgentPreset', summary: 'Set the native preset default for new sessions', parameters: presetParameters, responses: { '200': pluginResponse(presetRosterSchema), ...presetErrors } } }
+openapi.paths['/api/coding-agents/dsh/agent-presets/{presetId}/location'] = { post: { ...pluginAuth, operationId: 'locateDshAgentPreset', summary: 'Open a custom preset directory on the DSH host or return its path', parameters: presetParameters, responses: { '200': pluginResponse({ oneOf: [{ type: 'object', required: ['opened'], properties: { opened: { type: 'boolean', enum: [true] } } }, { type: 'object', required: ['opened', 'path'], properties: { opened: { type: 'boolean', enum: [false] }, path: { type: 'string' } } }] }), ...presetErrors } } }
+
 // Write output
 const outputPath = join(rootDir, 'docs/openapi.json')
 writeFileSync(outputPath, JSON.stringify(openapi, null, 2))

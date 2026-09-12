@@ -45,3 +45,22 @@ Validate the installed CLI without a paid model call with `NODE_ENV=test PORT=86
 Native format reference: [DeepSeek Harness source, dsh-v0.1.5-rc.1](https://github.com/deepseek-ai/deepseek-harness/tree/dsh-v0.1.5-rc.1).
 
 Validate the Web-backed production path with `DSH_WEB_REAL=1 DSH_WEB_COMMAND=/absolute/path/to/dsh npx vitest run tests/server/dsh-web-real.test.ts`. It uses temporary native Web bundles/presets and a local model fixture, including real tool calls and writes outside the workspace; no model credentials or external model requests are needed.
+
+## Agent presets
+
+The separate **Agent presets** page uses Studio Vue/Naive UI components. It is not
+an iframe. It lists the native roster with names, descriptions, default and broken
+states; users can view compositions, duplicate a preset, set the default, open a
+custom preset directory and delete custom presets with confirmation. Composition
+viewing is read-only, matching the native management workflow; custom composition
+changes are made in the preset files.
+
+Studio’s DSH-only preset API calls `agentPresets/list`, `read`, `copy`,
+`deletePreset` and the native settings methods through the existing management
+process. There is no additional service and no standalone preset CLI command in
+the validated installation. Native cookies stay server-side. All routes require
+a super administrator. The source bundle/profile/home preset configuration is
+preserved; management and ACP share the source user preset root, so authored
+presets survive management restarts. Defaults affect new sessions; resumed
+sessions retain their original preset. The plugin configuration slot keeps its
+native UI service dependencies, including `uiWorkspace` and the directory picker.

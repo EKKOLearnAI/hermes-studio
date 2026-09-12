@@ -88,17 +88,6 @@ export async function prepareDshWebProfile(input: { command: string; sourceHome:
       if (isMap(row) && typeof row.get('id') === 'string' && !WEB_BACKEND_ROWS.has(String(row.get('id')))) disabled.push(String(row.get('id')))
     }
   }
-  // Cordis patches replace config wholesale. Preserve the final preset config
-  // from the same ordered source layers, then anchor its user root explicitly.
-  let presetConfig: YAMLMap | undefined
-  for (const text of [...layers, profilePatch, homePatch]) {
-    const doc = dshPatchDocument(text)
-    for (const patch of (doc.contents as any).items) {
-      if (!isMap(patch)) continue
-      const candidates = [patch, ...(isSeq(patch.get('insert', true)) ? (patch.get('insert', true) as any).items : [])]
-      for (const row of candidates) if (isMap(row) && row.get('id') === 'agent-presets' && isMap(row.get('config', true))) presetConfig = (row.get('config', true) as unknown as YAMLMap).clone() as YAMLMap
-    }
-  }
   const adapterPath = join(directory, 'studio-acp.mjs')
   await writeDshAcpAdapter(installation, adapterPath)
   const adaptation = dshPatchDocument(stringify([
@@ -112,17 +101,33 @@ export async function prepareDshWebProfile(input: { command: string; sourceHome:
   const adapterRow = (adaptation.contents as any).items[disabled.length + 1].get('insert').items[0]
   const modelConfig = parseDocument('provider: !!js ctx.agentDefaultModel.currentSelection().provider\nmodel: !!js ctx.agentDefaultModel.currentSelection().model\n', { logLevel: 'silent' })
   adapterRow.set('config', modelConfig.contents)
-  presetConfig ??= parseDocument('default: standard\n').contents as YAMLMap
-  const roots = presetConfig.get('roots', true)
-  if (roots !== undefined && !isSeq(roots)) throw new Error('DSH Web preset roots must be a static sequence')
-  const configuredRoots = roots ? (roots as any).clone() : adaptation.createNode([])
-  if (presetConfig.get('includeUserRoot') !== false) configuredRoots.add({ path: join(input.sourceHome, '.agent-presets'), trust: 'user' })
-  presetConfig.set('roots', configuredRoots)
-  presetConfig.set('includeUserRoot', false)
-  adaptation.add({ id: 'agent-presets', inject: ['settings'], config: presetConfig })
+  adaptation.add({ id: 'agent-presets', inject: ['settings'], config: dshPresetSourceConfig([...layers, profilePatch, homePatch], input.sourceHome) })
   adaptation.add({ id: 'agent-default-model', inject: ['settings'] })
   const path = join(directory, 'web-acp.patch.yml')
   await writeFile(path, String(adaptation), { mode: 0o600 })
   await writeFile(join(directory, 'source.json'), JSON.stringify({ sourceHome: input.sourceHome, sourceProfile: 'web', generation, browserRuntime: false, excludedWebRows: disabled }, null, 2))
   return { profile, patch: path, sourceProfile, generation }
+}
+
+/** Share native preset discovery and authoring roots between Web management and ACP. */
+export function dshPresetSourceConfig(layers: string[], sourceHome: string): YAMLMap {
+  // Cordis patches replace config wholesale. Preserve the final preset config
+  // from the same ordered source layers, then anchor its user root explicitly.
+  let presetConfig: YAMLMap | undefined
+  for (const text of layers) {
+    const doc = dshPatchDocument(text)
+    for (const patch of (doc.contents as any).items) {
+      if (!isMap(patch)) continue
+      const candidates = [patch, ...(isSeq(patch.get('insert', true)) ? (patch.get('insert', true) as any).items : [])]
+      for (const row of candidates) if (isMap(row) && row.get('id') === 'agent-presets' && isMap(row.get('config', true))) presetConfig = (row.get('config', true) as unknown as YAMLMap).clone() as YAMLMap
+    }
+  }
+  presetConfig ??= parseDocument('default: standard\n').contents as YAMLMap
+  const roots = presetConfig.get('roots', true)
+  if (roots !== undefined && !isSeq(roots)) throw new Error('DSH Web preset roots must be a static sequence')
+  const configuredRoots = roots ? (roots as any).clone() : parseDocument('[]').contents!
+  if (presetConfig.get('includeUserRoot') !== false) configuredRoots.add({ path: join(sourceHome, '.agent-presets'), trust: 'user' })
+  presetConfig.set('roots', configuredRoots)
+  presetConfig.set('includeUserRoot', false)
+  return presetConfig
 }
