@@ -1,4 +1,5 @@
-import { app, dialog } from 'electron'
+import { updateProgressWindow, clearUpdateProgress } from './update-progress'
+import { app, dialog, BrowserWindow } from 'electron'
 import { autoUpdater, type ProgressInfo, type UpdateDownloadedEvent, type UpdateInfo } from 'electron-updater'
 import { execFile } from 'node:child_process'
 import { rm } from 'node:fs/promises'
@@ -178,6 +179,8 @@ async function promptDownloadAvailableUpdate(info: UpdateInfo): Promise<void> {
     cancelId: 1,
   })
   if (response === 0) {
+    clearUpdateProgress()
+    updateProgressWindow()
     await autoUpdater.downloadUpdate()
   }
 }
@@ -205,6 +208,8 @@ export function initAutoUpdater(nextOptions: AutoUpdaterOptions = {}) {
   })
   autoUpdater.on('error', err => {
     console.error('[updater] error:', err)
+    for (const window of BrowserWindow.getAllWindows()) window.setProgressBar(-1)
+    updateProgressWindow(undefined, true)
     recoverFailedPendingUpdate(err).catch(cleanupErr => {
       console.warn(`[updater] pending update recovery failed: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`)
     })
@@ -212,8 +217,11 @@ export function initAutoUpdater(nextOptions: AutoUpdaterOptions = {}) {
   })
   autoUpdater.on('download-progress', (info: ProgressInfo) => {
     console.log(`[updater] download ${Math.round(info.percent)}%`)
+    updateProgressWindow(info)
+    for (const window of BrowserWindow.getAllWindows()) window.setProgressBar(info.percent / 100)
   })
   autoUpdater.on('update-downloaded', async (info: UpdateDownloadedEvent) => {
+    clearUpdateProgress()
     downloadedUpdate = info
     await promptInstallDownloadedUpdate(info)
   })
