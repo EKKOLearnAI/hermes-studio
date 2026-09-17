@@ -18,6 +18,7 @@ import { agentInstallationState, fetchAgentAvailabilitySnapshot } from "@/api/ag
 import { useChatStore, type Session } from "@/stores/hermes/chat";
 import { useAppStore } from "@/stores/hermes/app";
 import { useProfilesStore } from "@/stores/hermes/profiles";
+import { profileSelectLabel } from "@/lib/profileDisplay";
 import { useFilesStore } from "@/stores/hermes/files";
 import { useToolPanelStore } from "@/stores/hermes/tool-panel";
 import { useSessionBrowserPrefsStore } from "@/stores/hermes/session-browser-prefs";
@@ -675,7 +676,7 @@ function toggleCategoryGroup(key: string) {
 const profileFilterOptions = computed(() => [
   { label: t("chat.allProfiles"), value: "__all__" },
   ...profilesStore.profiles.map((profile) => ({
-    label: profile.name,
+    label: profileSelectLabel(profile),
     value: profile.name,
   })),
 ]);
@@ -1094,7 +1095,7 @@ function getDefaultModelForProfile(profile: string) {
 
 const newChatProfileOptions = computed(() =>
   (profilesStore.profiles.length > 0 ? profilesStore.profiles : [{ name: "default" }]).map((profile) => ({
-    label: profile.name,
+    label: profileSelectLabel(profile),
     value: profile.name,
   })),
 );
